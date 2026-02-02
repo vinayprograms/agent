@@ -1,0 +1,34 @@
+# Binaries
+src/agent
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Build output
+/bin/
+/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials (never commit)
+credentials.toml
+.env
+
+# Session data
+sessions/
+*.db
+
+# Signing keys
+*.pem
