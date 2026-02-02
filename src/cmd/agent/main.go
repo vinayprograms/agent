@@ -54,8 +54,8 @@ func main() {
 	case "validate":
 		validateWorkflow(args)
 	case "inspect":
-		// Check if it's a package or Agentfile
-		if len(args) > 0 && strings.HasSuffix(args[0], ".agent") {
+		// Check if it's a package (zip) or Agentfile (text)
+		if len(args) > 0 && isPackageFile(args[0]) {
 			inspectPackage(args)
 		} else {
 			inspectWorkflow(args)
@@ -77,6 +77,22 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
+}
+
+// isPackageFile checks if a file is a zip package (not a text Agentfile)
+func isPackageFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	// Check for zip magic bytes (PK\x03\x04)
+	magic := make([]byte, 4)
+	if _, err := f.Read(magic); err != nil {
+		return false
+	}
+	return magic[0] == 'P' && magic[1] == 'K' && magic[2] == 0x03 && magic[3] == 0x04
 }
 
 func printUsage() {
