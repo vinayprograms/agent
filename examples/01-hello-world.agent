@@ -1,0 +1,7 @@
+# 01 - Hello World
+# Simplest possible workflow
+
+NAME hello-world
+INPUT topic DEFAULT "artificial intelligence"
+GOAL greet "Say hello and share one interesting fact about $topic"
+RUN main USING greet

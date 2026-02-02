@@ -1,0 +1,30 @@
+NAME multi-agent-collaboration
+
+# Example showing multiple agents used multiple times
+# Same agent can be reused across different goals
+
+INPUT topic
+INPUT depth DEFAULT "comprehensive"
+
+AGENT researcher FROM agents/creative-writer.md
+AGENT critic FROM agents/devils-advocate.md REQUIRES "reasoning-heavy"
+AGENT editor FROM agents/editor.md REQUIRES "fast"
+
+# Phase 1: Initial research
+GOAL initial-research "Research $topic thoroughly" USING researcher
+GOAL first-critique "Critique the research for gaps" USING critic
+
+# Phase 2: Refinement
+GOAL expand "Expand on weak areas identified" USING researcher
+GOAL second-critique "Re-evaluate the expanded research" USING critic
+
+# Phase 3: Parallel review
+GOAL final-review "Final parallel review" USING researcher, critic, editor
+
+# Phase 4: Polish
+GOAL polish "Polish and format the final output" USING editor
+
+RUN research USING initial-research, first-critique
+LOOP refine USING expand, second-critique WITHIN 2
+RUN review USING final-review
+RUN finish USING polish

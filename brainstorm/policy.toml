@@ -1,0 +1,62 @@
+# policy.toml
+
+# Global defaults
+default_deny = true
+
+[read]
+enabled = true
+allow = ["$WORKSPACE/**"]
+deny = ["~/.ssh/*", "~/.aws/*", "~/.gnupg/*"]
+
+[write]
+enabled = true
+allow = ["$WORKSPACE/**"]
+deny = ["~/.ssh/*", "~/.aws/*", "/etc/*"]
+
+[edit]
+enabled = true
+allow = ["$WORKSPACE/**"]
+deny = ["~/.ssh/*", "~/.aws/*"]
+
+[glob]
+enabled = true
+allow = ["**"]
+
+[grep]
+enabled = true
+allow = ["**"]
+deny = ["/etc/shadow", "/etc/passwd"]
+
+[ls]
+enabled = true
+allow = ["**"]
+
+[bash]
+enabled = true
+allowlist = [
+  "ls *", "pwd", "cat *", "head *", "tail *",
+  "git status", "git log *", "git diff *",
+  "go build *", "go test *", "go run *",
+  "npm test *", "npm run *",
+  "make *",
+]
+denylist = [
+  "rm -rf /", "rm -rf /*",
+  "sudo *", "su *",
+  "curl * | bash", "wget * | bash",
+]
+
+[web_fetch]
+enabled = true
+allow_domains = ["*"]
+rate_limit = 10
+
+[web_search]
+enabled = true
+rate_limit = 5
+
+[memory_read]
+enabled = true
+
+[memory_write]
+enabled = true

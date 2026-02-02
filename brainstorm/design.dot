@@ -1,0 +1,97 @@
+digraph headless_agent {
+    rankdir=LR
+    fontname="Helvetica"
+    node [fontname="Helvetica", shape=box, style="rounded,filled", fillcolor="#f5f5f5"]
+    edge [fontname="Helvetica"]
+    
+    // External
+    subgraph cluster_external {
+        label="External Services"
+        style=filled
+        fillcolor="#fafafa"
+        
+        llm_api [label="LLM API\n(Anthropic/OpenAI/Gemini)", shape=cylinder, fillcolor="#e8f5e9"]
+        internet_gw [label="Internet Gateway\n(future)", shape=cylinder, fillcolor="#fff3e0", style="dashed,filled"]
+        telemetry_svc [label="Telemetry Service", shape=cylinder, fillcolor="#e3f2fd"]
+    }
+    
+    // Input files
+    agentfile [label="Agentfile", shape=note, fillcolor="#fffde7"]
+    policy_file [label="policy.toml", shape=note, fillcolor="#ffcdd2"]
+    inputs [label="Inputs\n(CLI args)", shape=parallelogram, fillcolor="#f3e5f5"]
+    
+    // Agent Process
+    subgraph cluster_agent {
+        label="Headless Agent Process"
+        style=filled
+        fillcolor="#ffffff"
+        color="#1976d2"
+        penwidth=2
+        
+        // Parser
+        parser [label="Agentfile\nParser", fillcolor="#bbdefb"]
+        
+        // Executor
+        executor [label="Workflow\nExecutor", fillcolor="#ffe0b2"]
+        
+        // Agent Core
+        agent [label="Agent Core", fillcolor="#ffe0b2"]
+        
+        // Subagent orchestration
+        subagent_orch [label="Subagent\nOrchestration", fillcolor="#c8e6c9"]
+        
+        // LLM
+        llm_provider [label="LLM Provider\n(Fantasy)", fillcolor="#c8e6c9"]
+        
+        // Tools
+        subgraph cluster_tools {
+            label="Tool Registry"
+            style=filled
+            fillcolor="#fce4ec"
+            
+            security [label="Security\nPolicy Engine", fillcolor="#ffcdd2"]
+            
+            file_tools [label="File Tools\nread, write, edit\nglob, grep, ls", fillcolor="#f8bbd9"]
+            exec_tools [label="Exec Tools\nbash", fillcolor="#ffcdd2"]
+            web_tools [label="Web Tools\nfetch, search", fillcolor="#fff9c4"]
+            memory_tools [label="Memory Tools", fillcolor="#f8bbd9"]
+        }
+        
+        // Session
+        session_mgr [label="Session\nManager", fillcolor="#d1c4e9"]
+        
+        // Telemetry
+        telemetry_exp [label="Telemetry\nExporter", fillcolor="#b3e5fc"]
+        
+        // Storage
+        storage [label="Storage\n(SQLite/File)", shape=cylinder, fillcolor="#b2ebf2"]
+    }
+    
+    // Data flow
+    agentfile -> parser
+    policy_file -> security [label="load"]
+    inputs -> executor
+    parser -> executor [label="workflow"]
+    
+    executor -> agent [label="goals"]
+    agent -> subagent_orch [label="USING clause"]
+    subagent_orch -> llm_provider [label="parallel calls"]
+    agent -> llm_provider
+    
+    llm_provider -> llm_api
+    
+    agent -> security [label="tool calls"]
+    security -> file_tools
+    security -> exec_tools
+    security -> web_tools
+    security -> memory_tools
+    
+    web_tools -> internet_gw [style=dashed]
+    
+    executor -> session_mgr
+    session_mgr -> storage
+    
+    executor -> telemetry_exp
+    agent -> telemetry_exp
+    telemetry_exp -> telemetry_svc
+}

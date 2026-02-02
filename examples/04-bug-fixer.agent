@@ -1,0 +1,12 @@
+# 04 - Bug Fixer
+# Iteratively fix bugs until tests pass
+
+NAME bug-fixer
+INPUT test_command DEFAULT "go test ./..."
+INPUT max_attempts DEFAULT 5
+
+GOAL diagnose "Run $test_command using bash. Analyze any failures and identify root causes."
+GOAL fix "Apply fixes to the code using the edit tool. Make minimal, targeted changes."
+GOAL verify "Run $test_command again. If tests pass, declare success. If not, explain remaining issues."
+
+LOOP fix_cycle USING diagnose, fix, verify WITHIN $max_attempts

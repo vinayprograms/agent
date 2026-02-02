@@ -1,0 +1,13 @@
+# 07 - Recipe Creator
+# Generate recipes based on ingredients
+
+NAME recipe-creator
+INPUT ingredients
+INPUT cuisine DEFAULT "any"
+INPUT dietary DEFAULT "none"
+
+GOAL brainstorm "Given these ingredients: $ingredients, brainstorm 3 possible $cuisine dishes. Consider $dietary dietary restrictions."
+GOAL select "Choose the best recipe based on: ingredient usage, flavor balance, and preparation simplicity."
+GOAL detail "Write the complete recipe with: ingredients list, step-by-step instructions, timing, and tips."
+
+RUN create USING brainstorm, select, detail

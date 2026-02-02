@@ -1,0 +1,14 @@
+# 11 - API Builder
+# Generate a REST API from a spec
+
+NAME api-builder
+INPUT spec_file
+INPUT language DEFAULT "go"
+INPUT framework DEFAULT "gin"
+
+GOAL parse_spec "Read $spec_file and extract: endpoints, methods, request/response schemas, and auth requirements."
+GOAL design "Design the $language code structure using $framework: handlers, models, routes, middleware."
+GOAL generate "Generate the complete API code with proper error handling, validation, and documentation comments."
+GOAL write_files "Write each file to the appropriate location using the write tool. Create a clean project structure."
+
+RUN build USING parse_spec, design, generate, write_files

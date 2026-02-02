@@ -1,0 +1,12 @@
+# 18 - Git Commit Analyzer
+# Analyze git history and generate insights
+
+NAME git-analyzer
+INPUT repo_path DEFAULT "."
+INPUT period DEFAULT "30 days"
+
+GOAL gather "Use bash to run git log, git shortlog, git diff --stat for the last $period in $repo_path."
+GOAL analyze "Analyze: commit frequency, active contributors, hotspots (most changed files), and commit patterns."
+GOAL insights "Generate insights: development velocity, code churn areas, collaboration patterns, and recommendations."
+
+RUN analyze USING gather, analyze, insights

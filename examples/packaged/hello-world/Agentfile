@@ -1,0 +1,8 @@
+NAME hello-world
+VERSION 1.0.0
+
+INPUT topic DEFAULT "programming"
+
+GOAL greet "Generate a friendly greeting about $topic"
+
+RUN main USING greet

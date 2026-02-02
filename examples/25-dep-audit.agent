@@ -1,0 +1,13 @@
+# 25 - Dependency Auditor
+# Analyze project dependencies
+
+NAME dep-audit
+INPUT manifest_file
+INPUT ecosystem DEFAULT "auto-detect"
+
+GOAL parse "Read $manifest_file. Identify all dependencies, versions, and $ecosystem if auto-detect."
+GOAL analyze "For each dependency: check for outdated versions, known vulnerabilities, and maintenance status."
+GOAL recommend "Recommend: updates, replacements for unmaintained packages, and removal of unused deps."
+GOAL report "Generate a dependency health report with action items sorted by priority."
+
+RUN audit USING parse, analyze, recommend, report

@@ -1,0 +1,14 @@
+NAME code-reviewer
+VERSION 1.0.0
+
+INPUT code_path
+INPUT language DEFAULT "auto"
+
+AGENT reviewer FROM agents/reviewer.md REQUIRES "reasoning-heavy"
+AGENT style-checker FROM agents/style-checker.md REQUIRES "fast"
+
+GOAL review "Review code at $code_path for bugs, security issues, and best practices" USING reviewer
+GOAL style "Check code style and formatting" USING style-checker
+GOAL synthesize "Combine review and style feedback into actionable recommendations"
+
+RUN main USING review, style THEN synthesize

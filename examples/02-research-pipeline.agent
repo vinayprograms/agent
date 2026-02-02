@@ -1,0 +1,12 @@
+# 02 - Research Pipeline
+# Multi-step research with sequential goals
+
+NAME research-pipeline
+INPUT topic
+INPUT depth DEFAULT "comprehensive"
+
+GOAL research "Research $topic at a $depth level. Find key facts, history, and current developments."
+GOAL analyze "Analyze the research findings. Identify patterns, controversies, and gaps in knowledge."
+GOAL synthesize "Synthesize everything into a clear, structured report with sections and bullet points."
+
+RUN pipeline USING research, analyze, synthesize

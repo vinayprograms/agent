@@ -1,0 +1,54 @@
+{
+  "agent": {
+    "id": "example-agent",
+    "workspace": "."
+  },
+  "llm": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "max_tokens": 4096
+  },
+  "profiles": {
+    "reasoning-heavy": {
+      "provider": "anthropic",
+      "model": "claude-opus-4-20250514"
+    },
+    "fast": {
+      "provider": "anthropic",
+      "model": "claude-haiku-20240307"
+    },
+    "code-generation": {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "creative": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-20250514",
+      "max_tokens": 8192
+    }
+  },
+  "mcp": {
+    "servers": {
+      "filesystem": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      },
+      "memory": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-memory"]
+      }
+    }
+  },
+  "skills": {
+    "paths": ["./skills", "~/.agent/skills"]
+  },
+  "session": {
+    "store": "file",
+    "path": "./sessions"
+  },
+  "telemetry": {
+    "enabled": false
+  }
+}

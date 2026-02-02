@@ -1,0 +1,12 @@
+# 08 - Meeting Notes Processor
+# Transform raw notes into actionable summaries
+
+NAME meeting-processor
+INPUT notes_file
+
+GOAL read_notes "Read the meeting notes from $notes_file using the read tool."
+GOAL extract "Extract: decisions made, action items (with owners if mentioned), open questions, and key discussion points."
+GOAL format "Format into a clean summary with sections: Summary, Decisions, Action Items, Open Questions, Next Steps."
+GOAL save "Write the processed notes to a new file with '-processed' suffix using write tool."
+
+RUN process USING read_notes, extract, format, save

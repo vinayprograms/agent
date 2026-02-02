@@ -1,0 +1,13 @@
+{
+  "description": "Multi-agent code review system with security focus",
+  "license": "MIT",
+  "author": {
+    "name": "OpenClaw Examples"
+  },
+  "outputs": {
+    "review": {
+      "type": "markdown",
+      "description": "Comprehensive code review with actionable recommendations"
+    }
+  }
+}

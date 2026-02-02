@@ -1,0 +1,25 @@
+NAME parallel-specialists
+
+# Example with many parallel agents for comprehensive analysis
+# All specialists run in parallel, results synthesized
+
+INPUT codebase_path
+INPUT language DEFAULT "go"
+
+AGENT security FROM agents/security-auditor.md REQUIRES "reasoning-heavy"
+AGENT performance FROM agents/analyzer.md
+AGENT style FROM agents/editor.md REQUIRES "fast"
+AGENT docs FROM agents/creative-writer.md
+AGENT tests FROM skills/testing
+AGENT deps FROM agents/devils-advocate.md
+
+# All specialists analyze in parallel
+GOAL comprehensive-review "Analyze $codebase_path" USING security, performance, style, docs, tests, deps
+
+# Single agent synthesizes
+GOAL synthesize "Create unified report from all specialist findings"
+
+# Final recommendations
+GOAL prioritize "Prioritize recommendations by impact and effort"
+
+RUN main USING comprehensive-review, synthesize, prioritize

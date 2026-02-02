@@ -1,0 +1,18 @@
+NAME memory-augmented-research
+
+# Example using MCP memory server for persistent context
+# Requires: mcp.servers.memory configured
+
+INPUT topic
+INPUT depth DEFAULT "comprehensive"
+
+AGENT researcher FROM agents/creative-writer.md
+AGENT critic FROM agents/devils-advocate.md REQUIRES "reasoning-heavy"
+
+GOAL research "Research $topic thoroughly, storing key findings in memory for later reference"
+GOAL critique "Review the research findings critically" USING critic
+GOAL refine "Refine the research based on critique, updating memory with improved findings"
+GOAL finalize "Produce final research report from memory"
+
+LOOP iteration USING research, critique, refine WITHIN 3
+RUN main USING finalize

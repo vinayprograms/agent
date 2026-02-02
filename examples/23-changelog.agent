@@ -1,0 +1,14 @@
+# 23 - Changelog Generator
+# Generate changelogs from git history
+
+NAME changelog
+INPUT from_tag
+INPUT to_tag DEFAULT "HEAD"
+INPUT format DEFAULT "keepachangelog"
+
+GOAL gather "Use bash to get commits between $from_tag and $to_tag. Extract commit messages, authors, and PR references."
+GOAL categorize "Categorize changes: Added, Changed, Deprecated, Removed, Fixed, Security."
+GOAL format "Format as $format style changelog with proper markdown and links."
+GOAL write "Write CHANGELOG.md using write tool."
+
+RUN generate USING gather, categorize, format, write

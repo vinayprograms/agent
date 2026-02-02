@@ -1,0 +1,13 @@
+# 05 - Documentation Generator
+# Generate docs from code
+
+NAME doc-generator
+INPUT source_dir
+INPUT output_file DEFAULT "DOCUMENTATION.md"
+
+GOAL discover "Use glob to find all source files in $source_dir. List them with their purposes."
+GOAL extract "Read each file and extract: functions, classes, interfaces, and their purposes."
+GOAL document "Generate comprehensive documentation in markdown format."
+GOAL write_output "Write the documentation to $output_file using the write tool."
+
+RUN generate USING discover, extract, document, write_output

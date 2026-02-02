@@ -1,0 +1,17 @@
+NAME acp-compatible-agent
+# Version in manifest.json
+
+# Example designed for ACP (Agent Client Protocol) integration
+# Works with editors like VS Code, Zed, JetBrains via ACP
+
+INPUT query
+INPUT context DEFAULT ""
+
+AGENT assistant FROM agents/editor.md
+
+GOAL understand "Parse and understand the user query: $query"
+GOAL gather "Gather relevant context from $context and available tools"
+GOAL respond "Formulate a helpful response with code suggestions if applicable" USING assistant
+GOAL format "Format response for editor display with proper code blocks and explanations"
+
+RUN main USING understand, gather, respond, format

@@ -1,0 +1,22 @@
+NAME multi-tool-pipeline
+
+# Example combining built-in tools, MCP tools, and skills
+# Demonstrates the full capability stack
+
+INPUT repo_url
+INPUT branch DEFAULT "main"
+
+AGENT planner FROM agents/optimist.md
+AGENT executor FROM agents/security-auditor.md REQUIRES "reasoning-heavy"
+
+GOAL clone "Clone repository from $repo_url (branch: $branch) to workspace"
+GOAL scan "Scan codebase for security issues using available tools" USING executor
+GOAL plan "Create remediation plan for identified issues" USING planner
+GOAL patch "Generate patches for critical issues"
+GOAL verify "Verify patches don't break existing functionality"
+GOAL report "Generate comprehensive security audit report"
+
+RUN setup USING clone
+RUN analysis USING scan, plan
+LOOP fix USING patch, verify WITHIN 5
+RUN final USING report

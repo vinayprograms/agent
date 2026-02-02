@@ -1,0 +1,66 @@
+digraph security_policy {
+    rankdir=TB
+    fontname="Helvetica"
+    node [fontname="Helvetica", shape=box, style="rounded,filled", fillcolor="#f5f5f5"]
+    edge [fontname="Helvetica"]
+    
+    // Input
+    policy_file [label="policy.toml", shape=note, fillcolor="#fffde7"]
+    tool_call [label="Tool Call\n(from LLM)", shape=parallelogram, fillcolor="#e3f2fd"]
+    
+    // Policy engine
+    subgraph cluster_policy {
+        label="Security Policy Engine"
+        style=filled
+        fillcolor="#ffffff"
+        color="#d32f2f"
+        penwidth=2
+        
+        global_check [label="default_deny\ncheck", fillcolor="#ffcdd2"]
+        enabled_check [label="enabled\ncheck", fillcolor="#ffcdd2"]
+        deny_check [label="deny patterns\ncheck", fillcolor="#ffcdd2"]
+        allow_check [label="allow patterns\ncheck", fillcolor="#c8e6c9"]
+        
+        // Bash specific
+        bash_denylist [label="bash denylist\ncheck", fillcolor="#ffcdd2"]
+        bash_allowlist [label="bash allowlist\ncheck", fillcolor="#c8e6c9"]
+        
+        // Web specific
+        rate_limit [label="rate limit\ncheck", fillcolor="#fff9c4"]
+        domain_check [label="domain\ncheck", fillcolor="#fff9c4"]
+    }
+    
+    // Outcomes
+    allow [label="ALLOW", shape=ellipse, fillcolor="#c8e6c9"]
+    deny [label="DENY", shape=ellipse, fillcolor="#ffcdd2"]
+    
+    // Flow
+    policy_file -> global_check [label="load"]
+    tool_call -> enabled_check
+    
+    enabled_check -> deny [label="disabled"]
+    enabled_check -> global_check [label="enabled"]
+    
+    global_check -> deny [label="default_deny\nno allow rule"]
+    global_check -> deny_check [label="proceed"]
+    
+    deny_check -> deny [label="matches deny"]
+    deny_check -> allow_check [label="no match"]
+    
+    allow_check -> allow [label="matches allow"]
+    allow_check -> deny [label="no match\n(default_deny)"]
+    
+    // Bash flow
+    tool_call -> bash_denylist [label="bash tool", style=dashed]
+    bash_denylist -> deny [label="matches"]
+    bash_denylist -> bash_allowlist [label="no match"]
+    bash_allowlist -> allow [label="matches"]
+    bash_allowlist -> deny [label="no match"]
+    
+    // Web flow
+    tool_call -> rate_limit [label="web tool", style=dashed]
+    rate_limit -> deny [label="exceeded"]
+    rate_limit -> domain_check [label="ok"]
+    domain_check -> allow [label="allowed"]
+    domain_check -> deny [label="blocked"]
+}

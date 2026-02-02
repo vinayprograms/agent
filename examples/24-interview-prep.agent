@@ -1,0 +1,14 @@
+# 24 - Interview Prep Coach
+# Prepare for job interviews
+
+NAME interview-prep
+INPUT role
+INPUT company DEFAULT "tech company"
+INPUT experience_level DEFAULT "mid-level"
+
+GOAL research "Research typical $role interviews at a $company. Identify common question categories and expectations for $experience_level."
+GOAL questions "Generate 15 likely questions across: technical, behavioral, situational, and role-specific."
+GOAL frameworks "Provide answer frameworks: STAR method examples, technical explanation structures, and red flags to avoid."
+GOAL practice "Create a mock interview script with questions, ideal answer points, and follow-up probes."
+
+RUN prep USING research, questions, frameworks, practice

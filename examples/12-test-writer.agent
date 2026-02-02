@@ -1,0 +1,14 @@
+# 12 - Test Writer
+# Generate tests for existing code
+
+NAME test-writer
+INPUT source_file
+INPUT test_framework DEFAULT "auto-detect"
+INPUT coverage DEFAULT "comprehensive"
+
+GOAL analyze "Read $source_file and identify all testable functions, methods, edge cases, and error conditions."
+GOAL plan "Plan $coverage test coverage: unit tests, edge cases, error handling, and integration points."
+GOAL generate "Write the test file using $test_framework conventions. Include setup, assertions, and cleanup."
+GOAL write_test "Write the test file next to the source with appropriate naming using write tool."
+
+RUN create USING analyze, plan, generate, write_test

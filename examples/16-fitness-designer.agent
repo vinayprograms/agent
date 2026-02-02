@@ -1,0 +1,15 @@
+# 16 - Fitness Program Designer
+# Create personalized workout plans
+
+NAME fitness-designer
+INPUT fitness_goal
+INPUT current_fitness DEFAULT "sedentary"
+INPUT equipment DEFAULT "minimal home equipment"
+INPUT days_per_week DEFAULT 4
+
+GOAL assess "Understand the goal: $fitness_goal from $current_fitness level with $equipment, training $days_per_week days/week."
+GOAL design "Design a progressive program: exercises, sets, reps, rest periods, and weekly progression."
+GOAL schedule "Create a $days_per_week-day weekly schedule with muscle group splits and recovery days."
+GOAL guide "Add form cues for key exercises, warm-up/cool-down routines, and nutrition tips."
+
+RUN create USING assess, design, schedule, guide

@@ -1,0 +1,17 @@
+# 17 - Debate Simulator (Multi-Agent with Profiles)
+# Simulate a debate using fast models for rapid back-and-forth
+
+NAME debate
+INPUT topic
+INPUT rounds DEFAULT 3
+
+AGENT pro FROM agents/optimist.md REQUIRES "fast"
+AGENT con FROM agents/devils-advocate.md REQUIRES "fast"
+
+GOAL opening "Present the debate topic: $topic. Frame the key question and stakes."
+GOAL argue "Present arguments for and against $topic." USING pro, con
+GOAL rebut "Respond to opposing arguments with counterpoints." USING pro, con
+GOAL conclude "Summarize both sides and identify the strongest arguments and key tensions."
+
+LOOP debate_rounds USING argue, rebut WITHIN $rounds
+RUN wrap_up USING conclude

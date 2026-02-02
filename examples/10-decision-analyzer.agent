@@ -1,0 +1,15 @@
+# 10 - Decision Analyzer (Multi-Agent with Profiles)
+# Analyze decisions from multiple perspectives using different models
+
+NAME decision-analyzer
+INPUT decision
+INPUT context DEFAULT "business"
+
+AGENT optimist FROM agents/optimist.md REQUIRES "fast"
+AGENT critic FROM agents/devils-advocate.md REQUIRES "reasoning-heavy"
+
+GOAL frame "Clearly frame the decision: $decision. Identify the key factors and stakeholders in a $context context."
+GOAL evaluate "Evaluate this decision thoroughly." USING optimist, critic
+GOAL synthesize "Synthesize both perspectives into a balanced recommendation with pros, cons, and mitigations."
+
+RUN analyze USING frame, evaluate, synthesize

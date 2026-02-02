@@ -1,0 +1,15 @@
+NAME mcp-file-analyzer
+
+# Example using MCP filesystem server for file operations
+# Requires: mcp.servers.filesystem configured
+
+INPUT directory DEFAULT "/tmp"
+INPUT pattern DEFAULT "*.go"
+
+AGENT analyzer FROM agents/analyzer.md REQUIRES "reasoning-heavy"
+
+GOAL discover "List all files matching $pattern in $directory using filesystem tools"
+GOAL analyze "Analyze the discovered files for patterns and summarize findings" USING analyzer
+GOAL report "Generate a structured report of the analysis"
+
+RUN main USING discover, analyze, report

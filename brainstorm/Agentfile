@@ -1,0 +1,21 @@
+# Agentfile: Test-Driven Feature Implementation
+
+NAME implement-feature
+
+INPUT feature_request
+INPUT max_iterations DEFAULT 10
+
+AGENT creative FROM agents/creative.md
+AGENT devils_advocate FROM agents/devils_advocate.md
+
+GOAL analyze FROM goals/analyze.md USING creative, devils_advocate
+GOAL system_tests FROM goals/system_tests.md
+GOAL unit_tests FROM goals/unit_tests.md
+GOAL run_tests "Run all tests and capture any failures"
+GOAL analyze_failures FROM goals/analyze_failures.md USING creative, devils_advocate
+GOAL fix FROM goals/fix.md
+GOAL verified "All E2E tests pass, confirming feature works as specified"
+
+RUN setup USING analyze, system_tests, unit_tests
+LOOP implementation USING run_tests, analyze_failures, fix WITHIN $max_iterations
+RUN verify USING verified

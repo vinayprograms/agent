@@ -1,0 +1,13 @@
+# 13 - Refactoring Assistant
+# Iteratively improve code quality
+
+NAME refactor
+INPUT path
+INPUT focus DEFAULT "readability"
+INPUT max_passes DEFAULT 3
+
+GOAL assess "Read code at $path. Assess current state focusing on $focus. Identify specific improvement opportunities."
+GOAL improve "Apply one focused improvement using edit tool. Make atomic, reversible changes."
+GOAL validate "Run any existing tests. Verify the change improved $focus without breaking functionality."
+
+LOOP refactor_cycle USING assess, improve, validate WITHIN $max_passes

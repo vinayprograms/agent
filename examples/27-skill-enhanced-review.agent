@@ -1,0 +1,16 @@
+NAME skill-enhanced-review
+
+# Example that can leverage Agent Skills for code review
+# Agent can activate skills like [use-skill:code-review] during execution
+
+INPUT code_path
+INPUT language DEFAULT "auto"
+
+AGENT reviewer FROM agents/security-auditor.md REQUIRES "reasoning-heavy"
+AGENT helper FROM agents/editor.md REQUIRES "fast"
+
+GOAL security-scan "Scan $code_path for security vulnerabilities" USING reviewer
+GOAL style-check "Check code style and formatting" USING helper
+GOAL synthesize "Combine security and style findings into actionable recommendations"
+
+RUN main USING security-scan, style-check, synthesize

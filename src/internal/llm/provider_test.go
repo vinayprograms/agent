@@ -1,0 +1,255 @@
+// Package llm provides LLM provider interfaces and implementations.
+package llm
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+// R4.1.1: Define Chat method
+func TestProvider_ChatMethod(t *testing.T) {
+	provider := NewMockProvider()
+	provider.SetResponse("Hello from LLM")
+
+	resp, err := provider.Chat(context.Background(), ChatRequest{
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+
+	if resp.Content != "Hello from LLM" {
+		t.Errorf("expected 'Hello from LLM', got %s", resp.Content)
+	}
+}
+
+// R4.1.3: Support tool definitions
+func TestProvider_ToolDefinitions(t *testing.T) {
+	provider := NewMockProvider()
+	provider.SetToolCall("read", map[string]interface{}{"path": "/test.txt"})
+
+	resp, err := provider.Chat(context.Background(), ChatRequest{
+		Messages: []Message{
+			{Role: "user", Content: "Read the test file"},
+		},
+		Tools: []ToolDef{
+			{
+				Name:        "read",
+				Description: "Read a file",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"path": map[string]interface{}{
+							"type": "string",
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(resp.ToolCalls))
+	}
+
+	if resp.ToolCalls[0].Name != "read" {
+		t.Errorf("expected tool name 'read', got %s", resp.ToolCalls[0].Name)
+	}
+}
+
+// R4.1.4: Parse tool calls from response
+func TestProvider_ParseToolCalls(t *testing.T) {
+	provider := NewMockProvider()
+	provider.SetToolCall("write", map[string]interface{}{
+		"path":    "/output.txt",
+		"content": "hello",
+	})
+
+	resp, _ := provider.Chat(context.Background(), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "Write a file"}},
+		Tools:    []ToolDef{{Name: "write"}},
+	})
+
+	tc := resp.ToolCalls[0]
+	if tc.Args["path"] != "/output.txt" {
+		t.Errorf("expected path '/output.txt', got %v", tc.Args["path"])
+	}
+	if tc.Args["content"] != "hello" {
+		t.Errorf("expected content 'hello', got %v", tc.Args["content"])
+	}
+}
+
+// Test multiple tool calls
+func TestProvider_MultipleToolCalls(t *testing.T) {
+	provider := NewMockProvider()
+	provider.SetToolCalls([]ToolCallResponse{
+		{ID: "1", Name: "read", Args: map[string]interface{}{"path": "/a.txt"}},
+		{ID: "2", Name: "read", Args: map[string]interface{}{"path": "/b.txt"}},
+	})
+
+	resp, _ := provider.Chat(context.Background(), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "Read two files"}},
+		Tools:    []ToolDef{{Name: "read"}},
+	})
+
+	if len(resp.ToolCalls) != 2 {
+		t.Errorf("expected 2 tool calls, got %d", len(resp.ToolCalls))
+	}
+}
+
+// Test tool result message
+func TestProvider_ToolResultMessage(t *testing.T) {
+	provider := NewMockProvider()
+	provider.SetResponse("File contains: hello world")
+
+	resp, err := provider.Chat(context.Background(), ChatRequest{
+		Messages: []Message{
+			{Role: "user", Content: "Read the file"},
+			{Role: "assistant", Content: "", ToolCalls: []ToolCallResponse{
+				{ID: "tc1", Name: "read", Args: map[string]interface{}{"path": "/test.txt"}},
+			}},
+			{Role: "tool", ToolCallID: "tc1", Content: "hello world"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+
+	if !strings.Contains(resp.Content, "hello world") {
+		t.Errorf("response should reference tool result: %s", resp.Content)
+	}
+}
+
+// Test token counting
+func TestProvider_TokenCounts(t *testing.T) {
+	provider := NewMockProvider()
+	provider.SetResponse("Response")
+	provider.SetTokenCounts(100, 50)
+
+	resp, _ := provider.Chat(context.Background(), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "Hello"}},
+	})
+
+	if resp.InputTokens != 100 {
+		t.Errorf("expected input tokens 100, got %d", resp.InputTokens)
+	}
+	if resp.OutputTokens != 50 {
+		t.Errorf("expected output tokens 50, got %d", resp.OutputTokens)
+	}
+}
+
+// Test stop reason
+func TestProvider_StopReason(t *testing.T) {
+	provider := NewMockProvider()
+	provider.SetResponse("Done")
+	provider.SetStopReason("end_turn")
+
+	resp, _ := provider.Chat(context.Background(), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "Hello"}},
+	})
+
+	if resp.StopReason != "end_turn" {
+		t.Errorf("expected stop reason 'end_turn', got %s", resp.StopReason)
+	}
+}
+
+// Test max tokens configuration
+func TestProvider_MaxTokens(t *testing.T) {
+	provider := NewMockProvider()
+	provider.SetResponse("Response")
+
+	_, err := provider.Chat(context.Background(), ChatRequest{
+		Messages:  []Message{{Role: "user", Content: "Hello"}},
+		MaxTokens: 4096,
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+
+	if provider.LastRequest().MaxTokens != 4096 {
+		t.Errorf("expected max tokens 4096, got %d", provider.LastRequest().MaxTokens)
+	}
+}
+
+// R4.2.1-R4.2.6: Fantasy adapter tests
+// Note: These test the adapter interface, actual Fantasy integration is tested via integration tests
+
+func TestFantasyAdapter_ConfigValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  FantasyConfig
+		wantErr bool
+	}{
+		{
+			name: "valid anthropic config",
+			config: FantasyConfig{
+				Provider: "anthropic",
+				Model:    "claude-3-5-sonnet-20241022",
+				APIKey:   "test-key",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid openai config",
+			config: FantasyConfig{
+				Provider: "openai",
+				Model:    "gpt-4o",
+				APIKey:   "test-key",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing provider",
+			config: FantasyConfig{
+				Model:  "claude-3-5-sonnet-20241022",
+				APIKey: "test-key",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing model",
+			config: FantasyConfig{
+				Provider: "anthropic",
+				APIKey:   "test-key",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing api key",
+			config: FantasyConfig{
+				Provider: "anthropic",
+				Model:    "claude-3-5-sonnet-20241022",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestFantasyConfig_MaxTokensDefault(t *testing.T) {
+	cfg := FantasyConfig{
+		Provider: "anthropic",
+		Model:    "claude-3-5-sonnet-20241022",
+		APIKey:   "test-key",
+	}
+
+	cfg.ApplyDefaults()
+
+	if cfg.MaxTokens != 4096 {
+		t.Errorf("expected default max tokens 4096, got %d", cfg.MaxTokens)
+	}
+}

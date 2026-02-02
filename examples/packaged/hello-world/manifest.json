@@ -1,0 +1,7 @@
+{
+  "description": "A simple hello world agent that generates greetings",
+  "license": "MIT",
+  "author": {
+    "name": "OpenClaw Examples"
+  }
+}

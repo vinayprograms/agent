@@ -1,0 +1,25 @@
+NAME iterative-improvement
+
+# Example showing iterative improvement with multiple agents in a loop
+# Each iteration: create -> critique -> improve
+
+INPUT initial_content
+INPUT quality_threshold DEFAULT "high"
+
+AGENT creator FROM agents/creative-writer.md
+AGENT critic FROM agents/devils-advocate.md REQUIRES "reasoning-heavy"
+AGENT improver FROM agents/editor.md
+
+GOAL create "Create or improve content based on feedback"
+GOAL critique "Critically evaluate the current content for $quality_threshold quality" USING critic
+GOAL improve "Implement improvements based on critique" USING creator, improver
+
+# Initial creation
+RUN init USING create
+
+# Iterative improvement loop
+LOOP refine USING critique, improve WITHIN 5
+
+# Final polish
+GOAL finalize "Final polish and formatting" USING improver
+RUN finish USING finalize

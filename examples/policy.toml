@@ -1,0 +1,37 @@
+default_deny = false
+
+[tools.read]
+enabled = true
+
+[tools.write]
+enabled = true
+
+[tools.edit]
+enabled = true
+
+[tools.glob]
+enabled = true
+
+[tools.grep]
+enabled = true
+
+[tools.ls]
+enabled = true
+
+[tools.bash]
+enabled = true
+denylist = ["rm -rf *", "sudo *", "chmod 777 *"]
+
+[tools.web_fetch]
+enabled = true
+rate_limit = 30
+
+[tools.web_search]
+enabled = true
+rate_limit = 10
+
+[tools.memory_read]
+enabled = true
+
+[tools.memory_write]
+enabled = true

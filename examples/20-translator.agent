@@ -1,0 +1,14 @@
+# 20 - Language Translator with Context
+# Translate with cultural/contextual awareness
+
+NAME translator
+INPUT source_file
+INPUT target_language
+INPUT context DEFAULT "general"
+
+GOAL read "Read content from $source_file."
+GOAL analyze "Analyze the text: identify idioms, cultural references, tone, and domain-specific terms for $context context."
+GOAL translate "Translate to $target_language preserving meaning, tone, and cultural appropriateness."
+GOAL review "Review translation for: accuracy, naturalness, and handling of untranslatable concepts."
+
+RUN translate USING read, analyze, translate, review

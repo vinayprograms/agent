@@ -1,0 +1,29 @@
+NAME mixed-agent-sources
+
+# Example mixing different agent source types:
+# - Markdown prompts (agents/*.md)
+# - Skill directories (skills/*)
+
+INPUT project_path
+
+# From markdown prompt file
+AGENT project-lead FROM agents/optimist.md
+
+# From skill directory (relative path)
+AGENT code-reviewer FROM skills/code-review
+
+# From skill directory
+AGENT tester FROM skills/testing
+
+# With capability profiles
+AGENT security FROM agents/security-auditor.md REQUIRES "reasoning-heavy"
+AGENT helper FROM agents/editor.md REQUIRES "fast"
+
+GOAL plan "Create project improvement plan" USING project-lead
+GOAL review "Review code quality" USING code-reviewer
+GOAL security-scan "Scan for vulnerabilities" USING security
+GOAL test-plan "Create test plan" USING tester
+GOAL quick-fixes "Apply quick fixes" USING helper
+
+RUN analysis USING plan, review, security-scan
+RUN action USING test-plan, quick-fixes
