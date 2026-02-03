@@ -259,8 +259,18 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		return &GoalResult{Output: output, ToolCallsMade: false}, err
 	}
 
-	// Build prompt
+	// Build prompt with context from previous goals
 	prompt := e.interpolate(goal.Outcome)
+	
+	// Add context from prior goal outputs
+	if len(e.outputs) > 0 {
+		var priorContext strings.Builder
+		priorContext.WriteString("## Context from Previous Goals\n\n")
+		for goalName, output := range e.outputs {
+			priorContext.WriteString(fmt.Sprintf("### %s\n%s\n\n", goalName, output))
+		}
+		prompt = priorContext.String() + "## Current Goal\n" + prompt
+	}
 
 	// Build system message with skills context
 	systemMsg := "You are a helpful assistant executing a workflow goal."
