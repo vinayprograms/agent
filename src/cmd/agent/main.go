@@ -277,16 +277,23 @@ func runWorkflow(args []string) {
 	// Create tool registry
 	registry := tools.NewRegistry(pol)
 
+	// Resolve session path: default to ~/.local/grid/sessions/<workflow-name>/
+	sessionPath := cfg.Session.Path
+	if sessionPath == "" {
+		home, _ := os.UserHomeDir()
+		sessionPath = filepath.Join(home, ".local", "grid", "sessions", wf.Name)
+	}
+
 	// Create session manager
 	var sessionMgr session.SessionManager
 	if cfg.Session.Store == "sqlite" {
-		sessionMgr, err = session.NewSQLiteManager(cfg.Session.Path)
+		sessionMgr, err = session.NewSQLiteManager(sessionPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error creating session manager: %v\n", err)
 			os.Exit(1)
 		}
 	} else {
-		sessionMgr = session.NewFileManager(cfg.Session.Path)
+		sessionMgr = session.NewFileManager(sessionPath)
 	}
 
 	// Create telemetry exporter
