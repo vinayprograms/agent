@@ -540,7 +540,7 @@ type webFetchTool struct {
 func (t *webFetchTool) Name() string { return "web_fetch" }
 
 func (t *webFetchTool) Description() string {
-	return "Fetch content from a URL and return as text."
+	return "Fetch the full content from a URL. Use after web_search to retrieve complete information from promising results. The snippets from web_search are only previews - always fetch URLs that seem relevant to get the actual content needed for thorough research."
 }
 
 func (t *webFetchTool) Parameters() map[string]interface{} {
@@ -549,7 +549,7 @@ func (t *webFetchTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"url": map[string]interface{}{
 				"type":        "string",
-				"description": "URL to fetch",
+				"description": "URL to fetch (typically from web_search results)",
 			},
 		},
 		"required": []string{"url"},
@@ -593,7 +593,7 @@ type webSearchTool struct {
 func (t *webSearchTool) Name() string { return "web_search" }
 
 func (t *webSearchTool) Description() string {
-	return "Search the web using Brave or Tavily. Returns titles, URLs, and snippets."
+	return "Search the web. Returns titles, URLs, and short snippets. IMPORTANT: Snippets are brief previews only - use web_fetch on relevant URLs to get the full content needed for research. The standard flow is: web_search to discover sources, then web_fetch on 2-4 most relevant URLs."
 }
 
 func (t *webSearchTool) Parameters() map[string]interface{} {
