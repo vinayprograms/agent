@@ -74,6 +74,8 @@ func (r *Registry) registerBuiltins() {
 	r.Register(&grepTool{policy: r.policy})
 	r.Register(&lsTool{policy: r.policy})
 	r.Register(&bashTool{policy: r.policy})
+	r.Register(&webFetchTool{policy: r.policy})
+	r.Register(&webSearchTool{policy: r.policy})
 }
 
 // Register adds a tool to the registry.
