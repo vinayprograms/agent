@@ -49,7 +49,7 @@ RUN main USING analyze
 		t.Fatalf("failed to write Agentfile: %v", err)
 	}
 
-	cmd := exec.Command("go", "run", ".", "validate", agentfilePath)
+	cmd := exec.Command("go", "run", ".", "validate", "-f", agentfilePath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("CLI validate failed: %v\n%s", err, output)
@@ -77,7 +77,7 @@ LOOP step2 USING summarize WITHIN $max
 		t.Fatalf("failed to write Agentfile: %v", err)
 	}
 
-	cmd := exec.Command("go", "run", ".", "inspect", agentfilePath)
+	cmd := exec.Command("go", "run", ".", "inspect", "--file", agentfilePath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("CLI inspect failed: %v\n%s", err, output)
@@ -113,11 +113,54 @@ RUN main USING analyze
 		t.Fatalf("failed to write Agentfile: %v", err)
 	}
 
-	cmd := exec.Command("go", "run", ".", "validate", agentfilePath)
+	cmd := exec.Command("go", "run", ".", "validate", "-f", agentfilePath)
 	output, _ := cmd.CombinedOutput()
 
 	// Should fail (non-zero exit)
 	if strings.Contains(string(output), "Valid") {
 		t.Error("expected validation to fail for invalid Agentfile")
+	}
+}
+
+func TestCLI_ValidateDefault(t *testing.T) {
+	// Get src directory (parent of cmd/agent)
+	srcDir, _ := os.Getwd()
+	srcDir = filepath.Dir(filepath.Dir(srcDir))
+	if filepath.Base(srcDir) != "src" {
+		// We're running from src directly
+		srcDir, _ = os.Getwd()
+	}
+	
+	tmpDir := t.TempDir()
+	agentBinary := filepath.Join(tmpDir, "agent")
+	
+	// Build into tmpDir
+	cmd := exec.Command("go", "build", "-o", agentBinary, "./cmd/agent")
+	cmd.Dir = srcDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build: %v\n%s", err, output)
+	}
+	
+	// Create Agentfile in a work directory
+	workDir := filepath.Join(tmpDir, "work")
+	os.MkdirAll(workDir, 0755)
+	agentfile := `NAME default-test
+GOAL test "Test"
+RUN main USING test
+`
+	if err := os.WriteFile(filepath.Join(workDir, "Agentfile"), []byte(agentfile), 0644); err != nil {
+		t.Fatalf("failed to write Agentfile: %v", err)
+	}
+
+	// Run from workDir without -f flag
+	cmd = exec.Command(agentBinary, "validate")
+	cmd.Dir = workDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("CLI validate with default Agentfile failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(string(output), "Valid") {
+		t.Error("expected 'Valid' in output")
 	}
 }

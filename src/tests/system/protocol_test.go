@@ -48,7 +48,7 @@ RUN main USING analyze
 
 	// Validate the agentfile
 	srcDir := getSrcDir(t)
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", filepath.Join(agentDir, "Agentfile"))
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", filepath.Join(agentDir, "Agentfile"))
 	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -166,7 +166,7 @@ RUN main USING test
 
 	// Validate
 	srcDir := getSrcDir(t)
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", filepath.Join(tmpDir, "Agentfile"))
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", filepath.Join(tmpDir, "Agentfile"))
 	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -267,7 +267,7 @@ RUN main USING review
 
 	// Validate
 	srcDir := getSrcDir(t)
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", filepath.Join(agentDir, "Agentfile"))
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", filepath.Join(agentDir, "Agentfile"))
 	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {

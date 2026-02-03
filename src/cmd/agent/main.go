@@ -99,15 +99,18 @@ func printUsage() {
 	fmt.Println(`Usage: agent <command> [options]
 
 Commands:
-  run <Agentfile>       Run a workflow
-  validate <Agentfile>  Validate syntax
-  inspect <Agentfile>   Show workflow structure
+  run                   Run a workflow
+  validate              Validate syntax
+  inspect               Show workflow structure
   pack <dir>            Create a signed package
   verify <pkg>          Verify package signature
   install <pkg>         Install a package
   keygen                Generate signing key pair
   version               Show version
   help                  Show this help
+
+Agentfile Options:
+  -f, --file <path>     Agentfile path (default: ./Agentfile)
 
 Run Options:
   --input key=value     Provide input (repeatable)
@@ -131,19 +134,45 @@ Keygen Options:
   --output, -o <path>   Output path prefix (creates .pem and .pub)`)
 }
 
+// resolveAgentfile finds the Agentfile path from args.
+// Supports: -f <path>, --file <path>, --file=<path>, or defaults to ./Agentfile
+func resolveAgentfile(args []string) (string, []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case (arg == "-f" || arg == "--file") && i+1 < len(args):
+			path := args[i+1]
+			remaining := append(args[:i], args[i+2:]...)
+			return path, remaining
+		case strings.HasPrefix(arg, "--file="):
+			path := strings.TrimPrefix(arg, "--file=")
+			remaining := append(args[:i], args[i+1:]...)
+			return path, remaining
+		case strings.HasPrefix(arg, "-f="):
+			path := strings.TrimPrefix(arg, "-f=")
+			remaining := append(args[:i], args[i+1:]...)
+			return path, remaining
+		}
+	}
+	// Default to Agentfile in current directory
+	return "Agentfile", args
+}
+
 // runWorkflow executes a workflow from an Agentfile.
 func runWorkflow(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: Agentfile path required")
+	agentfilePath, args := resolveAgentfile(args)
+	
+	if _, err := os.Stat(agentfilePath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "error: %s not found\n", agentfilePath)
+		fmt.Fprintln(os.Stderr, "Use -f <path> to specify a different Agentfile")
 		os.Exit(1)
 	}
 
-	agentfilePath := args[0]
 	inputs := make(map[string]string)
 	var configPath, policyPath, workspacePath string
 
 	// Parse flags
-	for i := 1; i < len(args); i++ {
+	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
 		case arg == "--input" && i+1 < len(args):
@@ -323,12 +352,12 @@ func runWorkflow(args []string) {
 
 // validateWorkflow validates an Agentfile.
 func validateWorkflow(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: Agentfile path required")
+	agentfilePath, _ := resolveAgentfile(args)
+	
+	if _, err := os.Stat(agentfilePath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "✗ Error: %s not found\n", agentfilePath)
 		os.Exit(1)
 	}
-
-	agentfilePath := args[0]
 
 	wf, err := agentfile.LoadFile(agentfilePath)
 	if err != nil {
@@ -342,12 +371,12 @@ func validateWorkflow(args []string) {
 
 // inspectWorkflow shows the structure of an Agentfile.
 func inspectWorkflow(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: Agentfile path required")
+	agentfilePath, _ := resolveAgentfile(args)
+	
+	if _, err := os.Stat(agentfilePath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "error: %s not found\n", agentfilePath)
 		os.Exit(1)
 	}
-
-	agentfilePath := args[0]
 
 	wf, err := agentfile.LoadFile(agentfilePath)
 	if err != nil {

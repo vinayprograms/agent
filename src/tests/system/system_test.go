@@ -56,7 +56,7 @@ RUN main USING analyze
 
 	// Run from src directory
 	srcDir := getSrcDir(t)
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", path)
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", path)
 	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -108,7 +108,7 @@ func TestSystem_ValidateInvalidAgentfile(t *testing.T) {
 			os.WriteFile(path, []byte(tt.content), 0644)
 
 			srcDir := getSrcDir(t)
-			cmd := exec.Command("go", "run", "./cmd/agent", "validate", path)
+			cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", path)
 			cmd.Dir = srcDir
 			output, _ := cmd.CombinedOutput()
 
@@ -134,7 +134,7 @@ LOOP step2 USING summarize WITHIN $max
 	path := filepath.Join(tmpDir, "Agentfile")
 	os.WriteFile(path, []byte(agentfile), 0644)
 
-	cmd := exec.Command("go", "run", "./cmd/agent", "inspect", path)
+	cmd := exec.Command("go", "run", "./cmd/agent", "inspect", "-f", path)
 	srcDir := getSrcDir(t); cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -193,7 +193,7 @@ RUN main USING analyze
 	path := filepath.Join(tmpDir, "Agentfile")
 	os.WriteFile(path, []byte(agentfile), 0644)
 
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", path)
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", path)
 	srcDir := getSrcDir(t); cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -217,7 +217,7 @@ RUN main USING analyze
 	path := filepath.Join(tmpDir, "Agentfile")
 	os.WriteFile(path, []byte(agentfile), 0644)
 
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", path)
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", path)
 	srcDir := getSrcDir(t); cmd.Dir = srcDir
 	output, _ := cmd.CombinedOutput()
 
@@ -303,7 +303,7 @@ RUN main USING review
 	os.WriteFile(filepath.Join(tmpDir, "Agentfile"), []byte(agentfile), 0644)
 
 	srcDir := getSrcDir(t)
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", filepath.Join(tmpDir, "Agentfile"))
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", filepath.Join(tmpDir, "Agentfile"))
 	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -347,7 +347,7 @@ RUN phase3 USING parallel-review
 	os.WriteFile(filepath.Join(tmpDir, "Agentfile"), []byte(agentfile), 0644)
 
 	srcDir := getSrcDir(t)
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", filepath.Join(tmpDir, "Agentfile"))
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", filepath.Join(tmpDir, "Agentfile"))
 	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {

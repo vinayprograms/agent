@@ -107,14 +107,20 @@ RUN main USING research, summarize
 ### 5. Run
 
 ```bash
-# Validate first
-./agent validate Agentfile
+# Validate (uses ./Agentfile by default)
+./agent validate
+
+# Or specify a different file
+./agent validate -f path/to/MyAgentfile
 
 # Run the workflow
-./agent run Agentfile --config agent.json
+./agent run --config agent.json
 
-# Or with custom input
-./agent run Agentfile --config agent.json --input topic="Rust programming"
+# Run with custom input
+./agent run --config agent.json --input topic="Rust programming"
+
+# Run a specific Agentfile
+./agent run -f examples/hello.agent --config agent.json
 ```
 
 ### Quick Test (Validate Examples)
