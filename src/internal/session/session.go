@@ -19,6 +19,17 @@ const (
 	StatusFailed   = "failed"
 )
 
+// Event types for the session log
+const (
+	EventSystem    = "system"    // System message to LLM
+	EventUser      = "user"      // User/prompt message to LLM
+	EventAssistant = "assistant" // LLM response
+	EventToolCall  = "tool_call" // Tool invocation
+	EventToolResult = "tool_result" // Tool result (fed back to LLM)
+	EventGoalStart = "goal_start"
+	EventGoalEnd   = "goal_end"
+)
+
 // Session represents a workflow execution session.
 type Session struct {
 	ID           string                 `json:"id"`
@@ -29,13 +40,25 @@ type Session struct {
 	Status       string                 `json:"status"`
 	Result       string                 `json:"result,omitempty"`
 	Error        string                 `json:"error,omitempty"`
-	Messages     []Message              `json:"messages"`
-	ToolCalls    []ToolCall             `json:"tool_calls"`
+	Events       []Event                `json:"events"`
 	CreatedAt    time.Time              `json:"created_at"`
 	UpdatedAt    time.Time              `json:"updated_at"`
 }
 
-// Message represents an LLM message.
+// Event represents a single entry in the session log.
+// All events are in chronological order for easy reading.
+type Event struct {
+	Type      string                 `json:"type"`                // system, user, assistant, tool_call, tool_result, goal_start, goal_end
+	Goal      string                 `json:"goal,omitempty"`      // Current goal context
+	Content   string                 `json:"content,omitempty"`   // Message content or tool result
+	Tool      string                 `json:"tool,omitempty"`      // Tool name (for tool_call/tool_result)
+	Args      map[string]interface{} `json:"args,omitempty"`      // Tool arguments
+	Error     string                 `json:"error,omitempty"`     // Error message if failed
+	DurationMs int64                 `json:"duration_ms,omitempty"` // Tool execution time
+	Timestamp time.Time              `json:"timestamp"`
+}
+
+// Message represents an LLM message (kept for backwards compatibility).
 type Message struct {
 	Role      string    `json:"role"` // user, assistant, tool
 	Content   string    `json:"content"`
@@ -44,7 +67,7 @@ type Message struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// ToolCall represents a tool invocation.
+// ToolCall represents a tool invocation (kept for backwards compatibility).
 type ToolCall struct {
 	ID        string                 `json:"id"`
 	Name      string                 `json:"name"`
@@ -87,8 +110,7 @@ func (m *Manager) Create(workflowName string, inputs map[string]string) (*Sessio
 		Inputs:       inputs,
 		State:        make(map[string]interface{}),
 		Status:       StatusRunning,
-		Messages:     []Message{},
-		ToolCalls:    []ToolCall{},
+		Events:       []Event{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -155,8 +177,8 @@ func (m *Manager) UpdateState(id string, state map[string]interface{}) error {
 	return m.store.Save(sess)
 }
 
-// AddMessage adds a message to the session.
-func (m *Manager) AddMessage(id string, msg Message) error {
+// AddEvent adds an event to the session's chronological log.
+func (m *Manager) AddEvent(id string, event Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -165,23 +187,7 @@ func (m *Manager) AddMessage(id string, msg Message) error {
 		return err
 	}
 
-	sess.Messages = append(sess.Messages, msg)
-	sess.UpdatedAt = time.Now()
-
-	return m.store.Save(sess)
-}
-
-// AddToolCall adds a tool call to the session.
-func (m *Manager) AddToolCall(id string, tc ToolCall) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	sess, err := m.store.Load(id)
-	if err != nil {
-		return err
-	}
-
-	sess.ToolCalls = append(sess.ToolCalls, tc)
+	sess.Events = append(sess.Events, event)
 	sess.UpdatedAt = time.Now()
 
 	return m.store.Save(sess)
@@ -281,8 +287,7 @@ func (m *SimpleManager) Create(workflowName string) (*Session, error) {
 		State:        make(map[string]interface{}),
 		Outputs:      make(map[string]string),
 		Status:       "running",
-		Messages:     []Message{},
-		ToolCalls:    []ToolCall{},
+		Events:       []Event{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

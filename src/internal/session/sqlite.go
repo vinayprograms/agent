@@ -43,6 +43,7 @@ func (s *SQLiteStore) init() error {
 		workflow_name TEXT NOT NULL,
 		inputs TEXT,
 		state TEXT,
+		outputs TEXT,
 		status TEXT NOT NULL,
 		result TEXT,
 		error TEXT,
@@ -50,32 +51,21 @@ func (s *SQLiteStore) init() error {
 		updated_at DATETIME NOT NULL
 	);
 
-	CREATE TABLE IF NOT EXISTS messages (
+	CREATE TABLE IF NOT EXISTS events (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		session_id TEXT NOT NULL,
-		role TEXT NOT NULL,
-		content TEXT NOT NULL,
+		type TEXT NOT NULL,
 		goal TEXT,
-		agent TEXT,
-		timestamp DATETIME NOT NULL,
-		FOREIGN KEY (session_id) REFERENCES sessions(id)
-	);
-
-	CREATE TABLE IF NOT EXISTS tool_calls (
-		id TEXT PRIMARY KEY,
-		session_id TEXT NOT NULL,
-		name TEXT NOT NULL,
+		content TEXT,
+		tool TEXT,
 		args TEXT,
-		result TEXT,
 		error TEXT,
-		duration_ns INTEGER,
-		goal TEXT,
+		duration_ms INTEGER,
 		timestamp DATETIME NOT NULL,
 		FOREIGN KEY (session_id) REFERENCES sessions(id)
 	);
 
-	CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-	CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
+	CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -96,55 +86,41 @@ func (s *SQLiteStore) Save(sess *Session) error {
 
 	inputsJSON, _ := json.Marshal(sess.Inputs)
 	stateJSON, _ := json.Marshal(sess.State)
+	outputsJSON, _ := json.Marshal(sess.Outputs)
 
 	// Upsert session
 	_, err = tx.Exec(`
-		INSERT INTO sessions (id, workflow_name, inputs, state, status, result, error, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sessions (id, workflow_name, inputs, state, outputs, status, result, error, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			state = excluded.state,
+			outputs = excluded.outputs,
 			status = excluded.status,
 			result = excluded.result,
 			error = excluded.error,
 			updated_at = excluded.updated_at
-	`, sess.ID, sess.WorkflowName, string(inputsJSON), string(stateJSON),
+	`, sess.ID, sess.WorkflowName, string(inputsJSON), string(stateJSON), string(outputsJSON),
 		string(sess.Status), sess.Result, sess.Error, sess.CreatedAt, sess.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save session: %w", err)
 	}
 
-	// Delete existing messages and tool calls (full replacement)
-	_, err = tx.Exec("DELETE FROM messages WHERE session_id = ?", sess.ID)
+	// Delete existing events (full replacement)
+	_, err = tx.Exec("DELETE FROM events WHERE session_id = ?", sess.ID)
 	if err != nil {
-		return fmt.Errorf("failed to delete messages: %w", err)
-	}
-	_, err = tx.Exec("DELETE FROM tool_calls WHERE session_id = ?", sess.ID)
-	if err != nil {
-		return fmt.Errorf("failed to delete tool calls: %w", err)
+		return fmt.Errorf("failed to delete events: %w", err)
 	}
 
-	// Insert messages
-	for _, msg := range sess.Messages {
+	// Insert events
+	for _, event := range sess.Events {
+		argsJSON, _ := json.Marshal(event.Args)
 		_, err = tx.Exec(`
-			INSERT INTO messages (session_id, role, content, goal, agent, timestamp)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, sess.ID, msg.Role, msg.Content, msg.Goal, msg.Agent, msg.Timestamp)
-		if err != nil {
-			return fmt.Errorf("failed to save message: %w", err)
-		}
-	}
-
-	// Insert tool calls
-	for _, tc := range sess.ToolCalls {
-		argsJSON, _ := json.Marshal(tc.Args)
-		resultJSON, _ := json.Marshal(tc.Result)
-		_, err = tx.Exec(`
-			INSERT INTO tool_calls (id, session_id, name, args, result, error, duration_ns, goal, timestamp)
+			INSERT INTO events (session_id, type, goal, content, tool, args, error, duration_ms, timestamp)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, tc.ID, sess.ID, tc.Name, string(argsJSON), string(resultJSON),
-			tc.Error, int64(tc.Duration), tc.Goal, tc.Timestamp)
+		`, sess.ID, event.Type, event.Goal, event.Content, event.Tool, 
+			string(argsJSON), event.Error, event.DurationMs, event.Timestamp)
 		if err != nil {
-			return fmt.Errorf("failed to save tool call: %w", err)
+			return fmt.Errorf("failed to save event: %w", err)
 		}
 	}
 
@@ -154,15 +130,15 @@ func (s *SQLiteStore) Save(sess *Session) error {
 // Load loads a session from the database.
 func (s *SQLiteStore) Load(id string) (*Session, error) {
 	row := s.db.QueryRow(`
-		SELECT id, workflow_name, inputs, state, status, result, error, created_at, updated_at
+		SELECT id, workflow_name, inputs, state, outputs, status, result, error, created_at, updated_at
 		FROM sessions WHERE id = ?
 	`, id)
 
 	var sess Session
-	var inputsJSON, stateJSON string
+	var inputsJSON, stateJSON, outputsJSON string
 	var status string
 
-	err := row.Scan(&sess.ID, &sess.WorkflowName, &inputsJSON, &stateJSON,
+	err := row.Scan(&sess.ID, &sess.WorkflowName, &inputsJSON, &stateJSON, &outputsJSON,
 		&status, &sess.Result, &sess.Error, &sess.CreatedAt, &sess.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -174,57 +150,46 @@ func (s *SQLiteStore) Load(id string) (*Session, error) {
 	sess.Status = status
 	json.Unmarshal([]byte(inputsJSON), &sess.Inputs)
 	json.Unmarshal([]byte(stateJSON), &sess.State)
+	json.Unmarshal([]byte(outputsJSON), &sess.Outputs)
 
-	// Load messages
+	// Load events
 	rows, err := s.db.Query(`
-		SELECT role, content, goal, agent, timestamp
-		FROM messages WHERE session_id = ? ORDER BY id
+		SELECT type, goal, content, tool, args, error, duration_ms, timestamp
+		FROM events WHERE session_id = ? ORDER BY id
 	`, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load messages: %w", err)
+		return nil, fmt.Errorf("failed to load events: %w", err)
 	}
 	defer rows.Close()
 
+	sess.Events = []Event{}
 	for rows.Next() {
-		var msg Message
-		var agent sql.NullString
-		err := rows.Scan(&msg.Role, &msg.Content, &msg.Goal, &agent, &msg.Timestamp)
+		var event Event
+		var goal, content, tool, argsJSON, eventError sql.NullString
+		var durationMs sql.NullInt64
+		err := rows.Scan(&event.Type, &goal, &content, &tool, &argsJSON, &eventError, &durationMs, &event.Timestamp)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan message: %w", err)
+			return nil, fmt.Errorf("failed to scan event: %w", err)
 		}
-		if agent.Valid {
-			msg.Agent = agent.String
+		if goal.Valid {
+			event.Goal = goal.String
 		}
-		sess.Messages = append(sess.Messages, msg)
-	}
-
-	// Load tool calls
-	rows, err = s.db.Query(`
-		SELECT id, name, args, result, error, duration_ns, goal, timestamp
-		FROM tool_calls WHERE session_id = ? ORDER BY timestamp
-	`, id)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load tool calls: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var tc ToolCall
-		var argsJSON, resultJSON string
-		var durationNs int64
-		var tcError sql.NullString
-		err := rows.Scan(&tc.ID, &tc.Name, &argsJSON, &resultJSON,
-			&tcError, &durationNs, &tc.Goal, &tc.Timestamp)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan tool call: %w", err)
+		if content.Valid {
+			event.Content = content.String
 		}
-		json.Unmarshal([]byte(argsJSON), &tc.Args)
-		json.Unmarshal([]byte(resultJSON), &tc.Result)
-		if tcError.Valid {
-			tc.Error = tcError.String
+		if tool.Valid {
+			event.Tool = tool.String
 		}
-		tc.Duration = time.Duration(durationNs)
-		sess.ToolCalls = append(sess.ToolCalls, tc)
+		if argsJSON.Valid && argsJSON.String != "" && argsJSON.String != "null" {
+			json.Unmarshal([]byte(argsJSON.String), &event.Args)
+		}
+		if eventError.Valid {
+			event.Error = eventError.String
+		}
+		if durationMs.Valid {
+			event.DurationMs = durationMs.Int64
+		}
+		sess.Events = append(sess.Events, event)
 	}
 
 	return &sess, nil
@@ -256,8 +221,7 @@ func (m *SQLiteManager) Create(workflowName string) (*Session, error) {
 		State:        make(map[string]interface{}),
 		Outputs:      make(map[string]string),
 		Status:       "running",
-		Messages:     []Message{},
-		ToolCalls:    []ToolCall{},
+		Events:       []Event{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

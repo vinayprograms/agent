@@ -3,6 +3,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -117,44 +118,102 @@ func (e *Executor) SetPackagePaths(paths []string) {
 	e.initSubAgentRunner()
 }
 
-// SetSession sets the session for logging messages and tool calls.
+// SetSession sets the session for logging events.
 func (e *Executor) SetSession(sess *session.Session, mgr session.SessionManager) {
 	e.session = sess
 	e.sessionManager = mgr
 }
 
-// logMessage logs a message to the session.
-func (e *Executor) logMessage(role, content string) {
+// logEvent logs an event to the session's chronological event stream.
+func (e *Executor) logEvent(eventType, content string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
-	e.session.Messages = append(e.session.Messages, session.Message{
-		Role:      role,
-		Content:   content,
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:      eventType,
 		Goal:      e.currentGoal,
+		Content:   content,
 		Timestamp: time.Now(),
 	})
 	e.sessionManager.Update(e.session)
 }
 
-// logToolCall logs a tool call to the session.
-func (e *Executor) logToolCall(name string, args map[string]interface{}, result interface{}, err error, duration time.Duration) {
+// logToolCall logs a tool call event to the session.
+func (e *Executor) logToolCall(name string, args map[string]interface{}) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
-	tc := session.ToolCall{
-		ID:        fmt.Sprintf("%d", len(e.session.ToolCalls)+1),
-		Name:      name,
-		Args:      args,
-		Result:    result,
-		Duration:  duration,
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:      session.EventToolCall,
 		Goal:      e.currentGoal,
+		Tool:      name,
+		Args:      args,
 		Timestamp: time.Now(),
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logToolResult logs a tool result event to the session.
+func (e *Executor) logToolResult(name string, result interface{}, err error, duration time.Duration) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	
+	// Convert result to string for content
+	var content string
+	switch v := result.(type) {
+	case string:
+		content = v
+	case []byte:
+		content = string(v)
+	default:
+		if b, err := json.Marshal(result); err == nil {
+			content = string(b)
+		} else {
+			content = fmt.Sprintf("%v", result)
+		}
+	}
+	
+	event := session.Event{
+		Type:       session.EventToolResult,
+		Goal:       e.currentGoal,
+		Tool:       name,
+		Content:    content,
+		DurationMs: duration.Milliseconds(),
+		Timestamp:  time.Now(),
 	}
 	if err != nil {
-		tc.Error = err.Error()
+		event.Error = err.Error()
 	}
-	e.session.ToolCalls = append(e.session.ToolCalls, tc)
+	e.session.Events = append(e.session.Events, event)
+	e.sessionManager.Update(e.session)
+}
+
+// logGoalStart logs the start of a goal.
+func (e *Executor) logGoalStart(goalName string) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:      session.EventGoalStart,
+		Goal:      goalName,
+		Content:   fmt.Sprintf("Starting goal: %s", goalName),
+		Timestamp: time.Now(),
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logGoalEnd logs the end of a goal.
+func (e *Executor) logGoalEnd(goalName, output string) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:      session.EventGoalEnd,
+		Goal:      goalName,
+		Content:   output,
+		Timestamp: time.Now(),
+	})
 	e.sessionManager.Update(e.session)
 }
 
@@ -297,6 +356,9 @@ func (e *Executor) executeGoal(ctx context.Context, goal *agentfile.Goal) (strin
 
 // executeGoalWithTracking executes a single goal and tracks whether tool calls were made.
 func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.Goal) (*GoalResult, error) {
+	// Log goal start
+	e.logGoalStart(goal.Name)
+	
 	if e.OnGoalStart != nil {
 		e.OnGoalStart(goal.Name)
 	}
@@ -304,6 +366,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	// Check for multi-agent execution
 	if len(goal.UsingAgent) > 0 {
 		output, err := e.executeMultiAgentGoal(ctx, goal)
+		e.logGoalEnd(goal.Name, output)
 		return &GoalResult{Output: output, ToolCallsMade: false}, err
 	}
 
@@ -340,8 +403,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	}
 
 	// Log initial messages
-	e.logMessage("system", systemMsg)
-	e.logMessage("user", prompt)
+	e.logEvent(session.EventSystem, systemMsg)
+	e.logEvent(session.EventUser, prompt)
 
 	// Get tool definitions (built-in + MCP)
 	toolDefs := e.getAllToolDefinitions()
@@ -360,7 +423,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		}
 
 		// Log assistant response
-		e.logMessage("assistant", resp.Content)
+		e.logEvent(session.EventAssistant, resp.Content)
 
 		// Check for skill activation in response
 		if skill := e.checkSkillActivation(resp.Content); skill != nil {
@@ -374,7 +437,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				Role:    "user",
 				Content: skillMsg,
 			})
-			e.logMessage("user", skillMsg)
+			e.logEvent(session.EventUser, skillMsg)
 			continue
 		}
 
@@ -383,6 +446,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			if e.OnGoalComplete != nil {
 				e.OnGoalComplete(goal.Name, resp.Content)
 			}
+			e.logGoalEnd(goal.Name, resp.Content)
 			return &GoalResult{Output: resp.Content, ToolCallsMade: toolCallsMade}, nil
 		}
 
@@ -667,10 +731,13 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (interface{}, error) {
 	start := time.Now()
 	
+	// Log the tool call
+	e.logToolCall(tc.Name, tc.Args)
+	
 	// Check if it's an MCP tool
 	if strings.HasPrefix(tc.Name, "mcp_") {
 		result, err := e.executeMCPTool(ctx, tc)
-		e.logToolCall(tc.Name, tc.Args, result, err, time.Since(start))
+		e.logToolResult(tc.Name, result, err, time.Since(start))
 		return result, err
 	}
 
@@ -687,8 +754,8 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	result, err := tool.Execute(ctx, tc.Args)
 	duration := time.Since(start)
 
-	// Log to session
-	e.logToolCall(tc.Name, tc.Args, result, err, duration)
+	// Log the tool result
+	e.logToolResult(tc.Name, result, err, duration)
 
 	if e.OnToolCall != nil {
 		e.OnToolCall(tc.Name, tc.Args, result)

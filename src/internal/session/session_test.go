@@ -115,65 +115,63 @@ func TestSession_UpdateState(t *testing.T) {
 	}
 }
 
-// R7.2.2: Persist all messages
-func TestSession_AddMessage(t *testing.T) {
+// R7.2.2: Persist events (formerly messages)
+func TestSession_AddEvent(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := NewFileStore(tmpDir)
 	mgr := NewManager(store)
 
 	sess, _ := mgr.Create("workflow", nil)
 	
-	msg := Message{
-		Role:      "user",
+	event := Event{
+		Type:      EventUser,
 		Content:   "Hello",
 		Goal:      "goal1",
 		Timestamp: time.Now(),
 	}
-	err := mgr.AddMessage(sess.ID, msg)
+	err := mgr.AddEvent(sess.ID, event)
 	if err != nil {
-		t.Fatalf("add message error: %v", err)
+		t.Fatalf("add event error: %v", err)
 	}
 
 	loaded, _ := mgr.Get(sess.ID)
-	if len(loaded.Messages) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(loaded.Messages))
+	if len(loaded.Events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(loaded.Events))
 	}
-	if loaded.Messages[0].Role != "user" {
-		t.Errorf("expected role 'user', got %s", loaded.Messages[0].Role)
+	if loaded.Events[0].Type != EventUser {
+		t.Errorf("expected type 'user', got %s", loaded.Events[0].Type)
 	}
-	if loaded.Messages[0].Content != "Hello" {
-		t.Errorf("expected content 'Hello', got %s", loaded.Messages[0].Content)
+	if loaded.Events[0].Content != "Hello" {
+		t.Errorf("expected content 'Hello', got %s", loaded.Events[0].Content)
 	}
 }
 
-// R7.2.3: Persist tool call details
-func TestSession_AddToolCall(t *testing.T) {
+// R7.2.3: Persist tool call events
+func TestSession_AddToolCallEvent(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := NewFileStore(tmpDir)
 	mgr := NewManager(store)
 
 	sess, _ := mgr.Create("workflow", nil)
 	
-	tc := ToolCall{
-		ID:        "call-123",
-		Name:      "read",
-		Args:      map[string]interface{}{"path": "/test.txt"},
-		Result:    "file contents",
-		Duration:  100 * time.Millisecond,
-		Goal:      "goal1",
-		Timestamp: time.Now(),
+	event := Event{
+		Type:       EventToolCall,
+		Tool:       "read",
+		Args:       map[string]interface{}{"path": "/test.txt"},
+		Goal:       "goal1",
+		Timestamp:  time.Now(),
 	}
-	err := mgr.AddToolCall(sess.ID, tc)
+	err := mgr.AddEvent(sess.ID, event)
 	if err != nil {
-		t.Fatalf("add tool call error: %v", err)
+		t.Fatalf("add tool call event error: %v", err)
 	}
 
 	loaded, _ := mgr.Get(sess.ID)
-	if len(loaded.ToolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(loaded.ToolCalls))
+	if len(loaded.Events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(loaded.Events))
 	}
-	if loaded.ToolCalls[0].Name != "read" {
-		t.Errorf("expected name 'read', got %s", loaded.ToolCalls[0].Name)
+	if loaded.Events[0].Tool != "read" {
+		t.Errorf("expected tool 'read', got %s", loaded.Events[0].Tool)
 	}
 }
 
@@ -232,7 +230,7 @@ func TestFileStore_AtomicWrite(t *testing.T) {
 	}
 
 	// Update and verify atomic write
-	mgr.AddMessage(sess.ID, Message{Role: "user", Content: "test"})
+	mgr.AddEvent(sess.ID, Event{Type: EventUser, Content: "test", Timestamp: time.Now()})
 	
 	// Should still be only 1 file (no temp files left)
 	files, _ = os.ReadDir(tmpDir)
@@ -274,7 +272,7 @@ func TestSQLiteStore_Basic(t *testing.T) {
 	}
 }
 
-func TestSQLiteStore_Messages(t *testing.T) {
+func TestSQLiteStore_Events(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "sessions.db")
 	store, err := NewSQLiteStore(dbPath)
@@ -293,18 +291,18 @@ func TestSQLiteStore_Messages(t *testing.T) {
 		Goal:      "greet",
 		Timestamp: time.Now(),
 	}
-	mgr.AddMessage(sess.ID, msg)
+	mgr.AddEvent(sess.ID, Event{Type: EventAssistant, Content: msg.Content, Goal: msg.Goal, Timestamp: msg.Timestamp})
 
 	loaded, _ := mgr.Get(sess.ID)
-	if len(loaded.Messages) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(loaded.Messages))
+	if len(loaded.Events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(loaded.Events))
 	}
-	if loaded.Messages[0].Role != "assistant" {
-		t.Errorf("expected role 'assistant', got %s", loaded.Messages[0].Role)
+	if loaded.Events[0].Type != EventAssistant {
+		t.Errorf("expected type 'assistant', got %s", loaded.Events[0].Type)
 	}
 }
 
-func TestSQLiteStore_ToolCalls(t *testing.T) {
+func TestSQLiteStore_ToolCallEvents(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "sessions.db")
 	store, err := NewSQLiteStore(dbPath)
@@ -317,22 +315,20 @@ func TestSQLiteStore_ToolCalls(t *testing.T) {
 
 	sess, _ := mgr.Create("workflow", nil)
 	
-	tc := ToolCall{
-		ID:        "tc-1",
-		Name:      "write",
-		Args:      map[string]interface{}{"path": "/out.txt", "content": "data"},
-		Result:    "ok",
-		Duration:  50 * time.Millisecond,
-		Goal:      "write-goal",
-		Timestamp: time.Now(),
+	event := Event{
+		Type:       EventToolCall,
+		Tool:       "write",
+		Args:       map[string]interface{}{"path": "/out.txt", "content": "data"},
+		Goal:       "write-goal",
+		Timestamp:  time.Now(),
 	}
-	mgr.AddToolCall(sess.ID, tc)
+	mgr.AddEvent(sess.ID, event)
 
 	loaded, _ := mgr.Get(sess.ID)
-	if len(loaded.ToolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(loaded.ToolCalls))
+	if len(loaded.Events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(loaded.Events))
 	}
-	if loaded.ToolCalls[0].Name != "write" {
-		t.Errorf("expected name 'write', got %s", loaded.ToolCalls[0].Name)
+	if loaded.Events[0].Tool != "write" {
+		t.Errorf("expected tool 'write', got %s", loaded.Events[0].Tool)
 	}
 }
