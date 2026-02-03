@@ -338,6 +338,14 @@ func runWorkflow(args []string) {
 		fmt.Fprintf(os.Stderr, "  → Tool: %s\n", name)
 		telem.LogEvent("tool_call", map[string]interface{}{"tool": name, "args": args})
 	}
+	exec.OnToolError = func(name string, args map[string]interface{}, err error) {
+		fmt.Fprintf(os.Stderr, "  ✗ Tool error [%s]: %v\n", name, err)
+		telem.LogEvent("tool_error", map[string]interface{}{"tool": name, "error": err.Error()})
+	}
+	exec.OnLLMError = func(err error) {
+		fmt.Fprintf(os.Stderr, "  ✗ LLM error: %v\n", err)
+		telem.LogEvent("llm_error", map[string]interface{}{"error": err.Error()})
+	}
 
 	// Create session
 	sess, err := sessionMgr.Create(wf.Name)

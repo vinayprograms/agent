@@ -66,12 +66,14 @@ type Executor struct {
 	outputs map[string]string
 
 	// Callbacks
-	OnGoalStart      func(name string)
-	OnGoalComplete   func(name string, output string)
-	OnToolCall       func(name string, args map[string]interface{}, result interface{})
-	OnSkillLoaded    func(name string)
-	OnMCPToolCall    func(server, tool string, args map[string]interface{}, result interface{})
-	OnSubAgentStart  func(name string, input map[string]string)
+	OnGoalStart        func(name string)
+	OnGoalComplete     func(name string, output string)
+	OnToolCall         func(name string, args map[string]interface{}, result interface{})
+	OnToolError        func(name string, args map[string]interface{}, err error)
+	OnLLMError         func(err error)
+	OnSkillLoaded      func(name string)
+	OnMCPToolCall      func(server, tool string, args map[string]interface{}, result interface{})
+	OnSubAgentStart    func(name string, input map[string]string)
 	OnSubAgentComplete func(name string, output string)
 }
 
@@ -419,6 +421,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			Tools:    toolDefs,
 		})
 		if err != nil {
+			if e.OnLLMError != nil {
+				e.OnLLMError(err)
+			}
 			return nil, fmt.Errorf("LLM error: %w", err)
 		}
 
@@ -631,6 +636,9 @@ func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfil
 		Messages: messages,
 	})
 	if err != nil {
+		if e.OnLLMError != nil {
+			e.OnLLMError(err)
+		}
 		return "", err
 	}
 
@@ -717,6 +725,9 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		Messages: messages,
 	})
 	if err != nil {
+		if e.OnLLMError != nil {
+			e.OnLLMError(err)
+		}
 		return "", err
 	}
 
@@ -756,6 +767,10 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 
 	// Log the tool result
 	e.logToolResult(tc.Name, result, err, duration)
+
+	if err != nil && e.OnToolError != nil {
+		e.OnToolError(tc.Name, tc.Args, err)
+	}
 
 	if e.OnToolCall != nil {
 		e.OnToolCall(tc.Name, tc.Args, result)
