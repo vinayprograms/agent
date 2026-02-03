@@ -52,8 +52,14 @@ type ExecResult struct {
 
 // Registry holds all registered tools.
 type Registry struct {
-	tools  map[string]Tool
-	policy *policy.Policy
+	tools      map[string]Tool
+	policy     *policy.Policy
+	summarizer Summarizer
+}
+
+// Summarizer provides content summarization for web_fetch
+type Summarizer interface {
+	Summarize(ctx context.Context, content, question string) (string, error)
 }
 
 // NewRegistry creates a new registry with built-in tools.
@@ -64,6 +70,15 @@ func NewRegistry(pol *policy.Policy) *Registry {
 	}
 	r.registerBuiltins()
 	return r
+}
+
+// SetSummarizer sets the summarizer for web_fetch tool
+func (r *Registry) SetSummarizer(s Summarizer) {
+	r.summarizer = s
+	// Update web_fetch tool with summarizer
+	if wf, ok := r.tools["web_fetch"].(*webFetchTool); ok {
+		wf.summarizer = s
+	}
 }
 
 // registerBuiltins registers all built-in tools.
@@ -534,13 +549,13 @@ func (t *bashTool) Execute(ctx context.Context, args map[string]interface{}) (in
 // webFetchTool implements the web_fetch tool (R5.4.1).
 type webFetchTool struct {
 	policy     *policy.Policy
-	gatewayURL string
+	summarizer Summarizer
 }
 
 func (t *webFetchTool) Name() string { return "web_fetch" }
 
 func (t *webFetchTool) Description() string {
-	return "Fetch the full content from a URL. Use after web_search to retrieve complete information from promising results. The snippets from web_search are only previews - always fetch URLs that seem relevant to get the actual content needed for thorough research."
+	return "Fetch and summarize content from a URL. Requires a question/prompt - the tool returns a concise answer based on the page content, not the raw page. Use after web_search to get specific information from promising results."
 }
 
 func (t *webFetchTool) Parameters() map[string]interface{} {
@@ -551,12 +566,12 @@ func (t *webFetchTool) Parameters() map[string]interface{} {
 				"type":        "string",
 				"description": "URL to fetch (typically from web_search results)",
 			},
-			"max_chars": map[string]interface{}{
-				"type":        "integer",
-				"description": "Maximum characters to return (default 15000, ~4000 tokens)",
+			"question": map[string]interface{}{
+				"type":        "string",
+				"description": "What information to extract from the page",
 			},
 		},
-		"required": []string{"url"},
+		"required": []string{"url", "question"},
 	}
 }
 
@@ -566,10 +581,9 @@ func (t *webFetchTool) Execute(ctx context.Context, args map[string]interface{})
 		return nil, fmt.Errorf("url is required")
 	}
 
-	// Max content length (default 15000 chars ~= 4000 tokens)
-	maxChars := 15000
-	if mc, ok := args["max_chars"].(float64); ok {
-		maxChars = int(mc)
+	question, ok := args["question"].(string)
+	if !ok {
+		return nil, fmt.Errorf("question is required")
 	}
 
 	// Extract domain from URL for policy check
@@ -602,12 +616,28 @@ func (t *webFetchTool) Execute(ctx context.Context, args map[string]interface{})
 	// Extract readable text from HTML
 	content := extractReadableText(string(body))
 	
-	// Truncate if too long
+	// Truncate to ~100KB for summarization (like Claude Code)
+	maxChars := 100000
 	if len(content) > maxChars {
-		content = content[:maxChars] + "\n\n[Content truncated at " + fmt.Sprintf("%d", maxChars) + " characters]"
+		content = content[:maxChars] + "\n\n[Content truncated]"
 	}
 
-	return content, nil
+	// If no summarizer configured, return extracted text with length limit
+	if t.summarizer == nil {
+		// Fallback: return first 15000 chars
+		if len(content) > 15000 {
+			content = content[:15000] + "\n\n[Content truncated - configure small_llm for summarization]"
+		}
+		return content, nil
+	}
+
+	// Use summarizer to answer the question
+	answer, err := t.summarizer.Summarize(ctx, content, question)
+	if err != nil {
+		return nil, fmt.Errorf("summarization failed: %w", err)
+	}
+
+	return answer, nil
 }
 
 // extractReadableText removes HTML tags and extracts readable content

@@ -277,6 +277,19 @@ func runWorkflow(args []string) {
 	// Create tool registry
 	registry := tools.NewRegistry(pol)
 
+	// Set up summarizer for web_fetch if small_llm is configured
+	if cfg.SmallLLM.Provider != "" && cfg.SmallLLM.Model != "" {
+		smallProvider, err := llm.NewFantasyProvider(llm.FantasyConfig{
+			Provider:  cfg.SmallLLM.Provider,
+			Model:     cfg.SmallLLM.Model,
+			APIKey:    os.Getenv(cfg.SmallLLM.APIKeyEnv),
+			MaxTokens: cfg.SmallLLM.MaxTokens,
+		})
+		if err == nil {
+			registry.SetSummarizer(llm.NewSummarizer(smallProvider))
+		}
+	}
+
 	// Resolve session path: default to ~/.local/grid/sessions/<workflow-name>/
 	sessionPath := cfg.Session.Path
 	if sessionPath == "" {

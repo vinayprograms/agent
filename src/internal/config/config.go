@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Agent      AgentConfig           `json:"agent"`
 	LLM        LLMConfig             `json:"llm"`        // Default LLM settings
+	SmallLLM   LLMConfig             `json:"small_llm"`  // Fast/cheap model for summarization
 	Profiles   map[string]Profile    `json:"profiles"`   // Capability profiles
 	Web        WebConfig             `json:"web"`
 	Telemetry  TelemetryConfig       `json:"telemetry"`
