@@ -326,6 +326,9 @@ func runWorkflow(args []string) {
 		os.Exit(1)
 	}
 
+	// Connect session to executor for detailed logging
+	exec.SetSession(sess, sessionMgr)
+
 	fmt.Fprintf(os.Stderr, "Running workflow: %s (session: %s)\n\n", wf.Name, sess.ID)
 
 	// Run workflow

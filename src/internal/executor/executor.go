@@ -7,11 +7,13 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/openclaw/headless-agent/internal/agentfile"
 	"github.com/openclaw/headless-agent/internal/llm"
 	"github.com/openclaw/headless-agent/internal/mcp"
 	"github.com/openclaw/headless-agent/internal/policy"
+	"github.com/openclaw/headless-agent/internal/session"
 	"github.com/openclaw/headless-agent/internal/skills"
 	"github.com/openclaw/headless-agent/internal/subagent"
 	"github.com/openclaw/headless-agent/internal/tools"
@@ -52,6 +54,11 @@ type Executor struct {
 	// Sub-agent support
 	subAgentRunner *subagent.Runner
 	packagePaths   []string
+
+	// Session logging
+	session        *session.Session
+	sessionManager session.SessionManager
+	currentGoal    string
 
 	// State
 	inputs  map[string]string
@@ -108,6 +115,47 @@ func (e *Executor) SetSkills(refs []skills.SkillRef) {
 func (e *Executor) SetPackagePaths(paths []string) {
 	e.packagePaths = paths
 	e.initSubAgentRunner()
+}
+
+// SetSession sets the session for logging messages and tool calls.
+func (e *Executor) SetSession(sess *session.Session, mgr session.SessionManager) {
+	e.session = sess
+	e.sessionManager = mgr
+}
+
+// logMessage logs a message to the session.
+func (e *Executor) logMessage(role, content string) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Messages = append(e.session.Messages, session.Message{
+		Role:      role,
+		Content:   content,
+		Goal:      e.currentGoal,
+		Timestamp: time.Now(),
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logToolCall logs a tool call to the session.
+func (e *Executor) logToolCall(name string, args map[string]interface{}, result interface{}, err error, duration time.Duration) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	tc := session.ToolCall{
+		ID:        fmt.Sprintf("%d", len(e.session.ToolCalls)+1),
+		Name:      name,
+		Args:      args,
+		Result:    result,
+		Duration:  duration,
+		Goal:      e.currentGoal,
+		Timestamp: time.Now(),
+	}
+	if err != nil {
+		tc.Error = err.Error()
+	}
+	e.session.ToolCalls = append(e.session.ToolCalls, tc)
+	e.sessionManager.Update(e.session)
 }
 
 // initSubAgentRunner initializes the sub-agent runner.
@@ -272,6 +320,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		prompt = priorContext.String() + "## Current Goal\n" + prompt
 	}
 
+	// Set current goal for logging
+	e.currentGoal = goal.Name
+
 	// Build system message with skills context
 	systemMsg := "You are a helpful assistant executing a workflow goal."
 	if len(e.skillRefs) > 0 {
@@ -287,6 +338,10 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		{Role: "system", Content: systemMsg},
 		{Role: "user", Content: prompt},
 	}
+
+	// Log initial messages
+	e.logMessage("system", systemMsg)
+	e.logMessage("user", prompt)
 
 	// Get tool definitions (built-in + MCP)
 	toolDefs := e.getAllToolDefinitions()
@@ -304,6 +359,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			return nil, fmt.Errorf("LLM error: %w", err)
 		}
 
+		// Log assistant response
+		e.logMessage("assistant", resp.Content)
+
 		// Check for skill activation in response
 		if skill := e.checkSkillActivation(resp.Content); skill != nil {
 			skillContext := e.getSkillContext(skill)
@@ -311,10 +369,12 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				Role:    "assistant",
 				Content: resp.Content,
 			})
+			skillMsg := fmt.Sprintf("[Skill loaded: %s]\n\n%s", skill.Name, skillContext)
 			messages = append(messages, llm.Message{
 				Role:    "user",
-				Content: fmt.Sprintf("[Skill loaded: %s]\n\n%s", skill.Name, skillContext),
+				Content: skillMsg,
 			})
+			e.logMessage("user", skillMsg)
 			continue
 		}
 
@@ -605,9 +665,13 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 
 // executeTool executes a tool call (built-in or MCP).
 func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (interface{}, error) {
+	start := time.Now()
+	
 	// Check if it's an MCP tool
 	if strings.HasPrefix(tc.Name, "mcp_") {
-		return e.executeMCPTool(ctx, tc)
+		result, err := e.executeMCPTool(ctx, tc)
+		e.logToolCall(tc.Name, tc.Args, result, err, time.Since(start))
+		return result, err
 	}
 
 	// Built-in tool
@@ -621,6 +685,10 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	}
 
 	result, err := tool.Execute(ctx, tc.Args)
+	duration := time.Since(start)
+
+	// Log to session
+	e.logToolCall(tc.Name, tc.Args, result, err, duration)
 
 	if e.OnToolCall != nil {
 		e.OnToolCall(tc.Name, tc.Args, result)
