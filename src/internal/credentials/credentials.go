@@ -15,6 +15,8 @@ type Credentials struct {
 	Google    *ProviderCreds `toml:"google"`
 	Mistral   *ProviderCreds `toml:"mistral"`
 	Groq      *ProviderCreds `toml:"groq"`
+	Brave     *ProviderCreds `toml:"brave"`
+	Tavily    *ProviderCreds `toml:"tavily"`
 }
 
 // ProviderCreds holds credentials for a single provider
@@ -85,6 +87,12 @@ func (c *Credentials) Apply() {
 	}
 	if c.Groq != nil && c.Groq.APIKey != "" {
 		setIfEmpty("GROQ_API_KEY", c.Groq.APIKey)
+	}
+	if c.Brave != nil && c.Brave.APIKey != "" {
+		setIfEmpty("BRAVE_API_KEY", c.Brave.APIKey)
+	}
+	if c.Tavily != nil && c.Tavily.APIKey != "" {
+		setIfEmpty("TAVILY_API_KEY", c.Tavily.APIKey)
 	}
 }
 

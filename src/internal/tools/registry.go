@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -586,14 +587,13 @@ func (t *webFetchTool) Execute(ctx context.Context, args map[string]interface{})
 
 // webSearchTool implements the web_search tool (R5.4.2).
 type webSearchTool struct {
-	policy     *policy.Policy
-	gatewayURL string
+	policy *policy.Policy
 }
 
 func (t *webSearchTool) Name() string { return "web_search" }
 
 func (t *webSearchTool) Description() string {
-	return "Search the web using the configured search provider."
+	return "Search the web using Brave or Tavily. Returns titles, URLs, and snippets."
 }
 
 func (t *webSearchTool) Parameters() map[string]interface{} {
@@ -603,6 +603,10 @@ func (t *webSearchTool) Parameters() map[string]interface{} {
 			"query": map[string]interface{}{
 				"type":        "string",
 				"description": "Search query",
+			},
+			"count": map[string]interface{}{
+				"type":        "integer",
+				"description": "Number of results (1-10, default 5)",
 			},
 		},
 		"required": []string{"query"},
@@ -615,8 +619,129 @@ func (t *webSearchTool) Execute(ctx context.Context, args map[string]interface{}
 		return nil, fmt.Errorf("query is required")
 	}
 
-	// TODO: Implement via gateway
-	return fmt.Sprintf("Search results for: %s (gateway not configured)", query), nil
+	count := 5
+	if c, ok := args["count"].(float64); ok {
+		count = int(c)
+		if count < 1 {
+			count = 1
+		} else if count > 10 {
+			count = 10
+		}
+	}
+
+	// Try Brave first, then Tavily
+	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
+		return searchBrave(ctx, query, count, apiKey)
+	}
+	if apiKey := os.Getenv("TAVILY_API_KEY"); apiKey != "" {
+		return searchTavily(ctx, query, count, apiKey)
+	}
+
+	return nil, fmt.Errorf("no search API configured. Set BRAVE_API_KEY or TAVILY_API_KEY in credentials.toml")
+}
+
+// SearchResult represents a single search result
+type SearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Snippet string `json:"snippet"`
+}
+
+// searchBrave searches using Brave Search API
+func searchBrave(ctx context.Context, query string, count int, apiKey string) ([]SearchResult, error) {
+	url := fmt.Sprintf("https://api.search.brave.com/res/v1/web/search?q=%s&count=%d",
+		strings.ReplaceAll(query, " ", "+"), count)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Subscription-Token", apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("brave search failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("brave search error (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var braveResp struct {
+		Web struct {
+			Results []struct {
+				Title       string `json:"title"`
+				URL         string `json:"url"`
+				Description string `json:"description"`
+			} `json:"results"`
+		} `json:"web"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&braveResp); err != nil {
+		return nil, fmt.Errorf("failed to parse brave response: %w", err)
+	}
+
+	results := make([]SearchResult, 0, len(braveResp.Web.Results))
+	for _, r := range braveResp.Web.Results {
+		results = append(results, SearchResult{
+			Title:   r.Title,
+			URL:     r.URL,
+			Snippet: r.Description,
+		})
+	}
+	return results, nil
+}
+
+// searchTavily searches using Tavily API
+func searchTavily(ctx context.Context, query string, count int, apiKey string) ([]SearchResult, error) {
+	reqBody := map[string]interface{}{
+		"api_key":     apiKey,
+		"query":       query,
+		"max_results": count,
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.tavily.com/search", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tavily search failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("tavily search error (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var tavilyResp struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&tavilyResp); err != nil {
+		return nil, fmt.Errorf("failed to parse tavily response: %w", err)
+	}
+
+	results := make([]SearchResult, 0, len(tavilyResp.Results))
+	for _, r := range tavilyResp.Results {
+		results = append(results, SearchResult{
+			Title:   r.Title,
+			URL:     r.URL,
+			Snippet: r.Content,
+		})
+	}
+	return results, nil
 }
 
 // extractDomain extracts the domain from a URL.
