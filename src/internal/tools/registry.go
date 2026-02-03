@@ -551,6 +551,10 @@ func (t *webFetchTool) Parameters() map[string]interface{} {
 				"type":        "string",
 				"description": "URL to fetch (typically from web_search results)",
 			},
+			"max_chars": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum characters to return (default 15000, ~4000 tokens)",
+			},
 		},
 		"required": []string{"url"},
 	}
@@ -562,6 +566,12 @@ func (t *webFetchTool) Execute(ctx context.Context, args map[string]interface{})
 		return nil, fmt.Errorf("url is required")
 	}
 
+	// Max content length (default 15000 chars ~= 4000 tokens)
+	maxChars := 15000
+	if mc, ok := args["max_chars"].(float64); ok {
+		maxChars = int(mc)
+	}
+
 	// Extract domain from URL for policy check
 	domain := extractDomain(url)
 	allowed, reason := t.policy.CheckDomain(t.Name(), domain)
@@ -569,20 +579,79 @@ func (t *webFetchTool) Execute(ctx context.Context, args map[string]interface{})
 		return nil, fmt.Errorf("policy denied: %s", reason)
 	}
 
-	// TODO: Route through gateway if configured
-	// For now, direct fetch
-	resp, err := http.Get(url)
+	// Fetch the page
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; GridAgent/1.0)")
+	
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Limit read to prevent memory issues
+	limitedReader := io.LimitReader(resp.Body, 1024*1024) // 1MB max
+	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	return string(body), nil
+	// Extract readable text from HTML
+	content := extractReadableText(string(body))
+	
+	// Truncate if too long
+	if len(content) > maxChars {
+		content = content[:maxChars] + "\n\n[Content truncated at " + fmt.Sprintf("%d", maxChars) + " characters]"
+	}
+
+	return content, nil
+}
+
+// extractReadableText removes HTML tags and extracts readable content
+func extractReadableText(html string) string {
+	// Remove script and style blocks
+	reScript := regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+	html = reScript.ReplaceAllString(html, "")
+	reStyle := regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	html = reStyle.ReplaceAllString(html, "")
+	reHead := regexp.MustCompile(`(?is)<head[^>]*>.*?</head>`)
+	html = reHead.ReplaceAllString(html, "")
+	reNav := regexp.MustCompile(`(?is)<nav[^>]*>.*?</nav>`)
+	html = reNav.ReplaceAllString(html, "")
+	reFooter := regexp.MustCompile(`(?is)<footer[^>]*>.*?</footer>`)
+	html = reFooter.ReplaceAllString(html, "")
+	
+	// Remove HTML comments
+	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
+	html = reComments.ReplaceAllString(html, "")
+	
+	// Add newlines before block elements
+	reBlock := regexp.MustCompile(`<(p|div|br|h[1-6]|li|tr)[^>]*>`)
+	html = reBlock.ReplaceAllString(html, "\n")
+	
+	// Remove all remaining HTML tags
+	reTags := regexp.MustCompile(`<[^>]+>`)
+	text := reTags.ReplaceAllString(html, "")
+	
+	// Decode common HTML entities
+	text = strings.ReplaceAll(text, "&nbsp;", " ")
+	text = strings.ReplaceAll(text, "&amp;", "&")
+	text = strings.ReplaceAll(text, "&lt;", "<")
+	text = strings.ReplaceAll(text, "&gt;", ">")
+	text = strings.ReplaceAll(text, "&quot;", "\"")
+	text = strings.ReplaceAll(text, "&#39;", "'")
+	text = strings.ReplaceAll(text, "&apos;", "'")
+	
+	// Clean up whitespace
+	reMultiSpace := regexp.MustCompile(`[ \t]+`)
+	text = reMultiSpace.ReplaceAllString(text, " ")
+	reMultiNewline := regexp.MustCompile(`\n{3,}`)
+	text = reMultiNewline.ReplaceAllString(text, "\n\n")
+	
+	return strings.TrimSpace(text)
 }
 
 // webSearchTool implements the web_search tool (R5.4.2).
