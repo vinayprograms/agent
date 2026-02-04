@@ -229,6 +229,104 @@ func (e *Executor) initSubAgentRunner() {
 	e.subAgentRunner.OnSubAgentComplete = e.OnSubAgentComplete
 }
 
+// EnableDynamicSpawning registers the spawn_agent tool for orchestrator-style execution.
+// When enabled, the LLM can dynamically spawn sub-agents to handle tasks.
+func (e *Executor) EnableDynamicSpawning() {
+	spawner := func(ctx context.Context, role, task string) (string, error) {
+		return e.spawnDynamicAgent(ctx, role, task)
+	}
+	e.registry.Register(tools.NewSpawnAgentTool(spawner))
+}
+
+// spawnDynamicAgent spawns a sub-agent with the given role and task.
+func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string) (string, error) {
+	// Build system prompt for the sub-agent
+	systemPrompt := fmt.Sprintf("You are a %s. Complete the following task thoroughly and return your findings.\n\nTask: %s", role, task)
+
+	// Log the spawn
+	if e.OnSubAgentStart != nil {
+		e.OnSubAgentStart(role, map[string]string{"task": task})
+	}
+
+	// Create messages for the sub-agent
+	messages := []llm.Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: task},
+	}
+
+	// Build tool definitions (excluding spawn_agent to enforce depth=1)
+	var toolDefs []llm.ToolDef
+	for _, def := range e.registry.Definitions() {
+		if def.Name != "spawn_agent" {
+			toolDefs = append(toolDefs, llm.ToolDef{
+				Name:        def.Name,
+				Description: def.Description,
+				Parameters:  def.Parameters,
+			})
+		}
+	}
+
+	// Execute sub-agent loop
+	for {
+		resp, err := e.provider.Chat(ctx, llm.ChatRequest{
+			Messages: messages,
+			Tools:    toolDefs,
+		})
+		if err != nil {
+			return "", fmt.Errorf("sub-agent LLM error: %w", err)
+		}
+
+		// If no tool calls, we're done
+		if len(resp.ToolCalls) == 0 {
+			if e.OnSubAgentComplete != nil {
+				e.OnSubAgentComplete(role, resp.Content)
+			}
+			return resp.Content, nil
+		}
+
+		// Add assistant message with tool calls
+		messages = append(messages, llm.Message{
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		// Execute tool calls
+		for _, tc := range resp.ToolCalls {
+			result, err := e.executeTool(ctx, tc)
+			var content string
+			if err != nil {
+				content = fmt.Sprintf("Error: %v", err)
+			} else {
+				switch v := result.(type) {
+				case string:
+					content = v
+				default:
+					data, _ := json.Marshal(v)
+					content = string(data)
+				}
+			}
+			messages = append(messages, llm.Message{
+				Role:       "tool",
+				Content:    content,
+				ToolCallID: tc.ID,
+			})
+		}
+	}
+}
+
+// OrchestratorSystemPromptPrefix returns the prefix to inject when spawn_agent is available.
+const OrchestratorSystemPromptPrefix = `You are an orchestrator. You can spawn sub-agents to handle specific tasks.
+
+Consider delegating when:
+- The task has distinct parts that can be handled independently
+- Specialized expertise would help (research, analysis, critique, writing, etc.)
+- Work can be parallelized for efficiency
+
+Use spawn_agent(role, task) to delegate work. You coordinate the overall effort and synthesize results.
+
+`
+
 // Run executes the workflow.
 func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, error) {
 	// Bind inputs
@@ -390,6 +488,12 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 
 	// Build system message with skills context
 	systemMsg := "You are a helpful assistant executing a workflow goal."
+	
+	// If spawn_agent tool is available, inject orchestrator guidance
+	if e.registry.Has("spawn_agent") {
+		systemMsg = OrchestratorSystemPromptPrefix + systemMsg
+	}
+	
 	if len(e.skillRefs) > 0 {
 		systemMsg += "\n\nAvailable skills:\n"
 		for _, ref := range e.skillRefs {

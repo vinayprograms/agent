@@ -104,6 +104,15 @@ func (r *Registry) Get(name string) Tool {
 	return r.tools[name]
 }
 
+// Has returns true if the registry has a tool with the given name.
+func (r *Registry) Has(name string) bool {
+	if r == nil {
+		return false
+	}
+	_, ok := r.tools[name]
+	return ok
+}
+
 // Definitions returns LLM-facing definitions for enabled tools.
 func (r *Registry) Definitions() []ToolDefinition {
 	var defs []ToolDefinition
@@ -980,3 +989,60 @@ func (s *FileMemoryStore) Set(key, value string) error {
 	}
 	return os.WriteFile(s.path, data, 0644)
 }
+
+// SpawnFunc is the function signature for spawning sub-agents.
+// It takes role, task and returns the sub-agent's output.
+type SpawnFunc func(ctx context.Context, role, task string) (string, error)
+
+// spawnAgentTool implements dynamic sub-agent spawning.
+type spawnAgentTool struct {
+	spawner SpawnFunc
+}
+
+// NewSpawnAgentTool creates a spawn_agent tool with the given spawner function.
+func NewSpawnAgentTool(spawner SpawnFunc) Tool {
+	return &spawnAgentTool{spawner: spawner}
+}
+
+func (t *spawnAgentTool) Name() string { return "spawn_agent" }
+
+func (t *spawnAgentTool) Description() string {
+	return `Spawn a sub-agent to handle a specific task. The sub-agent runs in isolation and returns its output.
+Use this to delegate work: research, analysis, writing, review, etc.
+Each sub-agent is a fresh instance focused solely on its task.`
+}
+
+func (t *spawnAgentTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"role": map[string]interface{}{
+				"type":        "string",
+				"description": "The role/persona for the sub-agent (e.g., 'researcher', 'critic', 'analyst')",
+			},
+			"task": map[string]interface{}{
+				"type":        "string",
+				"description": "The specific task for the sub-agent to complete",
+			},
+		},
+		"required": []string{"role", "task"},
+	}
+}
+
+func (t *spawnAgentTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	role, ok := args["role"].(string)
+	if !ok {
+		return nil, fmt.Errorf("role is required")
+	}
+	task, ok := args["task"].(string)
+	if !ok {
+		return nil, fmt.Errorf("task is required")
+	}
+
+	if t.spawner == nil {
+		return nil, fmt.Errorf("spawn_agent not available (no spawner configured)")
+	}
+
+	return t.spawner(ctx, role, task)
+}
+

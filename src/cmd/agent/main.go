@@ -117,6 +117,7 @@ Run Options:
   --config <path>       Config file path
   --policy <path>       Policy file path
   --workspace <path>    Workspace directory
+  --orchestrate         Enable dynamic sub-agent spawning
 
 Pack Options:
   --output, -o <path>   Output package path
@@ -201,6 +202,15 @@ func runWorkflow(args []string) {
 			workspacePath = args[i]
 		case strings.HasPrefix(arg, "--workspace="):
 			workspacePath = strings.TrimPrefix(arg, "--workspace=")
+		}
+	}
+
+	// Check for --orchestrate flag
+	enableOrchestrate := false
+	for _, arg := range args {
+		if arg == "--orchestrate" {
+			enableOrchestrate = true
+			break
 		}
 	}
 
@@ -324,6 +334,19 @@ func runWorkflow(args []string) {
 
 	// Create executor
 	exec := executor.NewExecutor(wf, provider, registry, pol)
+	
+	// Enable dynamic spawning if --orchestrate flag is set
+	if enableOrchestrate {
+		exec.EnableDynamicSpawning()
+		exec.OnSubAgentStart = func(name string, input map[string]string) {
+			fmt.Fprintf(os.Stderr, "  ⊕ Spawning sub-agent: %s\n", name)
+			telem.LogEvent("subagent_start", map[string]interface{}{"role": name})
+		}
+		exec.OnSubAgentComplete = func(name, output string) {
+			fmt.Fprintf(os.Stderr, "  ⊖ Sub-agent complete: %s\n", name)
+			telem.LogEvent("subagent_complete", map[string]interface{}{"role": name})
+		}
+	}
 	
 	// Set up callbacks
 	exec.OnGoalStart = func(name string) {

@@ -1,0 +1,7 @@
+NAME dynamic-research
+
+INPUT topic
+
+GOAL research
+  Research {{topic}} thoroughly.
+  Consider multiple perspectives and synthesize findings.
