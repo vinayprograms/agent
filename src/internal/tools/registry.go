@@ -745,15 +745,16 @@ func (t *webSearchTool) Execute(ctx context.Context, args map[string]interface{}
 		}
 	}
 
-	// Try Brave first, then Tavily
+	// Try Brave first, then Tavily, then DuckDuckGo (no API key needed)
 	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
 		return searchBrave(ctx, query, count, apiKey)
 	}
 	if apiKey := os.Getenv("TAVILY_API_KEY"); apiKey != "" {
 		return searchTavily(ctx, query, count, apiKey)
 	}
-
-	return nil, fmt.Errorf("no search API configured. Set BRAVE_API_KEY or TAVILY_API_KEY in credentials.toml")
+	
+	// Fallback to DuckDuckGo HTML (no API key required)
+	return searchDuckDuckGo(ctx, query, count)
 }
 
 // SearchResult represents a single search result
@@ -858,6 +859,123 @@ func searchTavily(ctx context.Context, query string, count int, apiKey string) (
 		})
 	}
 	return results, nil
+}
+
+// searchDuckDuckGo searches using DuckDuckGo's HTML lite endpoint (no API key needed).
+func searchDuckDuckGo(ctx context.Context, query string, count int) ([]SearchResult, error) {
+	// Use the HTML lite endpoint that works well with CLI browsers
+	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", 
+		strings.ReplaceAll(strings.ReplaceAll(query, " ", "+"), "&", "%26"))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Mimic a simple text browser
+	req.Header.Set("User-Agent", "Lynx/2.8.9rel.1 libwww-FM/2.14")
+	req.Header.Set("Accept", "text/html")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("duckduckgo search failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("duckduckgo search error: status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read duckduckgo response: %w", err)
+	}
+
+	return parseDuckDuckGoHTML(string(body), count), nil
+}
+
+// parseDuckDuckGoHTML extracts search results from DuckDuckGo HTML response.
+func parseDuckDuckGoHTML(html string, count int) []SearchResult {
+	var results []SearchResult
+
+	// DuckDuckGo HTML results are in <a class="result__a"> tags
+	// with snippets in <a class="result__snippet"> tags
+	
+	// Simple regex-based parsing for the HTML lite version
+	// Result links: <a rel="nofollow" class="result__a" href="...">Title</a>
+	// Snippets: <a class="result__snippet" href="...">Snippet text</a>
+	
+	linkRe := regexp.MustCompile(`<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([^<]+)</a>`)
+	snippetRe := regexp.MustCompile(`<a[^>]+class="result__snippet"[^>]*>([^<]+(?:<[^>]+>[^<]*</[^>]+>)*[^<]*)</a>`)
+	
+	links := linkRe.FindAllStringSubmatch(html, count*2) // Get extra in case some are filtered
+	snippets := snippetRe.FindAllStringSubmatch(html, count*2)
+
+	for i := 0; i < len(links) && len(results) < count; i++ {
+		url := links[i][1]
+		title := strings.TrimSpace(links[i][2])
+		
+		// DuckDuckGo wraps URLs in a redirect - extract the actual URL
+		if strings.Contains(url, "uddg=") {
+			if parts := strings.Split(url, "uddg="); len(parts) > 1 {
+				decoded, err := decodeURLComponent(parts[1])
+				if err == nil {
+					// Remove anything after & in the decoded URL
+					if idx := strings.Index(decoded, "&"); idx != -1 {
+						decoded = decoded[:idx]
+					}
+					url = decoded
+				}
+			}
+		}
+		
+		// Skip non-http URLs
+		if !strings.HasPrefix(url, "http") {
+			continue
+		}
+
+		snippet := ""
+		if i < len(snippets) {
+			// Clean HTML tags from snippet
+			snippet = stripHTMLTags(snippets[i][1])
+		}
+
+		results = append(results, SearchResult{
+			Title:   decodeHTMLEntities(title),
+			URL:     url,
+			Snippet: decodeHTMLEntities(snippet),
+		})
+	}
+
+	return results
+}
+
+// decodeURLComponent decodes a URL-encoded string.
+func decodeURLComponent(s string) (string, error) {
+	// Handle common URL encoding
+	s = strings.ReplaceAll(s, "%3A", ":")
+	s = strings.ReplaceAll(s, "%2F", "/")
+	s = strings.ReplaceAll(s, "%3F", "?")
+	s = strings.ReplaceAll(s, "%3D", "=")
+	s = strings.ReplaceAll(s, "%26", "&")
+	s = strings.ReplaceAll(s, "%25", "%")
+	return s, nil
+}
+
+// stripHTMLTags removes HTML tags from a string.
+func stripHTMLTags(s string) string {
+	re := regexp.MustCompile(`<[^>]*>`)
+	return strings.TrimSpace(re.ReplaceAllString(s, ""))
+}
+
+// decodeHTMLEntities decodes common HTML entities.
+func decodeHTMLEntities(s string) string {
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	s = strings.ReplaceAll(s, "&quot;", "\"")
+	s = strings.ReplaceAll(s, "&#39;", "'")
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	return s
 }
 
 // extractDomain extracts the domain from a URL.
