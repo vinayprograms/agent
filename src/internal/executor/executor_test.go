@@ -634,3 +634,111 @@ func TestExecutor_AllCallbacks(t *testing.T) {
 		t.Errorf("expected goalCompleted 'goal1', got %q", goalCompleted)
 	}
 }
+
+// Test spawn_agent tool is registered by default
+func TestExecutor_SpawnAgentToolRegistered(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name: "test",
+		Steps: []agentfile.Step{
+			{Type: agentfile.StepRUN, UsingGoals: []string{"goal1"}},
+		},
+		Goals: []agentfile.Goal{
+			{Name: "goal1", Outcome: "Test"},
+		},
+	}
+
+	provider := llm.NewMockProvider()
+	registry := tools.NewRegistry(nil)
+
+	exec := NewExecutor(wf, provider, registry, nil)
+	_ = exec // executor created
+
+	// Verify spawn_agent is in the registry
+	if !registry.Has("spawn_agent") {
+		t.Error("expected spawn_agent tool to be registered")
+	}
+}
+
+// Test orchestrator prompt injection when spawn_agent is available
+func TestExecutor_OrchestratorPromptInjected(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name: "test",
+		Steps: []agentfile.Step{
+			{Type: agentfile.StepRUN, UsingGoals: []string{"goal1"}},
+		},
+		Goals: []agentfile.Goal{
+			{Name: "goal1", Outcome: "Research topic"},
+		},
+	}
+
+	provider := llm.NewMockProvider()
+	provider.SetResponse("Done")
+	pol := policy.New()
+	registry := tools.NewRegistry(pol)
+
+	exec := NewExecutor(wf, provider, registry, pol)
+	exec.Run(context.Background(), nil)
+
+	// Check that the system message contains orchestrator guidance
+	messages := provider.LastRequest().Messages
+	if len(messages) == 0 {
+		t.Fatal("expected messages in request")
+	}
+
+	systemMsg := ""
+	for _, m := range messages {
+		if m.Role == "system" {
+			systemMsg = m.Content
+			break
+		}
+	}
+
+	if !strings.Contains(systemMsg, "spawn sub-agents") {
+		t.Error("expected orchestrator guidance in system prompt")
+	}
+}
+
+// Test sub-agent depth=1 enforcement (spawn_agent not available to sub-agents)
+func TestExecutor_SubAgentCannotSpawn(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name: "test",
+		Steps: []agentfile.Step{
+			{Type: agentfile.StepRUN, UsingGoals: []string{"goal1"}},
+		},
+		Goals: []agentfile.Goal{
+			{Name: "goal1", Outcome: "Research"},
+		},
+	}
+
+	// Track what tools are available to sub-agent
+	var subAgentTools []string
+	provider := llm.NewMockProvider()
+	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		// Capture tool names from request
+		for _, tool := range req.Tools {
+			subAgentTools = append(subAgentTools, tool.Name)
+		}
+		return &llm.ChatResponse{
+			Content:    "Done",
+			StopReason: "end_turn",
+		}, nil
+	}
+
+	pol := policy.New()
+	registry := tools.NewRegistry(pol)
+	exec := NewExecutor(wf, provider, registry, pol)
+
+	// Manually trigger sub-agent spawn to inspect tool filtering
+	_, err := exec.spawnDynamicAgent(context.Background(), "researcher", "test task")
+	if err != nil {
+		t.Fatalf("spawn error: %v", err)
+	}
+
+	// spawn_agent should NOT be in sub-agent's tool list
+	for _, name := range subAgentTools {
+		if name == "spawn_agent" {
+			t.Error("spawn_agent should not be available to sub-agents")
+		}
+	}
+}
+

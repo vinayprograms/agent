@@ -410,6 +410,69 @@ When the orchestrator runs `audit`, it:
 3. Waits for both to complete
 4. Synthesizes their outputs
 
+## Dynamic Sub-Agent Spawning
+
+In addition to static sub-agents declared in the Agentfile, the LLM can **dynamically spawn sub-agents** at runtime using the `spawn_agent` tool.
+
+### How It Works
+
+Every agent has access to the `spawn_agent(role, task)` tool. The system prompt includes orchestrator guidance that encourages delegation when appropriate.
+
+```
+▶ Starting goal: research
+  → Tool: spawn_agent
+  ⊕ Spawning sub-agent: researcher
+    → Tool: web_search
+    → Tool: web_fetch
+  ⊖ Sub-agent complete: researcher
+  → Tool: spawn_agent
+  ⊕ Spawning sub-agent: critic
+  ⊖ Sub-agent complete: critic
+  → Tool: write
+✓ Completed goal: research
+```
+
+### Example
+
+**Agentfile:**
+```
+NAME dynamic-research
+INPUT topic
+GOAL research "Research $topic thoroughly, considering multiple perspectives"
+RUN main USING research
+```
+
+**What happens:**
+The LLM receives the goal and decides to delegate:
+```
+spawn_agent(role: "researcher", task: "Find factual information about {topic}")
+spawn_agent(role: "critic", task: "Identify potential biases and limitations")
+spawn_agent(role: "synthesizer", task: "Combine findings into a balanced summary")
+```
+
+### Depth=1 Enforcement
+
+Sub-agents spawned dynamically **cannot spawn their own sub-agents**. The `spawn_agent` tool is automatically excluded from their tool set:
+
+```
+Orchestrator (has spawn_agent)
+    ├── researcher (no spawn_agent)
+    ├── critic (no spawn_agent)
+    └── synthesizer (no spawn_agent)
+```
+
+This prevents infinite recursion and keeps the execution model simple.
+
+### When to Use
+
+| Static (AGENT/USING) | Dynamic (spawn_agent) |
+|---------------------|----------------------|
+| Known agents at design time | LLM decides what's needed |
+| Packaged agents with policies | Ad-hoc specialists |
+| Explicit control | Flexible problem decomposition |
+
+Both approaches can be used in the same workflow.
+
 ## Docker
 
 ```bash
@@ -432,7 +495,7 @@ docker run -it --rm \
 
 ## Examples
 
-See the `examples/` directory for 35 example workflows covering:
+See the `examples/` directory for 36 example workflows covering:
 - Programming (code review, testing, refactoring, security audits)
 - Writing (essays, stories, translations)
 - Planning (travel, fitness, learning paths)
