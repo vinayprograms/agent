@@ -534,6 +534,8 @@ docker run -it --rm \
 
 ## Supported LLM Providers
 
+The agent uses [Catwalk](https://github.com/charmbracelet/catwalk) for model discovery and [Fantasy](https://charm.land/fantasy) for provider abstraction.
+
 | Provider | `provider` value | `api_key_env` | Notes |
 |----------|-----------------|---------------|-------|
 | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | Claude models |
@@ -541,6 +543,28 @@ docker run -it --rm \
 | Google | `google` | `GOOGLE_API_KEY` | Gemini models |
 | Groq | `groq` | `GROQ_API_KEY` | Fast inference |
 | Mistral | `mistral` | `MISTRAL_API_KEY` | Mistral models |
+
+### Model Discovery
+
+The `provider` field is **optional** — the agent automatically determines the provider:
+
+1. **Catwalk lookup** (if `CATWALK_URL` set): Queries the catwalk server for exact model → provider mapping
+2. **Pattern inference** (fallback): Uses model name prefixes:
+   - `claude-*` → anthropic
+   - `gpt-*`, `o1-*`, `o3-*` → openai
+   - `gemini-*`, `gemma-*` → google
+   - `mistral-*`, `mixtral-*`, `codestral-*` → mistral
+
+When using Catwalk, you also get:
+- Model context windows and token limits
+- Cost information
+- Capability flags (reasoning, attachments)
+
+**Running a local Catwalk server:**
+```bash
+# Optional — only needed for live model updates
+export CATWALK_URL=http://localhost:8080
+```
 
 ## Built-in Tools
 

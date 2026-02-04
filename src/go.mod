@@ -1,6 +1,6 @@
 module github.com/openclaw/headless-agent
 
-go 1.25
+go 1.25.5
 
 require (
 	charm.land/fantasy v0.7.0
@@ -11,6 +11,7 @@ require (
 )
 
 require (
+	charm.land/catwalk v0.16.1 // indirect
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.18.1 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
@@ -33,6 +34,7 @@ require (
 	github.com/aws/smithy-go v1.24.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/anthropic-sdk-go v0.0.0-20251024181547-21d6f3d9a904 // indirect
+	github.com/charmbracelet/x/etag v0.2.0 // indirect
 	github.com/charmbracelet/x/exp/slice v0.0.0-20250904123553-b4e2667e5ad5 // indirect
 	github.com/charmbracelet/x/json v0.2.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
