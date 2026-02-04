@@ -24,19 +24,18 @@ import (
 
 const version = "0.1.0"
 
+// globalCreds holds loaded credentials (file > env fallback happens in GetAPIKey)
+var globalCreds *credentials.Credentials
+
 func init() {
-	// Load credentials from standard locations (silent if not found)
-	// Priority: env vars > .env > ~/.config/grid/credentials.toml
-	
-	// 1. Load credentials.toml first (lowest priority, can be overwritten)
+	// Load credentials from standard locations
+	// Priority: credentials.toml > env vars (handled by GetAPIKey)
 	if creds, _, err := credentials.Load(); err == nil && creds != nil {
-		creds.Apply()
+		globalCreds = creds
 	}
 	
-	// 2. Load .env (overwrites credentials.toml if both set)
+	// Load .env for any additional env vars
 	_ = godotenv.Load()
-	
-	// 3. Existing env vars have highest priority (Apply() won't overwrite them)
 }
 
 func main() {
@@ -258,11 +257,18 @@ func runWorkflow(args []string) {
 
 	// Create LLM provider
 	var provider llm.Provider
-	if cfg.LLM.Provider != "" {
+	
+	// Determine provider from model if not set
+	llmProvider := cfg.LLM.Provider
+	if llmProvider == "" {
+		llmProvider = llm.InferProviderFromModel(cfg.LLM.Model)
+	}
+	
+	if llmProvider != "" || cfg.LLM.Model != "" {
 		provider, err = llm.NewFantasyProvider(llm.FantasyConfig{
-			Provider:  cfg.LLM.Provider,
+			Provider:  llmProvider,
 			Model:     cfg.LLM.Model,
-			APIKey:    cfg.GetAPIKey(),
+			APIKey:    globalCreds.GetAPIKey(llmProvider),
 			MaxTokens: cfg.LLM.MaxTokens,
 		})
 		if err != nil {
@@ -270,7 +276,7 @@ func runWorkflow(args []string) {
 			os.Exit(1)
 		}
 	} else {
-		fmt.Fprintln(os.Stderr, "error: LLM provider not configured")
+		fmt.Fprintln(os.Stderr, "error: LLM model not configured")
 		os.Exit(1)
 	}
 
@@ -278,20 +284,19 @@ func runWorkflow(args []string) {
 	registry := tools.NewRegistry(pol)
 
 	// Set up summarizer for web_fetch if small_llm is configured
-	if cfg.SmallLLM.Provider != "" && cfg.SmallLLM.Model != "" {
-		// Resolve API key: explicit env var > default for provider
-		apiKeyEnv := cfg.SmallLLM.APIKeyEnv
-		if apiKeyEnv == "" {
-			apiKeyEnv = config.DefaultAPIKeyEnv(cfg.SmallLLM.Provider)
+	if cfg.SmallLLM.Model != "" {
+		smallProvider := cfg.SmallLLM.Provider
+		if smallProvider == "" {
+			smallProvider = llm.InferProviderFromModel(cfg.SmallLLM.Model)
 		}
-		smallProvider, err := llm.NewFantasyProvider(llm.FantasyConfig{
-			Provider:  cfg.SmallLLM.Provider,
+		smallLLM, err := llm.NewFantasyProvider(llm.FantasyConfig{
+			Provider:  smallProvider,
 			Model:     cfg.SmallLLM.Model,
-			APIKey:    os.Getenv(apiKeyEnv),
+			APIKey:    globalCreds.GetAPIKey(smallProvider),
 			MaxTokens: cfg.SmallLLM.MaxTokens,
 		})
 		if err == nil {
-			registry.SetSummarizer(llm.NewSummarizer(smallProvider))
+			registry.SetSummarizer(llm.NewSummarizer(smallLLM))
 		}
 	}
 

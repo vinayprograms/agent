@@ -159,13 +159,27 @@ func (p *Policy) IsToolEnabled(tool string) bool {
 
 // IsProtectedFile checks if a path refers to a protected config file.
 // Protected files cannot be modified by the agent.
+// Resolves symlinks to prevent bypass attacks.
 func (p *Policy) IsProtectedFile(path string) bool {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		absPath = path
 	}
 	
-	baseName := filepath.Base(absPath)
+	// Resolve symlinks to get the real path
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		// If file doesn't exist yet, check the path as-is
+		// but also check if parent exists and resolve that
+		dir := filepath.Dir(absPath)
+		if realDir, err := filepath.EvalSymlinks(dir); err == nil {
+			realPath = filepath.Join(realDir, filepath.Base(absPath))
+		} else {
+			realPath = absPath
+		}
+	}
+	
+	baseName := filepath.Base(realPath)
 	
 	// Check against protected file names
 	for _, protected := range ProtectedFiles {
@@ -177,18 +191,27 @@ func (p *Policy) IsProtectedFile(path string) bool {
 	// Also protect files in config directory
 	if p.ConfigDir != "" {
 		configAbs, _ := filepath.Abs(p.ConfigDir)
+		configReal, _ := filepath.EvalSymlinks(configAbs)
+		if configReal == "" {
+			configReal = configAbs
+		}
 		for _, protected := range ProtectedFiles {
-			protectedPath := filepath.Join(configAbs, protected)
-			if absPath == protectedPath {
+			protectedPath := filepath.Join(configReal, protected)
+			if realPath == protectedPath {
 				return true
 			}
 		}
-		// Protect ~/.config/grid/credentials.toml
-		if p.HomeDir != "" {
-			credPath := filepath.Join(p.HomeDir, ".config", "grid", "credentials.toml")
-			if absPath == credPath {
-				return true
-			}
+	}
+	
+	// Protect ~/.config/grid/credentials.toml
+	if p.HomeDir != "" {
+		credPath := filepath.Join(p.HomeDir, ".config", "grid", "credentials.toml")
+		credReal, _ := filepath.EvalSymlinks(credPath)
+		if credReal == "" {
+			credReal = credPath
+		}
+		if realPath == credReal {
+			return true
 		}
 	}
 	

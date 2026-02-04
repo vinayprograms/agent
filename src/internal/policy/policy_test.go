@@ -352,3 +352,29 @@ func TestPolicy_EditBlocksProtectedFiles(t *testing.T) {
 		t.Error("should block edit to credentials.toml")
 	}
 }
+
+// R6.6.3: Symlink bypass protection
+func TestPolicy_SymlinkBypass(t *testing.T) {
+	tmpDir := t.TempDir()
+	pol := New()
+	pol.ConfigDir = tmpDir
+	pol.HomeDir = tmpDir
+
+	// Create a real credentials.toml
+	credPath := filepath.Join(tmpDir, "credentials.toml")
+	os.WriteFile(credPath, []byte("test"), 0600)
+
+	// Create a symlink to it
+	linkPath := filepath.Join(tmpDir, "innocent.txt")
+	os.Symlink(credPath, linkPath)
+
+	// The symlink should be detected as protected
+	if !pol.IsProtectedFile(linkPath) {
+		t.Error("symlink to credentials.toml should be protected")
+	}
+
+	// Direct access should also be protected
+	if !pol.IsProtectedFile(credPath) {
+		t.Error("direct credentials.toml should be protected")
+	}
+}

@@ -2,11 +2,16 @@
 package credentials
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/BurntSushi/toml"
 )
+
+// ErrInsecurePermissions is returned when credentials file has overly permissive permissions.
+var ErrInsecurePermissions = fmt.Errorf("credentials file has insecure permissions")
 
 // Credentials holds API keys loaded from credentials.toml
 type Credentials struct {
@@ -58,8 +63,23 @@ func Load() (*Credentials, string, error) {
 	return nil, "", nil // No credentials file found (not an error)
 }
 
-// LoadFile loads credentials from a specific file
+// LoadFile loads credentials from a specific file.
+// Returns ErrInsecurePermissions if file is readable by group or others.
 func LoadFile(path string) (*Credentials, error) {
+	// Check file permissions (Unix only)
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		mode := info.Mode().Perm()
+		// Fail if group or others can read (should be 0600 or 0400)
+		if mode&0077 != 0 {
+			return nil, fmt.Errorf("%w: %s has mode %04o (should be 0600)", 
+				ErrInsecurePermissions, path, mode)
+		}
+	}
+
 	var creds Credentials
 	if _, err := toml.DecodeFile(path, &creds); err != nil {
 		return nil, err
@@ -67,37 +87,64 @@ func LoadFile(path string) (*Credentials, error) {
 	return &creds, nil
 }
 
-// Apply sets environment variables from loaded credentials (if not already set)
-func (c *Credentials) Apply() {
-	if c == nil {
-		return
+// GetAPIKey returns the API key for a provider.
+// Priority: credentials file > environment variable.
+func (c *Credentials) GetAPIKey(provider string) string {
+	if c != nil {
+		switch provider {
+		case "anthropic":
+			if c.Anthropic != nil && c.Anthropic.APIKey != "" {
+				return c.Anthropic.APIKey
+			}
+		case "openai":
+			if c.OpenAI != nil && c.OpenAI.APIKey != "" {
+				return c.OpenAI.APIKey
+			}
+		case "google":
+			if c.Google != nil && c.Google.APIKey != "" {
+				return c.Google.APIKey
+			}
+		case "mistral":
+			if c.Mistral != nil && c.Mistral.APIKey != "" {
+				return c.Mistral.APIKey
+			}
+		case "groq":
+			if c.Groq != nil && c.Groq.APIKey != "" {
+				return c.Groq.APIKey
+			}
+		case "brave":
+			if c.Brave != nil && c.Brave.APIKey != "" {
+				return c.Brave.APIKey
+			}
+		case "tavily":
+			if c.Tavily != nil && c.Tavily.APIKey != "" {
+				return c.Tavily.APIKey
+			}
+		}
 	}
 
-	if c.Anthropic != nil && c.Anthropic.APIKey != "" {
-		setIfEmpty("ANTHROPIC_API_KEY", c.Anthropic.APIKey)
-	}
-	if c.OpenAI != nil && c.OpenAI.APIKey != "" {
-		setIfEmpty("OPENAI_API_KEY", c.OpenAI.APIKey)
-	}
-	if c.Google != nil && c.Google.APIKey != "" {
-		setIfEmpty("GOOGLE_API_KEY", c.Google.APIKey)
-	}
-	if c.Mistral != nil && c.Mistral.APIKey != "" {
-		setIfEmpty("MISTRAL_API_KEY", c.Mistral.APIKey)
-	}
-	if c.Groq != nil && c.Groq.APIKey != "" {
-		setIfEmpty("GROQ_API_KEY", c.Groq.APIKey)
-	}
-	if c.Brave != nil && c.Brave.APIKey != "" {
-		setIfEmpty("BRAVE_API_KEY", c.Brave.APIKey)
-	}
-	if c.Tavily != nil && c.Tavily.APIKey != "" {
-		setIfEmpty("TAVILY_API_KEY", c.Tavily.APIKey)
-	}
+	// Fallback to environment variable
+	return os.Getenv(envVarForProvider(provider))
 }
 
-func setIfEmpty(key, value string) {
-	if os.Getenv(key) == "" {
-		os.Setenv(key, value)
+// envVarForProvider returns the environment variable name for a provider.
+func envVarForProvider(provider string) string {
+	switch provider {
+	case "anthropic":
+		return "ANTHROPIC_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	case "google":
+		return "GOOGLE_API_KEY"
+	case "mistral":
+		return "MISTRAL_API_KEY"
+	case "groq":
+		return "GROQ_API_KEY"
+	case "brave":
+		return "BRAVE_API_KEY"
+	case "tavily":
+		return "TAVILY_API_KEY"
+	default:
+		return ""
 	}
 }

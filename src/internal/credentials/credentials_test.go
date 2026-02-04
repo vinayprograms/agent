@@ -1,8 +1,10 @@
 package credentials
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -88,53 +90,133 @@ api_key = "groq-key"
 	}
 }
 
-func TestApply(t *testing.T) {
-	// Clear any existing env vars
-	os.Unsetenv("ANTHROPIC_API_KEY")
-	os.Unsetenv("OPENAI_API_KEY")
-
-	creds := &Credentials{
-		Anthropic: &ProviderCreds{APIKey: "test-anthropic"},
-		OpenAI:    &ProviderCreds{APIKey: "test-openai"},
+func TestLoadFile_InsecurePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission check not applicable on Windows")
 	}
 
-	creds.Apply()
+	tmpDir := t.TempDir()
+	credPath := filepath.Join(tmpDir, "credentials.toml")
 
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "test-anthropic" {
-		t.Errorf("ANTHROPIC_API_KEY = %q, want %q", got, "test-anthropic")
-	}
-	if got := os.Getenv("OPENAI_API_KEY"); got != "test-openai" {
-		t.Errorf("OPENAI_API_KEY = %q, want %q", got, "test-openai")
-	}
+	content := `
+[anthropic]
+api_key = "secret-key"
+`
+	// Write with world-readable permissions (0644)
+	os.WriteFile(credPath, []byte(content), 0644)
 
-	// Clean up
-	os.Unsetenv("ANTHROPIC_API_KEY")
-	os.Unsetenv("OPENAI_API_KEY")
+	_, err := LoadFile(credPath)
+	if err == nil {
+		t.Fatal("expected error for insecure permissions")
+	}
+	if !errors.Is(err, ErrInsecurePermissions) {
+		t.Errorf("expected ErrInsecurePermissions, got %v", err)
+	}
 }
 
-func TestApply_DoesNotOverwrite(t *testing.T) {
-	// Set existing env var
-	os.Setenv("ANTHROPIC_API_KEY", "existing-value")
-
-	creds := &Credentials{
-		Anthropic: &ProviderCreds{APIKey: "new-value"},
+func TestLoadFile_SecurePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission check not applicable on Windows")
 	}
 
-	creds.Apply()
+	tmpDir := t.TempDir()
+	credPath := filepath.Join(tmpDir, "credentials.toml")
 
-	// Should keep existing value
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "existing-value" {
-		t.Errorf("ANTHROPIC_API_KEY = %q, want %q (should not overwrite)", got, "existing-value")
+	content := `
+[anthropic]
+api_key = "secret-key"
+`
+	// Write with secure permissions (0600)
+	os.WriteFile(credPath, []byte(content), 0600)
+
+	creds, err := LoadFile(credPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	// Clean up
-	os.Unsetenv("ANTHROPIC_API_KEY")
+	if creds.Anthropic.APIKey != "secret-key" {
+		t.Errorf("unexpected api key: %s", creds.Anthropic.APIKey)
+	}
 }
 
-func TestApply_NilCredentials(t *testing.T) {
+func TestGetAPIKey_FromCredentials(t *testing.T) {
+	creds := &Credentials{
+		Anthropic: &ProviderCreds{APIKey: "creds-anthropic"},
+		OpenAI:    &ProviderCreds{APIKey: "creds-openai"},
+	}
+
+	if got := creds.GetAPIKey("anthropic"); got != "creds-anthropic" {
+		t.Errorf("GetAPIKey(anthropic) = %q, want %q", got, "creds-anthropic")
+	}
+	if got := creds.GetAPIKey("openai"); got != "creds-openai" {
+		t.Errorf("GetAPIKey(openai) = %q, want %q", got, "creds-openai")
+	}
+}
+
+func TestGetAPIKey_FallbackToEnv(t *testing.T) {
+	// Set env var but no credentials
+	os.Setenv("ANTHROPIC_API_KEY", "env-anthropic")
+	defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+	creds := &Credentials{} // No anthropic key set
+
+	if got := creds.GetAPIKey("anthropic"); got != "env-anthropic" {
+		t.Errorf("GetAPIKey(anthropic) = %q, want %q (from env)", got, "env-anthropic")
+	}
+}
+
+func TestGetAPIKey_CredentialsTakesPriority(t *testing.T) {
+	os.Setenv("ANTHROPIC_API_KEY", "env-value")
+	defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+	creds := &Credentials{
+		Anthropic: &ProviderCreds{APIKey: "creds-value"},
+	}
+
+	if got := creds.GetAPIKey("anthropic"); got != "creds-value" {
+		t.Errorf("GetAPIKey(anthropic) = %q, want %q (creds should take priority)", got, "creds-value")
+	}
+}
+
+func TestGetAPIKey_NilCredentials(t *testing.T) {
+	os.Setenv("OPENAI_API_KEY", "env-openai")
+	defer os.Unsetenv("OPENAI_API_KEY")
+
 	var creds *Credentials
-	// Should not panic
-	creds.Apply()
+
+	if got := creds.GetAPIKey("openai"); got != "env-openai" {
+		t.Errorf("GetAPIKey(openai) = %q, want %q (from env with nil creds)", got, "env-openai")
+	}
+}
+
+func TestGetAPIKey_AllProviders(t *testing.T) {
+	creds := &Credentials{
+		Anthropic: &ProviderCreds{APIKey: "anthropic-key"},
+		OpenAI:    &ProviderCreds{APIKey: "openai-key"},
+		Google:    &ProviderCreds{APIKey: "google-key"},
+		Mistral:   &ProviderCreds{APIKey: "mistral-key"},
+		Groq:      &ProviderCreds{APIKey: "groq-key"},
+		Brave:     &ProviderCreds{APIKey: "brave-key"},
+		Tavily:    &ProviderCreds{APIKey: "tavily-key"},
+	}
+
+	tests := []struct {
+		provider string
+		want     string
+	}{
+		{"anthropic", "anthropic-key"},
+		{"openai", "openai-key"},
+		{"google", "google-key"},
+		{"mistral", "mistral-key"},
+		{"groq", "groq-key"},
+		{"brave", "brave-key"},
+		{"tavily", "tavily-key"},
+	}
+
+	for _, tt := range tests {
+		if got := creds.GetAPIKey(tt.provider); got != tt.want {
+			t.Errorf("GetAPIKey(%s) = %q, want %q", tt.provider, got, tt.want)
+		}
+	}
 }
 
 func TestLoad_NoFile(t *testing.T) {
