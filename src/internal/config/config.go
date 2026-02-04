@@ -2,81 +2,82 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/BurntSushi/toml"
 )
 
 // Config represents the agent configuration.
 type Config struct {
-	Agent      AgentConfig           `json:"agent"`
-	LLM        LLMConfig             `json:"llm"`        // Default LLM settings
-	SmallLLM   LLMConfig             `json:"small_llm"`  // Fast/cheap model for summarization
-	Profiles   map[string]Profile    `json:"profiles"`   // Capability profiles
-	Web        WebConfig             `json:"web"`
-	Telemetry  TelemetryConfig       `json:"telemetry"`
-	Session    SessionConfig         `json:"session"`
-	MCP        MCPConfig             `json:"mcp"`        // MCP tool servers
-	Skills     SkillsConfig          `json:"skills"`     // Agent Skills
+	Agent     AgentConfig           `toml:"agent"`
+	LLM       LLMConfig             `toml:"llm"`        // Default LLM settings
+	SmallLLM  LLMConfig             `toml:"small_llm"`  // Fast/cheap model for summarization
+	Profiles  map[string]Profile    `toml:"profiles"`   // Capability profiles
+	Web       WebConfig             `toml:"web"`
+	Telemetry TelemetryConfig       `toml:"telemetry"`
+	Session   SessionConfig         `toml:"session"`
+	MCP       MCPConfig             `toml:"mcp"`        // MCP tool servers
+	Skills    SkillsConfig          `toml:"skills"`     // Agent Skills
 }
 
 // AgentConfig contains agent identification settings.
 type AgentConfig struct {
-	ID        string `json:"id"`
-	Workspace string `json:"workspace"`
+	ID        string `toml:"id"`
+	Workspace string `toml:"workspace"`
 }
 
 // LLMConfig contains LLM provider settings.
 type LLMConfig struct {
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	APIKeyEnv string `json:"api_key_env"`
-	MaxTokens int    `json:"max_tokens"`
+	Provider  string `toml:"provider"`
+	Model     string `toml:"model"`
+	APIKeyEnv string `toml:"api_key_env"`
+	MaxTokens int    `toml:"max_tokens"`
 }
 
 // Profile represents a capability profile mapping to a specific LLM configuration.
 type Profile struct {
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	APIKeyEnv string `json:"api_key_env"`
-	MaxTokens int    `json:"max_tokens"`
+	Provider  string `toml:"provider"`
+	Model     string `toml:"model"`
+	APIKeyEnv string `toml:"api_key_env"`
+	MaxTokens int    `toml:"max_tokens"`
 }
 
 // WebConfig contains Internet Gateway settings.
 type WebConfig struct {
-	GatewayURL      string `json:"gateway_url"`
-	GatewayTokenEnv string `json:"gateway_token_env"`
+	GatewayURL      string `toml:"gateway_url"`
+	GatewayTokenEnv string `toml:"gateway_token_env"`
 }
 
 // TelemetryConfig contains telemetry settings.
 type TelemetryConfig struct {
-	Enabled  bool   `json:"enabled"`
-	Endpoint string `json:"endpoint"`
-	Protocol string `json:"protocol"` // http, otlp, file, noop
+	Enabled  bool   `toml:"enabled"`
+	Endpoint string `toml:"endpoint"`
+	Protocol string `toml:"protocol"` // http, otlp, file, noop
 }
 
 // SessionConfig contains session storage settings.
 type SessionConfig struct {
-	Store string `json:"store"` // sqlite or file
-	Path  string `json:"path"`
+	Store string `toml:"store"` // sqlite or file
+	Path  string `toml:"path"`
 }
 
 // MCPConfig contains MCP tool server configuration.
 type MCPConfig struct {
-	Servers map[string]MCPServerConfig `json:"servers"`
+	Servers map[string]MCPServerConfig `toml:"servers"`
 }
 
 // MCPServerConfig configures an MCP server connection.
 type MCPServerConfig struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
+	Command string            `toml:"command"`
+	Args    []string          `toml:"args,omitempty"`
+	Env     map[string]string `toml:"env,omitempty"`
 }
 
 // SkillsConfig contains Agent Skills configuration.
 type SkillsConfig struct {
-	Paths []string `json:"paths"` // Directories to search for skills
+	Paths []string `toml:"paths"` // Directories to search for skills
 }
 
 // New creates a new config with defaults.
@@ -99,29 +100,23 @@ func Default() *Config {
 	return New()
 }
 
-// LoadFile loads configuration from a JSON file.
+// LoadFile loads configuration from a TOML file.
 func LoadFile(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
 	cfg := New()
-	if err := json.Unmarshal(data, cfg); err != nil {
+	if _, err := toml.DecodeFile(path, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
-
 	return cfg, nil
 }
 
-// LoadDefault loads configuration from agent.json in the current directory.
+// LoadDefault loads configuration from agent.toml in the current directory.
 func LoadDefault() (*Config, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	return LoadFile(filepath.Join(cwd, "agent.json"))
+	return LoadFile(filepath.Join(cwd, "agent.toml"))
 }
 
 // GetAPIKey returns the API key from the configured environment variable.

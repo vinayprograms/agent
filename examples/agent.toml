@@ -1,0 +1,44 @@
+# Agent Configuration
+
+[agent]
+id = "example-agent"
+workspace = "."
+
+[llm]
+model = "claude-sonnet-4-20250514"
+max_tokens = 4096
+
+[small_llm]
+model = "claude-3-5-haiku-20241022"
+max_tokens = 1000
+
+[profiles.reasoning-heavy]
+model = "claude-opus-4-20250514"
+
+[profiles.fast]
+model = "gpt-4o-mini"
+
+[profiles.code-generation]
+model = "gpt-4o"
+
+[profiles.creative]
+model = "claude-sonnet-4-20250514"
+max_tokens = 8192
+
+[mcp.servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+[mcp.servers.memory]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-memory"]
+
+[skills]
+paths = ["./skills", "~/.agent/skills"]
+
+[session]
+store = "file"
+path = "./sessions"
+
+[telemetry]
+enabled = false

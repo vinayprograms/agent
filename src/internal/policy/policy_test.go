@@ -279,3 +279,76 @@ func TestPolicy_RateLimit(t *testing.T) {
 		t.Errorf("expected rate limit 10, got %d", tp.RateLimit)
 	}
 }
+
+// R6.6: Protected config files cannot be modified
+func TestPolicy_ProtectedFiles(t *testing.T) {
+	pol := New()
+	pol.ConfigDir = "/workspace"
+	pol.HomeDir = "/home/user"
+
+	tests := []struct {
+		path      string
+		protected bool
+	}{
+		{"agent.toml", true},
+		{"policy.toml", true},
+		{"credentials.toml", true},
+		{"/workspace/agent.toml", true},
+		{"/workspace/policy.toml", true},
+		{"/home/user/.config/grid/credentials.toml", true},
+		{"README.md", false},
+		{"/workspace/src/main.go", false},
+		{"/workspace/config.toml", false}, // not a protected name
+	}
+
+	for _, tt := range tests {
+		result := pol.IsProtectedFile(tt.path)
+		if result != tt.protected {
+			t.Errorf("IsProtectedFile(%q) = %v, want %v", tt.path, result, tt.protected)
+		}
+	}
+}
+
+// R6.6.1: Write tool blocks protected files
+func TestPolicy_WriteBlocksProtectedFiles(t *testing.T) {
+	pol := New()
+	pol.ConfigDir = "/workspace"
+	pol.Tools["write"] = &ToolPolicy{
+		Enabled: true,
+		Allow:   []string{"**"}, // Allow everything normally
+	}
+
+	allowed, reason := pol.CheckPath("write", "/workspace/agent.toml")
+	if allowed {
+		t.Error("should block write to agent.toml")
+	}
+	if reason == "" {
+		t.Error("should have denial reason for protected file")
+	}
+
+	// Normal files should still work
+	allowed, _ = pol.CheckPath("write", "/workspace/src/main.go")
+	if !allowed {
+		t.Error("should allow write to normal files")
+	}
+}
+
+// R6.6.2: Edit tool blocks protected files
+func TestPolicy_EditBlocksProtectedFiles(t *testing.T) {
+	pol := New()
+	pol.ConfigDir = "/workspace"
+	pol.Tools["edit"] = &ToolPolicy{
+		Enabled: true,
+		Allow:   []string{"**"},
+	}
+
+	allowed, _ := pol.CheckPath("edit", "policy.toml")
+	if allowed {
+		t.Error("should block edit to policy.toml")
+	}
+
+	allowed, _ = pol.CheckPath("edit", "credentials.toml")
+	if allowed {
+		t.Error("should block edit to credentials.toml")
+	}
+}

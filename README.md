@@ -13,37 +13,34 @@ go build -o agent ./cmd/agent
 
 ### 2. Create a Config File
 
-Create `agent.json`:
+Create `agent.toml`:
 
-```json
-{
-  "agent": {
-    "id": "my-agent",
-    "workspace": "/path/to/your/workspace"
-  },
-  "llm": {
-    "model": "claude-sonnet-4-20250514",
-    "max_tokens": 4096
-  },
-  "profiles": {
-    "reasoning-heavy": {
-      "model": "claude-opus-4-20250514"
-    },
-    "fast": {
-      "model": "gpt-4o-mini"
-    },
-    "code-generation": {
-      "model": "gemini-1.5-pro"
-    }
-  },
-  "session": {
-    "store": "file",
-    "path": "./sessions"
-  },
-  "telemetry": {
-    "enabled": false
-  }
-}
+```toml
+# Agent Configuration
+
+[agent]
+id = "my-agent"
+workspace = "/path/to/your/workspace"
+
+[llm]
+model = "claude-sonnet-4-20250514"
+max_tokens = 4096
+
+[profiles.reasoning-heavy]
+model = "claude-opus-4-20250514"
+
+[profiles.fast]
+model = "gpt-4o-mini"
+
+[profiles.code-generation]
+model = "gemini-1.5-pro"
+
+[session]
+store = "file"
+path = "./sessions"
+
+[telemetry]
+enabled = false
 ```
 
 **Note:** The `provider` field is optional — it's automatically inferred from the model name:

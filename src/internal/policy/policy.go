@@ -10,11 +10,19 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// ProtectedFiles are files that agents cannot modify (security-critical).
+var ProtectedFiles = []string{
+	"agent.toml",
+	"credentials.toml",
+	"policy.toml",
+}
+
 // Policy represents the security policy for the agent.
 type Policy struct {
 	DefaultDeny bool
 	Workspace   string
 	HomeDir     string
+	ConfigDir   string // Directory containing agent.toml, policy.toml
 	Tools       map[string]*ToolPolicy
 }
 
@@ -149,6 +157,44 @@ func (p *Policy) IsToolEnabled(tool string) bool {
 	return tp.Enabled
 }
 
+// IsProtectedFile checks if a path refers to a protected config file.
+// Protected files cannot be modified by the agent.
+func (p *Policy) IsProtectedFile(path string) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+	
+	baseName := filepath.Base(absPath)
+	
+	// Check against protected file names
+	for _, protected := range ProtectedFiles {
+		if baseName == protected {
+			return true
+		}
+	}
+	
+	// Also protect files in config directory
+	if p.ConfigDir != "" {
+		configAbs, _ := filepath.Abs(p.ConfigDir)
+		for _, protected := range ProtectedFiles {
+			protectedPath := filepath.Join(configAbs, protected)
+			if absPath == protectedPath {
+				return true
+			}
+		}
+		// Protect ~/.config/grid/credentials.toml
+		if p.HomeDir != "" {
+			credPath := filepath.Join(p.HomeDir, ".config", "grid", "credentials.toml")
+			if absPath == credPath {
+				return true
+			}
+		}
+	}
+	
+	return false
+}
+
 // CheckPath checks if a path is allowed for a tool.
 func (p *Policy) CheckPath(tool, path string) (bool, string) {
 	tp := p.GetToolPolicy(tool)
@@ -160,6 +206,13 @@ func (p *Policy) CheckPath(tool, path string) (bool, string) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		absPath = path
+	}
+
+	// Check protected files first (write/edit tools)
+	if tool == "write" || tool == "edit" {
+		if p.IsProtectedFile(absPath) {
+			return false, fmt.Sprintf("path %s is a protected config file", path)
+		}
 	}
 
 	// Check deny patterns first (deny wins)

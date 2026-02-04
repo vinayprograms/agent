@@ -7,22 +7,21 @@ import (
 	"testing"
 )
 
-// R10.1.1: Load config from JSON file
+// R10.1.1: Load config from TOML file
 func TestConfig_LoadFromFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "agent.json")
-	os.WriteFile(configPath, []byte(`{
-		"agent": {
-			"id": "test-agent",
-			"workspace": "/workspace"
-		},
-		"llm": {
-			"provider": "anthropic",
-			"model": "claude-3-5-sonnet",
-			"api_key_env": "ANTHROPIC_API_KEY",
-			"max_tokens": 4096
-		}
-	}`), 0644)
+	configPath := filepath.Join(tmpDir, "agent.toml")
+	os.WriteFile(configPath, []byte(`
+[agent]
+id = "test-agent"
+workspace = "/workspace"
+
+[llm]
+provider = "anthropic"
+model = "claude-3-5-sonnet"
+api_key_env = "ANTHROPIC_API_KEY"
+max_tokens = 4096
+`), 0644)
 
 	cfg, err := LoadFile(configPath)
 	if err != nil {
@@ -49,16 +48,17 @@ func TestConfig_LoadFromFile(t *testing.T) {
 	}
 }
 
-// R10.1.3: Default to agent.json in current directory
+// R10.1.3: Default to agent.toml in current directory
 func TestConfig_LoadDefault(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer os.Chdir(oldWd)
 	os.Chdir(tmpDir)
 
-	os.WriteFile("agent.json", []byte(`{
-		"agent": {"id": "default-agent"}
-	}`), 0644)
+	os.WriteFile("agent.toml", []byte(`
+[agent]
+id = "default-agent"
+`), 0644)
 
 	cfg, err := LoadDefault()
 	if err != nil {
@@ -73,32 +73,31 @@ func TestConfig_LoadDefault(t *testing.T) {
 // R10.2.1-R10.2.13: All config sections
 func TestConfig_AllSections(t *testing.T) {
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "agent.json")
-	os.WriteFile(configPath, []byte(`{
-		"agent": {
-			"id": "full-agent",
-			"workspace": "/home/agent/workspace"
-		},
-		"llm": {
-			"provider": "openai",
-			"model": "gpt-4o",
-			"api_key_env": "OPENAI_API_KEY",
-			"max_tokens": 8192
-		},
-		"web": {
-			"gateway_url": "https://gateway.example.com",
-			"gateway_token_env": "GATEWAY_TOKEN"
-		},
-		"telemetry": {
-			"enabled": true,
-			"endpoint": "https://telemetry.example.com",
-			"protocol": "otlp"
-		},
-		"session": {
-			"store": "sqlite",
-			"path": "/data/sessions.db"
-		}
-	}`), 0644)
+	configPath := filepath.Join(tmpDir, "agent.toml")
+	os.WriteFile(configPath, []byte(`
+[agent]
+id = "full-agent"
+workspace = "/home/agent/workspace"
+
+[llm]
+provider = "openai"
+model = "gpt-4o"
+api_key_env = "OPENAI_API_KEY"
+max_tokens = 8192
+
+[web]
+gateway_url = "https://gateway.example.com"
+gateway_token_env = "GATEWAY_TOKEN"
+
+[telemetry]
+enabled = true
+endpoint = "https://telemetry.example.com"
+protocol = "otlp"
+
+[session]
+store = "sqlite"
+path = "/data/sessions.db"
+`), 0644)
 
 	cfg, err := LoadFile(configPath)
 	if err != nil {
@@ -172,21 +171,21 @@ func TestConfig_Defaults(t *testing.T) {
 
 // Test file not found
 func TestConfig_FileNotFound(t *testing.T) {
-	_, err := LoadFile("/nonexistent/path/agent.json")
+	_, err := LoadFile("/nonexistent/path/agent.toml")
 	if err == nil {
 		t.Error("expected error for missing file")
 	}
 }
 
-// Test invalid JSON
-func TestConfig_InvalidJSON(t *testing.T) {
+// Test invalid TOML
+func TestConfig_InvalidTOML(t *testing.T) {
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "agent.json")
-	os.WriteFile(configPath, []byte(`{invalid`), 0644)
+	configPath := filepath.Join(tmpDir, "agent.toml")
+	os.WriteFile(configPath, []byte(`[invalid`), 0644)
 
 	_, err := LoadFile(configPath)
 	if err == nil {
-		t.Error("expected error for invalid JSON")
+		t.Error("expected error for invalid TOML")
 	}
 }
 
@@ -252,5 +251,67 @@ func TestConfig_GetGatewayToken(t *testing.T) {
 	token := cfg.GetGatewayToken()
 	if token != "gateway456" {
 		t.Errorf("expected 'gateway456', got %s", token)
+	}
+}
+
+// Test capability profiles
+func TestConfig_Profiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "agent.toml")
+	os.WriteFile(configPath, []byte(`
+[agent]
+id = "profile-test"
+
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+max_tokens = 4096
+
+[profiles.reasoning-heavy]
+model = "claude-opus-4-20250514"
+
+[profiles.fast]
+provider = "openai"
+model = "gpt-4o-mini"
+max_tokens = 2048
+`), 0644)
+
+	cfg, err := LoadFile(configPath)
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+
+	// Default profile
+	defaultLLM := cfg.GetProfile("")
+	if defaultLLM.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("default profile: expected claude-sonnet-4-20250514, got %s", defaultLLM.Model)
+	}
+
+	// reasoning-heavy profile
+	reasoning := cfg.GetProfile("reasoning-heavy")
+	if reasoning.Model != "claude-opus-4-20250514" {
+		t.Errorf("reasoning profile: expected claude-opus-4-20250514, got %s", reasoning.Model)
+	}
+	// Should inherit provider from default
+	if reasoning.Provider != "anthropic" {
+		t.Errorf("reasoning profile: expected inherited provider 'anthropic', got %s", reasoning.Provider)
+	}
+
+	// fast profile
+	fast := cfg.GetProfile("fast")
+	if fast.Model != "gpt-4o-mini" {
+		t.Errorf("fast profile: expected gpt-4o-mini, got %s", fast.Model)
+	}
+	if fast.Provider != "openai" {
+		t.Errorf("fast profile: expected provider 'openai', got %s", fast.Provider)
+	}
+	if fast.MaxTokens != 2048 {
+		t.Errorf("fast profile: expected max_tokens 2048, got %d", fast.MaxTokens)
+	}
+
+	// Unknown profile falls back to default
+	unknown := cfg.GetProfile("nonexistent")
+	if unknown.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("unknown profile: should fall back to default, got %s", unknown.Model)
 	}
 }
