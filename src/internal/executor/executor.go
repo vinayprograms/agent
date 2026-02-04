@@ -972,6 +972,18 @@ func (e *Executor) executeMCPTool(ctx context.Context, tc llm.ToolCallResponse) 
 
 	server, toolName := parts[0], parts[1]
 
+	// Check MCP tool policy
+	if e.policy != nil {
+		allowed, reason, warning := e.policy.CheckMCPTool(server, toolName)
+		if warning != "" {
+			// Log warning (would go to logger in production)
+			e.logEvent(session.EventSystem, fmt.Sprintf("SECURITY WARNING: %s", warning))
+		}
+		if !allowed {
+			return nil, fmt.Errorf("policy denied: %s", reason)
+		}
+	}
+
 	result, err := e.mcpManager.CallTool(ctx, server, toolName, tc.Args)
 	if err != nil {
 		return nil, err

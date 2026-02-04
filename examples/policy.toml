@@ -1,37 +1,53 @@
 default_deny = false
 
-[tools.read]
-enabled = true
+# MCP Tool Security
+# ---
+# default_deny = false (or omitted): All MCP tools allowed (development mode)
+# default_deny = true: Only tools in allowed_tools list can be called
+[mcp]
+default_deny = false  # Set to true for production
+# allowed_tools = ["filesystem:read_file", "filesystem:list_directory", "memory:*"]
 
-[tools.write]
-enabled = true
-
-[tools.edit]
-enabled = true
-
-[tools.glob]
-enabled = true
-
-[tools.grep]
-enabled = true
-
-[tools.ls]
-enabled = true
-
-[tools.bash]
-enabled = true
-denylist = ["rm -rf *", "sudo *", "chmod 777 *"]
-
-[tools.web_fetch]
+# Web Tool Security
+# ---
+# allow_domains restricts which domains can be fetched/searched
+[web_fetch]
 enabled = true
 rate_limit = 30
+# Recommended: restrict to known-good domains in production
+# allow_domains = ["github.com", "*.github.io", "docs.python.org", "pkg.go.dev"]
 
-[tools.web_search]
+[web_search]
 enabled = true
 rate_limit = 10
 
-[tools.memory_read]
+# File Tools
+[read]
 enabled = true
 
-[tools.memory_write]
+[write]
+enabled = true
+
+[edit]
+enabled = true
+
+[glob]
+enabled = true
+
+[grep]
+enabled = true
+
+[ls]
+enabled = true
+
+# Shell
+[bash]
+enabled = true
+denylist = ["rm -rf *", "sudo *", "chmod 777 *"]
+
+# Memory
+[memory_read]
+enabled = true
+
+[memory_write]
 enabled = true

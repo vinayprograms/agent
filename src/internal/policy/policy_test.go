@@ -378,3 +378,83 @@ func TestPolicy_SymlinkBypass(t *testing.T) {
 		t.Error("direct credentials.toml should be protected")
 	}
 }
+
+// R6.7: MCP tool policy
+func TestPolicy_MCPToolNotConfigured(t *testing.T) {
+	pol := New()
+	// MCP is nil - should allow but warn
+
+	allowed, _, warning := pol.CheckMCPTool("filesystem", "read_file")
+	if !allowed {
+		t.Error("should allow MCP tool when policy not configured")
+	}
+	if warning == "" {
+		t.Error("should warn when MCP policy not configured")
+	}
+}
+
+func TestPolicy_MCPToolDefaultDenyFalse(t *testing.T) {
+	pol := New()
+	pol.MCP = &MCPPolicy{DefaultDeny: false}
+
+	allowed, _, warning := pol.CheckMCPTool("filesystem", "read_file")
+	if !allowed {
+		t.Error("should allow when default_deny is false")
+	}
+	if warning != "" {
+		t.Error("should not warn when policy is configured")
+	}
+}
+
+func TestPolicy_MCPToolDefaultDenyTrue(t *testing.T) {
+	pol := New()
+	pol.MCP = &MCPPolicy{
+		DefaultDeny:  true,
+		AllowedTools: []string{"filesystem:read_file", "memory:*"},
+	}
+
+	// Explicitly allowed tool
+	allowed, _, _ := pol.CheckMCPTool("filesystem", "read_file")
+	if !allowed {
+		t.Error("should allow filesystem:read_file")
+	}
+
+	// Wildcard pattern
+	allowed, _, _ = pol.CheckMCPTool("memory", "store")
+	if !allowed {
+		t.Error("should allow memory:* pattern")
+	}
+
+	// Not in allowlist
+	allowed, reason, _ := pol.CheckMCPTool("filesystem", "write_file")
+	if allowed {
+		t.Error("should deny filesystem:write_file")
+	}
+	if reason == "" {
+		t.Error("should have denial reason")
+	}
+}
+
+func TestPolicy_MCPToolParsing(t *testing.T) {
+	content := `
+default_deny = true
+
+[mcp]
+default_deny = true
+allowed_tools = ["filesystem:read_file", "memory:*"]
+`
+	pol, err := Parse(content)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	if pol.MCP == nil {
+		t.Fatal("expected MCP policy to be parsed")
+	}
+	if !pol.MCP.DefaultDeny {
+		t.Error("expected MCP default_deny = true")
+	}
+	if len(pol.MCP.AllowedTools) != 2 {
+		t.Errorf("expected 2 allowed tools, got %d", len(pol.MCP.AllowedTools))
+	}
+}

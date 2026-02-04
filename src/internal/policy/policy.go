@@ -24,6 +24,7 @@ type Policy struct {
 	HomeDir     string
 	ConfigDir   string // Directory containing agent.toml, policy.toml
 	Tools       map[string]*ToolPolicy
+	MCP         *MCPPolicy // MCP tools policy
 }
 
 // ToolPolicy represents the policy for a specific tool.
@@ -35,6 +36,15 @@ type ToolPolicy struct {
 	Denylist     []string // for bash
 	AllowDomains []string // for web tools
 	RateLimit    int      // requests per minute
+}
+
+// MCPPolicy controls MCP tool access.
+type MCPPolicy struct {
+	// DefaultDeny: if true, all MCP tools are blocked unless in AllowedTools.
+	// If false, all MCP tools are allowed (dev mode).
+	// If not set (nil MCPPolicy), logs a security warning.
+	DefaultDeny  bool
+	AllowedTools []string // List of "server:tool" patterns to allow
 }
 
 // tomlPolicy is the TOML representation.
@@ -74,9 +84,13 @@ func LoadFile(path string) (*Policy, error) {
 
 // Parse parses a policy from TOML content.
 func Parse(content string) (*Policy, error) {
-	// First pass: get default_deny
+	// First pass: get default_deny and mcp section
 	var base struct {
 		DefaultDeny bool `toml:"default_deny"`
+		MCP         *struct {
+			DefaultDeny  bool     `toml:"default_deny"`
+			AllowedTools []string `toml:"allowed_tools"`
+		} `toml:"mcp"`
 	}
 	if _, err := toml.Decode(content, &base); err != nil {
 		return nil, fmt.Errorf("failed to parse policy: %w", err)
@@ -84,6 +98,14 @@ func Parse(content string) (*Policy, error) {
 
 	pol := New()
 	pol.DefaultDeny = base.DefaultDeny
+	
+	// Parse MCP policy
+	if base.MCP != nil {
+		pol.MCP = &MCPPolicy{
+			DefaultDeny:  base.MCP.DefaultDeny,
+			AllowedTools: base.MCP.AllowedTools,
+		}
+	}
 
 	// Second pass: parse tool sections
 	var raw map[string]interface{}
@@ -92,7 +114,7 @@ func Parse(content string) (*Policy, error) {
 	}
 
 	for key, value := range raw {
-		if key == "default_deny" {
+		if key == "default_deny" || key == "mcp" {
 			continue
 		}
 
@@ -312,6 +334,47 @@ func (p *Policy) CheckDomain(tool, domain string) (bool, string) {
 	}
 
 	return false, fmt.Sprintf("domain %s not in allow list", domain)
+}
+
+// CheckMCPTool checks if an MCP tool is allowed.
+// Returns (allowed, reason, warning).
+// Warning is non-empty if MCP policy is not configured (security issue).
+func (p *Policy) CheckMCPTool(server, tool string) (bool, string, string) {
+	// If MCP policy not configured, warn but allow (dev mode)
+	if p.MCP == nil {
+		return true, "", "MCP policy not configured - all MCP tools allowed. Set [mcp] in policy.toml for production."
+	}
+
+	// If default_deny is false, allow all
+	if !p.MCP.DefaultDeny {
+		return true, "", ""
+	}
+
+	// Check against allowed tools list
+	toolSpec := fmt.Sprintf("%s:%s", server, tool)
+	for _, pattern := range p.MCP.AllowedTools {
+		if matchMCPTool(pattern, server, tool) {
+			return true, "", ""
+		}
+	}
+
+	return false, fmt.Sprintf("MCP tool %s not in allowed_tools list", toolSpec), ""
+}
+
+// matchMCPTool matches "server:tool" against a pattern.
+// Patterns can be: "server:tool" (exact), "server:*" (all tools from server), "*:tool" (tool from any server)
+func matchMCPTool(pattern, server, tool string) bool {
+	parts := strings.SplitN(pattern, ":", 2)
+	if len(parts) != 2 {
+		return pattern == server+":"+tool
+	}
+	
+	serverPattern, toolPattern := parts[0], parts[1]
+	
+	serverMatch := serverPattern == "*" || serverPattern == server
+	toolMatch := toolPattern == "*" || toolPattern == tool
+	
+	return serverMatch && toolMatch
 }
 
 // expandPattern expands $WORKSPACE and ~ in patterns.
