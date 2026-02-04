@@ -359,18 +359,6 @@ GOAL analyze "Analyze $topic" -> summary, recommendations USING researcher, crit
 3. An implicit **synthesizer** transforms their outputs into the goal's fields
 4. This is essentially: `findings, sources, issues, concerns -> summary, recommendations`
 
-### Dynamic spawn_agent
-
-```
-spawn_agent(
-  role: "researcher",
-  task: "Find historical data",
-  outputs: ["timeline", "key_events"]
-)
-```
-
-The `outputs` parameter is optional. When provided, the sub-agent returns structured JSON.
-
 ## AGENT FROM Resolution
 
 The `FROM` clause in `AGENT` declarations supports smart resolution:
@@ -457,7 +445,9 @@ In addition to static sub-agents declared in the Agentfile, the LLM can **dynami
 
 ### How It Works
 
-Every agent has access to the `spawn_agent(role, task)` tool. The system prompt includes orchestrator guidance that encourages delegation when appropriate.
+Every agent has access to the `spawn_agent(role, task, outputs)` tool. The system prompt includes orchestrator guidance that encourages delegation when appropriate.
+
+The optional `outputs` parameter enables structured output — when provided, the sub-agent returns JSON with those fields instead of freeform text.
 
 ```
 ▶ Starting goal: research
