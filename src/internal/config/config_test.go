@@ -227,6 +227,9 @@ func TestDefaultAPIKeyEnv(t *testing.T) {
 	}{
 		{"anthropic", "ANTHROPIC_API_KEY"},
 		{"openai", "OPENAI_API_KEY"},
+		{"google", "GOOGLE_API_KEY"},
+		{"mistral", "MISTRAL_API_KEY"},
+		{"groq", "GROQ_API_KEY"},
 		{"unknown", ""},
 	}
 

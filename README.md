@@ -521,10 +521,13 @@ docker run -it --rm \
 
 ## Supported LLM Providers
 
-| Provider | `provider` value | `api_key_env` |
-|----------|-----------------|---------------|
-| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` |
-| OpenAI | `openai` | `OPENAI_API_KEY` |
+| Provider | `provider` value | `api_key_env` | Notes |
+|----------|-----------------|---------------|-------|
+| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | Claude models |
+| OpenAI | `openai` | `OPENAI_API_KEY` | GPT models |
+| Google | `google` | `GOOGLE_API_KEY` | Gemini models |
+| Groq | `groq` | `GROQ_API_KEY` | Fast inference |
+| Mistral | `mistral` | `MISTRAL_API_KEY` | Mistral models |
 
 ## Built-in Tools
 
