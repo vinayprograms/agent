@@ -1,6 +1,6 @@
-# Dynamic Sub-Agent Spawning (Orchestrator Mode)
+# Dynamic Sub-Agent Spawning
 
-Run with `--orchestrate` to enable dynamic sub-agent spawning.
+The agent has access to `spawn_agent` tool by default. When the LLM determines a task would benefit from delegation, it spawns sub-agents automatically.
 
 ## Agentfile
 
@@ -16,17 +16,16 @@ GOAL research
 ## Usage
 
 ```bash
-agent run -f Agentfile --orchestrate --config agent.json --input topic="quantum computing"
+agent run -f Agentfile --config agent.json --input topic="quantum computing"
 ```
 
 ## What happens
 
-1. The agent receives the `spawn_agent` tool
-2. System prompt is augmented with orchestrator guidance
-3. The LLM can dynamically spawn sub-agents:
-   - `spawn_agent(role: "researcher", task: "Find recent advances in quantum computing")`
-   - `spawn_agent(role: "critic", task: "Identify limitations and challenges")`
-   - `spawn_agent(role: "synthesizer", task: "Combine findings into a summary")`
+The LLM receives the `spawn_agent` tool and orchestrator guidance in its system prompt. It can dynamically spawn sub-agents when appropriate:
+
+- `spawn_agent(role: "researcher", task: "Find recent advances in quantum computing")`
+- `spawn_agent(role: "critic", task: "Identify limitations and challenges")`
+- `spawn_agent(role: "synthesizer", task: "Combine findings into a summary")`
 
 ## CLI Output
 

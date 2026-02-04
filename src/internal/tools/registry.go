@@ -92,6 +92,14 @@ func (r *Registry) registerBuiltins() {
 	r.Register(&bashTool{policy: r.policy})
 	r.Register(&webFetchTool{policy: r.policy})
 	r.Register(&webSearchTool{policy: r.policy})
+	r.Register(&spawnAgentTool{}) // spawner set later via SetSpawner
+}
+
+// SetSpawner sets the spawner function for the spawn_agent tool
+func (r *Registry) SetSpawner(spawner SpawnFunc) {
+	if t, ok := r.tools["spawn_agent"].(*spawnAgentTool); ok {
+		t.spawner = spawner
+	}
 }
 
 // Register adds a tool to the registry.

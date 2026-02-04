@@ -79,7 +79,7 @@ type Executor struct {
 
 // NewExecutor creates a new executor.
 func NewExecutor(wf *agentfile.Workflow, provider llm.Provider, registry *tools.Registry, pol *policy.Policy) *Executor {
-	return &Executor{
+	e := &Executor{
 		workflow:        wf,
 		provider:        provider,
 		providerFactory: llm.NewSingleProviderFactory(provider),
@@ -88,12 +88,14 @@ func NewExecutor(wf *agentfile.Workflow, provider llm.Provider, registry *tools.
 		outputs:         make(map[string]string),
 		loadedSkills:    make(map[string]*skills.Skill),
 	}
+	e.initSpawner()
+	return e
 }
 
 // NewExecutorWithFactory creates an executor with a provider factory for profile support.
 func NewExecutorWithFactory(wf *agentfile.Workflow, factory llm.ProviderFactory, registry *tools.Registry, pol *policy.Policy) *Executor {
 	defaultProvider, _ := factory.GetProvider("")
-	return &Executor{
+	e := &Executor{
 		workflow:        wf,
 		provider:        defaultProvider,
 		providerFactory: factory,
@@ -102,6 +104,18 @@ func NewExecutorWithFactory(wf *agentfile.Workflow, factory llm.ProviderFactory,
 		outputs:         make(map[string]string),
 		loadedSkills:    make(map[string]*skills.Skill),
 	}
+	e.initSpawner()
+	return e
+}
+
+// initSpawner wires up the spawn_agent tool to this executor
+func (e *Executor) initSpawner() {
+	if e.registry == nil {
+		return
+	}
+	e.registry.SetSpawner(func(ctx context.Context, role, task string) (string, error) {
+		return e.spawnDynamicAgent(ctx, role, task)
+	})
 }
 
 // SetMCPManager sets the MCP manager for external tool access.
@@ -227,15 +241,6 @@ func (e *Executor) initSubAgentRunner() {
 	e.subAgentRunner = subagent.NewRunner(e.providerFactory, e.packagePaths)
 	e.subAgentRunner.OnSubAgentStart = e.OnSubAgentStart
 	e.subAgentRunner.OnSubAgentComplete = e.OnSubAgentComplete
-}
-
-// EnableDynamicSpawning registers the spawn_agent tool for orchestrator-style execution.
-// When enabled, the LLM can dynamically spawn sub-agents to handle tasks.
-func (e *Executor) EnableDynamicSpawning() {
-	spawner := func(ctx context.Context, role, task string) (string, error) {
-		return e.spawnDynamicAgent(ctx, role, task)
-	}
-	e.registry.Register(tools.NewSpawnAgentTool(spawner))
 }
 
 // spawnDynamicAgent spawns a sub-agent with the given role and task.
