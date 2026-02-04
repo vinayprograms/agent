@@ -57,7 +57,7 @@ API keys are loaded in this priority order (highest to lowest):
 2. `.env` file in current directory
 3. `~/.config/grid/credentials.toml`
 
-**Option A — Environment variables:**
+**Option A — Environment variables (recommended for production):**
 ```bash
 export ANTHROPIC_API_KEY="your-key-here"
 export OPENAI_API_KEY="your-key-here"
@@ -70,7 +70,7 @@ ANTHROPIC_API_KEY=your-key-here
 OPENAI_API_KEY=your-key-here
 ```
 
-**Option C — `~/.config/grid/credentials.toml` (recommended for shared credentials):**
+**Option C — `~/.config/grid/credentials.toml` (shared credentials file):**
 ```toml
 # ~/.config/grid/credentials.toml
 
@@ -91,6 +91,17 @@ api_key = "your-key-here"
 ```
 
 This file is shared with other Grid tools and agents.
+
+#### Security Considerations
+
+**For development and small deployments:** Using a credentials file is convenient. You can package it into a container for a small set of agents.
+
+**For production and larger deployments:** Use environment variable injection instead of copying credential files. In Kubernetes, use Secrets mounted as env vars. Credential files:
+- Can accidentally be committed to version control
+- Are harder to rotate across multiple deployments
+- Create copies of secrets that may persist on disk
+
+**Never commit credentials to git.** Add `credentials.toml`, `.env`, and `*.pem` to your `.gitignore`.
 
 ### 4. Create an Agentfile
 
