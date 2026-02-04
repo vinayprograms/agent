@@ -12,6 +12,7 @@ import (
 
 	"github.com/openclaw/headless-agent/internal/agentfile"
 	"github.com/openclaw/headless-agent/internal/llm"
+	"github.com/openclaw/headless-agent/internal/logging"
 	"github.com/openclaw/headless-agent/internal/mcp"
 	"github.com/openclaw/headless-agent/internal/policy"
 	"github.com/openclaw/headless-agent/internal/session"
@@ -44,6 +45,7 @@ type Executor struct {
 	providerFactory llm.ProviderFactory // Profile-based providers
 	registry        *tools.Registry
 	policy          *policy.Policy
+	logger          *logging.Logger
 
 	// MCP support
 	mcpManager *mcp.Manager
@@ -85,6 +87,7 @@ func NewExecutor(wf *agentfile.Workflow, provider llm.Provider, registry *tools.
 		providerFactory: llm.NewSingleProviderFactory(provider),
 		registry:        registry,
 		policy:          pol,
+		logger:          logging.New().WithComponent("executor"),
 		outputs:         make(map[string]string),
 		loadedSkills:    make(map[string]*skills.Skill),
 	}
@@ -101,6 +104,7 @@ func NewExecutorWithFactory(wf *agentfile.Workflow, factory llm.ProviderFactory,
 		providerFactory: factory,
 		registry:        registry,
 		policy:          pol,
+		logger:          logging.New().WithComponent("executor"),
 		outputs:         make(map[string]string),
 		loadedSkills:    make(map[string]*skills.Skill),
 	}
@@ -171,6 +175,9 @@ func (e *Executor) logToolCall(name string, args map[string]interface{}) {
 
 // logToolResult logs a tool result event to the session.
 func (e *Executor) logToolResult(name string, result interface{}, err error, duration time.Duration) {
+	// Structured logging to stdout
+	e.logger.ToolResult(name, duration.Milliseconds(), err)
+
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -976,8 +983,10 @@ func (e *Executor) executeMCPTool(ctx context.Context, tc llm.ToolCallResponse) 
 	if e.policy != nil {
 		allowed, reason, warning := e.policy.CheckMCPTool(server, toolName)
 		if warning != "" {
-			// Log warning (would go to logger in production)
-			e.logEvent(session.EventSystem, fmt.Sprintf("SECURITY WARNING: %s", warning))
+			e.logger.SecurityWarning(warning, map[string]interface{}{
+				"server": server,
+				"tool":   toolName,
+			})
 		}
 		if !allowed {
 			return nil, fmt.Errorf("policy denied: %s", reason)
