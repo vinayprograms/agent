@@ -88,9 +88,18 @@ api_key = "your-key-here"
 
 [groq]
 api_key = "your-key-here"
+
+# Web search (optional - falls back to DuckDuckGo if not set)
+[brave]
+api_key = "your-key-here"
+
+[tavily]
+api_key = "your-key-here"
 ```
 
 This file is shared with other Grid tools and agents.
+
+**Web Search Priority:** Brave API → Tavily API → DuckDuckGo (no key needed)
 
 ### 4. Create an Agentfile
 

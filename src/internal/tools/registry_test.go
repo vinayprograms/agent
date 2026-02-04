@@ -345,3 +345,91 @@ func TestTool_Read_SecurityDeny(t *testing.T) {
 		t.Error("expected security denial")
 	}
 }
+
+// Test DuckDuckGo HTML parsing
+func TestParseDuckDuckGoHTML(t *testing.T) {
+	// Sample HTML structure from DuckDuckGo lite
+	html := `
+	<div class="result">
+		<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage&rut=abc">Example Title</a>
+		<a class="result__snippet">This is a snippet with some text.</a>
+	</div>
+	<div class="result">
+		<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fgolang.org%2Fdoc&rut=def">Go Documentation</a>
+		<a class="result__snippet">Official Go docs and tutorials.</a>
+	</div>
+	`
+
+	results := parseDuckDuckGoHTML(html, 5)
+	
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	if results[0].Title != "Example Title" {
+		t.Errorf("expected title 'Example Title', got %q", results[0].Title)
+	}
+	if results[0].URL != "https://example.com/page" {
+		t.Errorf("expected URL 'https://example.com/page', got %q", results[0].URL)
+	}
+	if results[0].Snippet != "This is a snippet with some text." {
+		t.Errorf("unexpected snippet: %q", results[0].Snippet)
+	}
+
+	if results[1].Title != "Go Documentation" {
+		t.Errorf("expected title 'Go Documentation', got %q", results[1].Title)
+	}
+	if results[1].URL != "https://golang.org/doc" {
+		t.Errorf("expected URL 'https://golang.org/doc', got %q", results[1].URL)
+	}
+}
+
+// Test URL component decoding
+func TestDecodeURLComponent(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"https%3A%2F%2Fexample.com", "https://example.com"},
+		{"path%3Fquery%3Dvalue", "path?query=value"},
+		{"a%26b%3Dc", "a&b=c"},
+	}
+
+	for _, tt := range tests {
+		result, _ := decodeURLComponent(tt.input)
+		if result != tt.expected {
+			t.Errorf("decodeURLComponent(%q) = %q, want %q", tt.input, result, tt.expected)
+		}
+	}
+}
+
+// Test HTML entity decoding
+func TestDecodeHTMLEntities(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"Hello &amp; World", "Hello & World"},
+		{"&lt;tag&gt;", "<tag>"},
+		{"It&#39;s a test", "It's a test"},
+		{"&quot;quoted&quot;", "\"quoted\""},
+	}
+
+	for _, tt := range tests {
+		result := decodeHTMLEntities(tt.input)
+		if result != tt.expected {
+			t.Errorf("decodeHTMLEntities(%q) = %q, want %q", tt.input, result, tt.expected)
+		}
+	}
+}
+
+// Test HTML tag stripping
+func TestStripHTMLTags(t *testing.T) {
+	input := "Hello <b>world</b> and <a href='x'>link</a>!"
+	expected := "Hello world and link!"
+	
+	result := stripHTMLTags(input)
+	if result != expected {
+		t.Errorf("stripHTMLTags(%q) = %q, want %q", input, result, expected)
+	}
+}
