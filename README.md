@@ -608,6 +608,70 @@ api_key = "your-key"
 
 If no API keys are configured, `web_search` automatically uses DuckDuckGo's HTML endpoint.
 
+## Security
+
+### Credentials
+
+**File permissions:** `credentials.toml` must have mode 0600 (owner-only). The agent will refuse to load credentials with insecure permissions.
+
+```bash
+chmod 600 ~/.config/grid/credentials.toml
+```
+
+**Priority order:**
+1. `credentials.toml` (if found with secure permissions)
+2. Environment variables (fallback)
+
+### Protected Config Files
+
+The agent cannot modify its own configuration files:
+- `agent.toml` — agent configuration
+- `policy.toml` — security policy
+- `credentials.toml` — API keys
+
+This prevents privilege escalation attacks where an agent tries to grant itself additional permissions.
+
+### MCP Tool Security
+
+MCP servers run with the agent's permissions. For production, restrict which tools can be called:
+
+```toml
+# policy.toml
+[mcp]
+default_deny = true  # Block all MCP tools by default
+allowed_tools = [
+  "filesystem:read_file",
+  "filesystem:list_directory",
+  "memory:*",  # Allow all tools from memory server
+]
+```
+
+If `[mcp]` is not configured, the agent logs a security warning and allows all MCP tools (development mode).
+
+### Web Tool Security
+
+Restrict which domains can be accessed:
+
+```toml
+# policy.toml
+[web_fetch]
+enabled = true
+allow_domains = ["github.com", "*.github.io", "docs.python.org"]
+```
+
+Without `allow_domains`, all domains are allowed.
+
+### Shell Command Security
+
+Restrict shell commands with allowlists/denylists:
+
+```toml
+[bash]
+enabled = true
+allowlist = ["ls *", "cat *", "go build *", "go test *"]
+denylist = ["rm -rf *", "sudo *", "curl * | bash"]
+```
+
 ## Examples
 
 See the `examples/` directory for 38 example workflows covering:

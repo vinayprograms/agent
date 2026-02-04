@@ -459,17 +459,40 @@ func matchCommand(pattern, cmd string) bool {
 	}
 
 	// First word must match (command name)
-	if patternWords[0] != cmdWords[0] {
+	if len(cmdWords) == 0 || patternWords[0] != cmdWords[0] {
 		return false
+	}
+
+	// Security: reject commands with shell metacharacters when using allowlist
+	// These could be used to bypass the allowlist via command chaining
+	shellMetachars := []string{"&&", "||", ";", "|", "`", "$(", "${", ">", "<", "\n"}
+	for _, meta := range shellMetachars {
+		if strings.Contains(cmd, meta) {
+			return false // Never match commands with shell metacharacters
+		}
 	}
 
 	// If pattern ends with *, match any additional args
 	if len(patternWords) >= 2 && patternWords[len(patternWords)-1] == "*" {
+		// All pattern words except * must match command words in order
+		for i := 0; i < len(patternWords)-1; i++ {
+			if i >= len(cmdWords) || patternWords[i] != cmdWords[i] {
+				return false
+			}
+		}
 		return true
 	}
 
-	// Exact match check
-	return len(patternWords) == len(cmdWords)
+	// Exact match: same number of words and all match
+	if len(patternWords) != len(cmdWords) {
+		return false
+	}
+	for i := range patternWords {
+		if patternWords[i] != cmdWords[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // matchDomain matches a domain against a pattern.

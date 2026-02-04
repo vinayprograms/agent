@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/openclaw/headless-agent/internal/policy"
 )
@@ -345,7 +346,16 @@ func (t *globTool) Execute(ctx context.Context, args map[string]interface{}) (in
 		return nil, fmt.Errorf("invalid pattern: %w", err)
 	}
 
-	return matches, nil
+	// Filter results through policy
+	var allowed []string
+	for _, match := range matches {
+		ok, _ := t.policy.CheckPath("read", match)
+		if ok {
+			allowed = append(allowed, match)
+		}
+	}
+
+	return allowed, nil
 }
 
 // grepTool implements the grep tool (R5.2.5).
@@ -393,6 +403,12 @@ func (t *grepTool) Execute(ctx context.Context, args map[string]interface{}) (in
 		return nil, fmt.Errorf("path is required")
 	}
 
+	// Check policy for the root path
+	allowed, reason := t.policy.CheckPath("read", path)
+	if !allowed {
+		return nil, fmt.Errorf("policy denied: %s", reason)
+	}
+
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("invalid regex: %w", err)
@@ -412,6 +428,10 @@ func (t *grepTool) Execute(ctx context.Context, args map[string]interface{}) (in
 			}
 			if info.IsDir() {
 				return nil
+			}
+			// Check policy for each file
+			if allowed, _ := t.policy.CheckPath("read", p); !allowed {
+				return nil // Skip files not allowed by policy
 			}
 			fileMatches, _ := grepFile(re, p)
 			matches = append(matches, fileMatches...)
@@ -537,6 +557,13 @@ func (t *bashTool) Execute(ctx context.Context, args map[string]interface{}) (in
 		return nil, fmt.Errorf("policy denied: %s", reason)
 	}
 
+	// Add timeout to context if not already set (default 5 minutes)
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+	}
+
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
 	cmd.Dir = t.policy.Workspace
 
@@ -547,6 +574,9 @@ func (t *bashTool) Execute(ctx context.Context, args map[string]interface{}) (in
 	err := cmd.Run()
 	exitCode := 0
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("command timed out")
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {

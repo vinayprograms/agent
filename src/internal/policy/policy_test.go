@@ -242,6 +242,34 @@ func TestPolicy_BashNotInAllowlist(t *testing.T) {
 	}
 }
 
+// R6.4.4: Block command chaining attacks (shell metacharacters)
+func TestPolicy_BashCommandChaining(t *testing.T) {
+	pol := New()
+	pol.Tools["bash"] = &ToolPolicy{
+		Enabled:   true,
+		Allowlist: []string{"ls *"},
+	}
+
+	// These should all be blocked despite starting with "ls"
+	attacks := []string{
+		"ls && rm -rf /",
+		"ls || rm -rf /",
+		"ls; rm -rf /",
+		"ls | cat /etc/passwd",
+		"ls `rm -rf /`",
+		"ls $(rm -rf /)",
+		"ls > /etc/cron.d/backdoor",
+		"ls\nrm -rf /",
+	}
+
+	for _, cmd := range attacks {
+		allowed, _ := pol.CheckCommand("bash", cmd)
+		if allowed {
+			t.Errorf("should block command chaining attack: %q", cmd)
+		}
+	}
+}
+
 // R6.5.1: Check domain against allow_domains list
 func TestPolicy_WebDomains(t *testing.T) {
 	pol := New()
