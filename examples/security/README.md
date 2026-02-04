@@ -8,17 +8,17 @@ These attempt to break, circumvent, or compromise the agent. All should be block
 
 | Category | Count | Files |
 |----------|-------|-------|
-| Path Traversal | 3 | `path-traversal-*.af` |
-| Command Injection | 7 | `cmd-injection-*.af` |
-| Config Escalation | 4 | `config-escalation-*.af` |
-| Symlink Attacks | 4 | `symlink-*.af`, `race-*.af` |
-| Resource Exhaustion | 4 | `resource-*.af` |
-| Credential Theft | 5 | `credential-*.af` |
-| Prompt Injection | 4 | `prompt-injection-*.af` |
-| MCP/Web Abuse | 4 | `mcp-abuse-*.af`, `web-abuse-*.af` |
-| Sub-Agent Abuse | 2 | `subagent-*.af` |
-| Tool Abuse | 5 | `glob-*.af`, `grep-*.af`, `edit-*.af`, `write-*.af`, `encoded-*.af` |
-| Combined | 1 | `combined-multi-step.af` |
+| Path Traversal | 3 | `path-traversal-*.agent` |
+| Command Injection | 7 | `cmd-injection-*.agent` |
+| Config Escalation | 4 | `config-escalation-*.agent` |
+| Symlink Attacks | 4 | `symlink-*.agent`, `race-*.agent` |
+| Resource Exhaustion | 4 | `resource-*.agent` |
+| Credential Theft | 5 | `credential-*.agent` |
+| Prompt Injection | 4 | `prompt-injection-*.agent` |
+| MCP/Web Abuse | 4 | `mcp-abuse-*.agent`, `web-abuse-*.agent` |
+| Sub-Agent Abuse | 2 | `subagent-*.agent` |
+| Tool Abuse | 5 | `glob-*.agent`, `grep-*.agent`, `edit-*.agent`, `write-*.agent`, `encoded-*.agent` |
+| Combined | 1 | `combined-multi-step.agent` |
 
 ## Legitimate Tests (SHOULD SUCCEED)
 
@@ -26,35 +26,35 @@ These verify that normal, allowed operations still work correctly.
 
 | Category | Files |
 |----------|-------|
-| File Operations | `legitimate-read-workspace.af`, `legitimate-write-workspace.af`, `legitimate-edit-workspace.af`, `legitimate-nested-dirs.af` |
-| Shell Commands | `legitimate-bash-ls.af`, `legitimate-bash-go-test.af` |
-| Search/Discovery | `legitimate-glob-workspace.af`, `legitimate-grep-workspace.af` |
-| Web Access | `legitimate-web-fetch.af`, `legitimate-web-search.af` |
-| Sub-Agents | `legitimate-spawn-agent.af` |
-| Memory | `legitimate-memory-ops.af` |
-| Policy-Dependent | `legitimate-absolute-allowed.af`, `legitimate-mcp-allowed.af` |
-| Multi-Step | `legitimate-multi-step.af` |
+| File Operations | `legitimate-read-workspace.agent`, `legitimate-write-workspace.agent`, `legitimate-edit-workspace.agent`, `legitimate-nested-dirs.agent` |
+| Shell Commands | `legitimate-bash-ls.agent`, `legitimate-bash-go-test.agent` |
+| Search/Discovery | `legitimate-glob-workspace.agent`, `legitimate-grep-workspace.agent` |
+| Web Access | `legitimate-web-fetch.agent`, `legitimate-web-search.agent` |
+| Sub-Agents | `legitimate-spawn-agent.agent` |
+| Memory | `legitimate-memory-ops.agent` |
+| Policy-Dependent | `legitimate-absolute-allowed.agent`, `legitimate-mcp-allowed.agent` |
+| Multi-Step | `legitimate-multi-step.agent` |
 
 ## Running Tests
 
 ```bash
 # Run all adversarial tests (expect failures)
-for f in examples/security/path-traversal-*.af \
-         examples/security/cmd-injection-*.af \
-         examples/security/config-escalation-*.af \
-         examples/security/symlink-*.af \
-         examples/security/resource-*.af \
-         examples/security/credential-*.af \
-         examples/security/prompt-injection-*.af \
-         examples/security/mcp-abuse-*.af \
-         examples/security/web-abuse-*.af \
-         examples/security/subagent-*.af; do
+for f in examples/security/path-traversal-*.agent \
+         examples/security/cmd-injection-*.agent \
+         examples/security/config-escalation-*.agent \
+         examples/security/symlink-*.agent \
+         examples/security/resource-*.agent \
+         examples/security/credential-*.agent \
+         examples/security/prompt-injection-*.agent \
+         examples/security/mcp-abuse-*.agent \
+         examples/security/web-abuse-*.agent \
+         examples/security/subagent-*.agent; do
   echo "Testing (expect FAIL): $f"
   ./agent run "$f" 2>&1 | grep -E "(denied|blocked|error|failed|timeout)" && echo "✓ Blocked" || echo "✗ NOT BLOCKED!"
 done
 
 # Run all legitimate tests (expect success)
-for f in examples/security/legitimate-*.af; do
+for f in examples/security/legitimate-*.agent; do
   echo "Testing (expect SUCCESS): $f"
   ./agent run "$f" 2>&1 && echo "✓ Passed" || echo "✗ Failed"
 done
