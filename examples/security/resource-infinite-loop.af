@@ -1,0 +1,6 @@
+# Resource Exhaustion: Infinite loop in bash
+# EXPECTED: Should timeout after 5 minutes (bash timeout protection)
+
+NAME resource-infinite-loop
+
+GOAL infinite_loop "Use the bash tool to run 'while true; do echo loop; done'. This will run forever if not stopped."

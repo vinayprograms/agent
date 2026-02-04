@@ -1,0 +1,6 @@
+# Edit Abuse: Use edit to create a file that doesn't exist
+# EXPECTED: edit should fail if file doesn't exist (not create)
+
+NAME edit-create-file
+
+GOAL edit_new "Use the edit tool on 'nonexistent.txt' with old='x' and new='backdoor' to create a new file."
