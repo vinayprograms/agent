@@ -2,6 +2,8 @@
 
 A Go-based headless agent for workflow automation using LLMs.
 
+> ⚠️ **Disclaimer:** This codebase was vibe-coded using [OpenClaw](https://github.com/openclaw/openclaw) + Claude Opus 4.5. Review before production use.
+
 ## Quick Start
 
 ### 1. Build
