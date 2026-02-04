@@ -138,6 +138,54 @@ func (r *Registry) Definitions() []ToolDefinition {
 	return defs
 }
 
+// sanitizePath validates and cleans a path, preventing path traversal attacks.
+// It returns an error if the path attempts to escape the workspace.
+func sanitizePath(path string, workspace string) (string, error) {
+	// Clean the path to remove . and .. components
+	cleaned := filepath.Clean(path)
+	
+	// Convert to absolute path
+	var absPath string
+	if filepath.IsAbs(cleaned) {
+		absPath = cleaned
+	} else {
+		absPath = filepath.Join(workspace, cleaned)
+	}
+	
+	// Resolve any symlinks to get the real path
+	realPath, err := filepath.EvalSymlinks(filepath.Dir(absPath))
+	if err != nil {
+		// If parent doesn't exist yet, just use the cleaned path
+		// but still check for traversal
+		realPath = filepath.Dir(absPath)
+	}
+	realPath = filepath.Join(realPath, filepath.Base(absPath))
+	
+	// Ensure the path is within the workspace (if workspace is set)
+	if workspace != "" {
+		absWorkspace, err := filepath.Abs(workspace)
+		if err != nil {
+			return "", fmt.Errorf("invalid workspace: %w", err)
+		}
+		
+		// Resolve workspace symlinks too
+		realWorkspace, err := filepath.EvalSymlinks(absWorkspace)
+		if err != nil {
+			realWorkspace = absWorkspace
+		}
+		
+		// Check if path starts with workspace
+		if !strings.HasPrefix(realPath, realWorkspace+string(filepath.Separator)) && realPath != realWorkspace {
+			// Allow absolute paths outside workspace only if they're truly absolute in the original
+			if !filepath.IsAbs(path) {
+				return "", fmt.Errorf("path traversal detected: path escapes workspace")
+			}
+		}
+	}
+	
+	return absPath, nil
+}
+
 // --- Built-in Tools ---
 
 // readTool implements the read tool (R5.2.1).
@@ -222,19 +270,25 @@ func (t *writeTool) Execute(ctx context.Context, args map[string]interface{}) (i
 		return nil, fmt.Errorf("content is required")
 	}
 
+	// Sanitize path to prevent traversal attacks
+	safePath, err := sanitizePath(path, t.policy.Workspace)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check policy
-	allowed, reason := t.policy.CheckPath(t.Name(), path)
+	allowed, reason := t.policy.CheckPath(t.Name(), safePath)
 	if !allowed {
 		return nil, fmt.Errorf("policy denied: %s", reason)
 	}
 
 	// Create parent directories
-	dir := filepath.Dir(path)
+	dir := filepath.Dir(safePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create directories: %w", err)
 	}
 
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(safePath, []byte(content), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
 
@@ -287,13 +341,19 @@ func (t *editTool) Execute(ctx context.Context, args map[string]interface{}) (in
 		return nil, fmt.Errorf("new is required")
 	}
 
+	// Sanitize path to prevent traversal attacks
+	safePath, err := sanitizePath(path, t.policy.Workspace)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check policy
-	allowed, reason := t.policy.CheckPath(t.Name(), path)
+	allowed, reason := t.policy.CheckPath(t.Name(), safePath)
 	if !allowed {
 		return nil, fmt.Errorf("policy denied: %s", reason)
 	}
 
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(safePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
@@ -304,7 +364,7 @@ func (t *editTool) Execute(ctx context.Context, args map[string]interface{}) (in
 	}
 
 	newContent := strings.Replace(oldContent, old, new, 1)
-	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
+	if err := os.WriteFile(safePath, []byte(newContent), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
 

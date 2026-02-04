@@ -168,6 +168,41 @@ func TestTool_Write_CreateDirs(t *testing.T) {
 	}
 }
 
+// R5.2.2.1: write tool - Block path traversal attacks
+func TestTool_Write_PathTraversal(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	pol := policy.New()
+	pol.Workspace = tmpDir
+	pol.Tools["write"] = &policy.ToolPolicy{
+		Enabled: true,
+		Allow:   []string{tmpDir + "/**"},
+	}
+	reg := NewRegistry(pol)
+
+	tool := reg.Get("write")
+
+	// These should all be blocked
+	attacks := []string{
+		"../../../etc/passwd",
+		"foo/../../../etc/passwd",
+		"./foo/../../bar/../../../etc/passwd",
+	}
+
+	for _, path := range attacks {
+		_, err := tool.Execute(context.Background(), map[string]interface{}{
+			"path":    path,
+			"content": "malicious",
+		})
+		if err == nil {
+			t.Errorf("path traversal should be blocked: %q", path)
+		}
+		if err != nil && !strings.Contains(err.Error(), "traversal") {
+			t.Errorf("expected traversal error for %q, got: %v", path, err)
+		}
+	}
+}
+
 // R5.2.3: edit tool - Find and replace
 func TestTool_Edit(t *testing.T) {
 	tmpDir := t.TempDir()
