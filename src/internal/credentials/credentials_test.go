@@ -120,21 +120,33 @@ func TestLoadFile_SecurePermissions(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	credPath := filepath.Join(tmpDir, "credentials.toml")
 
 	content := `
 [anthropic]
 api_key = "secret-key"
 `
-	// Write with secure permissions (0600)
-	os.WriteFile(credPath, []byte(content), 0600)
+	// Test 0600 (owner read-write)
+	credPath600 := filepath.Join(tmpDir, "credentials-600.toml")
+	os.WriteFile(credPath600, []byte(content), 0600)
 
-	creds, err := LoadFile(credPath)
+	creds, err := LoadFile(credPath600)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("0600 should be allowed: %v", err)
 	}
 	if creds.Anthropic.APIKey != "secret-key" {
-		t.Errorf("unexpected api key: %s", creds.Anthropic.APIKey)
+		t.Error("expected api_key to be loaded")
+	}
+
+	// Test 0400 (owner read-only) - should also be allowed
+	credPath400 := filepath.Join(tmpDir, "credentials-400.toml")
+	os.WriteFile(credPath400, []byte(content), 0400)
+
+	creds, err = LoadFile(credPath400)
+	if err != nil {
+		t.Fatalf("0400 should be allowed: %v", err)
+	}
+	if creds.Anthropic.APIKey != "secret-key" {
+		t.Error("expected api_key to be loaded")
 	}
 }
 

@@ -75,7 +75,7 @@ func LoadFile(path string) (*Credentials, error) {
 		mode := info.Mode().Perm()
 		// Fail if group or others can read (should be 0600 or 0400)
 		if mode&0077 != 0 {
-			return nil, fmt.Errorf("%w: %s has mode %04o (should be 0600)", 
+			return nil, fmt.Errorf("%w: %s has mode %04o (must not be readable by group/others)", 
 				ErrInsecurePermissions, path, mode)
 		}
 	}
