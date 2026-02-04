@@ -88,18 +88,9 @@ api_key = "your-key-here"
 
 [groq]
 api_key = "your-key-here"
-
-# Web search (optional - falls back to DuckDuckGo if not set)
-[brave]
-api_key = "your-key-here"
-
-[tavily]
-api_key = "your-key-here"
 ```
 
 This file is shared with other Grid tools and agents.
-
-**Web Search Priority:** Brave API → Tavily API → DuckDuckGo (no key needed)
 
 ### 4. Create an Agentfile
 
@@ -532,6 +523,51 @@ docker run -it --rm \
 |----------|-----------------|---------------|
 | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` |
 | OpenAI | `openai` | `OPENAI_API_KEY` |
+
+## Built-in Tools
+
+### File Operations
+- `read` — Read file contents
+- `write` — Write/create files
+- `edit` — Edit files (find/replace)
+- `glob` — Find files by pattern
+- `grep` — Search file contents
+- `ls` — List directory contents
+
+### Shell
+- `bash` — Execute shell commands (policy-controlled)
+
+### Web
+- `web_search` — Search the web
+- `web_fetch` — Fetch and summarize URL content
+
+### Memory
+- `memory_read` — Read from agent memory
+- `memory_write` — Write to agent memory
+
+### Dynamic Agents
+- `spawn_agent` — Spawn sub-agents at runtime (see Dynamic Sub-Agent Spawning)
+
+### Web Search Providers
+
+`web_search` supports multiple providers with automatic fallback:
+
+| Priority | Provider | API Key Required | Notes |
+|----------|----------|------------------|-------|
+| 1 | Brave Search | `BRAVE_API_KEY` | Best quality |
+| 2 | Tavily | `TAVILY_API_KEY` | Good for research |
+| 3 | DuckDuckGo | None | Zero-config fallback |
+
+Configure in `~/.config/grid/credentials.toml`:
+```toml
+[brave]
+api_key = "your-key"
+
+[tavily]
+api_key = "your-key"
+```
+
+If no API keys are configured, `web_search` automatically uses DuckDuckGo's HTML endpoint.
 
 ## Examples
 
