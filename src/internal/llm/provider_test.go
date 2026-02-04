@@ -205,6 +205,33 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid google config",
+			config: FantasyConfig{
+				Provider: "google",
+				Model:    "gemini-1.5-pro",
+				APIKey:   "test-key",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid groq config",
+			config: FantasyConfig{
+				Provider: "groq",
+				Model:    "llama-3.1-70b-versatile",
+				APIKey:   "test-key",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid mistral config",
+			config: FantasyConfig{
+				Provider: "mistral",
+				Model:    "mistral-large-latest",
+				APIKey:   "test-key",
+			},
+			wantErr: false,
+		},
+		{
 			name: "missing provider",
 			config: FantasyConfig{
 				Model:  "claude-3-5-sonnet-20241022",
@@ -237,6 +264,52 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestNewProvider_AllProviders tests that all supported providers can be instantiated
+func TestNewProvider_AllProviders(t *testing.T) {
+	providers := []struct {
+		name  string
+		model string
+	}{
+		{"anthropic", "claude-3-5-sonnet-20241022"},
+		{"openai", "gpt-4o"},
+		{"google", "gemini-1.5-pro"},
+		{"groq", "llama-3.1-70b-versatile"},
+		{"mistral", "mistral-large-latest"},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			cfg := FantasyConfig{
+				Provider: p.name,
+				Model:    p.model,
+				APIKey:   "test-key-for-" + p.name,
+			}
+
+			provider, err := NewProvider(cfg)
+			if err != nil {
+				t.Fatalf("NewProvider(%s) failed: %v", p.name, err)
+			}
+			if provider == nil {
+				t.Errorf("NewProvider(%s) returned nil provider", p.name)
+			}
+		})
+	}
+}
+
+// TestNewProvider_UnsupportedProvider tests that unsupported providers return an error
+func TestNewProvider_UnsupportedProvider(t *testing.T) {
+	cfg := FantasyConfig{
+		Provider: "unsupported-provider",
+		Model:    "some-model",
+		APIKey:   "test-key",
+	}
+
+	_, err := NewProvider(cfg)
+	if err == nil {
+		t.Error("expected error for unsupported provider")
 	}
 }
 
