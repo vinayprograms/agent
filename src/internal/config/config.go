@@ -144,12 +144,6 @@ func DefaultAPIKeyEnv(provider string) string {
 		return "ANTHROPIC_API_KEY"
 	case "openai":
 		return "OPENAI_API_KEY"
-	case "google":
-		return "GOOGLE_API_KEY"
-	case "mistral":
-		return "MISTRAL_API_KEY"
-	case "groq":
-		return "GROQ_API_KEY"
 	default:
 		return ""
 	}

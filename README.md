@@ -79,15 +79,6 @@ api_key = "your-key-here"
 
 [openai]
 api_key = "your-key-here"
-
-[google]
-api_key = "your-key-here"
-
-[mistral]
-api_key = "your-key-here"
-
-[groq]
-api_key = "your-key-here"
 ```
 
 This file is shared with other Grid tools and agents.
