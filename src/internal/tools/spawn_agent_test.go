@@ -51,7 +51,7 @@ func TestSpawnAgentTool_RequiresSpawner(t *testing.T) {
 func TestSpawnAgentTool_RequiresRole(t *testing.T) {
 	spawned := false
 	tool := &spawnAgentTool{
-		spawner: func(ctx context.Context, role, task string) (string, error) {
+		spawner: func(ctx context.Context, role, task string, outputs []string) (string, error) {
 			spawned = true
 			return "result", nil
 		},
@@ -72,7 +72,7 @@ func TestSpawnAgentTool_RequiresRole(t *testing.T) {
 func TestSpawnAgentTool_RequiresTask(t *testing.T) {
 	spawned := false
 	tool := &spawnAgentTool{
-		spawner: func(ctx context.Context, role, task string) (string, error) {
+		spawner: func(ctx context.Context, role, task string, outputs []string) (string, error) {
 			spawned = true
 			return "result", nil
 		},
@@ -93,7 +93,7 @@ func TestSpawnAgentTool_RequiresTask(t *testing.T) {
 func TestSpawnAgentTool_ExecutesSpawner(t *testing.T) {
 	var capturedRole, capturedTask string
 	tool := &spawnAgentTool{
-		spawner: func(ctx context.Context, role, task string) (string, error) {
+		spawner: func(ctx context.Context, role, task string, outputs []string) (string, error) {
 			capturedRole = role
 			capturedTask = task
 			return "sub-agent output", nil
@@ -119,6 +119,35 @@ func TestSpawnAgentTool_ExecutesSpawner(t *testing.T) {
 	}
 }
 
+func TestSpawnAgentTool_WithOutputs(t *testing.T) {
+	var capturedOutputs []string
+	tool := &spawnAgentTool{
+		spawner: func(ctx context.Context, role, task string, outputs []string) (string, error) {
+			capturedOutputs = outputs
+			return `{"findings": "test", "sources": ["a", "b"]}`, nil
+		},
+	}
+	
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"role":    "researcher",
+		"task":    "find info",
+		"outputs": []interface{}{"findings", "sources"},
+	})
+	
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(capturedOutputs) != 2 {
+		t.Fatalf("expected 2 outputs, got %d", len(capturedOutputs))
+	}
+	if capturedOutputs[0] != "findings" || capturedOutputs[1] != "sources" {
+		t.Errorf("unexpected outputs: %v", capturedOutputs)
+	}
+	if result != `{"findings": "test", "sources": ["a", "b"]}` {
+		t.Errorf("unexpected result: %v", result)
+	}
+}
+
 func TestRegistry_HasSpawnAgent(t *testing.T) {
 	registry := NewRegistry(nil)
 	
@@ -131,7 +160,7 @@ func TestRegistry_SetSpawner(t *testing.T) {
 	registry := NewRegistry(nil)
 	
 	called := false
-	registry.SetSpawner(func(ctx context.Context, role, task string) (string, error) {
+	registry.SetSpawner(func(ctx context.Context, role, task string, outputs []string) (string, error) {
 		called = true
 		return "test", nil
 	})

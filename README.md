@@ -313,22 +313,63 @@ NAME workflow-name
 INPUT required_param
 INPUT optional_param DEFAULT "value"
 
-# Agents reference prompts, skills, or packages
-AGENT researcher FROM agents/researcher.md       # Markdown prompt file
-AGENT critic FROM skills/code-review             # Skill directory (has SKILL.md)
-AGENT helper FROM testing                        # Skill name (looked up in skills.paths)
-AGENT scanner FROM security.agent REQUIRES "reasoning-heavy"  # Packaged agent
+# Agents reference prompts, skills, or packages (with optional structured output)
+AGENT researcher FROM agents/researcher.md -> findings, sources
+AGENT critic FROM skills/code-review -> issues, recommendations
+AGENT helper "Inline prompt for helper" -> result
+AGENT scanner FROM security.agent REQUIRES "reasoning-heavy"
 
-# Goals define what to accomplish
-GOAL name "Inline description with $variables"
-GOAL name FROM path/to/goal.md
-GOAL name "Description" USING agent1, agent2  # Multi-agent (spawns isolated sub-agents)
+# Goals define what to accomplish (with optional structured output)
+GOAL name "Inline description with $variables" -> output1, output2
+GOAL name FROM path/to/goal.md -> outputs
+GOAL name "Description" -> summary, recommendations USING agent1, agent2
 
 # Steps execute goals
 RUN step_name USING goal1, goal2, goal3
 LOOP step_name USING goal1 WITHIN 5           # Loop max 5 times
 LOOP step_name USING goal1 WITHIN $max_iter   # Variable limit
 ```
+
+## Structured Output
+
+Use `->` to declare output fields. The LLM returns JSON with those fields, which become variables for subsequent goals.
+
+### Simple structured output
+
+```
+GOAL research "Research $topic" -> findings, sources, confidence
+GOAL report "Write report using $findings" -> summary, action_items
+```
+
+- `research` goal returns: `{"findings": "...", "sources": [...], "confidence": 0.8}`
+- Fields become variables: `$findings`, `$sources`, `$confidence`
+- `report` goal can use `$findings` in its prompt
+
+### Multi-agent with synthesis
+
+```
+AGENT researcher "Research $topic" -> findings, sources
+AGENT critic "Find biases in $topic" -> issues, concerns
+
+GOAL analyze "Analyze $topic" -> summary, recommendations USING researcher, critic
+```
+
+1. `researcher` and `critic` run in **parallel**
+2. Each returns structured JSON
+3. An implicit **synthesizer** transforms their outputs into the goal's fields
+4. This is essentially: `findings, sources, issues, concerns -> summary, recommendations`
+
+### Dynamic spawn_agent
+
+```
+spawn_agent(
+  role: "researcher",
+  task: "Find historical data",
+  outputs: ["timeline", "key_events"]
+)
+```
+
+The `outputs` parameter is optional. When provided, the sub-agent returns structured JSON.
 
 ## AGENT FROM Resolution
 
@@ -495,7 +536,7 @@ docker run -it --rm \
 
 ## Examples
 
-See the `examples/` directory for 36 example workflows covering:
+See the `examples/` directory for 38 example workflows covering:
 - Programming (code review, testing, refactoring, security audits)
 - Writing (essays, stories, translations)
 - Planning (travel, fitness, learning paths)

@@ -1000,7 +1000,9 @@ func (s *FileMemoryStore) Set(key, value string) error {
 
 // SpawnFunc is the function signature for spawning sub-agents.
 // It takes role, task and returns the sub-agent's output.
-type SpawnFunc func(ctx context.Context, role, task string) (string, error)
+// SpawnFunc is the function signature for spawning dynamic sub-agents.
+// outputs is optional - when provided, the sub-agent returns structured JSON.
+type SpawnFunc func(ctx context.Context, role, task string, outputs []string) (string, error)
 
 // spawnAgentTool implements dynamic sub-agent spawning.
 type spawnAgentTool struct {
@@ -1015,9 +1017,22 @@ func NewSpawnAgentTool(spawner SpawnFunc) Tool {
 func (t *spawnAgentTool) Name() string { return "spawn_agent" }
 
 func (t *spawnAgentTool) Description() string {
-	return `Spawn a sub-agent to handle a specific task. The sub-agent runs in isolation and returns its output.
-Use this to delegate work: research, analysis, writing, review, etc.
-Each sub-agent is a fresh instance focused solely on its task.`
+	return `Spawn a sub-agent to handle a specific task.
+
+Parameters:
+  - role (required): Name/role for the sub-agent (e.g., "researcher", "critic")
+  - task (required): Task description for the sub-agent
+  - outputs (optional): List of field names for structured output. When provided,
+    the sub-agent returns a JSON object with these fields. Use when you need
+    specific data to process further. Omit for freeform text responses.
+
+Returns:
+  - If outputs specified: JSON object with declared fields
+  - If outputs omitted: Plain text response
+
+Example:
+  spawn_agent(role: "researcher", task: "Find key events", outputs: ["events", "dates"])
+  → {"events": [...], "dates": [...]}`
 }
 
 func (t *spawnAgentTool) Parameters() map[string]interface{} {
@@ -1031,6 +1046,11 @@ func (t *spawnAgentTool) Parameters() map[string]interface{} {
 			"task": map[string]interface{}{
 				"type":        "string",
 				"description": "The specific task for the sub-agent to complete",
+			},
+			"outputs": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Optional list of output field names for structured JSON response",
 			},
 		},
 		"required": []string{"role", "task"},
@@ -1047,10 +1067,22 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args map[string]interface{
 		return nil, fmt.Errorf("task is required")
 	}
 
+	// Parse optional outputs
+	var outputs []string
+	if outputsRaw, ok := args["outputs"]; ok {
+		if outputsList, ok := outputsRaw.([]interface{}); ok {
+			for _, o := range outputsList {
+				if s, ok := o.(string); ok {
+					outputs = append(outputs, s)
+				}
+			}
+		}
+	}
+
 	if t.spawner == nil {
 		return nil, fmt.Errorf("spawn_agent not available (no spawner configured)")
 	}
 
-	return t.spawner(ctx, role, task)
+	return t.spawner(ctx, role, task, outputs)
 }
 

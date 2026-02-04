@@ -45,8 +45,14 @@ func LoadFileWithOptions(path string, opts LoadOptions) (*Workflow, error) {
 	// Load agents with smart FROM resolution
 	for i := range wf.Agents {
 		agent := &wf.Agents[i]
-		if err := resolveAgentFrom(agent, baseDir, opts.SkillPaths); err != nil {
-			return nil, fmt.Errorf("line %d: %w", agent.Line, err)
+		// Skip if agent has inline prompt (no FROM path)
+		if agent.FromPath == "" && agent.Prompt != "" {
+			continue
+		}
+		if agent.FromPath != "" {
+			if err := resolveAgentFrom(agent, baseDir, opts.SkillPaths); err != nil {
+				return nil, fmt.Errorf("line %d: %w", agent.Line, err)
+			}
 		}
 	}
 

@@ -29,11 +29,12 @@ func (i *Input) node() {}
 // Agent represents an AGENT declaration.
 type Agent struct {
 	Name     string
-	FromPath string // path to prompt file or skill directory
-	Prompt   string // loaded prompt content (or skill instructions)
-	Requires string // capability profile name (e.g., "reasoning-heavy", "code-generation")
-	IsSkill  bool   // true if loaded from a skill directory
-	SkillDir string // path to skill directory (if IsSkill)
+	FromPath string   // path to prompt file or skill directory
+	Prompt   string   // loaded prompt content (or skill instructions)
+	Requires string   // capability profile name (e.g., "reasoning-heavy", "code-generation")
+	Outputs  []string // structured output field names (after ->)
+	IsSkill  bool     // true if loaded from a skill directory
+	SkillDir string   // path to skill directory (if IsSkill)
 	Line     int
 }
 
@@ -44,6 +45,7 @@ type Goal struct {
 	Name       string
 	Outcome    string   // inline string content
 	FromPath   string   // path to outcome file (mutually exclusive with Outcome)
+	Outputs    []string // structured output field names (after ->)
 	UsingAgent []string // agent names for multi-agent goals
 	Line       int
 }

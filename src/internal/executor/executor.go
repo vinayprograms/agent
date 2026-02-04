@@ -113,8 +113,8 @@ func (e *Executor) initSpawner() {
 	if e.registry == nil {
 		return
 	}
-	e.registry.SetSpawner(func(ctx context.Context, role, task string) (string, error) {
-		return e.spawnDynamicAgent(ctx, role, task)
+	e.registry.SetSpawner(func(ctx context.Context, role, task string, outputs []string) (string, error) {
+		return e.spawnDynamicAgent(ctx, role, task, outputs)
 	})
 }
 
@@ -244,9 +244,15 @@ func (e *Executor) initSubAgentRunner() {
 }
 
 // spawnDynamicAgent spawns a sub-agent with the given role and task.
-func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string) (string, error) {
+func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, outputs []string) (string, error) {
 	// Build system prompt for the sub-agent
 	systemPrompt := fmt.Sprintf("You are a %s. Complete the following task thoroughly and return your findings.\n\nTask: %s", role, task)
+
+	// Add structured output instruction if outputs specified
+	userPrompt := task
+	if len(outputs) > 0 {
+		userPrompt += "\n\n" + buildStructuredOutputInstruction(outputs)
+	}
 
 	// Log the spawn
 	if e.OnSubAgentStart != nil {
@@ -256,7 +262,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string) (st
 	// Create messages for the sub-agent
 	messages := []llm.Message{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: task},
+		{Role: "user", Content: userPrompt},
 	}
 
 	// Build tool definitions (excluding spawn_agent to enforce depth=1)
@@ -488,6 +494,11 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		prompt = priorContext.String() + "## Current Goal\n" + prompt
 	}
 
+	// Add structured output instruction if outputs are declared
+	if len(goal.Outputs) > 0 {
+		prompt += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
+	}
+
 	// Set current goal for logging
 	e.currentGoal = goal.Name
 
@@ -557,11 +568,27 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 
 		// No tool calls = goal complete
 		if len(resp.ToolCalls) == 0 {
-			if e.OnGoalComplete != nil {
-				e.OnGoalComplete(goal.Name, resp.Content)
+			output := resp.Content
+			
+			// Parse structured output if declared
+			if len(goal.Outputs) > 0 {
+				parsedOutputs, err := parseStructuredOutput(resp.Content, goal.Outputs)
+				if err != nil {
+					// Log warning but don't fail - keep raw output
+					e.logEvent(session.EventSystem, fmt.Sprintf("Warning: failed to parse structured output: %v", err))
+				} else {
+					// Store each output field as a variable
+					for field, value := range parsedOutputs {
+						e.outputs[field] = value
+					}
+				}
 			}
-			e.logGoalEnd(goal.Name, resp.Content)
-			return &GoalResult{Output: resp.Content, ToolCallsMade: toolCallsMade}, nil
+			
+			if e.OnGoalComplete != nil {
+				e.OnGoalComplete(goal.Name, output)
+			}
+			e.logGoalEnd(goal.Name, output)
+			return &GoalResult{Output: output, ToolCallsMade: toolCallsMade}, nil
 		}
 
 		toolCallsMade = true
@@ -712,18 +739,46 @@ func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfil
 		return "", fmt.Errorf("sub-agent execution failed: %w", err)
 	}
 
-	// Collect outputs
-	var agentOutputs []string
+	// Collect outputs (with structured parsing if agents have outputs declared)
+	agentOutputs := make(map[string]map[string]string)
+	var agentOutputStrings []string
 	for _, result := range results {
 		if result.Error != nil {
 			return "", fmt.Errorf("sub-agent %s failed: %w", result.Name, result.Error)
 		}
-		agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.Name, result.Output))
+		
+		// Find the agent to check for structured outputs
+		agent := e.findAgent(result.Name)
+		if agent != nil && len(agent.Outputs) > 0 {
+			// Parse structured output from agent
+			parsed, err := parseStructuredOutput(result.Output, agent.Outputs)
+			if err == nil {
+				agentOutputs[result.Name] = parsed
+				// Build formatted output for synthesis
+				var formatted strings.Builder
+				formatted.WriteString(fmt.Sprintf("[%s]:\n", result.Name))
+				for field, value := range parsed {
+					formatted.WriteString(fmt.Sprintf("- %s: %s\n", field, value))
+				}
+				agentOutputStrings = append(agentOutputStrings, formatted.String())
+			} else {
+				// Fallback to raw output
+				agentOutputStrings = append(agentOutputStrings, fmt.Sprintf("[%s]: %s", result.Name, result.Output))
+			}
+		} else {
+			agentOutputStrings = append(agentOutputStrings, fmt.Sprintf("[%s]: %s", result.Name, result.Output))
+		}
 	}
 
 	// If single agent, return directly
-	if len(agentOutputs) == 1 {
+	if len(results) == 1 {
 		output := results[0].Output
+		// Store structured outputs if parsed
+		if parsed, ok := agentOutputs[results[0].Name]; ok {
+			for field, value := range parsed {
+				e.outputs[field] = value
+			}
+		}
 		if e.OnGoalComplete != nil {
 			e.OnGoalComplete(goal.Name, output)
 		}
@@ -733,8 +788,13 @@ func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfil
 	// Multiple agents: synthesize responses
 	synthesisPrompt := fmt.Sprintf(
 		"Synthesize these agent responses into a coherent answer:\n\n%s",
-		strings.Join(agentOutputs, "\n\n"),
+		strings.Join(agentOutputStrings, "\n\n"),
 	)
+	
+	// Add structured output instruction for synthesis if goal has outputs
+	if len(goal.Outputs) > 0 {
+		synthesisPrompt += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
+	}
 
 	messages := []llm.Message{
 		{Role: "system", Content: "You are synthesizing multiple agent responses."},
@@ -749,6 +809,16 @@ func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfil
 			e.OnLLMError(err)
 		}
 		return "", err
+	}
+
+	// Parse structured output from synthesis if goal has outputs
+	if len(goal.Outputs) > 0 {
+		parsed, err := parseStructuredOutput(resp.Content, goal.Outputs)
+		if err == nil {
+			for field, value := range parsed {
+				e.outputs[field] = value
+			}
+		}
 	}
 
 	if e.OnGoalComplete != nil {
@@ -968,4 +1038,90 @@ func (e *Executor) findAgent(name string) *agentfile.Agent {
 		}
 	}
 	return nil
+}
+
+// buildStructuredOutputInstruction creates the instruction for structured JSON output.
+func buildStructuredOutputInstruction(outputs []string) string {
+	var sb strings.Builder
+	sb.WriteString("Respond with a JSON object containing these fields:\n")
+	for _, field := range outputs {
+		sb.WriteString(fmt.Sprintf("- %s\n", field))
+	}
+	sb.WriteString("\nProvide only the JSON object, no additional text.")
+	return sb.String()
+}
+
+// parseStructuredOutput extracts fields from JSON response.
+func parseStructuredOutput(content string, expectedFields []string) (map[string]string, error) {
+	// Try to find JSON in the response (it might be wrapped in markdown code blocks)
+	jsonStr := extractJSON(content)
+	if jsonStr == "" {
+		return nil, fmt.Errorf("no JSON found in response")
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	result := make(map[string]string)
+	for _, field := range expectedFields {
+		if val, ok := parsed[field]; ok {
+			// Convert value to string
+			switch v := val.(type) {
+			case string:
+				result[field] = v
+			case []interface{}:
+				// Convert array to JSON string
+				bytes, _ := json.Marshal(v)
+				result[field] = string(bytes)
+			default:
+				// Convert other types to JSON
+				bytes, _ := json.Marshal(v)
+				result[field] = string(bytes)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// extractJSON finds and returns JSON object from text that may contain markdown or other content.
+func extractJSON(content string) string {
+	// First try: look for ```json code block
+	jsonBlockRe := regexp.MustCompile("(?s)```json\\s*\\n?(.*?)\\n?```")
+	if matches := jsonBlockRe.FindStringSubmatch(content); len(matches) > 1 {
+		return strings.TrimSpace(matches[1])
+	}
+
+	// Second try: look for ``` code block (no language specified)
+	codeBlockRe := regexp.MustCompile("(?s)```\\s*\\n?(.*?)\\n?```")
+	if matches := codeBlockRe.FindStringSubmatch(content); len(matches) > 1 {
+		candidate := strings.TrimSpace(matches[1])
+		if strings.HasPrefix(candidate, "{") {
+			return candidate
+		}
+	}
+
+	// Third try: find raw JSON object
+	start := strings.Index(content, "{")
+	if start == -1 {
+		return ""
+	}
+
+	// Find matching closing brace
+	depth := 0
+	for i := start; i < len(content); i++ {
+		switch content[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return content[start : i+1]
+			}
+		}
+	}
+
+	return ""
 }

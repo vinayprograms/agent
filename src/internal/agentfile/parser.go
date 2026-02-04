@@ -126,7 +126,7 @@ func (p *Parser) parseInputStatement() (*Input, error) {
 	return input, nil
 }
 
-// parseAgentStatement parses: AGENT <identifier> FROM <path> [REQUIRES <string>]
+// parseAgentStatement parses: AGENT <identifier> (FROM <path> | <string>) [-> outputs] [REQUIRES <string>]
 func (p *Parser) parseAgentStatement() (*Agent, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume AGENT
@@ -141,16 +141,29 @@ func (p *Parser) parseAgentStatement() (*Agent, error) {
 	}
 	p.nextToken()
 
-	if p.curToken.Type != TokenFROM {
-		return nil, fmt.Errorf("line %d: expected FROM after AGENT name, got %s", line, p.curToken.Type)
+	// Either string prompt or FROM path
+	if p.curToken.Type == TokenString {
+		agent.Prompt = p.curToken.Literal
+		p.nextToken()
+	} else if p.curToken.Type == TokenFROM {
+		p.nextToken() // consume FROM
+		if p.curToken.Type != TokenPath {
+			return nil, fmt.Errorf("line %d: expected path after FROM, got %s", line, p.curToken.Type)
+		}
+		agent.FromPath = p.curToken.Literal
+		p.nextToken()
+	} else {
+		return nil, fmt.Errorf("line %d: expected string or FROM after AGENT name, got %s", line, p.curToken.Type)
 	}
-	p.nextToken() // consume FROM
 
-	if p.curToken.Type != TokenPath {
-		return nil, fmt.Errorf("line %d: expected path after FROM, got %s", line, p.curToken.Type)
+	// Check for optional -> outputs
+	if p.curToken.Type == TokenArrow {
+		outputs, err := p.parseOutputList()
+		if err != nil {
+			return nil, err
+		}
+		agent.Outputs = outputs
 	}
-	agent.FromPath = p.curToken.Literal
-	p.nextToken()
 
 	// Check for optional REQUIRES clause
 	if p.curToken.Type == TokenREQUIRES {
@@ -166,7 +179,7 @@ func (p *Parser) parseAgentStatement() (*Agent, error) {
 	return agent, nil
 }
 
-// parseGoalStatement parses: GOAL <identifier> (<string> | FROM <path>) [USING <identifier_list>]
+// parseGoalStatement parses: GOAL <identifier> (<string> | FROM <path>) [-> outputs] [USING <identifier_list>]
 func (p *Parser) parseGoalStatement() (*Goal, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume GOAL
@@ -194,6 +207,15 @@ func (p *Parser) parseGoalStatement() (*Goal, error) {
 		p.nextToken()
 	} else {
 		return nil, fmt.Errorf("line %d: expected string or FROM after GOAL name, got %s", line, p.curToken.Type)
+	}
+
+	// Check for optional -> outputs
+	if p.curToken.Type == TokenArrow {
+		outputs, err := p.parseOutputList()
+		if err != nil {
+			return nil, err
+		}
+		goal.Outputs = outputs
 	}
 
 	// Check for optional USING clause
@@ -310,6 +332,32 @@ func (p *Parser) parseIdentifierList() ([]string, error) {
 	}
 
 	return idents, nil
+}
+
+// parseOutputList parses: -> <identifier> [, <identifier>]*
+func (p *Parser) parseOutputList() ([]string, error) {
+	line := p.curToken.Line
+	p.nextToken() // consume ->
+
+	var outputs []string
+
+	if !p.isIdentifier() {
+		return nil, fmt.Errorf("line %d: expected identifier after ->, got %s", line, p.curToken.Type)
+	}
+	outputs = append(outputs, p.curToken.Literal)
+	p.nextToken()
+
+	// Continue while we see commas
+	for p.curToken.Type == TokenComma {
+		p.nextToken() // consume comma
+		if !p.isIdentifier() {
+			return nil, fmt.Errorf("line %d: expected identifier after comma, got %s", line, p.curToken.Type)
+		}
+		outputs = append(outputs, p.curToken.Literal)
+		p.nextToken()
+	}
+
+	return outputs, nil
 }
 
 // isIdentifier returns true if current token is an identifier (not a keyword used as value).

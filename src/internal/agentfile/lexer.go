@@ -86,6 +86,15 @@ func (l *Lexer) NextToken() Token {
 	case ',':
 		tok = l.newToken(TokenComma, ",")
 		l.readChar()
+	case '-':
+		if l.peekChar() == '>' {
+			l.readChar() // consume -
+			l.readChar() // consume >
+			tok = l.newToken(TokenArrow, "->")
+		} else {
+			tok = l.newToken(TokenIllegal, string(l.ch))
+			l.readChar()
+		}
 	case '"':
 		tok = l.readString()
 	case '$':

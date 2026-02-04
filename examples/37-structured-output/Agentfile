@@ -1,0 +1,8 @@
+NAME structured-analysis
+INPUT topic
+
+GOAL research "Research $topic thoroughly" -> findings, sources, confidence
+GOAL critique "Critique $findings for bias and gaps" -> issues, recommendations
+GOAL report "Write final report on $topic incorporating $recommendations" -> summary, action_items
+
+RUN analysis USING research, critique, report

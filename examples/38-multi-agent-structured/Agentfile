@@ -1,0 +1,9 @@
+NAME balanced-research
+INPUT topic
+
+AGENT researcher "Research $topic finding facts and evidence" -> findings, sources
+AGENT critic "Identify biases, limitations, and counterarguments about $topic" -> issues, concerns
+
+GOAL analyze "Analyze $topic from multiple perspectives" -> summary, recommendations, confidence USING researcher, critic
+
+RUN main USING analyze

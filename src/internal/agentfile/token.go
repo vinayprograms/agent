@@ -32,6 +32,7 @@ const (
 
 	// Punctuation
 	TokenComma // ,
+	TokenArrow // ->
 )
 
 // String returns the string representation of the token type.
@@ -77,6 +78,8 @@ func (t TokenType) String() string {
 		return "VAR"
 	case TokenComma:
 		return "COMMA"
+	case TokenArrow:
+		return "ARROW"
 	default:
 		return "UNKNOWN"
 	}

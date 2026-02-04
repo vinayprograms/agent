@@ -399,3 +399,168 @@ RUN main USING test`
         t.Errorf("expected Requires='reasoning-heavy', got %q", agent.Requires)
     }
 }
+
+// Test GOAL with structured output
+func TestParser_GoalWithOutputs(t *testing.T) {
+	input := `NAME test
+GOAL assess "Assess code at $path" -> current_state, opportunities, priority
+RUN main USING assess`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	if len(wf.Goals) != 1 {
+		t.Fatalf("expected 1 goal, got %d", len(wf.Goals))
+	}
+
+	goal := wf.Goals[0]
+	if goal.Name != "assess" {
+		t.Errorf("expected name 'assess', got %q", goal.Name)
+	}
+	if goal.Outcome != "Assess code at $path" {
+		t.Errorf("expected outcome 'Assess code at $path', got %q", goal.Outcome)
+	}
+	if len(goal.Outputs) != 3 {
+		t.Fatalf("expected 3 outputs, got %d", len(goal.Outputs))
+	}
+	expectedOutputs := []string{"current_state", "opportunities", "priority"}
+	for i, expected := range expectedOutputs {
+		if goal.Outputs[i] != expected {
+			t.Errorf("output[%d]: expected %q, got %q", i, expected, goal.Outputs[i])
+		}
+	}
+}
+
+// Test GOAL with outputs and USING
+func TestParser_GoalWithOutputsAndUsing(t *testing.T) {
+	input := `NAME test
+AGENT researcher "Research $topic" -> findings, sources
+AGENT critic "Find biases" -> issues, concerns
+GOAL analyze "Analyze $topic" -> summary, recommendations USING researcher, critic
+RUN main USING analyze`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	if len(wf.Goals) != 1 {
+		t.Fatalf("expected 1 goal, got %d", len(wf.Goals))
+	}
+
+	goal := wf.Goals[0]
+	if len(goal.Outputs) != 2 {
+		t.Fatalf("expected 2 goal outputs, got %d", len(goal.Outputs))
+	}
+	if goal.Outputs[0] != "summary" || goal.Outputs[1] != "recommendations" {
+		t.Errorf("unexpected goal outputs: %v", goal.Outputs)
+	}
+	if len(goal.UsingAgent) != 2 {
+		t.Fatalf("expected 2 agents, got %d", len(goal.UsingAgent))
+	}
+	if goal.UsingAgent[0] != "researcher" || goal.UsingAgent[1] != "critic" {
+		t.Errorf("unexpected agents: %v", goal.UsingAgent)
+	}
+}
+
+// Test AGENT with structured output
+func TestParser_AgentWithOutputs(t *testing.T) {
+	input := `NAME test
+AGENT researcher "Research $topic thoroughly" -> findings, sources, confidence
+GOAL analyze "Analyze" USING researcher
+RUN main USING analyze`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	if len(wf.Agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(wf.Agents))
+	}
+
+	agent := wf.Agents[0]
+	if agent.Name != "researcher" {
+		t.Errorf("expected name 'researcher', got %q", agent.Name)
+	}
+	if agent.Prompt != "Research $topic thoroughly" {
+		t.Errorf("expected prompt 'Research $topic thoroughly', got %q", agent.Prompt)
+	}
+	if len(agent.Outputs) != 3 {
+		t.Fatalf("expected 3 outputs, got %d", len(agent.Outputs))
+	}
+	expectedOutputs := []string{"findings", "sources", "confidence"}
+	for i, expected := range expectedOutputs {
+		if agent.Outputs[i] != expected {
+			t.Errorf("output[%d]: expected %q, got %q", i, expected, agent.Outputs[i])
+		}
+	}
+}
+
+// Test AGENT with outputs and REQUIRES
+func TestParser_AgentWithOutputsAndRequires(t *testing.T) {
+	input := `NAME test
+AGENT critic FROM agents/critic.md -> issues, severity REQUIRES "reasoning-heavy"
+GOAL analyze "Analyze" USING critic
+RUN main USING analyze`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	agent := wf.Agents[0]
+	if len(agent.Outputs) != 2 {
+		t.Fatalf("expected 2 outputs, got %d", len(agent.Outputs))
+	}
+	if agent.Outputs[0] != "issues" || agent.Outputs[1] != "severity" {
+		t.Errorf("unexpected outputs: %v", agent.Outputs)
+	}
+	if agent.Requires != "reasoning-heavy" {
+		t.Errorf("expected requires 'reasoning-heavy', got %q", agent.Requires)
+	}
+}
+
+// Test GOAL FROM with outputs
+func TestParser_GoalFromWithOutputs(t *testing.T) {
+	input := `NAME test
+GOAL assess FROM prompts/assess.md -> findings, recommendations
+RUN main USING assess`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	goal := wf.Goals[0]
+	if goal.FromPath != "prompts/assess.md" {
+		t.Errorf("expected FromPath 'prompts/assess.md', got %q", goal.FromPath)
+	}
+	if len(goal.Outputs) != 2 {
+		t.Fatalf("expected 2 outputs, got %d", len(goal.Outputs))
+	}
+	if goal.Outputs[0] != "findings" || goal.Outputs[1] != "recommendations" {
+		t.Errorf("unexpected outputs: %v", goal.Outputs)
+	}
+}
+
+// Test lexer arrow token
+func TestLexer_ArrowToken(t *testing.T) {
+	input := `-> output1, output2`
+	l := NewLexer(input)
+
+	tok := l.NextToken()
+	if tok.Type != TokenArrow {
+		t.Errorf("expected ARROW token, got %s", tok.Type)
+	}
+	if tok.Literal != "->" {
+		t.Errorf("expected literal '->', got %q", tok.Literal)
+	}
+
+	tok = l.NextToken()
+	if tok.Type != TokenIdent || tok.Literal != "output1" {
+		t.Errorf("expected IDENT 'output1', got %s %q", tok.Type, tok.Literal)
+	}
+}

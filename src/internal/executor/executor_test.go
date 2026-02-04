@@ -729,7 +729,7 @@ func TestExecutor_SubAgentCannotSpawn(t *testing.T) {
 	exec := NewExecutor(wf, provider, registry, pol)
 
 	// Manually trigger sub-agent spawn to inspect tool filtering
-	_, err := exec.spawnDynamicAgent(context.Background(), "researcher", "test task")
+	_, err := exec.spawnDynamicAgent(context.Background(), "researcher", "test task", nil)
 	if err != nil {
 		t.Fatalf("spawn error: %v", err)
 	}
@@ -739,6 +739,133 @@ func TestExecutor_SubAgentCannotSpawn(t *testing.T) {
 		if name == "spawn_agent" {
 			t.Error("spawn_agent should not be available to sub-agents")
 		}
+	}
+}
+
+// Test structured output instruction generation
+func TestBuildStructuredOutputInstruction(t *testing.T) {
+	outputs := []string{"findings", "sources", "confidence"}
+	instruction := buildStructuredOutputInstruction(outputs)
+
+	if !strings.Contains(instruction, "findings") {
+		t.Error("expected instruction to contain 'findings'")
+	}
+	if !strings.Contains(instruction, "sources") {
+		t.Error("expected instruction to contain 'sources'")
+	}
+	if !strings.Contains(instruction, "JSON") {
+		t.Error("expected instruction to mention JSON")
+	}
+}
+
+// Test JSON extraction from various formats
+func TestExtractJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "raw json",
+			input:    `{"key": "value"}`,
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "json code block",
+			input:    "```json\n{\"key\": \"value\"}\n```",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "generic code block",
+			input:    "```\n{\"key\": \"value\"}\n```",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "json with surrounding text",
+			input:    "Here is the result:\n{\"key\": \"value\"}\nDone.",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "nested json",
+			input:    `{"outer": {"inner": "value"}}`,
+			expected: `{"outer": {"inner": "value"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractJSON(tt.input)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+// Test structured output parsing
+func TestParseStructuredOutput(t *testing.T) {
+	content := `{"findings": "test result", "sources": ["a", "b"], "count": 42}`
+	fields := []string{"findings", "sources", "count"}
+
+	result, err := parseStructuredOutput(content, fields)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result["findings"] != "test result" {
+		t.Errorf("expected findings='test result', got %q", result["findings"])
+	}
+	if result["sources"] != `["a","b"]` {
+		t.Errorf("expected sources as JSON array, got %q", result["sources"])
+	}
+	if result["count"] != "42" {
+		t.Errorf("expected count='42', got %q", result["count"])
+	}
+}
+
+// Test goal with structured output adds JSON instruction
+func TestExecutor_GoalWithStructuredOutput(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name: "test",
+		Steps: []agentfile.Step{
+			{Type: agentfile.StepRUN, UsingGoals: []string{"analyze"}},
+		},
+		Goals: []agentfile.Goal{
+			{
+				Name:    "analyze",
+				Outcome: "Analyze the topic",
+				Outputs: []string{"summary", "recommendations"},
+			},
+		},
+	}
+
+	provider := llm.NewMockProvider()
+	provider.SetResponse(`{"summary": "Test summary", "recommendations": ["Do X", "Do Y"]}`)
+	pol := policy.New()
+	registry := tools.NewRegistry(pol)
+
+	exec := NewExecutor(wf, provider, registry, pol)
+	_, err := exec.Run(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+
+	// Check that the prompt contained JSON instruction
+	req := provider.LastRequest()
+	found := false
+	for _, msg := range req.Messages {
+		if strings.Contains(msg.Content, "JSON") && strings.Contains(msg.Content, "summary") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected JSON instruction in prompt")
+	}
+
+	// Check that outputs were stored as variables
+	if exec.outputs["summary"] != "Test summary" {
+		t.Errorf("expected summary='Test summary', got %q", exec.outputs["summary"])
 	}
 }
 
