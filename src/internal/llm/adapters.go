@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
@@ -138,39 +139,90 @@ func (a *FantasyAdapter) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	return result, nil
 }
 
+// InferProviderFromModel returns the provider name based on model name patterns.
+// This allows users to just specify a model name without explicitly setting the provider.
+func InferProviderFromModel(model string) string {
+	model = strings.ToLower(model)
+
+	// Anthropic models
+	if strings.HasPrefix(model, "claude") {
+		return "anthropic"
+	}
+
+	// OpenAI models
+	if strings.HasPrefix(model, "gpt-") ||
+		strings.HasPrefix(model, "o1") ||
+		strings.HasPrefix(model, "o3") ||
+		strings.HasPrefix(model, "chatgpt") {
+		return "openai"
+	}
+
+	// Google models
+	if strings.HasPrefix(model, "gemini") ||
+		strings.HasPrefix(model, "gemma") {
+		return "google"
+	}
+
+	// Groq models (Llama, Mixtral on Groq)
+	if strings.HasPrefix(model, "llama") ||
+		strings.HasPrefix(model, "mixtral") && strings.Contains(model, "groq") {
+		return "groq"
+	}
+
+	// Mistral models
+	if strings.HasPrefix(model, "mistral") ||
+		strings.HasPrefix(model, "mixtral") ||
+		strings.HasPrefix(model, "codestral") ||
+		strings.HasPrefix(model, "pixtral") {
+		return "mistral"
+	}
+
+	return ""
+}
+
+// createFantasyProvider creates a Fantasy provider for the given provider name and API key.
+func createFantasyProvider(providerName, apiKey string) (fantasy.Provider, error) {
+	switch providerName {
+	case "anthropic":
+		return anthropic.New(anthropic.WithAPIKey(apiKey))
+	case "openai":
+		return openai.New(openai.WithAPIKey(apiKey))
+	case "google":
+		return google.New(google.WithGeminiAPIKey(apiKey))
+	case "groq":
+		return openaicompat.New(
+			openaicompat.WithBaseURL("https://api.groq.com/openai/v1"),
+			openaicompat.WithAPIKey(apiKey),
+			openaicompat.WithName("groq"),
+		)
+	case "mistral":
+		return openaicompat.New(
+			openaicompat.WithBaseURL("https://api.mistral.ai/v1"),
+			openaicompat.WithAPIKey(apiKey),
+			openaicompat.WithName("mistral"),
+		)
+	default:
+		return nil, fmt.Errorf("unsupported provider: %s", providerName)
+	}
+}
+
 // NewProvider creates a provider based on the configuration using fantasy.
+// If Provider is empty, it will be inferred from the Model name.
 func NewProvider(cfg FantasyConfig) (Provider, error) {
+	// Infer provider from model if not explicitly set
+	if cfg.Provider == "" && cfg.Model != "" {
+		cfg.Provider = InferProviderFromModel(cfg.Model)
+		if cfg.Provider == "" {
+			return nil, fmt.Errorf("cannot infer provider from model %q; please set provider explicitly", cfg.Model)
+		}
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	cfg.ApplyDefaults()
 
-	var fantasyProvider fantasy.Provider
-	var err error
-
-	switch cfg.Provider {
-	case "anthropic":
-		fantasyProvider, err = anthropic.New(anthropic.WithAPIKey(cfg.APIKey))
-	case "openai":
-		fantasyProvider, err = openai.New(openai.WithAPIKey(cfg.APIKey))
-	case "google":
-		fantasyProvider, err = google.New(google.WithGeminiAPIKey(cfg.APIKey))
-	case "groq":
-		fantasyProvider, err = openaicompat.New(
-			openaicompat.WithBaseURL("https://api.groq.com/openai/v1"),
-			openaicompat.WithAPIKey(cfg.APIKey),
-			openaicompat.WithName("groq"),
-		)
-	case "mistral":
-		fantasyProvider, err = openaicompat.New(
-			openaicompat.WithBaseURL("https://api.mistral.ai/v1"),
-			openaicompat.WithAPIKey(cfg.APIKey),
-			openaicompat.WithName("mistral"),
-		)
-	default:
-		return nil, fmt.Errorf("unsupported provider: %s", cfg.Provider)
-	}
-
+	fantasyProvider, err := createFantasyProvider(cfg.Provider, cfg.APIKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create %s provider: %w", cfg.Provider, err)
 	}

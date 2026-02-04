@@ -22,7 +22,6 @@ Create `agent.json`:
     "workspace": "/path/to/your/workspace"
   },
   "llm": {
-    "provider": "anthropic",
     "model": "claude-sonnet-4-20250514",
     "max_tokens": 4096
   },
@@ -31,11 +30,10 @@ Create `agent.json`:
       "model": "claude-opus-4-20250514"
     },
     "fast": {
-      "model": "claude-haiku-20240307"
+      "model": "gpt-4o-mini"
     },
     "code-generation": {
-      "provider": "openai",
-      "model": "gpt-4o"
+      "model": "gemini-1.5-pro"
     }
   },
   "session": {
@@ -48,7 +46,13 @@ Create `agent.json`:
 }
 ```
 
-**Note:** `api_key_env` is optional. By default, the agent uses standard environment variables based on the provider (e.g., `ANTHROPIC_API_KEY` for Anthropic). Only set `api_key_env` if you need a custom variable name.
+**Note:** The `provider` field is optional — it's automatically inferred from the model name:
+- `claude-*` → Anthropic
+- `gpt-*`, `o1-*`, `o3-*` → OpenAI
+- `gemini-*`, `gemma-*` → Google
+- `mistral-*`, `mixtral-*`, `codestral-*` → Mistral
+
+Set `provider` explicitly only for ambiguous model names or OpenAI-compatible endpoints (e.g., Groq).
 
 ### 3. Set API Keys
 

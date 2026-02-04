@@ -313,6 +313,84 @@ func TestNewProvider_UnsupportedProvider(t *testing.T) {
 	}
 }
 
+// TestInferProviderFromModel tests model name to provider inference
+func TestInferProviderFromModel(t *testing.T) {
+	tests := []struct {
+		model    string
+		expected string
+	}{
+		// Anthropic
+		{"claude-3-5-sonnet-20241022", "anthropic"},
+		{"claude-3-opus-20240229", "anthropic"},
+		{"claude-3-haiku-20240307", "anthropic"},
+		{"Claude-3-Sonnet", "anthropic"}, // case insensitive
+
+		// OpenAI
+		{"gpt-4o", "openai"},
+		{"gpt-4-turbo", "openai"},
+		{"gpt-3.5-turbo", "openai"},
+		{"o1-preview", "openai"},
+		{"o1-mini", "openai"},
+		{"o3-mini", "openai"},
+		{"chatgpt-4o-latest", "openai"},
+
+		// Google
+		{"gemini-1.5-pro", "google"},
+		{"gemini-1.5-flash", "google"},
+		{"gemini-2.0-flash", "google"},
+		{"gemma-2-9b", "google"},
+
+		// Mistral
+		{"mistral-large-latest", "mistral"},
+		{"mistral-small-latest", "mistral"},
+		{"mixtral-8x7b-instruct", "mistral"},
+		{"codestral-latest", "mistral"},
+		{"pixtral-12b", "mistral"},
+
+		// Unknown
+		{"unknown-model", ""},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			result := InferProviderFromModel(tt.model)
+			if result != tt.expected {
+				t.Errorf("InferProviderFromModel(%q) = %q, want %q", tt.model, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestNewProvider_InferredProvider tests that provider can be inferred from model name
+func TestNewProvider_InferredProvider(t *testing.T) {
+	tests := []struct {
+		model    string
+		wantErr  bool
+	}{
+		{"claude-3-5-sonnet-20241022", false},
+		{"gpt-4o", false},
+		{"gemini-1.5-pro", false},
+		{"mistral-large-latest", false},
+		{"unknown-model-xyz", true}, // cannot infer
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			cfg := FantasyConfig{
+				// Provider not set - should be inferred
+				Model:  tt.model,
+				APIKey: "test-key",
+			}
+
+			_, err := NewProvider(cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("NewProvider() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestFantasyConfig_MaxTokensDefault(t *testing.T) {
 	cfg := FantasyConfig{
 		Provider: "anthropic",
