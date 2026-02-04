@@ -262,7 +262,7 @@ func runWorkflow(args []string) {
 		provider, err = llm.NewFantasyProvider(llm.FantasyConfig{
 			Provider:  cfg.LLM.Provider,
 			Model:     cfg.LLM.Model,
-			APIKey:    os.Getenv(cfg.LLM.APIKeyEnv),
+			APIKey:    cfg.GetAPIKey(),
 			MaxTokens: cfg.LLM.MaxTokens,
 		})
 		if err != nil {
@@ -279,10 +279,15 @@ func runWorkflow(args []string) {
 
 	// Set up summarizer for web_fetch if small_llm is configured
 	if cfg.SmallLLM.Provider != "" && cfg.SmallLLM.Model != "" {
+		// Resolve API key: explicit env var > default for provider
+		apiKeyEnv := cfg.SmallLLM.APIKeyEnv
+		if apiKeyEnv == "" {
+			apiKeyEnv = config.DefaultAPIKeyEnv(cfg.SmallLLM.Provider)
+		}
 		smallProvider, err := llm.NewFantasyProvider(llm.FantasyConfig{
 			Provider:  cfg.SmallLLM.Provider,
 			Model:     cfg.SmallLLM.Model,
-			APIKey:    os.Getenv(cfg.SmallLLM.APIKeyEnv),
+			APIKey:    os.Getenv(apiKeyEnv),
 			MaxTokens: cfg.SmallLLM.MaxTokens,
 		})
 		if err == nil {

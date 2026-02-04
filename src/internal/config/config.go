@@ -125,11 +125,34 @@ func LoadDefault() (*Config, error) {
 }
 
 // GetAPIKey returns the API key from the configured environment variable.
+// If api_key_env is not set, uses the default env var for the provider.
 func (c *Config) GetAPIKey() string {
-	if c.LLM.APIKeyEnv == "" {
+	envVar := c.LLM.APIKeyEnv
+	if envVar == "" {
+		envVar = DefaultAPIKeyEnv(c.LLM.Provider)
+	}
+	if envVar == "" {
 		return ""
 	}
-	return os.Getenv(c.LLM.APIKeyEnv)
+	return os.Getenv(envVar)
+}
+
+// DefaultAPIKeyEnv returns the default environment variable name for a provider.
+func DefaultAPIKeyEnv(provider string) string {
+	switch provider {
+	case "anthropic":
+		return "ANTHROPIC_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	case "google":
+		return "GOOGLE_API_KEY"
+	case "mistral":
+		return "MISTRAL_API_KEY"
+	case "groq":
+		return "GROQ_API_KEY"
+	default:
+		return ""
+	}
 }
 
 // GetGatewayToken returns the gateway token from the configured environment variable.

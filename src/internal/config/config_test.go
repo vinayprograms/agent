@@ -204,6 +204,43 @@ func TestConfig_GetAPIKey(t *testing.T) {
 	}
 }
 
+// Test GetAPIKey uses default env var when api_key_env not set
+func TestConfig_GetAPIKey_Default(t *testing.T) {
+	os.Setenv("ANTHROPIC_API_KEY", "default-anthropic-key")
+	defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+	cfg := New()
+	cfg.LLM.Provider = "anthropic"
+	// api_key_env not set - should use default ANTHROPIC_API_KEY
+
+	key := cfg.GetAPIKey()
+	if key != "default-anthropic-key" {
+		t.Errorf("expected 'default-anthropic-key', got %s", key)
+	}
+}
+
+// Test DefaultAPIKeyEnv returns correct env var for each provider
+func TestDefaultAPIKeyEnv(t *testing.T) {
+	tests := []struct {
+		provider string
+		expected string
+	}{
+		{"anthropic", "ANTHROPIC_API_KEY"},
+		{"openai", "OPENAI_API_KEY"},
+		{"google", "GOOGLE_API_KEY"},
+		{"mistral", "MISTRAL_API_KEY"},
+		{"groq", "GROQ_API_KEY"},
+		{"unknown", ""},
+	}
+
+	for _, tt := range tests {
+		result := DefaultAPIKeyEnv(tt.provider)
+		if result != tt.expected {
+			t.Errorf("DefaultAPIKeyEnv(%q) = %q, want %q", tt.provider, result, tt.expected)
+		}
+	}
+}
+
 // Test GetGatewayToken from environment
 func TestConfig_GetGatewayToken(t *testing.T) {
 	os.Setenv("TEST_GATEWAY_TOKEN", "gateway456")

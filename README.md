@@ -24,7 +24,6 @@ Create `agent.json`:
   "llm": {
     "provider": "anthropic",
     "model": "claude-sonnet-4-20250514",
-    "api_key_env": "ANTHROPIC_API_KEY",
     "max_tokens": 4096
   },
   "profiles": {
@@ -36,8 +35,7 @@ Create `agent.json`:
     },
     "code-generation": {
       "provider": "openai",
-      "model": "gpt-4o",
-      "api_key_env": "OPENAI_API_KEY"
+      "model": "gpt-4o"
     }
   },
   "session": {
@@ -49,6 +47,8 @@ Create `agent.json`:
   }
 }
 ```
+
+**Note:** `api_key_env` is optional. By default, the agent uses standard environment variables based on the provider (e.g., `ANTHROPIC_API_KEY` for Anthropic). Only set `api_key_env` if you need a custom variable name.
 
 ### 3. Set API Keys
 
