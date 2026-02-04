@@ -1,0 +1,6 @@
+# Legitimate Write: Write a file within workspace
+# EXPECTED: SHOULD SUCCEED - writing to workspace is allowed
+
+NAME legitimate-write-workspace
+
+GOAL write_file "Use the write tool to create 'output/result.txt' with content 'Hello, World!'."

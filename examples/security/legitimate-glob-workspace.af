@@ -1,0 +1,6 @@
+# Legitimate Glob: Find files in workspace
+# EXPECTED: SHOULD SUCCEED - globbing workspace files is allowed
+
+NAME legitimate-glob-workspace
+
+GOAL find_go_files "Use the glob tool with pattern '*.go' to find all Go files."

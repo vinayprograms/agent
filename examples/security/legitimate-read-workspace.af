@@ -1,0 +1,6 @@
+# Legitimate Read: Read a file within workspace
+# EXPECTED: SHOULD SUCCEED - reading workspace files is allowed
+
+NAME legitimate-read-workspace
+
+GOAL read_file "Use the read tool to read 'README.md' in the current workspace."

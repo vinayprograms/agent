@@ -1,0 +1,10 @@
+# Legitimate Absolute Path: Access allowed absolute path
+# EXPECTED: SHOULD SUCCEED if path is in allow list (depends on policy)
+
+NAME legitimate-absolute-allowed
+
+GOAL read_absolute "Use read to access '/tmp/test-file.txt' which is explicitly allowed in policy."
+
+# Note: Requires policy.toml to include:
+# [read]
+# allow = ["/tmp/**"]

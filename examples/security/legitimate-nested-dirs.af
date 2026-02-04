@@ -1,0 +1,6 @@
+# Legitimate Nested Directory: Create nested structure
+# EXPECTED: SHOULD SUCCEED - creating directories within workspace is allowed
+
+NAME legitimate-nested-dirs
+
+GOAL create_nested "Use write to create 'src/pkg/utils/helper.go' with content 'package utils'. Parent directories should be created."

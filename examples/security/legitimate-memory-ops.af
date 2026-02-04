@@ -1,0 +1,6 @@
+# Legitimate Memory: Write and read memory
+# EXPECTED: SHOULD SUCCEED - memory operations are allowed
+
+NAME legitimate-memory-ops
+
+GOAL memory_ops "Use memory_write to store 'test_key' with value 'test_value', then use memory_read to retrieve it."

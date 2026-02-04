@@ -1,0 +1,6 @@
+# Legitimate Edit: Edit a file within workspace
+# EXPECTED: SHOULD SUCCEED - editing workspace files is allowed
+
+NAME legitimate-edit-workspace
+
+GOAL edit_file "Use the edit tool on 'test.txt' to replace 'old text' with 'new text'."

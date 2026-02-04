@@ -1,51 +1,77 @@
 # Security Test Examples
 
-This directory contains adversarial examples that attempt to break, circumvent, or compromise the agent. Each example targets a specific security control.
+This directory contains security test workflows in two categories:
 
-**Purpose:** Verify that security mitigations work as intended. All of these examples SHOULD FAIL safely.
+## Adversarial Tests (SHOULD FAIL)
 
-## Categories
+These attempt to break, circumvent, or compromise the agent. All should be blocked by security controls.
 
-### Path Traversal (`path-traversal-*.af`)
-Attempts to read/write files outside the workspace using `..` sequences.
+| Category | Count | Files |
+|----------|-------|-------|
+| Path Traversal | 3 | `path-traversal-*.af` |
+| Command Injection | 7 | `cmd-injection-*.af` |
+| Config Escalation | 4 | `config-escalation-*.af` |
+| Symlink Attacks | 4 | `symlink-*.af`, `race-*.af` |
+| Resource Exhaustion | 4 | `resource-*.af` |
+| Credential Theft | 5 | `credential-*.af` |
+| Prompt Injection | 4 | `prompt-injection-*.af` |
+| MCP/Web Abuse | 4 | `mcp-abuse-*.af`, `web-abuse-*.af` |
+| Sub-Agent Abuse | 2 | `subagent-*.af` |
+| Tool Abuse | 5 | `glob-*.af`, `grep-*.af`, `edit-*.af`, `write-*.af`, `encoded-*.af` |
+| Combined | 1 | `combined-multi-step.af` |
 
-### Command Injection (`cmd-injection-*.af`)
-Attempts to bypass command allowlists using shell metacharacters.
+## Legitimate Tests (SHOULD SUCCEED)
 
-### Config Escalation (`config-escalation-*.af`)
-Attempts to modify protected configuration files to gain privileges.
+These verify that normal, allowed operations still work correctly.
 
-### Symlink Attacks (`symlink-*.af`)
-Attempts to use symlinks to bypass file access controls.
+| Category | Files |
+|----------|-------|
+| File Operations | `legitimate-read-workspace.af`, `legitimate-write-workspace.af`, `legitimate-edit-workspace.af`, `legitimate-nested-dirs.af` |
+| Shell Commands | `legitimate-bash-ls.af`, `legitimate-bash-go-test.af` |
+| Search/Discovery | `legitimate-glob-workspace.af`, `legitimate-grep-workspace.af` |
+| Web Access | `legitimate-web-fetch.af`, `legitimate-web-search.af` |
+| Sub-Agents | `legitimate-spawn-agent.af` |
+| Memory | `legitimate-memory-ops.af` |
+| Policy-Dependent | `legitimate-absolute-allowed.af`, `legitimate-mcp-allowed.af` |
+| Multi-Step | `legitimate-multi-step.af` |
 
-### MCP Tool Abuse (`mcp-abuse-*.af`)
-Attempts to call blocked MCP tools or bypass the allowlist.
-
-### Resource Exhaustion (`resource-*.af`)
-Attempts to hang or crash the agent via infinite loops, large allocations, etc.
-
-### Credential Theft (`credential-*.af`)
-Attempts to read or exfiltrate API keys and credentials.
-
-### Prompt Injection (`prompt-injection-*.af`)
-Attempts to manipulate the agent via malicious input content.
-
-## Running These Tests
+## Running Tests
 
 ```bash
-# Each should fail with a security error
-for f in examples/security/*.af; do
-  echo "Testing: $f"
-  ./agent run "$f" 2>&1 | grep -E "(denied|blocked|error|failed)"
+# Run all adversarial tests (expect failures)
+for f in examples/security/path-traversal-*.af \
+         examples/security/cmd-injection-*.af \
+         examples/security/config-escalation-*.af \
+         examples/security/symlink-*.af \
+         examples/security/resource-*.af \
+         examples/security/credential-*.af \
+         examples/security/prompt-injection-*.af \
+         examples/security/mcp-abuse-*.af \
+         examples/security/web-abuse-*.af \
+         examples/security/subagent-*.af; do
+  echo "Testing (expect FAIL): $f"
+  ./agent run "$f" 2>&1 | grep -E "(denied|blocked|error|failed|timeout)" && echo "✓ Blocked" || echo "✗ NOT BLOCKED!"
+done
+
+# Run all legitimate tests (expect success)
+for f in examples/security/legitimate-*.af; do
+  echo "Testing (expect SUCCESS): $f"
+  ./agent run "$f" 2>&1 && echo "✓ Passed" || echo "✗ Failed"
 done
 ```
 
 ## Expected Results
 
-Every example should:
+**Adversarial tests should:**
 1. Be blocked by a security control
 2. Return a clear error message
 3. NOT execute the malicious action
 4. NOT crash the agent
 
-If any example succeeds in its attack, that's a security vulnerability.
+**Legitimate tests should:**
+1. Complete successfully
+2. Produce expected output
+3. Demonstrate security doesn't break functionality
+
+If any adversarial test succeeds → security vulnerability.
+If any legitimate test fails → security too restrictive.

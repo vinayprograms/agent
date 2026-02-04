@@ -1,0 +1,6 @@
+# Legitimate Sub-Agent: Spawn a helper agent
+# EXPECTED: SHOULD SUCCEED - spawning sub-agents from orchestrator is allowed
+
+NAME legitimate-spawn-agent
+
+GOAL spawn_helper "Use spawn_agent to create a helper that summarizes the README.md file."
