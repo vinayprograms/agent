@@ -125,28 +125,40 @@ func TestLoadFile_SecurePermissions(t *testing.T) {
 [anthropic]
 api_key = "secret-key"
 `
-	// Test 0600 (owner read-write)
-	credPath600 := filepath.Join(tmpDir, "credentials-600.toml")
-	os.WriteFile(credPath600, []byte(content), 0600)
+	// Only 0400 (owner read-only) is allowed
+	credPath := filepath.Join(tmpDir, "credentials.toml")
+	os.WriteFile(credPath, []byte(content), 0400)
 
-	creds, err := LoadFile(credPath600)
-	if err != nil {
-		t.Fatalf("0600 should be allowed: %v", err)
-	}
-	if creds.Anthropic.APIKey != "secret-key" {
-		t.Error("expected api_key to be loaded")
-	}
-
-	// Test 0400 (owner read-only) - should also be allowed
-	credPath400 := filepath.Join(tmpDir, "credentials-400.toml")
-	os.WriteFile(credPath400, []byte(content), 0400)
-
-	creds, err = LoadFile(credPath400)
+	creds, err := LoadFile(credPath)
 	if err != nil {
 		t.Fatalf("0400 should be allowed: %v", err)
 	}
 	if creds.Anthropic.APIKey != "secret-key" {
 		t.Error("expected api_key to be loaded")
+	}
+}
+
+func TestLoadFile_RejectWritablePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission check not applicable on Windows")
+	}
+
+	tmpDir := t.TempDir()
+
+	content := `
+[anthropic]
+api_key = "secret-key"
+`
+	// 0600 should be rejected (owner can write)
+	credPath := filepath.Join(tmpDir, "credentials.toml")
+	os.WriteFile(credPath, []byte(content), 0600)
+
+	_, err := LoadFile(credPath)
+	if err == nil {
+		t.Fatal("expected error for 0600 permissions (writable)")
+	}
+	if !errors.Is(err, ErrInsecurePermissions) {
+		t.Errorf("expected ErrInsecurePermissions, got %v", err)
 	}
 }
 
