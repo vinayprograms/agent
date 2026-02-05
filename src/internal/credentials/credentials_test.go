@@ -36,33 +36,21 @@ api_key = "sk-openai-test456"
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if creds.Anthropic == nil || creds.Anthropic.APIKey != "sk-ant-test123" {
-		t.Errorf("anthropic key not loaded correctly")
+	if got := creds.GetAPIKey("anthropic"); got != "sk-ant-test123" {
+		t.Errorf("anthropic key = %q, want %q", got, "sk-ant-test123")
 	}
-	if creds.OpenAI == nil || creds.OpenAI.APIKey != "sk-openai-test456" {
-		t.Errorf("openai key not loaded correctly")
+	if got := creds.GetAPIKey("openai"); got != "sk-openai-test456" {
+		t.Errorf("openai key = %q, want %q", got, "sk-openai-test456")
 	}
 }
 
-func TestLoadFile_AllProviders(t *testing.T) {
+func TestLoadFile_GenericLLMSection(t *testing.T) {
 	tmpDir := t.TempDir()
 	credPath := filepath.Join(tmpDir, "credentials.toml")
 
 	content := `
-[anthropic]
-api_key = "anthropic-key"
-
-[openai]
-api_key = "openai-key"
-
-[google]
-api_key = "google-key"
-
-[mistral]
-api_key = "mistral-key"
-
-[groq]
-api_key = "groq-key"
+[llm]
+api_key = "generic-llm-key"
 `
 	os.WriteFile(credPath, []byte(content), 0400)
 
@@ -71,22 +59,43 @@ api_key = "groq-key"
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	tests := []struct {
-		name string
-		got  *ProviderCreds
-		want string
-	}{
-		{"anthropic", creds.Anthropic, "anthropic-key"},
-		{"openai", creds.OpenAI, "openai-key"},
-		{"google", creds.Google, "google-key"},
-		{"mistral", creds.Mistral, "mistral-key"},
-		{"groq", creds.Groq, "groq-key"},
+	// Any provider should get the generic key
+	if got := creds.GetAPIKey("anthropic"); got != "generic-llm-key" {
+		t.Errorf("anthropic key = %q, want %q (from [llm])", got, "generic-llm-key")
+	}
+	if got := creds.GetAPIKey("openrouter"); got != "generic-llm-key" {
+		t.Errorf("openrouter key = %q, want %q (from [llm])", got, "generic-llm-key")
+	}
+	if got := creds.GetAPIKey("my-custom-provider"); got != "generic-llm-key" {
+		t.Errorf("my-custom-provider key = %q, want %q (from [llm])", got, "generic-llm-key")
+	}
+}
+
+func TestLoadFile_ProviderOverridesLLM(t *testing.T) {
+	tmpDir := t.TempDir()
+	credPath := filepath.Join(tmpDir, "credentials.toml")
+
+	content := `
+[llm]
+api_key = "generic-key"
+
+[anthropic]
+api_key = "anthropic-specific-key"
+`
+	os.WriteFile(credPath, []byte(content), 0400)
+
+	creds, err := LoadFile(credPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	for _, tt := range tests {
-		if tt.got == nil || tt.got.APIKey != tt.want {
-			t.Errorf("%s: expected %q, got %v", tt.name, tt.want, tt.got)
-		}
+	// Specific provider should use its own key
+	if got := creds.GetAPIKey("anthropic"); got != "anthropic-specific-key" {
+		t.Errorf("anthropic key = %q, want %q", got, "anthropic-specific-key")
+	}
+	// Other providers should use generic
+	if got := creds.GetAPIKey("openai"); got != "generic-key" {
+		t.Errorf("openai key = %q, want %q (from [llm])", got, "generic-key")
 	}
 }
 
@@ -99,10 +108,9 @@ func TestLoadFile_InsecurePermissions(t *testing.T) {
 	credPath := filepath.Join(tmpDir, "credentials.toml")
 
 	content := `
-[anthropic]
+[llm]
 api_key = "secret-key"
 `
-	// Write with world-readable permissions (0644)
 	os.WriteFile(credPath, []byte(content), 0644)
 
 	_, err := LoadFile(credPath)
@@ -120,20 +128,19 @@ func TestLoadFile_SecurePermissions(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
+	credPath := filepath.Join(tmpDir, "credentials.toml")
 
 	content := `
-[anthropic]
+[llm]
 api_key = "secret-key"
 `
-	// Only 0400 (owner read-only) is allowed
-	credPath := filepath.Join(tmpDir, "credentials.toml")
 	os.WriteFile(credPath, []byte(content), 0400)
 
 	creds, err := LoadFile(credPath)
 	if err != nil {
 		t.Fatalf("0400 should be allowed: %v", err)
 	}
-	if creds.Anthropic.APIKey != "secret-key" {
+	if creds.GetAPIKey("any-provider") != "secret-key" {
 		t.Error("expected api_key to be loaded")
 	}
 }
@@ -144,13 +151,12 @@ func TestLoadFile_RejectWritablePermissions(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
+	credPath := filepath.Join(tmpDir, "credentials.toml")
 
 	content := `
-[anthropic]
+[llm]
 api_key = "secret-key"
 `
-	// 0600 should be rejected (owner can write)
-	credPath := filepath.Join(tmpDir, "credentials.toml")
 	os.WriteFile(credPath, []byte(content), 0600)
 
 	_, err := LoadFile(credPath)
@@ -162,26 +168,11 @@ api_key = "secret-key"
 	}
 }
 
-func TestGetAPIKey_FromCredentials(t *testing.T) {
-	creds := &Credentials{
-		Anthropic: &ProviderCreds{APIKey: "creds-anthropic"},
-		OpenAI:    &ProviderCreds{APIKey: "creds-openai"},
-	}
-
-	if got := creds.GetAPIKey("anthropic"); got != "creds-anthropic" {
-		t.Errorf("GetAPIKey(anthropic) = %q, want %q", got, "creds-anthropic")
-	}
-	if got := creds.GetAPIKey("openai"); got != "creds-openai" {
-		t.Errorf("GetAPIKey(openai) = %q, want %q", got, "creds-openai")
-	}
-}
-
 func TestGetAPIKey_FallbackToEnv(t *testing.T) {
-	// Set env var but no credentials
 	os.Setenv("ANTHROPIC_API_KEY", "env-anthropic")
 	defer os.Unsetenv("ANTHROPIC_API_KEY")
 
-	creds := &Credentials{} // No anthropic key set
+	creds := &Credentials{providers: make(map[string]*ProviderCreds)}
 
 	if got := creds.GetAPIKey("anthropic"); got != "env-anthropic" {
 		t.Errorf("GetAPIKey(anthropic) = %q, want %q (from env)", got, "env-anthropic")
@@ -193,7 +184,9 @@ func TestGetAPIKey_CredentialsTakesPriority(t *testing.T) {
 	defer os.Unsetenv("ANTHROPIC_API_KEY")
 
 	creds := &Credentials{
-		Anthropic: &ProviderCreds{APIKey: "creds-value"},
+		providers: map[string]*ProviderCreds{
+			"anthropic": {APIKey: "creds-value"},
+		},
 	}
 
 	if got := creds.GetAPIKey("anthropic"); got != "creds-value" {
@@ -212,39 +205,19 @@ func TestGetAPIKey_NilCredentials(t *testing.T) {
 	}
 }
 
-func TestGetAPIKey_AllProviders(t *testing.T) {
-	creds := &Credentials{
-		Anthropic: &ProviderCreds{APIKey: "anthropic-key"},
-		OpenAI:    &ProviderCreds{APIKey: "openai-key"},
-		Google:    &ProviderCreds{APIKey: "google-key"},
-		Mistral:   &ProviderCreds{APIKey: "mistral-key"},
-		Groq:      &ProviderCreds{APIKey: "groq-key"},
-		Brave:     &ProviderCreds{APIKey: "brave-key"},
-		Tavily:    &ProviderCreds{APIKey: "tavily-key"},
-	}
+func TestGetAPIKey_GenericEnvVar(t *testing.T) {
+	// Unknown provider should generate PROVIDER_API_KEY env var
+	os.Setenv("MYCUSTOM_API_KEY", "custom-env-value")
+	defer os.Unsetenv("MYCUSTOM_API_KEY")
 
-	tests := []struct {
-		provider string
-		want     string
-	}{
-		{"anthropic", "anthropic-key"},
-		{"openai", "openai-key"},
-		{"google", "google-key"},
-		{"mistral", "mistral-key"},
-		{"groq", "groq-key"},
-		{"brave", "brave-key"},
-		{"tavily", "tavily-key"},
-	}
+	creds := &Credentials{providers: make(map[string]*ProviderCreds)}
 
-	for _, tt := range tests {
-		if got := creds.GetAPIKey(tt.provider); got != tt.want {
-			t.Errorf("GetAPIKey(%s) = %q, want %q", tt.provider, got, tt.want)
-		}
+	if got := creds.GetAPIKey("mycustom"); got != "custom-env-value" {
+		t.Errorf("GetAPIKey(mycustom) = %q, want %q", got, "custom-env-value")
 	}
 }
 
 func TestLoad_NoFile(t *testing.T) {
-	// Change to temp dir where no credentials file exists
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
@@ -269,7 +242,7 @@ func TestLoad_FromCurrentDir(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	content := `
-[anthropic]
+[llm]
 api_key = "from-current-dir"
 `
 	os.WriteFile("credentials.toml", []byte(content), 0400)
@@ -281,10 +254,36 @@ api_key = "from-current-dir"
 	if creds == nil {
 		t.Fatal("expected credentials to be loaded")
 	}
-	if creds.Anthropic.APIKey != "from-current-dir" {
-		t.Errorf("unexpected api key: %s", creds.Anthropic.APIKey)
+	if creds.GetAPIKey("any") != "from-current-dir" {
+		t.Errorf("unexpected api key: %s", creds.GetAPIKey("any"))
 	}
 	if path != "credentials.toml" {
 		t.Errorf("expected path 'credentials.toml', got %q", path)
+	}
+}
+
+func TestLoadFile_AnyProviderSection(t *testing.T) {
+	tmpDir := t.TempDir()
+	credPath := filepath.Join(tmpDir, "credentials.toml")
+
+	content := `
+[openrouter]
+api_key = "openrouter-key"
+
+[my-custom-llm]
+api_key = "custom-key"
+`
+	os.WriteFile(credPath, []byte(content), 0400)
+
+	creds, err := LoadFile(credPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := creds.GetAPIKey("openrouter"); got != "openrouter-key" {
+		t.Errorf("openrouter key = %q, want %q", got, "openrouter-key")
+	}
+	if got := creds.GetAPIKey("my-custom-llm"); got != "custom-key" {
+		t.Errorf("my-custom-llm key = %q, want %q", got, "custom-key")
 	}
 }

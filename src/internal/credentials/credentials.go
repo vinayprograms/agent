@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -14,23 +15,24 @@ import (
 var ErrInsecurePermissions = fmt.Errorf("credentials file has insecure permissions")
 
 // Credentials holds API keys loaded from credentials.toml
+// Uses a generic map to support any provider without hardcoding.
 type Credentials struct {
-	Anthropic  *ProviderCreds `toml:"anthropic"`
-	OpenAI     *ProviderCreds `toml:"openai"`
-	Google     *ProviderCreds `toml:"google"`
-	Mistral    *ProviderCreds `toml:"mistral"`
-	Groq       *ProviderCreds `toml:"groq"`
-	Brave      *ProviderCreds `toml:"brave"`
-	Tavily     *ProviderCreds `toml:"tavily"`
-	OpenRouter *ProviderCreds `toml:"openrouter"`
-	LiteLLM    *ProviderCreds `toml:"litellm"`
-	Ollama     *ProviderCreds `toml:"ollama"`
-	LMStudio   *ProviderCreds `toml:"lmstudio"`
+	// LLM is the generic LLM API key (used when provider-specific key not found)
+	LLM *ProviderCreds `toml:"llm"`
+
+	// Provider-specific sections (loaded dynamically)
+	providers map[string]*ProviderCreds
 }
 
 // ProviderCreds holds credentials for a single provider
 type ProviderCreds struct {
 	APIKey string `toml:"api_key"`
+}
+
+// rawCredentials is used for TOML unmarshaling
+type rawCredentials struct {
+	LLM      *ProviderCreds            `toml:"llm"`
+	Sections map[string]*ProviderCreds `toml:"-"`
 }
 
 // StandardPaths returns the standard credential file locations in order of priority
@@ -77,70 +79,66 @@ func LoadFile(path string) (*Credentials, error) {
 			return nil, err
 		}
 		mode := info.Mode().Perm()
-		// Fail if group or others can read (should be 0600 or 0400)
 		// Credentials must be 0400 (owner read-only)
 		if mode != 0400 {
-			return nil, fmt.Errorf("%w: %s has mode %04o (must be 0400)", 
+			return nil, fmt.Errorf("%w: %s has mode %04o (must be 0400)",
 				ErrInsecurePermissions, path, mode)
 		}
 	}
 
-	var creds Credentials
-	if _, err := toml.DecodeFile(path, &creds); err != nil {
+	// First pass: decode into a generic map to get all sections
+	var rawData map[string]interface{}
+	if _, err := toml.DecodeFile(path, &rawData); err != nil {
 		return nil, err
 	}
-	return &creds, nil
+
+	creds := &Credentials{
+		providers: make(map[string]*ProviderCreds),
+	}
+
+	// Extract provider sections
+	for key, value := range rawData {
+		section, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		apiKey, _ := section["api_key"].(string)
+		if apiKey == "" {
+			continue
+		}
+
+		provCreds := &ProviderCreds{APIKey: apiKey}
+
+		if key == "llm" {
+			creds.LLM = provCreds
+		} else {
+			creds.providers[key] = provCreds
+		}
+	}
+
+	return creds, nil
 }
 
 // GetAPIKey returns the API key for a provider.
-// Priority: credentials file > environment variable.
+// Priority: [provider] section > [llm] section > environment variable
 func (c *Credentials) GetAPIKey(provider string) string {
 	if c != nil {
-		switch provider {
-		case "anthropic":
-			if c.Anthropic != nil && c.Anthropic.APIKey != "" {
-				return c.Anthropic.APIKey
-			}
-		case "openai", "openai-compat":
-			if c.OpenAI != nil && c.OpenAI.APIKey != "" {
-				return c.OpenAI.APIKey
-			}
-		case "google":
-			if c.Google != nil && c.Google.APIKey != "" {
-				return c.Google.APIKey
-			}
-		case "mistral":
-			if c.Mistral != nil && c.Mistral.APIKey != "" {
-				return c.Mistral.APIKey
-			}
-		case "groq":
-			if c.Groq != nil && c.Groq.APIKey != "" {
-				return c.Groq.APIKey
-			}
-		case "brave":
-			if c.Brave != nil && c.Brave.APIKey != "" {
-				return c.Brave.APIKey
-			}
-		case "tavily":
-			if c.Tavily != nil && c.Tavily.APIKey != "" {
-				return c.Tavily.APIKey
-			}
-		case "openrouter":
-			if c.OpenRouter != nil && c.OpenRouter.APIKey != "" {
-				return c.OpenRouter.APIKey
-			}
-		case "litellm":
-			if c.LiteLLM != nil && c.LiteLLM.APIKey != "" {
-				return c.LiteLLM.APIKey
-			}
-		case "ollama":
-			if c.Ollama != nil && c.Ollama.APIKey != "" {
-				return c.Ollama.APIKey
-			}
-		case "lmstudio":
-			if c.LMStudio != nil && c.LMStudio.APIKey != "" {
-				return c.LMStudio.APIKey
-			}
+		// Normalize provider name (lowercase, no dashes)
+		normalized := strings.ToLower(strings.ReplaceAll(provider, "-", ""))
+
+		// Check provider-specific section first
+		if creds, ok := c.providers[provider]; ok && creds.APIKey != "" {
+			return creds.APIKey
+		}
+		// Try normalized name
+		if creds, ok := c.providers[normalized]; ok && creds.APIKey != "" {
+			return creds.APIKey
+		}
+
+		// Fall back to generic [llm] section
+		if c.LLM != nil && c.LLM.APIKey != "" {
+			return c.LLM.APIKey
 		}
 	}
 
@@ -150,10 +148,11 @@ func (c *Credentials) GetAPIKey(provider string) string {
 
 // envVarForProvider returns the environment variable name for a provider.
 func envVarForProvider(provider string) string {
+	// Known providers with standard env vars
 	switch provider {
 	case "anthropic":
 		return "ANTHROPIC_API_KEY"
-	case "openai":
+	case "openai", "openai-compat":
 		return "OPENAI_API_KEY"
 	case "google":
 		return "GOOGLE_API_KEY"
@@ -165,17 +164,8 @@ func envVarForProvider(provider string) string {
 		return "BRAVE_API_KEY"
 	case "tavily":
 		return "TAVILY_API_KEY"
-	case "openrouter":
-		return "OPENROUTER_API_KEY"
-	case "litellm":
-		return "LITELLM_API_KEY"
-	case "ollama":
-		return "OLLAMA_API_KEY"
-	case "lmstudio":
-		return "LMSTUDIO_API_KEY"
-	case "openai-compat":
-		return "OPENAI_API_KEY" // Default to OpenAI env var for generic compat
 	default:
-		return ""
+		// Generic: PROVIDER_API_KEY
+		return strings.ToUpper(strings.ReplaceAll(provider, "-", "_")) + "_API_KEY"
 	}
 }
