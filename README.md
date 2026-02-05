@@ -2,7 +2,7 @@
 
 A Go-based headless agent for workflow automation using LLMs.
 
-> ⚠️ **Disclaimer:** This codebase was vibe-coded using [OpenClaw](https://github.com/openclaw/openclaw) + Claude Opus 4.5. Review before production use.
+> ⚠️ **Disclaimer:** This entire codebase was **gramcoded** — built by texting an AI through Telegram. No IDE. No terminal. Just vibes, thumbs, and [OpenClaw](https://github.com/openclaw/openclaw) + Claude Opus 4.5. Review before production use.
 
 ## Quick Start
 
