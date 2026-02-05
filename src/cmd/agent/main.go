@@ -227,6 +227,10 @@ func runWorkflow(args []string) {
 	if cfg.Agent.Workspace == "" {
 		cfg.Agent.Workspace, _ = os.Getwd()
 	}
+	// Make workspace absolute
+	if !filepath.IsAbs(cfg.Agent.Workspace) {
+		cfg.Agent.Workspace, _ = filepath.Abs(cfg.Agent.Workspace)
+	}
 
 	// Parse and load Agentfile (includes loading FROM files and validation)
 	wf, err := agentfile.LoadFile(agentfilePath)

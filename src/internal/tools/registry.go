@@ -152,6 +152,15 @@ func sanitizePath(path string, workspace string) (string, error) {
 	// Clean the path to remove . and .. components
 	cleaned := filepath.Clean(path)
 	
+	// Make workspace absolute first
+	if workspace != "" && !filepath.IsAbs(workspace) {
+		var err error
+		workspace, err = filepath.Abs(workspace)
+		if err != nil {
+			return "", fmt.Errorf("invalid workspace: %w", err)
+		}
+	}
+	
 	// Convert to absolute path
 	var absPath string
 	if filepath.IsAbs(cleaned) {
@@ -163,30 +172,24 @@ func sanitizePath(path string, workspace string) (string, error) {
 	// Resolve any symlinks to get the real path
 	realPath, err := filepath.EvalSymlinks(filepath.Dir(absPath))
 	if err != nil {
-		// If parent doesn't exist yet, just use the cleaned path
-		// but still check for traversal
+		// If parent doesn't exist yet, use the absolute dir path
 		realPath = filepath.Dir(absPath)
 	}
 	realPath = filepath.Join(realPath, filepath.Base(absPath))
 	
 	// Ensure the path is within the workspace (if workspace is set)
 	if workspace != "" {
-		absWorkspace, err := filepath.Abs(workspace)
-		if err != nil {
-			return "", fmt.Errorf("invalid workspace: %w", err)
-		}
-		
 		// Resolve workspace symlinks too
-		realWorkspace, err := filepath.EvalSymlinks(absWorkspace)
+		realWorkspace, err := filepath.EvalSymlinks(workspace)
 		if err != nil {
-			realWorkspace = absWorkspace
+			realWorkspace = workspace
 		}
 		
 		// Check if path starts with workspace
 		if !strings.HasPrefix(realPath, realWorkspace+string(filepath.Separator)) && realPath != realWorkspace {
 			// Allow absolute paths outside workspace only if they're truly absolute in the original
 			if !filepath.IsAbs(path) {
-				return "", fmt.Errorf("path traversal detected: requested=%q resolved=%q workspace=%q", path, realPath, realWorkspace)
+				return "", fmt.Errorf("path traversal detected: requested=%q absPath=%q resolved=%q workspace=%q realWorkspace=%q", path, absPath, realPath, workspace, realWorkspace)
 			}
 		}
 	}
