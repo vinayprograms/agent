@@ -6,14 +6,33 @@ A Go-based headless agent for workflow automation using LLMs.
 
 ## Quick Start
 
-### 1. Build
+### Option A: Interactive Setup (Recommended)
 
 ```bash
+# Build
+make build
+
+# Run the interactive setup wizard
+./bin/agent setup
+```
+
+The setup wizard guides you through configuration for any deployment scenario — from local experimentation to enterprise Kubernetes deployments.
+
+### Option B: Manual Setup
+
+#### 1. Build
+
+```bash
+# Using Make (recommended)
+make build          # Build to ./bin/agent
+make install        # Install to ~/.local/bin/agent
+
+# Or manually
 cd src
 go build -o agent ./cmd/agent
 ```
 
-### 2. Create a Config File
+#### 2. Create a Config File
 
 Create `agent.toml`:
 
@@ -53,7 +72,7 @@ enabled = false
 
 Set `provider` explicitly only for ambiguous model names or OpenAI-compatible endpoints (e.g., Groq).
 
-### 3. Set API Keys
+#### 3. Set API Keys
 
 API keys are loaded in this priority order (highest to lowest):
 1. Environment variables
@@ -104,7 +123,7 @@ This file is shared with other Grid tools and agents.
 
 **Never commit credentials to git.** Add `credentials.toml`, `.env`, and `*.pem` to your `.gitignore`.
 
-### 4. Create an Agentfile
+#### 4. Create an Agentfile
 
 Create `Agentfile`:
 
@@ -116,7 +135,7 @@ GOAL summarize "Summarize the research in one sentence"
 RUN main USING research, summarize
 ```
 
-### 5. Run
+#### 5. Run
 
 ```bash
 # Validate (uses ./Agentfile by default)
@@ -194,8 +213,22 @@ AGENT helper FROM agents/helper.md REQUIRES "fast"
 | `agent verify <pkg>` | Verify package signature |
 | `agent install <pkg>` | Install a package |
 | `agent keygen` | Generate signing key pair |
+| `agent setup` | Interactive setup wizard |
 | `agent help` | Show help |
 | `agent version` | Show version |
+
+## Makefile Targets
+
+```bash
+make build          # Build to ./bin/agent
+make install        # Install to ~/.local/bin/agent
+make install-system # Install to /usr/local/bin (requires sudo)
+make test           # Run all tests
+make test-cover     # Run tests with coverage report
+make docker-build   # Build Docker image
+make clean          # Remove build artifacts
+make help           # Show all available targets
+```
 
 ## Flags
 

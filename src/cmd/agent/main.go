@@ -18,11 +18,17 @@ import (
 	"github.com/openclaw/headless-agent/internal/packaging"
 	"github.com/openclaw/headless-agent/internal/policy"
 	"github.com/openclaw/headless-agent/internal/session"
+	"github.com/openclaw/headless-agent/internal/setup"
 	"github.com/openclaw/headless-agent/internal/telemetry"
 	"github.com/openclaw/headless-agent/internal/tools"
 )
 
-const version = "0.1.0"
+// Build-time variables (set via ldflags)
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildTime = "unknown"
+)
 
 // globalCreds holds loaded credentials (file > env fallback happens in GetAPIKey)
 var globalCreds *credentials.Credentials
@@ -67,8 +73,10 @@ func main() {
 		installPackage(args)
 	case "keygen":
 		generateKeys(args)
+	case "setup":
+		runSetup()
 	case "version":
-		fmt.Printf("agent version %s\n", version)
+		fmt.Printf("agent version %s (commit: %s, built: %s)\n", version, commit, buildTime)
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -105,6 +113,7 @@ Commands:
   verify <pkg>          Verify package signature
   install <pkg>         Install a package
   keygen                Generate signing key pair
+  setup                 Interactive setup wizard
   version               Show version
   help                  Show this help
 
@@ -883,4 +892,11 @@ func generateKeys(args []string) {
 	fmt.Printf("✓ Generated key pair\n")
 	fmt.Printf("  Private key: %s (keep secret!)\n", privPath)
 	fmt.Printf("  Public key:  %s (share for verification)\n", pubPath)
+}
+
+func runSetup() {
+	if err := setup.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 }
