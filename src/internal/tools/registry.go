@@ -812,6 +812,13 @@ type webSearchTool struct {
 	policy *policy.Policy
 }
 
+// Global rate limiter for web search to prevent hammering APIs
+var (
+	searchMutex     sync.Mutex
+	lastSearchTime  time.Time
+	searchCooldown  = 500 * time.Millisecond // minimum time between searches
+)
+
 func (t *webSearchTool) Name() string { return "web_search" }
 
 func (t *webSearchTool) Description() string {
@@ -850,6 +857,22 @@ func (t *webSearchTool) Execute(ctx context.Context, args map[string]interface{}
 			count = 10
 		}
 	}
+
+	// Rate limiting: serialize requests with cooldown to avoid hammering APIs
+	searchMutex.Lock()
+	elapsed := time.Since(lastSearchTime)
+	if elapsed < searchCooldown {
+		wait := searchCooldown - elapsed
+		searchMutex.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+		searchMutex.Lock()
+	}
+	lastSearchTime = time.Now()
+	searchMutex.Unlock()
 
 	// Try Brave first, then Tavily, then DuckDuckGo (no API key needed)
 	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
