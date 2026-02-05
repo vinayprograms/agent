@@ -1,0 +1,21 @@
+# Basic Supervised Workflow
+# 
+# Global SUPERVISED at the top enables supervision for all steps.
+# The supervisor monitors execution and auto-corrects if drift is detected.
+
+SUPERVISED
+NAME basic-supervised
+
+INPUT topic DEFAULT "renewable energy trends"
+
+# Define agents
+AGENT researcher "Research the given topic thoroughly. Find current data, trends, and key insights." -> findings, sources
+AGENT analyst "Analyze findings and identify patterns, opportunities, and risks." -> analysis, recommendations
+
+# Define goals
+GOAL research "Research $topic and compile findings" -> research_output USING researcher
+GOAL analyze "Analyze research findings and provide recommendations" -> final_analysis USING analyst
+
+# Execution
+RUN research_phase USING research
+RUN analysis_phase USING analyze

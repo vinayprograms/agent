@@ -564,3 +564,310 @@ func TestLexer_ArrowToken(t *testing.T) {
 		t.Errorf("expected IDENT 'output1', got %s %q", tok.Type, tok.Literal)
 	}
 }
+
+// Test global SUPERVISED keyword
+func TestParser_GlobalSupervised(t *testing.T) {
+	input := `SUPERVISED
+NAME supervised-workflow
+GOAL analyze "Analyze the data"
+RUN main USING analyze`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	if !wf.Supervised {
+		t.Error("expected workflow to be supervised")
+	}
+	if wf.HumanOnly {
+		t.Error("expected HumanOnly to be false")
+	}
+}
+
+// Test global SUPERVISED HUMAN
+func TestParser_GlobalSupervisedHuman(t *testing.T) {
+	input := `SUPERVISED HUMAN
+NAME human-supervised-workflow
+GOAL deploy "Deploy to production"
+RUN main USING deploy`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	if !wf.Supervised {
+		t.Error("expected workflow to be supervised")
+	}
+	if !wf.HumanOnly {
+		t.Error("expected HumanOnly to be true")
+	}
+}
+
+// Test GOAL with inline SUPERVISED
+func TestParser_GoalSupervised(t *testing.T) {
+	input := `NAME test
+GOAL risky_operation "Perform risky operation" SUPERVISED
+RUN main USING risky_operation`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	goal := wf.Goals[0]
+	if goal.Supervised == nil || !*goal.Supervised {
+		t.Error("expected goal to be supervised")
+	}
+	if goal.HumanOnly {
+		t.Error("expected goal HumanOnly to be false")
+	}
+}
+
+// Test GOAL with SUPERVISED HUMAN
+func TestParser_GoalSupervisedHuman(t *testing.T) {
+	input := `NAME test
+GOAL deploy "Deploy to production" SUPERVISED HUMAN
+RUN main USING deploy`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	goal := wf.Goals[0]
+	if goal.Supervised == nil || !*goal.Supervised {
+		t.Error("expected goal to be supervised")
+	}
+	if !goal.HumanOnly {
+		t.Error("expected goal HumanOnly to be true")
+	}
+}
+
+// Test GOAL with UNSUPERVISED
+func TestParser_GoalUnsupervised(t *testing.T) {
+	input := `SUPERVISED
+NAME test
+GOAL trivial "Do something trivial" UNSUPERVISED
+RUN main USING trivial`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	if !wf.Supervised {
+		t.Error("expected workflow to be supervised")
+	}
+
+	goal := wf.Goals[0]
+	if goal.Supervised == nil || *goal.Supervised {
+		t.Error("expected goal to be unsupervised")
+	}
+}
+
+// Test AGENT with SUPERVISED
+func TestParser_AgentSupervised(t *testing.T) {
+	input := `NAME test
+AGENT critic "Find issues" SUPERVISED
+GOAL analyze "Analyze" USING critic
+RUN main USING analyze`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	agent := wf.Agents[0]
+	if agent.Supervised == nil || !*agent.Supervised {
+		t.Error("expected agent to be supervised")
+	}
+}
+
+// Test AGENT with SUPERVISED HUMAN and REQUIRES
+func TestParser_AgentSupervisedHumanWithRequires(t *testing.T) {
+	input := `NAME test
+AGENT deployer "Deploy changes" REQUIRES "production" SUPERVISED HUMAN
+GOAL deploy "Deploy" USING deployer
+RUN main USING deploy`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	agent := wf.Agents[0]
+	if agent.Requires != "production" {
+		t.Errorf("expected Requires 'production', got %q", agent.Requires)
+	}
+	if agent.Supervised == nil || !*agent.Supervised {
+		t.Error("expected agent to be supervised")
+	}
+	if !agent.HumanOnly {
+		t.Error("expected agent HumanOnly to be true")
+	}
+}
+
+// Test RUN with SUPERVISED
+func TestParser_RunSupervised(t *testing.T) {
+	input := `NAME test
+GOAL analyze "Analyze"
+RUN main USING analyze SUPERVISED`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	step := wf.Steps[0]
+	if step.Supervised == nil || !*step.Supervised {
+		t.Error("expected step to be supervised")
+	}
+}
+
+// Test LOOP with SUPERVISED HUMAN
+func TestParser_LoopSupervisedHuman(t *testing.T) {
+	input := `NAME test
+GOAL refine "Refine"
+LOOP refine_loop USING refine WITHIN 10 SUPERVISED HUMAN`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	step := wf.Steps[0]
+	if step.Type != StepLOOP {
+		t.Error("expected LOOP step")
+	}
+	if step.Supervised == nil || !*step.Supervised {
+		t.Error("expected step to be supervised")
+	}
+	if !step.HumanOnly {
+		t.Error("expected step HumanOnly to be true")
+	}
+}
+
+// Test mixed supervision levels
+func TestParser_MixedSupervision(t *testing.T) {
+	input := `SUPERVISED
+NAME mixed-workflow
+GOAL analyze "Analyze data"
+GOAL trivial "Simple task" UNSUPERVISED
+GOAL deploy "Deploy" SUPERVISED HUMAN
+RUN phase1 USING analyze
+RUN phase2 USING trivial
+RUN phase3 USING deploy`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	// Workflow level
+	if !wf.Supervised {
+		t.Error("expected workflow to be supervised")
+	}
+
+	// Goal 1: inherits from workflow (supervised)
+	if wf.Goals[0].Supervised != nil {
+		t.Error("expected goal[0].Supervised to be nil (inherits)")
+	}
+
+	// Goal 2: explicitly unsupervised
+	if wf.Goals[1].Supervised == nil || *wf.Goals[1].Supervised {
+		t.Error("expected goal[1] to be unsupervised")
+	}
+
+	// Goal 3: explicitly supervised with human
+	if wf.Goals[2].Supervised == nil || !*wf.Goals[2].Supervised {
+		t.Error("expected goal[2] to be supervised")
+	}
+	if !wf.Goals[2].HumanOnly {
+		t.Error("expected goal[2] HumanOnly to be true")
+	}
+}
+
+// Test HasHumanRequiredSteps
+func TestWorkflow_HasHumanRequiredSteps(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name: "no supervision",
+			input: `NAME test
+GOAL a "A"
+RUN main USING a`,
+			expected: false,
+		},
+		{
+			name: "supervised but not human",
+			input: `SUPERVISED
+NAME test
+GOAL a "A"
+RUN main USING a`,
+			expected: false,
+		},
+		{
+			name: "global supervised human",
+			input: `SUPERVISED HUMAN
+NAME test
+GOAL a "A"
+RUN main USING a`,
+			expected: true,
+		},
+		{
+			name: "one step requires human",
+			input: `NAME test
+GOAL a "A"
+GOAL b "B" SUPERVISED HUMAN
+RUN main USING a, b`,
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wf, err := ParseString(tt.input)
+			if err != nil {
+				t.Fatalf("ParseString failed: %v", err)
+			}
+
+			got := wf.HasHumanRequiredSteps()
+			if got != tt.expected {
+				t.Errorf("HasHumanRequiredSteps() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+// Test GetHumanRequiredStepNames
+func TestWorkflow_GetHumanRequiredStepNames(t *testing.T) {
+	input := `NAME test
+GOAL analyze "Analyze"
+GOAL deploy "Deploy" SUPERVISED HUMAN
+GOAL cleanup "Cleanup" SUPERVISED HUMAN
+RUN main USING analyze, deploy, cleanup`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	names := wf.GetHumanRequiredStepNames()
+	if len(names) != 2 {
+		t.Fatalf("expected 2 names, got %d", len(names))
+	}
+
+	// Check that deploy and cleanup are in the list
+	found := make(map[string]bool)
+	for _, n := range names {
+		found[n] = true
+	}
+	if !found["deploy"] || !found["cleanup"] {
+		t.Errorf("expected deploy and cleanup, got %v", names)
+	}
+}

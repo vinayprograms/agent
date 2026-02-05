@@ -35,6 +35,31 @@ Agents declare requirements:
 AGENT critic FROM agents/critic.md REQUIRES "reasoning-heavy"
 ```
 
+## Supervision
+
+Enable drift detection and course correction with the `SUPERVISED` keyword:
+
+```
+# Global supervision - applies to all steps
+SUPERVISED
+NAME my-workflow
+GOAL analyze "Analyze data"
+```
+
+```
+# Per-step supervision
+GOAL deploy "Deploy to production" SUPERVISED HUMAN
+GOAL cleanup "Quick cleanup" UNSUPERVISED
+```
+
+| Mode | Behavior |
+|------|----------|
+| `SUPERVISED` | Auto-corrects drift, falls back to autonomous decisions |
+| `SUPERVISED HUMAN` | Requires human approval, hard-fails if unavailable |
+| `UNSUPERVISED` | Skips supervision for trusted/fast operations |
+
+See `39-supervision/` for detailed examples.
+
 ## Examples
 
 | File | Description | Key Features |
@@ -69,6 +94,8 @@ AGENT critic FROM agents/critic.md REQUIRES "reasoning-heavy"
 | **Analysis** |
 | `10-decision-analyzer.agent` | Decision analysis | `fast` + `reasoning-heavy` profiles |
 | `17-debate-simulator.agent` | Debate simulation | `fast` profile, LOOP |
+| **Supervision** |
+| `39-supervision/` | Drift detection examples | `SUPERVISED`, `SUPERVISED HUMAN` |
 
 ## Agent Personas
 

@@ -22,6 +22,9 @@ const (
 	TokenWITHIN
 	TokenDEFAULT
 	TokenREQUIRES
+	TokenSUPERVISED
+	TokenHUMAN
+	TokenUNSUPERVISED
 
 	// Literals
 	TokenIdent   // identifier
@@ -66,6 +69,12 @@ func (t TokenType) String() string {
 		return "DEFAULT"
 	case TokenREQUIRES:
 		return "REQUIRES"
+	case TokenSUPERVISED:
+		return "SUPERVISED"
+	case TokenHUMAN:
+		return "HUMAN"
+	case TokenUNSUPERVISED:
+		return "UNSUPERVISED"
 	case TokenIdent:
 		return "IDENT"
 	case TokenString:
@@ -95,17 +104,20 @@ type Token struct {
 
 // keywords maps keyword strings to their token types.
 var keywords = map[string]TokenType{
-	"NAME":     TokenNAME,
-	"INPUT":    TokenINPUT,
-	"AGENT":    TokenAGENT,
-	"GOAL":     TokenGOAL,
-	"RUN":      TokenRUN,
-	"LOOP":     TokenLOOP,
-	"FROM":     TokenFROM,
-	"USING":    TokenUSING,
-	"WITHIN":   TokenWITHIN,
-	"DEFAULT":  TokenDEFAULT,
-	"REQUIRES": TokenREQUIRES,
+	"NAME":         TokenNAME,
+	"INPUT":        TokenINPUT,
+	"AGENT":        TokenAGENT,
+	"GOAL":         TokenGOAL,
+	"RUN":          TokenRUN,
+	"LOOP":         TokenLOOP,
+	"FROM":         TokenFROM,
+	"USING":        TokenUSING,
+	"WITHIN":       TokenWITHIN,
+	"DEFAULT":      TokenDEFAULT,
+	"REQUIRES":     TokenREQUIRES,
+	"SUPERVISED":   TokenSUPERVISED,
+	"HUMAN":        TokenHUMAN,
+	"UNSUPERVISED": TokenUNSUPERVISED,
 }
 
 // LookupIdent checks if an identifier is a keyword.

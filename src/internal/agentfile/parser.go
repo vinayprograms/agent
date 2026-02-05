@@ -37,6 +37,15 @@ func (p *Parser) Parse() (*Workflow, error) {
 		case TokenNewline:
 			p.nextToken()
 			continue
+		case TokenSUPERVISED:
+			// Global supervision at the top level
+			p.nextToken() // consume SUPERVISED
+			wf.Supervised = true
+			if p.curToken.Type == TokenHUMAN {
+				wf.HumanOnly = true
+				p.nextToken()
+			}
+			p.skipNewline()
 		case TokenNAME:
 			name, err := p.parseNameStatement()
 			if err != nil {
@@ -126,7 +135,7 @@ func (p *Parser) parseInputStatement() (*Input, error) {
 	return input, nil
 }
 
-// parseAgentStatement parses: AGENT <identifier> (FROM <path> | <string>) [-> outputs] [REQUIRES <string>]
+// parseAgentStatement parses: AGENT <identifier> (FROM <path> | <string>) [-> outputs] [REQUIRES <string>] [SUPERVISED [HUMAN] | UNSUPERVISED]
 func (p *Parser) parseAgentStatement() (*Agent, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume AGENT
@@ -175,11 +184,26 @@ func (p *Parser) parseAgentStatement() (*Agent, error) {
 		p.nextToken()
 	}
 
+	// Check for optional supervision modifiers
+	if p.curToken.Type == TokenSUPERVISED {
+		supervised := true
+		agent.Supervised = &supervised
+		p.nextToken()
+		if p.curToken.Type == TokenHUMAN {
+			agent.HumanOnly = true
+			p.nextToken()
+		}
+	} else if p.curToken.Type == TokenUNSUPERVISED {
+		supervised := false
+		agent.Supervised = &supervised
+		p.nextToken()
+	}
+
 	p.skipNewline()
 	return agent, nil
 }
 
-// parseGoalStatement parses: GOAL <identifier> (<string> | FROM <path>) [-> outputs] [USING <identifier_list>]
+// parseGoalStatement parses: GOAL <identifier> (<string> | FROM <path>) [-> outputs] [USING <identifier_list>] [SUPERVISED [HUMAN] | UNSUPERVISED]
 func (p *Parser) parseGoalStatement() (*Goal, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume GOAL
@@ -227,11 +251,26 @@ func (p *Parser) parseGoalStatement() (*Goal, error) {
 		goal.UsingAgent = agents
 	}
 
+	// Check for optional supervision modifiers
+	if p.curToken.Type == TokenSUPERVISED {
+		supervised := true
+		goal.Supervised = &supervised
+		p.nextToken()
+		if p.curToken.Type == TokenHUMAN {
+			goal.HumanOnly = true
+			p.nextToken()
+		}
+	} else if p.curToken.Type == TokenUNSUPERVISED {
+		supervised := false
+		goal.Supervised = &supervised
+		p.nextToken()
+	}
+
 	p.skipNewline()
 	return goal, nil
 }
 
-// parseRunStatement parses: RUN <identifier> USING <identifier_list>
+// parseRunStatement parses: RUN <identifier> USING <identifier_list> [SUPERVISED [HUMAN] | UNSUPERVISED]
 func (p *Parser) parseRunStatement() (*Step, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume RUN
@@ -257,11 +296,26 @@ func (p *Parser) parseRunStatement() (*Step, error) {
 	}
 	step.UsingGoals = goals
 
+	// Check for optional supervision modifiers
+	if p.curToken.Type == TokenSUPERVISED {
+		supervised := true
+		step.Supervised = &supervised
+		p.nextToken()
+		if p.curToken.Type == TokenHUMAN {
+			step.HumanOnly = true
+			p.nextToken()
+		}
+	} else if p.curToken.Type == TokenUNSUPERVISED {
+		supervised := false
+		step.Supervised = &supervised
+		p.nextToken()
+	}
+
 	p.skipNewline()
 	return step, nil
 }
 
-// parseLoopStatement parses: LOOP <identifier> USING <identifier_list> WITHIN (<number> | <variable>)
+// parseLoopStatement parses: LOOP <identifier> USING <identifier_list> WITHIN (<number> | <variable>) [SUPERVISED [HUMAN] | UNSUPERVISED]
 func (p *Parser) parseLoopStatement() (*Step, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume LOOP
@@ -302,6 +356,21 @@ func (p *Parser) parseLoopStatement() (*Step, error) {
 		p.nextToken()
 	} else {
 		return nil, fmt.Errorf("line %d: expected number or variable after WITHIN, got %s", line, p.curToken.Type)
+	}
+
+	// Check for optional supervision modifiers
+	if p.curToken.Type == TokenSUPERVISED {
+		supervised := true
+		step.Supervised = &supervised
+		p.nextToken()
+		if p.curToken.Type == TokenHUMAN {
+			step.HumanOnly = true
+			p.nextToken()
+		}
+	} else if p.curToken.Type == TokenUNSUPERVISED {
+		supervised := false
+		step.Supervised = &supervised
+		p.nextToken()
 	}
 
 	p.skipNewline()

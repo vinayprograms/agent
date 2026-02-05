@@ -836,3 +836,112 @@ The agent can run as an ACP server for editor integration:
 
 This enables communication with code editors (VS Code, JetBrains, Zed) that support ACP.
 
+## Supervision
+
+Enable drift detection and course correction for critical workflows. The supervision system monitors agent execution and intervenes when the agent's understanding diverges from the original goal.
+
+### Enabling Supervision
+
+**Global supervision (all steps):**
+```
+SUPERVISED
+NAME my-workflow
+GOAL analyze "Analyze data"
+GOAL report "Generate report"
+RUN main USING analyze, report
+```
+
+**Per-step supervision:**
+```
+NAME my-workflow
+GOAL analyze "Analyze data"
+GOAL deploy "Deploy to production" SUPERVISED HUMAN
+RUN main USING analyze, deploy
+```
+
+**Opt-out for specific steps:**
+```
+SUPERVISED
+NAME my-workflow
+GOAL analyze "Analyze data"
+GOAL trivial "Quick cleanup" UNSUPERVISED
+RUN main USING analyze, trivial
+```
+
+### Supervision Modes
+
+| Mode | Behavior |
+|------|----------|
+| `SUPERVISED` | Autonomous — supervisor corrects drift automatically |
+| `SUPERVISED HUMAN` | Requires human approval — fails if no human available |
+| `UNSUPERVISED` | Skips supervision for trusted/fast operations |
+
+### Four-Phase Execution
+
+When supervision is enabled, each step executes in four phases:
+
+1. **COMMIT** — Agent declares intent before execution
+   - Interpretation of the goal
+   - Planned approach
+   - Expected output
+   - Assumptions made
+
+2. **EXECUTE** — Agent performs the work
+   - Tools called
+   - Actual output
+   - Self-assessment of whether commitment was met
+
+3. **RECONCILE** — Static pattern matching (fast, no LLM)
+   - Concerns raised?
+   - Commitment met?
+   - Deviations from plan?
+   - Low confidence?
+
+4. **SUPERVISE** — LLM evaluation (only if reconcile triggers)
+   - Evaluates drift against original goal
+   - Decides: CONTINUE, REORIENT, or PAUSE
+
+### Pre-flight Check
+
+Before execution begins, the system checks if:
+- Any step requires `SUPERVISED HUMAN`
+- A human connection (ACP/A2A) is available
+
+If human required but unavailable → **hard fail before execution starts**.
+
+This prevents wasted compute on workflows that would fail mid-run.
+
+### Example: Deployment Pipeline
+
+```
+SUPERVISED
+NAME deployment-pipeline
+INPUT service_name
+
+# Build and test — supervised for drift detection
+GOAL build "Build $service_name"
+GOAL test "Run test suite"
+
+# Security scan — important, keep supervised
+GOAL security "Scan for vulnerabilities"
+
+# Config validation — fast and trusted
+GOAL config "Validate config" UNSUPERVISED
+
+# Deployment — critical, requires human approval
+GOAL deploy "Deploy $service_name" SUPERVISED HUMAN
+
+# Post-deploy verification
+GOAL verify "Run smoke tests"
+
+RUN pipeline USING build, test, security, config, deploy, verify
+```
+
+This workflow:
+- Supervises most steps (inherited from global)
+- Skips supervision for trivial config validation
+- Requires human approval before deployment
+- Fails at startup if no human connection available
+
+See `examples/39-supervision/` for more examples.
+

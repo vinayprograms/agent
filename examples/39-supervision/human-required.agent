@@ -1,0 +1,27 @@
+# Human-Required Workflow
+#
+# Critical steps that MUST have human approval.
+# The workflow will hard-fail at startup if no human connection is available.
+
+NAME human-required
+
+INPUT database_name
+INPUT migration_script
+
+# Agents
+AGENT validator "Validate SQL migration script for safety" -> validation_result, warnings
+AGENT executor "Execute database migration"
+AGENT verifier "Verify migration completed successfully" -> verification_status
+
+# Goals with human-required supervision
+GOAL validate "Validate $migration_script against $database_name" SUPERVISED -> validation
+# Migration is destructive - require human approval
+GOAL migrate "Execute migration on $database_name" SUPERVISED HUMAN
+# Verification is safe to auto-supervise
+GOAL verify "Verify migration completed" SUPERVISED -> verification
+
+# Execution
+RUN validation_phase USING validate
+# This step requires human - workflow will fail pre-flight if no human available
+RUN migration_phase USING migrate SUPERVISED HUMAN
+RUN verification_phase USING verify

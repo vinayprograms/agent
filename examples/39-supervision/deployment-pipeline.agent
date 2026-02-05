@@ -1,0 +1,46 @@
+# Deployment Pipeline
+#
+# Realistic deployment pipeline with progressive supervision levels.
+# Early stages are less supervised, critical stages require human approval.
+
+SUPERVISED
+NAME deployment-pipeline
+
+INPUT service_name
+INPUT version
+INPUT environment DEFAULT "staging"
+
+# Agents for different stages
+AGENT builder "Build and package the service" -> build_artifacts, build_log
+AGENT tester "Run test suite" -> test_results, coverage
+AGENT security_scanner "Scan for security vulnerabilities" -> vulnerabilities, risk_score
+AGENT config_validator "Validate deployment configuration" -> config_status, warnings
+AGENT deployer "Deploy to target environment" -> deployment_id, endpoints
+AGENT smoke_tester "Run smoke tests post-deployment" -> smoke_results
+
+# Build phase - supervised for drift detection
+GOAL build "Build $service_name version $version" -> build_output USING builder
+
+# Test phase - supervised
+GOAL test "Run all tests for $service_name" -> test_output USING tester
+
+# Security scan - supervised, this is important
+GOAL security "Scan $service_name for security issues" -> security_output USING security_scanner
+
+# Config validation - quick, can skip supervision
+GOAL config "Validate deployment config for $environment" UNSUPERVISED USING config_validator
+
+# Deployment - critical, requires human approval
+GOAL deploy "Deploy $service_name to $environment" SUPERVISED HUMAN -> deploy_output USING deployer
+
+# Smoke tests - supervised for verification
+GOAL smoke "Run smoke tests against deployed $service_name" -> smoke_output USING smoke_tester
+
+# Execution pipeline
+RUN build_stage USING build
+RUN test_stage USING test
+RUN security_stage USING security
+RUN config_stage USING config
+# Human must approve before this runs
+RUN deploy_stage USING deploy
+RUN smoke_stage USING smoke

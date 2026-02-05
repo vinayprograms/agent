@@ -1,0 +1,27 @@
+# Mixed Supervision Workflow
+#
+# Shows selective supervision: some steps supervised, others not.
+# Use UNSUPERVISED to opt-out of supervision for trusted/trivial operations.
+
+SUPERVISED
+NAME mixed-supervision
+
+INPUT code_path
+INPUT deploy_target DEFAULT "staging"
+
+# Agents
+AGENT scanner "Scan code for security issues" -> vulnerabilities, severity
+AGENT formatter "Format code according to style guide"
+AGENT deployer "Deploy to target environment" -> deployment_status
+
+# Goals with mixed supervision levels
+GOAL scan "Scan $code_path for security issues" -> scan_results USING scanner
+# Formatting is trusted and fast - skip supervision
+GOAL format "Format code at $code_path" UNSUPERVISED USING formatter
+# Deployment is critical - keep supervised (inherited from global)
+GOAL deploy "Deploy to $deploy_target" -> deploy_output USING deployer
+
+# Execution
+RUN security_scan USING scan
+RUN formatting USING format
+RUN deployment USING deploy
