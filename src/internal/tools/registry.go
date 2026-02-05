@@ -155,7 +155,7 @@ func (r *Registry) Has(name string) bool {
 func (r *Registry) Definitions() []ToolDefinition {
 	var defs []ToolDefinition
 	for _, t := range r.tools {
-		if !r.policy.IsToolEnabled(t.Name()) {
+		if r.policy != nil && !r.policy.IsToolEnabled(t.Name()) {
 			continue
 		}
 		defs = append(defs, ToolDefinition{

@@ -530,6 +530,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 
 	// Get tool definitions (built-in + MCP)
 	toolDefs := e.getAllToolDefinitions()
+	e.logger.Debug("tools available", map[string]interface{}{
+		"count": len(toolDefs),
+	})
 
 	// Track if any tool calls were made
 	toolCallsMade := false

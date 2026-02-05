@@ -166,6 +166,9 @@ func toStringSlice(v []interface{}) []string {
 
 // GetToolPolicy returns the policy for a tool, with defaults.
 func (p *Policy) GetToolPolicy(tool string) *ToolPolicy {
+	if p == nil || p.Tools == nil {
+		return &ToolPolicy{Enabled: true}
+	}
 	if tp, ok := p.Tools[tool]; ok {
 		return tp
 	}
