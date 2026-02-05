@@ -52,12 +52,18 @@ type ExecResult struct {
 	ExitCode int    `json:"exit_code"`
 }
 
+// CredentialProvider provides API keys for tools
+type CredentialProvider interface {
+	GetAPIKey(provider string) string
+}
+
 // Registry holds all registered tools.
 type Registry struct {
 	tools       map[string]Tool
 	policy      *policy.Policy
 	summarizer  Summarizer
 	memoryStore MemoryStore
+	credentials CredentialProvider
 }
 
 // Summarizer provides content summarization for web_fetch
@@ -106,6 +112,14 @@ func (r *Registry) SetSpawner(spawner SpawnFunc) {
 	}
 	if t, ok := r.tools["spawn_agents"].(*spawnAgentsTool); ok {
 		t.spawner = spawner
+	}
+}
+
+// SetCredentials sets the credential provider for tools that need API keys
+func (r *Registry) SetCredentials(creds CredentialProvider) {
+	r.credentials = creds
+	if t, ok := r.tools["web_search"].(*webSearchTool); ok {
+		t.credentials = creds
 	}
 }
 
@@ -809,7 +823,8 @@ func extractReadableText(html string) string {
 
 // webSearchTool implements the web_search tool (R5.4.2).
 type webSearchTool struct {
-	policy *policy.Policy
+	policy      *policy.Policy
+	credentials CredentialProvider
 }
 
 // Global rate limiter for web search to prevent hammering APIs
@@ -874,12 +889,25 @@ func (t *webSearchTool) Execute(ctx context.Context, args map[string]interface{}
 	lastSearchTime = time.Now()
 	searchMutex.Unlock()
 
-	// Try Brave first, then Tavily, then DuckDuckGo (no API key needed)
-	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
-		return searchBrave(ctx, query, count, apiKey)
+	// Try Brave first (credentials file, then env), then Tavily, then DuckDuckGo
+	var braveKey, tavilyKey string
+	if t.credentials != nil {
+		braveKey = t.credentials.GetAPIKey("brave")
+		tavilyKey = t.credentials.GetAPIKey("tavily")
 	}
-	if apiKey := os.Getenv("TAVILY_API_KEY"); apiKey != "" {
-		return searchTavily(ctx, query, count, apiKey)
+	// Fallback to env vars if credentials not set
+	if braveKey == "" {
+		braveKey = os.Getenv("BRAVE_API_KEY")
+	}
+	if tavilyKey == "" {
+		tavilyKey = os.Getenv("TAVILY_API_KEY")
+	}
+
+	if braveKey != "" {
+		return searchBrave(ctx, query, count, braveKey)
+	}
+	if tavilyKey != "" {
+		return searchTavily(ctx, query, count, tavilyKey)
 	}
 	
 	// Fallback to DuckDuckGo HTML (no API key required)

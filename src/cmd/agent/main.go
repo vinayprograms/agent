@@ -304,6 +304,9 @@ func runWorkflow(args []string) {
 		}
 	}
 
+	// Set up credentials for web_search tool
+	registry.SetCredentials(globalCreds)
+
 	// Resolve session path: default to ~/.local/grid/sessions/<workflow-name>/
 	sessionPath := cfg.Session.Path
 	if sessionPath == "" {
