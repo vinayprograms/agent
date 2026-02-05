@@ -186,7 +186,7 @@ func sanitizePath(path string, workspace string) (string, error) {
 		if !strings.HasPrefix(realPath, realWorkspace+string(filepath.Separator)) && realPath != realWorkspace {
 			// Allow absolute paths outside workspace only if they're truly absolute in the original
 			if !filepath.IsAbs(path) {
-				return "", fmt.Errorf("path traversal detected: path escapes workspace")
+				return "", fmt.Errorf("path traversal detected: requested=%q resolved=%q workspace=%q", path, realPath, realWorkspace)
 			}
 		}
 	}
