@@ -15,13 +15,17 @@ var ErrInsecurePermissions = fmt.Errorf("credentials file has insecure permissio
 
 // Credentials holds API keys loaded from credentials.toml
 type Credentials struct {
-	Anthropic *ProviderCreds `toml:"anthropic"`
-	OpenAI    *ProviderCreds `toml:"openai"`
-	Google    *ProviderCreds `toml:"google"`
-	Mistral   *ProviderCreds `toml:"mistral"`
-	Groq      *ProviderCreds `toml:"groq"`
-	Brave     *ProviderCreds `toml:"brave"`
-	Tavily    *ProviderCreds `toml:"tavily"`
+	Anthropic  *ProviderCreds `toml:"anthropic"`
+	OpenAI     *ProviderCreds `toml:"openai"`
+	Google     *ProviderCreds `toml:"google"`
+	Mistral    *ProviderCreds `toml:"mistral"`
+	Groq       *ProviderCreds `toml:"groq"`
+	Brave      *ProviderCreds `toml:"brave"`
+	Tavily     *ProviderCreds `toml:"tavily"`
+	OpenRouter *ProviderCreds `toml:"openrouter"`
+	LiteLLM    *ProviderCreds `toml:"litellm"`
+	Ollama     *ProviderCreds `toml:"ollama"`
+	LMStudio   *ProviderCreds `toml:"lmstudio"`
 }
 
 // ProviderCreds holds credentials for a single provider
@@ -97,7 +101,7 @@ func (c *Credentials) GetAPIKey(provider string) string {
 			if c.Anthropic != nil && c.Anthropic.APIKey != "" {
 				return c.Anthropic.APIKey
 			}
-		case "openai":
+		case "openai", "openai-compat":
 			if c.OpenAI != nil && c.OpenAI.APIKey != "" {
 				return c.OpenAI.APIKey
 			}
@@ -120,6 +124,22 @@ func (c *Credentials) GetAPIKey(provider string) string {
 		case "tavily":
 			if c.Tavily != nil && c.Tavily.APIKey != "" {
 				return c.Tavily.APIKey
+			}
+		case "openrouter":
+			if c.OpenRouter != nil && c.OpenRouter.APIKey != "" {
+				return c.OpenRouter.APIKey
+			}
+		case "litellm":
+			if c.LiteLLM != nil && c.LiteLLM.APIKey != "" {
+				return c.LiteLLM.APIKey
+			}
+		case "ollama":
+			if c.Ollama != nil && c.Ollama.APIKey != "" {
+				return c.Ollama.APIKey
+			}
+		case "lmstudio":
+			if c.LMStudio != nil && c.LMStudio.APIKey != "" {
+				return c.LMStudio.APIKey
 			}
 		}
 	}
@@ -145,6 +165,16 @@ func envVarForProvider(provider string) string {
 		return "BRAVE_API_KEY"
 	case "tavily":
 		return "TAVILY_API_KEY"
+	case "openrouter":
+		return "OPENROUTER_API_KEY"
+	case "litellm":
+		return "LITELLM_API_KEY"
+	case "ollama":
+		return "OLLAMA_API_KEY"
+	case "lmstudio":
+		return "LMSTUDIO_API_KEY"
+	case "openai-compat":
+		return "OPENAI_API_KEY" // Default to OpenAI env var for generic compat
 	default:
 		return ""
 	}
