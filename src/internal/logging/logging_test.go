@@ -2,9 +2,9 @@ package logging
 
 import (
 	"bytes"
-	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLogger_Levels(t *testing.T) {
@@ -25,17 +25,12 @@ func TestLogger_Levels(t *testing.T) {
 		t.Error("info message should be logged")
 	}
 
-	// Parse the entry
-	var entry Entry
-	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
-		t.Fatalf("failed to parse log entry: %v", err)
+	output := buf.String()
+	if !strings.Contains(output, "INFO") {
+		t.Error("log should contain INFO level")
 	}
-
-	if entry.Level != LevelInfo {
-		t.Errorf("expected level INFO, got %s", entry.Level)
-	}
-	if entry.Message != "info message" {
-		t.Errorf("expected message 'info message', got %s", entry.Message)
+	if !strings.Contains(output, "info message") {
+		t.Error("log should contain the message")
 	}
 }
 
@@ -46,11 +41,9 @@ func TestLogger_WithComponent(t *testing.T) {
 
 	logger.Info("test message")
 
-	var entry Entry
-	json.Unmarshal(buf.Bytes(), &entry)
-
-	if entry.Component != "executor" {
-		t.Errorf("expected component 'executor', got %s", entry.Component)
+	output := buf.String()
+	if !strings.Contains(output, "[executor]") {
+		t.Errorf("expected component 'executor' in log, got: %s", output)
 	}
 }
 
@@ -61,11 +54,11 @@ func TestLogger_WithTraceID(t *testing.T) {
 
 	logger.Info("test message")
 
-	var entry Entry
-	json.Unmarshal(buf.Bytes(), &entry)
-
-	if entry.TraceID != "req-123" {
-		t.Errorf("expected trace_id 'req-123', got %s", entry.TraceID)
+	// TraceID is stored but not shown in simple format
+	// Just ensure logging works
+	output := buf.String()
+	if !strings.Contains(output, "test message") {
+		t.Error("log should contain the message")
 	}
 }
 
@@ -76,14 +69,11 @@ func TestLogger_Fields(t *testing.T) {
 
 	logger.Info("tool call", map[string]interface{}{
 		"tool": "bash",
-		"args": map[string]string{"command": "ls"},
 	})
 
-	var entry Entry
-	json.Unmarshal(buf.Bytes(), &entry)
-
-	if entry.Fields["tool"] != "bash" {
-		t.Errorf("expected tool 'bash', got %v", entry.Fields["tool"])
+	output := buf.String()
+	if !strings.Contains(output, "tool=bash") {
+		t.Errorf("expected field 'tool=bash' in log, got: %s", output)
 	}
 }
 
@@ -94,8 +84,9 @@ func TestLogger_ToolCall(t *testing.T) {
 
 	logger.ToolCall("read", map[string]interface{}{"path": "/tmp/test"})
 
-	if !strings.Contains(buf.String(), `"tool":"read"`) {
-		t.Error("tool call should include tool name")
+	output := buf.String()
+	if !strings.Contains(output, "tool=read") {
+		t.Errorf("tool call should include tool name, got: %s", output)
 	}
 }
 
@@ -106,13 +97,56 @@ func TestLogger_SecurityWarning(t *testing.T) {
 
 	logger.SecurityWarning("MCP policy not configured", nil)
 
-	var entry Entry
-	json.Unmarshal(buf.Bytes(), &entry)
-
-	if entry.Level != LevelWarn {
+	output := buf.String()
+	if !strings.Contains(output, "WARN") {
 		t.Error("security warning should be WARN level")
 	}
-	if entry.Fields["security"] != true {
+	if !strings.Contains(output, "security=true") {
 		t.Error("security warning should have security=true field")
+	}
+}
+
+func TestLogger_Format(t *testing.T) {
+	var buf bytes.Buffer
+	logger := New().WithComponent("test")
+	logger.SetOutput(&buf)
+
+	logger.Info("hello world", map[string]interface{}{"key": "value"})
+
+	output := buf.String()
+	// Format: LEVEL TIMESTAMP [component] message key=value
+	// Example: INFO  2026-02-05T04:00:00.000Z [test] hello world key=value
+	if !strings.HasPrefix(output, "INFO ") {
+		t.Errorf("expected line to start with 'INFO ', got: %s", output)
+	}
+	if !strings.Contains(output, "[test]") {
+		t.Errorf("expected component [test], got: %s", output)
+	}
+	if !strings.Contains(output, "hello world") {
+		t.Errorf("expected message, got: %s", output)
+	}
+	if !strings.Contains(output, "key=value") {
+		t.Errorf("expected key=value, got: %s", output)
+	}
+}
+
+func TestLogger_ExecutionTiming(t *testing.T) {
+	var buf bytes.Buffer
+	logger := New()
+	logger.SetOutput(&buf)
+
+	logger.ExecutionStart("test-workflow")
+	time.Sleep(10 * time.Millisecond)
+	logger.ExecutionComplete("test-workflow", 10*time.Millisecond, "complete")
+
+	output := buf.String()
+	if !strings.Contains(output, "execution_start") {
+		t.Error("expected execution_start log")
+	}
+	if !strings.Contains(output, "execution_complete") {
+		t.Error("expected execution_complete log")
+	}
+	if !strings.Contains(output, "duration=") {
+		t.Error("expected duration in log")
 	}
 }

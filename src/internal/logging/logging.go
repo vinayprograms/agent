@@ -2,9 +2,10 @@
 package logging
 
 import (
-	"encoding/json"
+	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,16 +19,6 @@ const (
 	LevelWarn  Level = "WARN"
 	LevelError Level = "ERROR"
 )
-
-// Entry represents a structured log entry (RFC 5424 inspired).
-type Entry struct {
-	Timestamp string                 `json:"timestamp"`          // ISO 8601
-	Level     Level                  `json:"level"`              // DEBUG, INFO, WARN, ERROR
-	Message   string                 `json:"message"`            // Human-readable message
-	Component string                 `json:"component,omitempty"` // e.g., "executor", "tool:bash"
-	TraceID   string                 `json:"trace_id,omitempty"` // Request/session correlation
-	Fields    map[string]interface{} `json:"fields,omitempty"`   // Additional structured data
-}
 
 // Logger provides structured logging to stdout.
 type Logger struct {
@@ -104,65 +95,63 @@ func (l *Logger) Error(msg string, fields ...map[string]interface{}) {
 	l.log(LevelError, msg, fields...)
 }
 
-// log writes a structured log entry.
+// formatFields formats a map of fields as key=value pairs.
+func formatFields(fields map[string]interface{}) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	var parts []string
+	for k, v := range fields {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+	}
+	return " " + strings.Join(parts, " ")
+}
+
+// log writes a log entry in traditional format: LEVEL TIMESTAMP [component] message key=value ...
 func (l *Logger) log(level Level, msg string, fields ...map[string]interface{}) {
 	if levelPriority[level] < levelPriority[l.minLevel] {
 		return
 	}
 
-	entry := Entry{
-		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-		Level:     level,
-		Message:   msg,
-		Component: l.component,
-		TraceID:   l.traceID,
+	timestamp := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+
+	var fieldStr string
+	if len(fields) > 0 && fields[0] != nil {
+		fieldStr = formatFields(fields[0])
 	}
 
-	if len(fields) > 0 && fields[0] != nil {
-		entry.Fields = fields[0]
+	var line string
+	if l.component != "" {
+		line = fmt.Sprintf("%-5s %s [%s] %s%s\n", level, timestamp, l.component, msg, fieldStr)
+	} else {
+		line = fmt.Sprintf("%-5s %s %s%s\n", level, timestamp, msg, fieldStr)
 	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-
-	data, err := json.Marshal(entry)
-	if err != nil {
-		// Fallback to simple format if JSON fails
-		l.output.Write([]byte(msg + "\n"))
-		return
-	}
-	l.output.Write(append(data, '\n'))
+	l.output.Write([]byte(line))
 }
 
 // ToolCall logs a tool invocation.
 func (l *Logger) ToolCall(tool string, args map[string]interface{}) {
+	// Don't log args to avoid PII - just log tool name
 	l.Info("tool_call", map[string]interface{}{
 		"tool": tool,
-		"args": args,
 	})
 }
 
 // ToolResult logs a tool result.
-func (l *Logger) ToolResult(tool string, durationMs int64, err error) {
+func (l *Logger) ToolResult(tool string, duration time.Duration, err error) {
 	fields := map[string]interface{}{
-		"tool":        tool,
-		"duration_ms": durationMs,
+		"tool":     tool,
+		"duration": duration.String(),
 	}
 	if err != nil {
 		fields["error"] = err.Error()
 		l.Error("tool_error", fields)
 	} else {
-		l.Info("tool_result", fields)
+		l.Debug("tool_result", fields)
 	}
-}
-
-// LLMCall logs an LLM API call.
-func (l *Logger) LLMCall(model string, inputTokens, outputTokens int) {
-	l.Info("llm_call", map[string]interface{}{
-		"model":         model,
-		"input_tokens":  inputTokens,
-		"output_tokens": outputTokens,
-	})
 }
 
 // SecurityWarning logs a security-related warning.
@@ -174,11 +163,33 @@ func (l *Logger) SecurityWarning(msg string, fields map[string]interface{}) {
 	l.Warn(msg, fields)
 }
 
-// Default is the global default logger.
-var Default = New()
+// GoalStart logs the start of a goal execution.
+func (l *Logger) GoalStart(name string) {
+	l.Info("goal_start", map[string]interface{}{
+		"goal": name,
+	})
+}
 
-// Convenience functions using Default logger.
-func Debug(msg string, fields ...map[string]interface{}) { Default.Debug(msg, fields...) }
-func Info(msg string, fields ...map[string]interface{})  { Default.Info(msg, fields...) }
-func Warn(msg string, fields ...map[string]interface{})  { Default.Warn(msg, fields...) }
-func Error(msg string, fields ...map[string]interface{}) { Default.Error(msg, fields...) }
+// GoalComplete logs the completion of a goal.
+func (l *Logger) GoalComplete(name string, duration time.Duration) {
+	l.Info("goal_complete", map[string]interface{}{
+		"goal":     name,
+		"duration": duration.String(),
+	})
+}
+
+// ExecutionStart logs the start of workflow execution.
+func (l *Logger) ExecutionStart(workflow string) {
+	l.Info("execution_start", map[string]interface{}{
+		"workflow": workflow,
+	})
+}
+
+// ExecutionComplete logs the completion of workflow execution.
+func (l *Logger) ExecutionComplete(workflow string, duration time.Duration, status string) {
+	l.Info("execution_complete", map[string]interface{}{
+		"workflow": workflow,
+		"duration": duration.String(),
+		"status":   status,
+	})
+}

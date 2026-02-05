@@ -176,7 +176,7 @@ func (e *Executor) logToolCall(name string, args map[string]interface{}) {
 // logToolResult logs a tool result event to the session.
 func (e *Executor) logToolResult(name string, result interface{}, err error, duration time.Duration) {
 	// Structured logging to stdout
-	e.logger.ToolResult(name, duration.Milliseconds(), err)
+	e.logger.ToolResult(name, duration, err)
 
 	if e.session == nil || e.sessionManager == nil {
 		return
@@ -329,8 +329,16 @@ Use spawn_agent(role, task) to delegate work. You coordinate the overall effort 
 
 // Run executes the workflow.
 func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, error) {
+	startTime := time.Now()
+	workflowName := e.workflow.Name
+	if workflowName == "" {
+		workflowName = "unnamed"
+	}
+	e.logger.ExecutionStart(workflowName)
+
 	// Bind inputs
 	if err := e.bindInputs(inputs); err != nil {
+		e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
 		return &Result{Status: StatusFailed, Error: err.Error()}, err
 	}
 
@@ -346,12 +354,14 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 			if err := e.executeRunStep(ctx, step, result); err != nil {
 				result.Status = StatusFailed
 				result.Error = err.Error()
+				e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
 				return result, err
 			}
 		} else if step.Type == agentfile.StepLOOP {
 			if err := e.executeLoopStep(ctx, step, result); err != nil {
 				result.Status = StatusFailed
 				result.Error = err.Error()
+				e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
 				return result, err
 			}
 		}
@@ -359,6 +369,7 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 
 	result.Status = StatusComplete
 	result.Outputs = e.outputs
+	e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusComplete))
 	return result, nil
 }
 
