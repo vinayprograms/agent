@@ -53,9 +53,10 @@ type ExecResult struct {
 
 // Registry holds all registered tools.
 type Registry struct {
-	tools      map[string]Tool
-	policy     *policy.Policy
-	summarizer Summarizer
+	tools       map[string]Tool
+	policy      *policy.Policy
+	summarizer  Summarizer
+	memoryStore MemoryStore
 }
 
 // Summarizer provides content summarization for web_fetch
@@ -101,6 +102,13 @@ func (r *Registry) SetSpawner(spawner SpawnFunc) {
 	if t, ok := r.tools["spawn_agent"].(*spawnAgentTool); ok {
 		t.spawner = spawner
 	}
+}
+
+// SetMemoryStore sets the memory store and registers memory tools
+func (r *Registry) SetMemoryStore(store MemoryStore) {
+	r.memoryStore = store
+	r.Register(&memoryReadTool{store: store})
+	r.Register(&memoryWriteTool{store: store})
 }
 
 // Register adds a tool to the registry.

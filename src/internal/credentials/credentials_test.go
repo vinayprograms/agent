@@ -29,7 +29,7 @@ api_key = "sk-ant-test123"
 [openai]
 api_key = "sk-openai-test456"
 `
-	os.WriteFile(credPath, []byte(content), 0600)
+	os.WriteFile(credPath, []byte(content), 0400)
 
 	creds, err := LoadFile(credPath)
 	if err != nil {
@@ -64,7 +64,7 @@ api_key = "mistral-key"
 [groq]
 api_key = "groq-key"
 `
-	os.WriteFile(credPath, []byte(content), 0600)
+	os.WriteFile(credPath, []byte(content), 0400)
 
 	creds, err := LoadFile(credPath)
 	if err != nil {
@@ -272,7 +272,7 @@ func TestLoad_FromCurrentDir(t *testing.T) {
 [anthropic]
 api_key = "from-current-dir"
 `
-	os.WriteFile("credentials.toml", []byte(content), 0600)
+	os.WriteFile("credentials.toml", []byte(content), 0400)
 
 	creds, path, err := Load()
 	if err != nil {

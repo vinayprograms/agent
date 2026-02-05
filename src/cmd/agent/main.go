@@ -319,6 +319,10 @@ func runWorkflow(args []string) {
 		sessionMgr = session.NewFileManager(sessionPath)
 	}
 
+	// Set up memory store for memory_read/memory_write tools
+	memoryPath := filepath.Join(sessionPath, "memory.json")
+	registry.SetMemoryStore(tools.NewFileMemoryStore(memoryPath))
+
 	// Create telemetry exporter
 	var telem telemetry.Exporter
 	if cfg.Telemetry.Enabled {
