@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
@@ -12,6 +13,27 @@ import (
 	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openaicompat"
 )
+
+// Retry configuration
+const (
+	maxRetries     = 5
+	initialBackoff = 1 * time.Second
+	maxBackoff     = 60 * time.Second
+	backoffFactor  = 2.0
+)
+
+// isRateLimitError checks if the error is a rate limit error.
+func isRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "rate limit") ||
+		strings.Contains(errStr, "too many requests") ||
+		strings.Contains(errStr, "429") ||
+		strings.Contains(errStr, "overloaded") ||
+		strings.Contains(errStr, "capacity")
+}
 
 // FantasyAdapter wraps a fantasy.LanguageModel to implement our Provider interface.
 type FantasyAdapter struct {
@@ -96,10 +118,39 @@ func (a *FantasyAdapter) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		MaxOutputTokens: &maxTokens,
 	}
 
-	// Generate
-	resp, err := a.model.Generate(ctx, call)
-	if err != nil {
-		return nil, fmt.Errorf("fantasy generate failed: %w", err)
+	// Generate with retry and exponential backoff
+	var resp *fantasy.Response
+	var err error
+	backoff := initialBackoff
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, err = a.model.Generate(ctx, call)
+		if err == nil {
+			break
+		}
+
+		// Check if it's a rate limit error
+		if !isRateLimitError(err) {
+			return nil, fmt.Errorf("fantasy generate failed: %w", err)
+		}
+
+		// Don't retry if we've exhausted attempts
+		if attempt == maxRetries {
+			return nil, fmt.Errorf("fantasy generate failed after %d retries (rate limited): %w", maxRetries, err)
+		}
+
+		// Wait before retrying
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+
+		// Exponential backoff with cap
+		backoff = time.Duration(float64(backoff) * backoffFactor)
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 
 	// Convert response
