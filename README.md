@@ -77,21 +77,19 @@ OPENAI_API_KEY=your-key-here
 ```toml
 # ~/.config/grid/credentials.toml
 
+# Simple: single key for all providers
+[llm]
+api_key = "your-api-key"
+
+# Or provider-specific (optional, overrides [llm])
 [anthropic]
-api_key = "your-key-here"
+api_key = "anthropic-specific-key"
 
 [openai]
-api_key = "your-key-here"
-
-[google]
-api_key = "your-key-here"
-
-[groq]
-api_key = "your-key-here"
-
-[mistral]
-api_key = "your-key-here"
+api_key = "openai-specific-key"
 ```
+
+Priority: `[provider]` section → `[llm]` section → environment variable.
 
 This file is shared with other Grid tools and agents.
 
@@ -543,6 +541,53 @@ The agent uses [Catwalk](https://github.com/charmbracelet/catwalk) for model dis
 | Groq | `groq` | `GROQ_API_KEY` | Fast inference |
 | Mistral | `mistral` | `MISTRAL_API_KEY` | Mistral models |
 
+### Custom Endpoints (OpenRouter, LiteLLM, Ollama, etc.)
+
+Use `base_url` to connect to any OpenAI-compatible endpoint:
+
+```toml
+# agent.toml
+
+# OpenRouter
+[llm]
+provider = "openrouter"
+model = "anthropic/claude-3.5-sonnet"
+base_url = "https://openrouter.ai/api/v1"
+
+# LiteLLM proxy
+[llm]
+provider = "litellm"
+model = "gpt-4"
+base_url = "http://localhost:4000"
+
+# Ollama
+[llm]
+provider = "ollama"
+model = "llama3:70b"
+base_url = "http://localhost:11434/v1"
+
+# LMStudio
+[llm]
+provider = "lmstudio"
+model = "local-model"
+base_url = "http://localhost:1234/v1"
+
+# Generic OpenAI-compatible
+[llm]
+provider = "openai-compat"
+model = "any-model"
+base_url = "https://my-api.example.com/v1"
+```
+
+You can also use `base_url` with native providers to proxy requests:
+
+```toml
+[llm]
+provider = "openai"
+model = "gpt-4"
+base_url = "https://my-company-proxy.com/v1"
+```
+
 ### Model Discovery
 
 The `provider` field is **optional** — the agent automatically determines the provider:
@@ -614,10 +659,10 @@ If no API keys are configured, `web_search` automatically uses DuckDuckGo's HTML
 
 ### Credentials
 
-**File permissions:** `credentials.toml` must have mode 0600 (owner-only). The agent will refuse to load credentials with insecure permissions.
+**File permissions:** `credentials.toml` must have mode 0400 (owner read-only). The agent will refuse to load credentials with insecure permissions.
 
 ```bash
-chmod 600 ~/.config/grid/credentials.toml
+chmod 400 ~/.config/grid/credentials.toml
 ```
 
 **Priority order:**
