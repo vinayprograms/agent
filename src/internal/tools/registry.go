@@ -128,6 +128,8 @@ func (r *Registry) SetMemoryStore(store MemoryStore) {
 	r.memoryStore = store
 	r.Register(&memoryReadTool{store: store})
 	r.Register(&memoryWriteTool{store: store})
+	r.Register(&memoryListTool{store: store})
+	r.Register(&memorySearchTool{store: store})
 }
 
 // Register adds a tool to the registry.
@@ -1232,10 +1234,98 @@ func (t *memoryWriteTool) Execute(ctx context.Context, args map[string]interface
 	return "ok", nil
 }
 
+// memoryListTool implements the memory_list tool.
+type memoryListTool struct {
+	store MemoryStore
+}
+
+func (t *memoryListTool) Name() string { return "memory_list" }
+
+func (t *memoryListTool) Description() string {
+	return "List all keys in memory, optionally filtered by prefix. Use this first to discover what information is stored before reading specific keys."
+}
+
+func (t *memoryListTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"prefix": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional prefix to filter keys (e.g., 'user.' returns user.name, user.prefs)",
+			},
+		},
+		"required": []string{},
+	}
+}
+
+func (t *memoryListTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	prefix := ""
+	if p, ok := args["prefix"].(string); ok {
+		prefix = p
+	}
+
+	keys, err := t.store.List(prefix)
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return "no keys found", nil
+	}
+	return keys, nil
+}
+
+// memorySearchTool implements the memory_search tool.
+type memorySearchTool struct {
+	store MemoryStore
+}
+
+func (t *memorySearchTool) Name() string { return "memory_search" }
+
+func (t *memorySearchTool) Description() string {
+	return "Search memory values for a query string. Returns keys whose values contain the search term. Use this to find relevant memories when you don't know the exact key."
+}
+
+func (t *memorySearchTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"query": map[string]interface{}{
+				"type":        "string",
+				"description": "Search term to find in memory values",
+			},
+		},
+		"required": []string{"query"},
+	}
+}
+
+func (t *memorySearchTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	query, ok := args["query"].(string)
+	if !ok {
+		return nil, fmt.Errorf("query is required")
+	}
+
+	results, err := t.store.Search(query)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return "no matching memories found", nil
+	}
+	return results, nil
+}
+
 // MemoryStore is the interface for persistent key-value storage.
 type MemoryStore interface {
 	Get(key string) (string, error)
 	Set(key, value string) error
+	List(prefix string) ([]string, error)
+	Search(query string) ([]MemorySearchResult, error)
+}
+
+// MemorySearchResult represents a search hit in memory.
+type MemorySearchResult struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // FileMemoryStore stores memory in a JSON file.
@@ -1271,6 +1361,28 @@ func (s *FileMemoryStore) Set(key, value string) error {
 		return err
 	}
 	return os.WriteFile(s.path, data, 0644)
+}
+
+func (s *FileMemoryStore) List(prefix string) ([]string, error) {
+	var keys []string
+	for k := range s.data {
+		if prefix == "" || strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+
+func (s *FileMemoryStore) Search(query string) ([]MemorySearchResult, error) {
+	query = strings.ToLower(query)
+	var results []MemorySearchResult
+	for k, v := range s.data {
+		if strings.Contains(strings.ToLower(v), query) ||
+			strings.Contains(strings.ToLower(k), query) {
+			results = append(results, MemorySearchResult{Key: k, Value: v})
+		}
+	}
+	return results, nil
 }
 
 // SpawnFunc is the function signature for spawning sub-agents.
