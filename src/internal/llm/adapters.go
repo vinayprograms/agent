@@ -35,6 +35,22 @@ func isRateLimitError(err error) bool {
 		strings.Contains(errStr, "capacity")
 }
 
+// isBillingError checks if the error is a billing/payment/quota error (fatal, no retry).
+func isBillingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "billing") ||
+		strings.Contains(errStr, "payment") ||
+		strings.Contains(errStr, "credits") ||
+		strings.Contains(errStr, "quota exceeded") ||
+		strings.Contains(errStr, "insufficient") ||
+		strings.Contains(errStr, "402") ||
+		strings.Contains(errStr, "subscription") ||
+		strings.Contains(errStr, "expired")
+}
+
 // FantasyAdapter wraps a fantasy.LanguageModel to implement our Provider interface.
 type FantasyAdapter struct {
 	model     fantasy.LanguageModel
@@ -129,7 +145,12 @@ func (a *FantasyAdapter) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 			break
 		}
 
-		// Check if it's a rate limit error
+		// Billing errors are fatal - no retry
+		if isBillingError(err) {
+			return nil, fmt.Errorf("billing/payment error (fatal): %w", err)
+		}
+
+		// Only retry rate limit errors
 		if !isRateLimitError(err) {
 			return nil, fmt.Errorf("fantasy generate failed: %w", err)
 		}
