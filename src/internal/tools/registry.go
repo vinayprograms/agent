@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openclaw/headless-agent/internal/policy"
@@ -94,12 +95,16 @@ func (r *Registry) registerBuiltins() {
 	r.Register(&bashTool{policy: r.policy})
 	r.Register(&webFetchTool{policy: r.policy})
 	r.Register(&webSearchTool{policy: r.policy})
-	r.Register(&spawnAgentTool{}) // spawner set later via SetSpawner
+	r.Register(&spawnAgentTool{})  // spawner set later via SetSpawner
+	r.Register(&spawnAgentsTool{}) // spawner set later via SetSpawner
 }
 
-// SetSpawner sets the spawner function for the spawn_agent tool
+// SetSpawner sets the spawner function for the spawn_agent and spawn_agents tools
 func (r *Registry) SetSpawner(spawner SpawnFunc) {
 	if t, ok := r.tools["spawn_agent"].(*spawnAgentTool); ok {
+		t.spawner = spawner
+	}
+	if t, ok := r.tools["spawn_agents"].(*spawnAgentsTool); ok {
 		t.spawner = spawner
 	}
 }
@@ -1305,3 +1310,152 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args map[string]interface{
 	return t.spawner(ctx, role, task, outputs)
 }
 
+// spawnAgentsTool implements parallel sub-agent spawning.
+type spawnAgentsTool struct {
+	spawner SpawnFunc
+}
+
+func (t *spawnAgentsTool) Name() string { return "spawn_agents" }
+
+func (t *spawnAgentsTool) Description() string {
+	return `Spawn multiple sub-agents in parallel.
+
+Parameters:
+  - agents (required): Array of agent specs, each with:
+    - role (required): Name/role for the sub-agent
+    - task (required): Task description
+    - outputs (optional): List of field names for structured output
+
+Returns: Array of results in same order as input agents.
+
+Example:
+  spawn_agents(agents: [
+    {role: "researcher", task: "Find historical context"},
+    {role: "analyst", task: "Analyze current trends"},
+    {role: "critic", task: "Identify weaknesses"}
+  ])
+  → ["Historical context...", "Current trends...", "Weaknesses..."]`
+}
+
+func (t *spawnAgentsTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"agents": map[string]interface{}{
+				"type": "array",
+				"items": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"role": map[string]interface{}{
+							"type":        "string",
+							"description": "The role/persona for the sub-agent",
+						},
+						"task": map[string]interface{}{
+							"type":        "string",
+							"description": "The specific task for the sub-agent",
+						},
+						"outputs": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "Optional output field names for structured response",
+						},
+					},
+					"required": []string{"role", "task"},
+				},
+				"description": "Array of agent specifications to run in parallel",
+			},
+		},
+		"required": []string{"agents"},
+	}
+}
+
+// agentResult holds the result of a parallel agent spawn.
+type agentResult struct {
+	index  int
+	result interface{}
+	err    error
+}
+
+func (t *spawnAgentsTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if t.spawner == nil {
+		return nil, fmt.Errorf("spawn_agents not available (no spawner configured)")
+	}
+
+	agentsRaw, ok := args["agents"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("agents array is required")
+	}
+
+	if len(agentsRaw) == 0 {
+		return []interface{}{}, nil
+	}
+
+	// Parse agent specs
+	type agentSpec struct {
+		role    string
+		task    string
+		outputs []string
+	}
+	specs := make([]agentSpec, 0, len(agentsRaw))
+	for i, a := range agentsRaw {
+		agent, ok := a.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("agent[%d]: invalid format", i)
+		}
+		role, ok := agent["role"].(string)
+		if !ok {
+			return nil, fmt.Errorf("agent[%d]: role is required", i)
+		}
+		task, ok := agent["task"].(string)
+		if !ok {
+			return nil, fmt.Errorf("agent[%d]: task is required", i)
+		}
+		var outputs []string
+		if outputsRaw, ok := agent["outputs"]; ok {
+			if outputsList, ok := outputsRaw.([]interface{}); ok {
+				for _, o := range outputsList {
+					if s, ok := o.(string); ok {
+						outputs = append(outputs, s)
+					}
+				}
+			}
+		}
+		specs = append(specs, agentSpec{role: role, task: task, outputs: outputs})
+	}
+
+	// Run all agents in parallel
+	results := make(chan agentResult, len(specs))
+	var wg sync.WaitGroup
+
+	for i, spec := range specs {
+		wg.Add(1)
+		go func(idx int, s agentSpec) {
+			defer wg.Done()
+			result, err := t.spawner(ctx, s.role, s.task, s.outputs)
+			results <- agentResult{index: idx, result: result, err: err}
+		}(i, spec)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results in order
+	collected := make([]agentResult, len(specs))
+	for r := range results {
+		collected[r.index] = r
+	}
+
+	// Build output array
+	output := make([]interface{}, len(specs))
+	for i, r := range collected {
+		if r.err != nil {
+			output[i] = fmt.Sprintf("Error: %v", r.err)
+		} else {
+			output[i] = r.result
+		}
+	}
+
+	return output, nil
+}
