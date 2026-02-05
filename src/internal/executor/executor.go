@@ -309,27 +309,9 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 			ToolCalls: resp.ToolCalls,
 		})
 
-		// Execute tool calls
-		for _, tc := range resp.ToolCalls {
-			result, err := e.executeTool(ctx, tc)
-			var content string
-			if err != nil {
-				content = fmt.Sprintf("Error: %v", err)
-			} else {
-				switch v := result.(type) {
-				case string:
-					content = v
-				default:
-					data, _ := json.Marshal(v)
-					content = string(data)
-				}
-			}
-			messages = append(messages, llm.Message{
-				Role:       "tool",
-				Content:    content,
-				ToolCallID: tc.ID,
-			})
-		}
+		// Execute tool calls in parallel
+		toolMessages := e.executeToolsParallel(ctx, resp.ToolCalls)
+		messages = append(messages, toolMessages...)
 	}
 }
 
@@ -607,22 +589,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			ToolCalls: resp.ToolCalls,
 		})
 
-		// Execute tool calls
-		for _, tc := range resp.ToolCalls {
-			result, err := e.executeTool(ctx, tc)
-			var resultStr string
-			if err != nil {
-				resultStr = fmt.Sprintf("Error: %v", err)
-			} else {
-				resultStr = fmt.Sprintf("%v", result)
-			}
-
-			messages = append(messages, llm.Message{
-				Role:       "tool",
-				ToolCallID: tc.ID,
-				Content:    resultStr,
-			})
-		}
+		// Execute tool calls in parallel
+		toolMessages := e.executeToolsParallel(ctx, resp.ToolCalls)
+		messages = append(messages, toolMessages...)
 	}
 }
 
@@ -963,6 +932,93 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	}
 
 	return result, err
+}
+
+// toolResult holds the result of a parallel tool execution.
+type toolResult struct {
+	index   int
+	id      string
+	content string
+}
+
+// executeToolsParallel executes multiple tool calls concurrently and returns
+// messages in the original order.
+func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.ToolCallResponse) []llm.Message {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+
+	// For single tool call, no need for goroutines
+	if len(toolCalls) == 1 {
+		tc := toolCalls[0]
+		result, err := e.executeTool(ctx, tc)
+		var content string
+		if err != nil {
+			content = fmt.Sprintf("Error: %v", err)
+		} else {
+			switch v := result.(type) {
+			case string:
+				content = v
+			default:
+				data, _ := json.Marshal(v)
+				content = string(data)
+			}
+		}
+		return []llm.Message{{
+			Role:       "tool",
+			ToolCallID: tc.ID,
+			Content:    content,
+		}}
+	}
+
+	// Execute tools in parallel
+	results := make(chan toolResult, len(toolCalls))
+	var wg sync.WaitGroup
+
+	for i, tc := range toolCalls {
+		wg.Add(1)
+		go func(idx int, tc llm.ToolCallResponse) {
+			defer wg.Done()
+			result, err := e.executeTool(ctx, tc)
+			var content string
+			if err != nil {
+				content = fmt.Sprintf("Error: %v", err)
+			} else {
+				switch v := result.(type) {
+				case string:
+					content = v
+				default:
+					data, _ := json.Marshal(v)
+					content = string(data)
+				}
+			}
+			results <- toolResult{index: idx, id: tc.ID, content: content}
+		}(i, tc)
+	}
+
+	// Wait for all to complete
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results and sort by original index
+	collected := make([]toolResult, 0, len(toolCalls))
+	for r := range results {
+		collected = append(collected, r)
+	}
+
+	// Sort by original order
+	messages := make([]llm.Message, len(toolCalls))
+	for _, r := range collected {
+		messages[r.index] = llm.Message{
+			Role:       "tool",
+			ToolCallID: r.id,
+			Content:    r.content,
+		}
+	}
+
+	return messages
 }
 
 // executeMCPTool executes an MCP tool call.
