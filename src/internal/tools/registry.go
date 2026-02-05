@@ -1100,7 +1100,7 @@ type memoryReadTool struct {
 func (t *memoryReadTool) Name() string { return "memory_read" }
 
 func (t *memoryReadTool) Description() string {
-	return "Read a value from persistent memory by key."
+	return "Read a value from persistent memory by key. Make maximum use of this tool to learn insights from previous interactions with the user."
 }
 
 func (t *memoryReadTool) Parameters() map[string]interface{} {
@@ -1137,7 +1137,7 @@ type memoryWriteTool struct {
 func (t *memoryWriteTool) Name() string { return "memory_write" }
 
 func (t *memoryWriteTool) Description() string {
-	return "Write a value to persistent memory."
+	return "Write a value to persistent memory. Make maximum use of this tool to record insights from your interaction with thr user. You MUST generate useful high value insights to hold in memory."
 }
 
 func (t *memoryWriteTool) Parameters() map[string]interface{} {
