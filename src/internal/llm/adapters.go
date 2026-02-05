@@ -252,26 +252,58 @@ func InferProviderFromModel(model string) string {
 	return ""
 }
 
-// createFantasyProvider creates a Fantasy provider for the given provider name and API key.
-func createFantasyProvider(providerName, apiKey string) (fantasy.Provider, error) {
+// createFantasyProvider creates a Fantasy provider for the given provider name, API key, and optional base URL.
+func createFantasyProvider(providerName, apiKey, baseURL string) (fantasy.Provider, error) {
 	switch providerName {
 	case "anthropic":
+		if baseURL != "" {
+			return openaicompat.New(
+				openaicompat.WithBaseURL(baseURL),
+				openaicompat.WithAPIKey(apiKey),
+				openaicompat.WithName("anthropic"),
+			)
+		}
 		return anthropic.New(anthropic.WithAPIKey(apiKey))
 	case "openai":
+		if baseURL != "" {
+			return openaicompat.New(
+				openaicompat.WithBaseURL(baseURL),
+				openaicompat.WithAPIKey(apiKey),
+				openaicompat.WithName("openai"),
+			)
+		}
 		return openai.New(openai.WithAPIKey(apiKey))
 	case "google":
 		return google.New(google.WithGeminiAPIKey(apiKey))
 	case "groq":
+		url := "https://api.groq.com/openai/v1"
+		if baseURL != "" {
+			url = baseURL
+		}
 		return openaicompat.New(
-			openaicompat.WithBaseURL("https://api.groq.com/openai/v1"),
+			openaicompat.WithBaseURL(url),
 			openaicompat.WithAPIKey(apiKey),
 			openaicompat.WithName("groq"),
 		)
 	case "mistral":
+		url := "https://api.mistral.ai/v1"
+		if baseURL != "" {
+			url = baseURL
+		}
 		return openaicompat.New(
-			openaicompat.WithBaseURL("https://api.mistral.ai/v1"),
+			openaicompat.WithBaseURL(url),
 			openaicompat.WithAPIKey(apiKey),
 			openaicompat.WithName("mistral"),
+		)
+	case "openai-compat", "openrouter", "litellm", "ollama", "lmstudio":
+		// Generic OpenAI-compatible endpoint
+		if baseURL == "" {
+			return nil, fmt.Errorf("base_url is required for provider %s", providerName)
+		}
+		return openaicompat.New(
+			openaicompat.WithBaseURL(baseURL),
+			openaicompat.WithAPIKey(apiKey),
+			openaicompat.WithName(providerName),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", providerName)
@@ -305,7 +337,7 @@ func NewProvider(cfg FantasyConfig) (Provider, error) {
 	}
 	cfg.ApplyDefaults()
 
-	fantasyProvider, err := createFantasyProvider(cfg.Provider, cfg.APIKey)
+	fantasyProvider, err := createFantasyProvider(cfg.Provider, cfg.APIKey, cfg.BaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create %s provider: %w", cfg.Provider, err)
 	}

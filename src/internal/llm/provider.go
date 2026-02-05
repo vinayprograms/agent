@@ -53,10 +53,11 @@ type Provider interface {
 
 // FantasyConfig holds configuration for the Fantasy adapter.
 type FantasyConfig struct {
-	Provider  string `json:"provider"` // anthropic, openai, gemini, etc.
+	Provider  string `json:"provider"`  // anthropic, openai, google, groq, mistral, openai-compat
 	Model     string `json:"model"`
 	APIKey    string `json:"api_key"`
 	MaxTokens int    `json:"max_tokens"`
+	BaseURL   string `json:"base_url"` // Custom API endpoint (for OpenRouter, LiteLLM, Ollama, LMStudio)
 }
 
 // Validate validates the configuration.

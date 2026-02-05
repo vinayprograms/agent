@@ -274,6 +274,7 @@ func runWorkflow(args []string) {
 			Model:     cfg.LLM.Model,
 			APIKey:    globalCreds.GetAPIKey(llmProvider),
 			MaxTokens: cfg.LLM.MaxTokens,
+			BaseURL:   cfg.LLM.BaseURL,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error creating LLM provider: %v\n", err)

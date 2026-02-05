@@ -34,6 +34,7 @@ type LLMConfig struct {
 	Model     string `toml:"model"`
 	APIKeyEnv string `toml:"api_key_env"`
 	MaxTokens int    `toml:"max_tokens"`
+	BaseURL   string `toml:"base_url"` // Custom API endpoint (OpenRouter, LiteLLM, Ollama, LMStudio)
 }
 
 // Profile represents a capability profile mapping to a specific LLM configuration.
@@ -42,6 +43,7 @@ type Profile struct {
 	Model     string `toml:"model"`
 	APIKeyEnv string `toml:"api_key_env"`
 	MaxTokens int    `toml:"max_tokens"`
+	BaseURL   string `toml:"base_url"` // Custom API endpoint
 }
 
 // WebConfig contains Internet Gateway settings.
