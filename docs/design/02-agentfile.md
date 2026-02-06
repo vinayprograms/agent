@@ -30,7 +30,7 @@ The Agentfile is a flat, declarative workflow definition language. Inspired by D
 2. No indentation or nesting
 3. Keywords are UPPERCASE
 4. Strings use double quotes
-5. Variables use `{name}` for interpolation
+5. Variables use `$name` for interpolation
 6. Comments start with `#`
 
 ## Examples
@@ -41,7 +41,7 @@ The Agentfile is a flat, declarative workflow definition language. Inspired by D
 NAME analyze-logs
 INPUT log_file
 
-GOAL analyze "Analyze {log_file} and summarize errors"
+GOAL analyze "Analyze $log_file and summarize errors"
 ```
 
 ### With Agents
@@ -51,7 +51,7 @@ NAME code-review
 INPUT repo_path
 
 AGENT reviewer "You are a code reviewer. Be thorough but concise."
-GOAL review "Review code in {repo_path}" USING reviewer
+GOAL review "Review code in $repo_path" USING reviewer
 ```
 
 ### With Supervision
@@ -63,9 +63,9 @@ INPUT environment
 
 SUPERVISED
 
-GOAL build "Build version {version}"
+GOAL build "Build version $version"
 GOAL test "Run test suite"
-GOAL deploy "Deploy to {environment}" SUPERVISED HUMAN
+GOAL deploy "Deploy to $environment" SUPERVISED HUMAN
 ```
 
 ### With Security Mode
@@ -83,7 +83,7 @@ GOAL process "Process user request from API"
 NAME extract-data
 INPUT document
 
-GOAL extract "Extract entities from {document}" -> entities, summary
+GOAL extract "Extract entities from $document" -> entities, summary
 ```
 
 ### Loading From Files
