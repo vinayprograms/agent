@@ -25,6 +25,21 @@ Our approach: **Defense in depth**
 
 No single layer is sufficient. Together, they raise the bar significantly.
 
+## Security vs Execution Supervision
+
+This documentation references a "security supervisor" in Tier 3 verification. This is **not** a sub-agent.
+
+| Term | What It Is | When It Runs |
+|------|------------|--------------|
+| Security supervisor | On-demand LLM call | Per tool call when Tier 1+2 escalate |
+| Execution supervisor | On-demand LLM call | Per goal when RECONCILE flags issues |
+
+Both are stateless verification calls, not persistent agents. A workflow does not spawn additional sub-agents for supervision.
+
+**Security checks are always on.** Even goals marked `UNSUPERVISED` (which skip execution supervision) still run security verification on tool calls when untrusted content is present.
+
+See [Execution Model](../execution/README.md) for details on goal supervision.
+
 ## Quick Start
 
 For most deployments, the default security mode provides good protection:

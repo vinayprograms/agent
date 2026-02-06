@@ -34,13 +34,28 @@ The headless agent uses a four-phase execution model with optional supervision:
 | RECONCILE | Static pattern checks | ~0 (no LLM) |
 | SUPERVISE | LLM-based judgment | 1 LLM call (when triggered) |
 
+## Execution Supervisor vs Security Supervisor
+
+The execution supervisor described here is **not** a sub-agent. It's an on-demand LLM call made when RECONCILE flags drift issues.
+
+| Term | What It Is | When It Runs |
+|------|------------|--------------|
+| Execution supervisor | On-demand LLM call | Per goal when RECONCILE flags issues |
+| Security supervisor | On-demand LLM call | Per tool call when security tiers escalate |
+
+Both are stateless verification calls. A workflow does not spawn additional sub-agents for supervision.
+
+**Important:** Security checks are always on, regardless of execution supervision mode. An `UNSUPERVISED` goal skips the four-phase execution overhead but still runs security verification on tool calls when untrusted content is present.
+
+See [Security Documentation](../security/README.md) for details on security supervision.
+
 ## When to Use Supervision
 
 | Scenario | Recommendation |
 |----------|----------------|
-| Development/testing | UNSUPERVISED |
-| Internal tools, trusted data | UNSUPERVISED |
-| Production, trusted users | SUPERVISED (auto) |
+| Development/testing | No keyword (UNSUPERVISED) |
+| Internal tools, trusted data | No keyword (UNSUPERVISED) |
+| Production, trusted users | SUPERVISED |
 | Critical operations | SUPERVISED |
 | Sensitive data, compliance | SUPERVISED HUMAN |
 | Public-facing agents | SUPERVISED + paranoid security |
