@@ -19,9 +19,8 @@ The supervision system supports three modes, from lightest to strictest:
 The fastest execution path. Only COMMIT and EXECUTE phases run.
 
 ```
-UNSUPERVISED
 NAME quick-analysis
-GOAL "Analyze the log file and report errors"
+GOAL analyze "Analyze the log file and report errors" UNSUPERVISED
 ```
 
 **Behavior:**
@@ -41,9 +40,8 @@ GOAL "Analyze the log file and report errors"
 The default for production. All four phases run, but supervisor only engages when reconcile flags issues.
 
 ```
-SUPERVISED
 NAME data-pipeline
-GOAL "Process customer data and generate report"
+GOAL process "Process customer data and generate report" SUPERVISED
 ```
 
 **Behavior:**
@@ -62,9 +60,8 @@ GOAL "Process customer data and generate report"
 Maximum oversight. Supervisor always runs, and human approval required.
 
 ```
-SUPERVISED HUMAN
 NAME production-deploy
-GOAL "Deploy version 2.1 to production servers"
+GOAL deploy "Deploy version 2.1 to production servers" SUPERVISED HUMAN
 ```
 
 **Behavior:**
@@ -92,24 +89,24 @@ Don't start a workflow that will inevitably stall waiting for a human who isn't 
 
 ### Global Supervision (in Agentfile)
 
-Place at top of file — applies to all goals:
+Place at top of file — applies to all goals that don't have explicit modifiers:
 
 ```
 SUPERVISED
 NAME my-workflow
-GOAL "First goal - supervised"
-GOAL "Second goal - also supervised"
+GOAL step1 "First goal - inherits SUPERVISED"
+GOAL step2 "Second goal - also inherits SUPERVISED"
 ```
 
 ### Per-Goal Supervision
 
-Override for specific goals:
+Modifier at end of GOAL line:
 
 ```
 NAME mixed-workflow
-GOAL "Read configuration file"
-SUPERVISED GOAL "Modify database records"
-SUPERVISED HUMAN GOAL "Delete user accounts"
+GOAL read-config "Read configuration file" UNSUPERVISED
+GOAL modify-db "Modify database records" SUPERVISED
+GOAL delete-users "Delete user accounts" SUPERVISED HUMAN
 ```
 
 ### Default Mode (in agent.toml)
@@ -125,8 +122,8 @@ human_timeout_seconds = 300
 
 ## Mode Inheritance
 
-| Global Setting | Goal Setting | Result |
-|----------------|--------------|--------|
+| Global Setting | Goal Modifier | Result |
+|----------------|---------------|--------|
 | (none) | (none) | Uses default_mode from config |
 | UNSUPERVISED | (none) | UNSUPERVISED |
 | UNSUPERVISED | SUPERVISED | SUPERVISED |

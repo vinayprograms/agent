@@ -11,16 +11,16 @@ INPUT environment
 
 SUPERVISED
 
-GOAL "Build and test version {version}"
-SUPERVISED HUMAN GOAL "Deploy to {environment} servers"
-GOAL "Verify deployment health"
+GOAL build "Build and test version {version}"
+GOAL deploy "Deploy to {environment} servers" SUPERVISED HUMAN
+GOAL verify "Verify deployment health"
 ```
 
 **Key syntax rules:**
 - One instruction per line
 - No indentation or nesting
-- GOAL followed by a single quoted string
-- Supervision keywords precede GOAL on the same line
+- GOAL followed by identifier, then quoted string
+- Supervision modifier at end of line (not before GOAL)
 
 ## Execution Flow
 
@@ -42,8 +42,9 @@ Each goal has:
 
 | Field | Description |
 |-------|-------------|
-| Content | The goal string |
-| Supervised | Goal-level override |
+| Name | Goal identifier |
+| Outcome | The goal string |
+| Supervised | Goal-level override (pointer, nil = inherit) |
 | HumanOnly | Goal-level human requirement |
 
 ## Pre-Flight Validation
