@@ -22,6 +22,7 @@ The Agentfile is a flat, declarative workflow definition language. Inspired by D
 | SUPERVISED | Enable execution supervision |
 | HUMAN | Require human approval (with SUPERVISED) |
 | UNSUPERVISED | Disable supervision for goal |
+| SECURITY | Set security mode (default, paranoid) |
 
 ## Syntax Rules
 
@@ -65,6 +66,15 @@ SUPERVISED
 GOAL build "Build version {version}"
 GOAL test "Run test suite"
 GOAL deploy "Deploy to {environment}" SUPERVISED HUMAN
+```
+
+### With Security Mode
+
+```
+NAME public-api-agent
+SECURITY paranoid
+
+GOAL process "Process user request from API"
 ```
 
 ### With Structured Output
@@ -120,6 +130,23 @@ GOAL step1 "First goal"              # Inherits SUPERVISED
 GOAL step2 "Second goal" UNSUPERVISED # Override to unsupervised
 GOAL step3 "Third goal" SUPERVISED HUMAN  # Escalate to human
 ```
+
+## Security Mode
+
+Set security mode at top of file:
+
+```
+SECURITY paranoid
+NAME high-security-workflow
+GOAL process "Handle untrusted input"
+```
+
+| Mode | Behavior |
+|------|----------|
+| default | Security checks when flagged |
+| paranoid | Full verification on every action |
+
+Agentfile setting overrides config (more restrictive wins). See [Security Modes](../security/07-security-modes.md).
 
 ---
 
