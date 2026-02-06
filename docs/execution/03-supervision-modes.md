@@ -14,13 +14,15 @@ The supervision system supports three modes, from lightest to strictest:
 | SUPERVISED | All four | When flagged | Never | Production |
 | SUPERVISED HUMAN | All four | Always | Required | Critical/compliance |
 
-## UNSUPERVISED
+## Default Behavior
 
-The fastest execution path. Only COMMIT and EXECUTE phases run.
+**Goals without a supervision keyword are UNSUPERVISED.**
+
+This is the fastest execution path. Only COMMIT and EXECUTE phases run.
 
 ```
 NAME quick-analysis
-GOAL analyze "Analyze the log file and report errors" UNSUPERVISED
+GOAL analyze "Analyze the log file and report errors"
 ```
 
 **Behavior:**
@@ -29,15 +31,15 @@ GOAL analyze "Analyze the log file and report errors" UNSUPERVISED
 - No supervisor oversight
 - Checkpoints still captured for audit
 
-**When to use:**
+**When appropriate:**
 - Development and testing
 - Trusted internal tools
 - Low-risk operations
 - Maximum performance needed
 
-## SUPERVISED (Auto)
+## SUPERVISED
 
-The default for production. All four phases run, but supervisor only engages when reconcile flags issues.
+Add `SUPERVISED` at end of goal line for production oversight. All four phases run, but supervisor only engages when reconcile flags issues.
 
 ```
 NAME data-pipeline
@@ -52,7 +54,7 @@ GOAL process "Process customer data and generate report" SUPERVISED
 
 **When to use:**
 - Production workloads
-- Trusted users, standard workflows
+- Standard workflows
 - Balance of safety and performance
 
 ## SUPERVISED HUMAN
@@ -85,55 +87,47 @@ If SUPERVISED HUMAN is required but no human connection exists → **fail immedi
 
 Don't start a workflow that will inevitably stall waiting for a human who isn't there.
 
-## Configuration
+## Global Supervision
 
-### Global Supervision (in Agentfile)
-
-Place at top of file — applies to all goals that don't have explicit modifiers:
+Place `SUPERVISED` or `SUPERVISED HUMAN` at top of file to set a default for all goals:
 
 ```
 SUPERVISED
 NAME my-workflow
 GOAL step1 "First goal - inherits SUPERVISED"
-GOAL step2 "Second goal - also inherits SUPERVISED"
+GOAL step2 "Second goal - also SUPERVISED"
+GOAL step3 "Third goal - explicit override" UNSUPERVISED
 ```
 
-### Per-Goal Supervision
+Goals can still override with explicit modifiers.
 
-Modifier at end of GOAL line:
-
-```
-NAME mixed-workflow
-GOAL read-config "Read configuration file" UNSUPERVISED
-GOAL modify-db "Modify database records" SUPERVISED
-GOAL delete-users "Delete user accounts" SUPERVISED HUMAN
-```
-
-### Default Mode (in agent.toml)
-
-When not specified in Agentfile:
+## Configuration (agent.toml)
 
 ```toml
 [supervision]
-default_mode = "supervised"  # unsupervised | supervised | supervised_human
 model = "claude-sonnet"
 human_timeout_seconds = 300
 ```
+
+| Setting | Description |
+|---------|-------------|
+| model | LLM for supervisor |
+| human_timeout_seconds | Timeout waiting for human approval |
 
 ## Mode Inheritance
 
 | Global Setting | Goal Modifier | Result |
 |----------------|---------------|--------|
-| (none) | (none) | Uses default_mode from config |
-| UNSUPERVISED | (none) | UNSUPERVISED |
-| UNSUPERVISED | SUPERVISED | SUPERVISED |
+| (none) | (none) | UNSUPERVISED |
+| (none) | SUPERVISED | SUPERVISED |
+| (none) | SUPERVISED HUMAN | SUPERVISED HUMAN |
 | SUPERVISED | (none) | SUPERVISED |
 | SUPERVISED | UNSUPERVISED | UNSUPERVISED |
 | SUPERVISED | SUPERVISED HUMAN | SUPERVISED HUMAN |
 | SUPERVISED HUMAN | (none) | SUPERVISED HUMAN |
 | SUPERVISED HUMAN | UNSUPERVISED | **Error** (cannot downgrade) |
 
-**Rule:** Goals can escalate supervision but cannot reduce it below global level when global is SUPERVISED HUMAN.
+**Rule:** Goals can escalate or downgrade supervision, except when global is SUPERVISED HUMAN — then downgrading is an error.
 
 ---
 
