@@ -79,6 +79,20 @@ GOAL deploy "Deploy version 2.1 to production servers" SUPERVISED HUMAN
 - Compliance requirements
 - High-risk tool usage
 
+## UNSUPERVISED (Explicit)
+
+Use `UNSUPERVISED` to explicitly opt out of supervision for a specific goal when global supervision is enabled:
+
+```
+SUPERVISED
+NAME mixed-workflow
+GOAL fetch "Fetch data from API"
+GOAL analyze "Analyze the data" UNSUPERVISED
+GOAL report "Generate report for stakeholders"
+```
+
+In this example, `fetch` and `report` inherit global SUPERVISED, but `analyze` is explicitly UNSUPERVISED.
+
 ## Pre-Flight Check
 
 Before execution begins, the system validates supervision requirements.
