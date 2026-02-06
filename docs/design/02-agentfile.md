@@ -2,146 +2,151 @@
 
 ## Overview
 
-The Agentfile is a flat, declarative workflow definition language. Inspired by Dockerfile simplicity — one instruction per line, no indentation, no nesting.
+Flat, declarative workflow definition. One instruction per line, no indentation, no nesting.
 
 ## Keywords
 
 | Keyword | Purpose |
 |---------|---------|
 | NAME | Workflow identifier |
-| INPUT | Declare required input parameter |
-| AGENT | Define a reusable agent with prompt |
-| GOAL | Define a goal for agent to achieve |
-| RUN | Execute goals using agents |
-| LOOP | Repeat goals within a limit |
-| FROM | Load content from file path |
+| INPUT | Declare input parameter (with optional DEFAULT) |
+| AGENT | Define agent from prompt, file, skill, or package |
+| GOAL | Define goal with description |
+| RUN | Execute goals sequentially |
+| LOOP | Execute goals repeatedly within a limit |
+| FROM | Load content from path |
 | USING | Specify which agents/goals to use |
 | WITHIN | Set iteration limit for LOOP |
 | DEFAULT | Default value for INPUT |
-| REQUIRES | Capability requirement for AGENT |
+| REQUIRES | Capability profile requirement |
 | SUPERVISED | Enable execution supervision |
 | HUMAN | Require human approval (with SUPERVISED) |
-| UNSUPERVISED | Disable supervision for goal |
+| UNSUPERVISED | Disable supervision |
 | SECURITY | Set security mode |
 
-## Syntax Rules
-
-1. One instruction per line
-2. No indentation or nesting
-3. Keywords are UPPERCASE
-4. Strings use double quotes
-5. Variables use `$name` for interpolation
-6. Comments start with `#`
-
-## Examples
-
-### Basic Workflow
+## Syntax
 
 ```
-NAME analyze-logs
-INPUT log_file
+# Comments start with #
 
-GOAL analyze "Analyze $log_file and summarize errors"
+NAME workflow-name
+
+INPUT required_param
+INPUT optional_param DEFAULT "value"
+
+AGENT name FROM path/to/prompt.md
+AGENT name FROM skill-name
+AGENT name FROM package.agent REQUIRES "profile"
+AGENT name "Inline prompt"
+
+GOAL name "Description with $variables"
+GOAL name "Description" -> output1, output2
+GOAL name "Description" USING agent1, agent2
+
+RUN step_name USING goal1, goal2
+LOOP step_name USING goal1 WITHIN 5
+LOOP step_name USING goal1 WITHIN $max_iter
 ```
 
-### With Agents
+## Variable Interpolation
+
+Use `$variable` to reference inputs and outputs:
 
 ```
-NAME code-review
-INPUT repo_path
-
-AGENT reviewer "You are a code reviewer. Be thorough but concise."
-GOAL review "Review code in $repo_path" USING reviewer
+INPUT topic DEFAULT "Go programming"
+GOAL research "Research $topic and list 3 key facts"
 ```
 
-### With Supervision
+## Structured Output
+
+Use `->` to declare output fields:
 
 ```
-NAME deploy-service
-INPUT version
-INPUT environment
+GOAL research "Research $topic" -> findings, sources, confidence
+GOAL report "Write report using $findings" -> summary
+```
 
+The LLM returns JSON with those fields. Fields become variables for subsequent goals.
+
+## Multi-Agent Goals
+
+When a goal uses multiple agents, they run in parallel:
+
+```
+AGENT researcher "Research $topic" -> findings
+AGENT critic "Find biases in $topic" -> issues
+
+GOAL analyze "Analyze $topic" -> summary USING researcher, critic
+```
+
+An implicit synthesizer transforms their outputs into the goal's fields.
+
+## AGENT FROM Resolution
+
+| FROM Value | Resolution |
+|------------|------------|
+| `agents/critic.md` | File path → loads as prompt |
+| `skills/code-review` | Directory with SKILL.md → loads as skill |
+| `testing` | Name → searches skills.paths |
+| `scanner.agent` | Package file → loads as sub-agent |
+
+Resolution order:
+1. Check if path exists relative to Agentfile
+2. If file → load as prompt (must be .md)
+3. If directory → must have SKILL.md
+4. If not found → search configured skills.paths
+5. If still not found → error
+
+## Capability Profiles
+
+Agents can require specific capabilities:
+
+```
+AGENT critic FROM agents/critic.md REQUIRES "reasoning-heavy"
+```
+
+Profiles are defined in agent.toml:
+
+```toml
+[profiles.reasoning-heavy]
+model = "claude-opus-4-20250514"
+
+[profiles.fast]
+model = "gpt-4o-mini"
+```
+
+Benefits:
+- Workflow declares intent (what capability)
+- Config controls implementation (which model)
+- Same Agentfile works in different environments
+
+## Supervision
+
+Global (at top of file):
+
+```
 SUPERVISED
-
-GOAL build "Build version $version"
-GOAL test "Run test suite"
-GOAL deploy "Deploy to $environment" SUPERVISED HUMAN
-```
-
-### With Security Mode
-
-```
-NAME public-api-agent
-SECURITY paranoid
-
-GOAL process "Process user request from API"
-```
-
-### With Structured Output
-
-```
-NAME extract-data
-INPUT document
-
-GOAL extract "Extract entities from $document" -> entities, summary
-```
-
-### Loading From Files
-
-```
-NAME complex-workflow
-
-AGENT analyst FROM prompts/analyst.md
-GOAL analyze "Analyze quarterly data" USING analyst
-```
-
-### Loops
-
-```
-NAME iterative-refinement
-INPUT draft
-
-LOOP refine USING improve, evaluate WITHIN 5
-```
-
-## Parsing
-
-The lexer tokenizes the Agentfile, then the parser builds an AST:
-
-| AST Node | Fields |
-|----------|--------|
-| Workflow | Name, Inputs, Agents, Goals, Steps, Supervised, HumanOnly |
-| Input | Name, Default, Line |
-| Agent | Name, Prompt, FromPath, Outputs, Requires, Supervised, HumanOnly |
-| Goal | Name, Outcome, FromPath, Outputs, UsingAgent, Supervised, HumanOnly |
-| Step | Type (RUN/LOOP), Name, UsingGoals, WithinLimit, Supervised, HumanOnly |
-
-## Supervision Modifiers
-
-| Position | Scope |
-|----------|-------|
-| Top of file (before NAME) | Global default for all goals |
-| End of GOAL line | Override for that specific goal |
-
-```
-SUPERVISED                           # Global
 NAME my-workflow
-GOAL step1 "First goal"              # Inherits SUPERVISED
-GOAL step2 "Second goal" UNSUPERVISED # Override to unsupervised
-GOAL step3 "Third goal" SUPERVISED HUMAN  # Escalate to human
+GOAL step1 "First goal"
 ```
+
+Per-goal (at end of line):
+
+```
+GOAL deploy "Deploy to production" SUPERVISED HUMAN
+GOAL cleanup "Quick cleanup" UNSUPERVISED
+```
+
+See [Supervision Modes](../execution/03-supervision-modes.md).
 
 ## Security Mode
-
-Set security mode at top of file:
 
 ```
 SECURITY paranoid
 NAME high-security-workflow
-GOAL process "Handle untrusted input"
 ```
 
-See [Security Modes](../security/07-security-modes.md) for details.
+See [Security Modes](../security/07-security-modes.md).
 
 ---
 

@@ -1,9 +1,5 @@
 # Chapter 4: Tool System
 
-## Overview
-
-Tools give the agent capabilities beyond text generation. The tool registry manages both built-in and external tools.
-
 ## Built-in Tools
 
 ### File Operations
@@ -11,105 +7,126 @@ Tools give the agent capabilities beyond text generation. The tool registry mana
 | Tool | Description |
 |------|-------------|
 | read | Read file contents |
-| write | Write content to file |
-| edit | Find and replace text in file |
-| glob | List files matching pattern |
-| grep | Search for pattern in files |
+| write | Write/create files |
+| edit | Edit files (find/replace) |
+| glob | Find files by pattern |
+| grep | Search file contents |
 | ls | List directory contents |
 
-### Execution
+### Shell
 
 | Tool | Description |
 |------|-------------|
-| bash | Execute shell commands |
+| bash | Execute shell commands (policy-controlled) |
 
 ### Web
 
 | Tool | Description |
 |------|-------------|
-| web_fetch | Fetch and extract content from URL |
-| web_search | Search the web (requires API key) |
+| web_search | Search the web |
+| web_fetch | Fetch and summarize URL content |
 
 ### Memory
 
 | Tool | Description |
 |------|-------------|
-| memory_read | Read value by key |
-| memory_write | Write value by key |
-| memory_list | List keys (with optional prefix) |
-| memory_search | Search values |
+| memory_read | Read from agent memory |
+| memory_write | Write to agent memory |
 
-### Sub-Agents
+### Dynamic Agents
 
 | Tool | Description |
 |------|-------------|
-| spawn_agent | Spawn a single sub-agent |
-| spawn_agents | Spawn multiple sub-agents in parallel |
+| spawn_agent | Spawn sub-agents at runtime |
 
-## Tool Interface
+## Web Search Providers
 
-Every tool implements:
+`web_search` supports multiple providers with automatic fallback:
 
-| Method | Purpose |
-|--------|---------|
-| Name() | Tool identifier |
-| Description() | Human-readable description |
-| Parameters() | JSON Schema for arguments |
-| Execute() | Run the tool |
+| Priority | Provider | API Key | Notes |
+|----------|----------|---------|-------|
+| 1 | Brave Search | BRAVE_API_KEY | Best quality |
+| 2 | Tavily | TAVILY_API_KEY | Good for research |
+| 3 | DuckDuckGo | None | Zero-config fallback |
 
-## Policy Enforcement
+## MCP (Model Context Protocol)
 
-Tools check permissions against policy.toml:
+Connect to external MCP tool servers:
 
 ```toml
-[tools]
-# Allowed paths for file operations
-allowed_paths = ["/workspace", "/tmp"]
+# agent.toml
 
-# Denied paths (takes precedence)
-denied_paths = ["/etc", "/root/.ssh"]
+[mcp.servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
 
-# Allowed tools (empty = all allowed)
-allowed_tools = []
-
-# Denied tools
-denied_tools = ["bash"]  # Disable shell access
+[mcp.servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
 ```
 
-**Policy checks happen before execution.** A denied operation returns an error without side effects.
+Tools from MCP servers are automatically discovered and available to workflows.
 
-## MCP Tools
+## Agent Skills
 
-External tools via Model Context Protocol. See [Standards Support](05-standards.md).
+Load skills from directories containing SKILL.md:
 
 ```toml
-[[mcp.servers]]
-name = "database"
-command = ["mcp-server-postgres"]
-env = { DATABASE_URL = "..." }
-allowed_tools = ["query", "list_tables"]  # Optional allowlist
+[skills]
+paths = ["./skills", "~/.agent/skills"]
 ```
 
-MCP tools appear in the registry alongside built-in tools.
+Skill structure:
+```
+my-skill/
+├── SKILL.md           # Required: frontmatter + instructions
+├── scripts/           # Optional: executable scripts
+├── references/        # Optional: additional docs
+└── assets/            # Optional: templates, data
+```
 
-## Tool Execution Flow
+## Security Policy
 
-1. Agent requests tool call
-2. Registry looks up tool by name
-3. Policy check (paths, permissions)
-4. Security check (Tier 1 patterns)
-5. If untrusted content in context → Tier 2/3 verification
-6. Tool executes
-7. Result returned (marked as untrusted)
+Restrict tool access with policy.toml:
 
-## Adding Custom Tools
+```toml
+default_deny = true
+workspace = "/path/to/workspace"
 
-Tools can be added via:
+[tools.read]
+enabled = true
+allow = ["$WORKSPACE/**"]
+deny = ["**/.env", "**/*.key"]
 
-1. **MCP servers** — External processes, any language
-2. **Go plugins** — Native tools, compiled in
-3. **ACP exposure** — Agent capabilities exposed to others
+[tools.write]
+enabled = true
+allow = ["$WORKSPACE/**"]
+
+[tools.bash]
+enabled = true
+allowlist = ["ls *", "cat *", "grep *"]
+denylist = ["rm *", "sudo *"]
+
+[tools.web_fetch]
+enabled = true
+allow_domains = ["api.github.com", "*.example.com"]
+```
+
+## MCP Tool Security
+
+```toml
+[mcp]
+default_deny = true
+allowed_tools = [
+  "filesystem:read_file",
+  "filesystem:list_directory",
+  "memory:*",
+]
+```
+
+If [mcp] is not configured, agent logs a warning and allows all MCP tools (development mode).
 
 ---
 
-Next: [Standards Support](05-standards.md)
+Next: [Sub-Agents](05-subagents.md)

@@ -1,102 +1,101 @@
 # Chapter 3: LLM Integration
 
-## Fantasy Framework
+## Stack
 
-The agent uses [charm.land/fantasy](https://charm.land/fantasy) for LLM abstraction. Fantasy provides a unified interface across providers.
+| Library | Purpose |
+|---------|---------|
+| [Catwalk](https://github.com/charmbracelet/catwalk) | Model discovery and metadata |
+| [Fantasy](https://charm.land/fantasy) | Provider abstraction |
 
 ## Supported Providers
 
-| Provider | Models | Environment Variable |
-|----------|--------|---------------------|
-| Anthropic | Claude family | ANTHROPIC_API_KEY |
-| OpenAI | GPT family | OPENAI_API_KEY |
-| Google | Gemini family | GOOGLE_API_KEY |
-| Groq | Llama, Mixtral | GROQ_API_KEY |
-| Mistral | Mistral family | MISTRAL_API_KEY |
-
-Any OpenAI-compatible endpoint also works (OpenRouter, LiteLLM, Ollama, LMStudio).
+| Provider | Model Patterns | Environment Variable |
+|----------|---------------|---------------------|
+| Anthropic | claude-* | ANTHROPIC_API_KEY |
+| OpenAI | gpt-*, o1-*, o3-* | OPENAI_API_KEY |
+| Google | gemini-*, gemma-* | GOOGLE_API_KEY |
+| Mistral | mistral-*, mixtral-*, codestral-* | MISTRAL_API_KEY |
+| Groq | (set provider explicitly) | GROQ_API_KEY |
 
 ## Automatic Provider Inference
 
-The agent infers the provider from the model name:
+The `provider` field is optional. The agent determines the provider:
 
-| Model Pattern | Provider |
-|---------------|----------|
-| claude-* | Anthropic |
-| gpt-* | OpenAI |
-| gemini-* | Google |
-| llama-*, mixtral-* | Groq |
-| mistral-*, codestral-* | Mistral |
+1. **Catwalk lookup** (if CATWALK_URL set): Queries for exact model → provider mapping
+2. **Pattern inference** (fallback): Uses model name prefixes
 
-For ambiguous names, specify the provider explicitly in configuration.
+Set `provider` explicitly only for ambiguous model names or OpenAI-compatible endpoints.
 
 ## Configuration
 
-### agent.toml
-
 ```toml
-[llm]
-model = "claude-sonnet"
-# provider = "anthropic"  # Optional, inferred from model name
+# agent.toml
 
-# For custom endpoints (proxies, self-hosted)
+[llm]
+model = "claude-sonnet-4-20250514"
+max_tokens = 4096
+# provider = "anthropic"  # Optional, inferred from model
+
+# Custom endpoint
 # base_url = "http://localhost:8080/v1"
 ```
 
-### credentials.toml
+## Custom Endpoints
+
+Use `base_url` for OpenAI-compatible endpoints:
 
 ```toml
+# OpenRouter
+[llm]
+provider = "openrouter"
+model = "anthropic/claude-3.5-sonnet"
+base_url = "https://openrouter.ai/api/v1"
+
+# Ollama
+[llm]
+provider = "ollama"
+model = "llama3:70b"
+base_url = "http://localhost:11434/v1"
+
+# LiteLLM proxy
+[llm]
+provider = "litellm"
+model = "gpt-4"
+base_url = "http://localhost:4000"
+```
+
+## Credentials
+
+```toml
+# ~/.config/grid/credentials.toml
+
+# Simple: single key for all providers
 [llm]
 api_key = "your-api-key"
-```
 
-This single key works for any provider. For multiple providers:
-
-```toml
+# Or provider-specific
 [anthropic]
-api_key = "sk-ant-..."
+api_key = "anthropic-key"
 
 [openai]
-api_key = "sk-..."
+api_key = "openai-key"
 ```
 
-**Permissions:** credentials.toml must be 0400 (read-only, owner only).
+**Priority:** Provider section → [llm] section → environment variable
 
-## Credential Priority
+**Permissions:** File must be mode 0400 (owner read-only). Agent refuses to load insecure credentials.
 
-1. Provider-specific section in credentials.toml
-2. `[llm]` section in credentials.toml
-3. Environment variable (ANTHROPIC_API_KEY, etc.)
+## Catwalk Benefits
 
-File takes precedence over environment.
+When using Catwalk:
+- Model context windows and token limits
+- Cost information
+- Capability flags (reasoning, attachments)
 
-## Catwalk Integration
-
-The agent uses [charm.land/catwalk](https://charm.land/catwalk) for model discovery and metadata.
-
-Catwalk provides:
-- Available models list
-- Context window sizes
-- Pricing information
-- Capability flags
-
-If catwalk is unavailable, the agent falls back to pattern-based provider inference.
-
-## Rate Limiting
-
-The agent handles rate limits with exponential backoff:
-
-| Attempt | Delay |
-|---------|-------|
-| 1 | 1 second |
-| 2 | 2 seconds |
-| 3 | 4 seconds |
-| 4 | 8 seconds |
-| 5 | 16 seconds |
-
-After 5 attempts, the request fails.
-
-**Billing errors are fatal** — no retry on payment/quota issues.
+Run a local Catwalk server:
+```bash
+export CATWALK_URL=http://localhost:8080
+```
 
 ---
 
