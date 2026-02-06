@@ -72,18 +72,15 @@ File takes precedence over environment.
 
 ## Catwalk Integration
 
-Optional integration with [charm.land/catwalk](https://charm.land/catwalk) for model discovery and metadata:
+The agent uses [charm.land/catwalk](https://charm.land/catwalk) for model discovery and metadata.
 
-```toml
-[llm]
-use_catwalk = true
-```
-
-When enabled, catwalk provides:
+Catwalk provides:
 - Available models list
 - Context window sizes
 - Pricing information
 - Capability flags
+
+If catwalk is unavailable, the agent falls back to pattern-based provider inference.
 
 ## Rate Limiting
 
