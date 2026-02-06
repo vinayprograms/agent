@@ -11,63 +11,7 @@ We use a tiered approach: fast checks filter most cases, expensive checks only w
 
 ## The Verification Tiers
 
-```plantuml
-@startuml
-skinparam backgroundColor white
-skinparam defaultFontName Helvetica
-
-title Tiered Verification Pipeline
-
-start
-
-partition "Tier 1: Deterministic" {
-  :Check context state;
-  if (Untrusted content in recent context?) then (no)
-    :PASS - no untrusted influence;
-    stop
-  else (yes)
-  endif
-  
-  if (High-risk tool?) then (no)
-    :PASS - low-risk operation;
-    stop
-  else (yes)
-  endif
-  
-  if (Suspicious patterns in args?) then (yes)
-    :Escalate to Tier 2;
-  else (no)
-  endif
-  
-  if (Encoded content detected?) then (yes)
-    :Escalate to Tier 2;
-  else (no)
-    :PASS - no red flags;
-    stop
-  endif
-}
-
-partition "Tier 2: Cheap Model Triage" {
-  :Fast model (Haiku/Flash);
-  :Single question: Is this influenced by untrusted content?;
-  
-  if (Response: suspicious?) then (yes)
-    :Escalate to Tier 3;
-  else (no)
-    :PASS - triage cleared;
-    stop
-  endif
-}
-
-partition "Tier 3: Full Supervisor" {
-  :Capable model (Sonnet/Opus);
-  :Deep analysis with decision trail;
-  :Return CONTINUE / REORIENT / PAUSE;
-}
-
-stop
-@enduml
-```
+![Tiered Verification Pipeline](images/05-tiered-verification.png)
 
 ## Tier 1: Deterministic Checks
 
@@ -178,7 +122,7 @@ suggested within the untrusted content, answer YES.
 
 ## Tier 3: Full Supervisor
 
-The existing supervision system (see [Supervision](../README.md#supervision)).
+The existing supervision system (see [Supervision docs](../README.md)).
 
 - Uses capable model (Sonnet/Opus)
 - Has full decision trail context

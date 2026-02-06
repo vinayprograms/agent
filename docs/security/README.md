@@ -21,19 +21,7 @@ LLMs cannot reliably distinguish instructions from data. Everything is tokens.
 
 Our approach: **Defense in depth**
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    DEFENSE LAYERS                       │
-├─────────────────────────────────────────────────────────┤
-│  1. Structural Tagging    - Mark content with metadata  │
-│  2. LLM Instruction       - Tell model to respect tags  │
-│  3. Pattern Detection     - Catch encoded payloads      │
-│  4. Tiered Verification   - Check suspicious actions    │
-│  5. Tool Restrictions     - Limit blast radius          │
-│  6. Supervision           - Detect drift from intent    │
-│  7. Audit Trail           - Enable forensic analysis    │
-└─────────────────────────────────────────────────────────┘
-```
+![Defense Layers](images/00-defense-layers.png)
 
 No single layer is sufficient. Together, they raise the bar significantly.
 

@@ -13,21 +13,7 @@ Even with all defenses, attacks may succeed. The audit trail enables:
 
 Each session generates a fresh Ed25519 keypair:
 
-```
-Session Start
-    │
-    ▼
-┌──────────────────────────────────────┐
-│  Generate Ed25519 Keypair            │
-│                                      │
-│  Private Key: In memory only         │
-│               Never written to disk  │
-│               Destroyed at end       │
-│                                      │
-│  Public Key:  Stored in session log  │
-│               Available for audit    │
-└──────────────────────────────────────┘
-```
+![Session Keypair](images/06-session-keypair.png)
 
 **Why Ed25519?**
 - Fast signing (~15,000 signatures/second on modern CPU)
@@ -63,24 +49,7 @@ type SignedSecurityRecord struct {
 
 ## Signing Process
 
-```plantuml
-@startuml
-skinparam backgroundColor white
-skinparam defaultFontName Helvetica
-
-title Security Record Signing
-
-start
-:Security check completes;
-:Create record with all fields except signature;
-:Serialize to canonical JSON;
-:Hash with SHA-256;
-:Sign hash with session private key;
-:Attach signature to record;
-:Store record in session log;
-stop
-@enduml
-```
+![Signing Process](images/06-signing-process.png)
 
 **Canonical JSON**: Fields sorted alphabetically, consistent whitespace. Ensures same content always produces same hash.
 

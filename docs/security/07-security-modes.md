@@ -4,28 +4,7 @@
 
 The system operates in one of two security modes:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     SECURITY MODES                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────────────┐      ┌─────────────────────┐       │
-│  │      DEFAULT        │      │      PARANOID       │       │
-│  ├─────────────────────┤      ├─────────────────────┤       │
-│  │ Tiered verification │      │ Full verification   │       │
-│  │ Smart escalation    │      │ Every action        │       │
-│  │ Trust vetted blocks │      │ Re-verify vetted    │       │
-│  │                     │      │                     │       │
-│  │ Balanced cost/      │      │ Maximum security    │       │
-│  │ security            │      │ Higher cost         │       │
-│  └─────────────────────┘      └─────────────────────┘       │
-│                                                             │
-│  Use for: Most deployments    Use for: High-security       │
-│           Internal users                Public-facing       │
-│           Trusted workflows             Sensitive data      │
-│                                         Compliance reqs     │
-└─────────────────────────────────────────────────────────────┘
-```
+![Security Modes](images/07-security-modes.png)
 
 ## Mode Comparison
 

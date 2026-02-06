@@ -4,20 +4,11 @@
 
 Every piece of content in the agent's context has an origin. We classify origins by trust level:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      TRUST LEVELS                           │
-├──────────────┬──────────────────────────────────────────────┤
-│   TRUSTED    │  Framework-generated, cannot be influenced   │
-│              │  by external sources                         │
-├──────────────┼──────────────────────────────────────────────┤
-│   VETTED     │  Human-authored and reviewed                 │
-│              │  (Agentfiles, signed packages)               │
-├──────────────┼──────────────────────────────────────────────┤
-│  UNTRUSTED   │  External data that may contain              │
-│              │  malicious content                           │
-└──────────────┴──────────────────────────────────────────────┘
-```
+| Level | Description |
+|-------|-------------|
+| **TRUSTED** | Framework-generated, cannot be influenced by external sources |
+| **VETTED** | Human-authored and reviewed (Agentfiles, signed packages) |
+| **UNTRUSTED** | External data that may contain malicious content |
 
 ## Trust Assignment
 
@@ -59,34 +50,14 @@ user_trust = "untrusted"  # Public-facing, unknown users
 
 When content from multiple sources is combined, the result inherits the **lowest** trust level:
 
-```
-trusted   + trusted   → trusted
-trusted   + vetted    → vetted
-trusted   + untrusted → untrusted
-vetted    + untrusted → untrusted
-```
+| Combination | Result |
+|-------------|--------|
+| trusted + trusted | trusted |
+| trusted + vetted | vetted |
+| trusted + untrusted | untrusted |
+| vetted + untrusted | untrusted |
 
-```plantuml
-@startuml
-skinparam backgroundColor white
-skinparam defaultFontName Helvetica
-
-title Taint Propagation
-
-rectangle "Trusted\nGoal" as goal #90EE90
-rectangle "Untrusted\nFile Content" as file #FFB6C1
-rectangle "Agent\nSummary" as summary #FFB6C1
-
-goal --> summary : "influences"
-file --> summary : "contains data from"
-
-note bottom of summary
-  Output is tainted (untrusted)
-  because it incorporates
-  untrusted content
-end note
-@enduml
-```
+![Taint Propagation](images/02-taint-propagation.png)
 
 ### Instruction Taint vs Data Taint
 
@@ -112,41 +83,7 @@ This is not configurable. The security modes (default/paranoid) control verifica
 
 ## Visual Summary
 
-```plantuml
-@startuml
-skinparam backgroundColor white
-skinparam defaultFontName Helvetica
-
-title Trust Boundaries in Agent Execution
-
-actor User
-rectangle "Agent Runtime" {
-  rectangle "System Prompt\n[trusted]" as sys #90EE90
-  rectangle "Agentfile\n[vetted]" as af #87CEEB
-  rectangle "User Input\n[configurable]" as usr #FFFFE0
-  rectangle "Tool Results\n[untrusted]" as tool #FFB6C1
-  rectangle "File Reads\n[untrusted]" as file #FFB6C1
-  rectangle "Web Fetch\n[untrusted]" as web #FFB6C1
-  
-  rectangle "LLM" as llm
-  
-  sys --> llm
-  af --> llm
-  usr --> llm
-  tool --> llm
-  file --> llm
-  web --> llm
-}
-
-User --> usr
-
-note right of tool
-  All external data
-  enters as untrusted
-  regardless of origin
-end note
-@enduml
-```
+![Trust Boundaries](images/02-trust-boundaries.png)
 
 ---
 

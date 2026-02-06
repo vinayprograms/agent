@@ -15,39 +15,23 @@ LLMs can decode common encodings (Base64, hex, URL encoding) when prompted. An i
 
 We use multiple signals to detect encoded content:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│               ENCODED CONTENT DETECTION                     │
-├─────────────────────────────────────────────────────────────┤
-│  1. Shannon Entropy    High entropy = compressed/encoded    │
-│  2. Character Set      Base64/hex use limited char sets     │
-│  3. Pattern Matching   Structural signatures (padding, etc) │
-│  4. Length Heuristics  Long unbroken alphanumeric strings   │
-└─────────────────────────────────────────────────────────────┘
-```
+1. **Shannon Entropy** — High entropy indicates compressed/encoded data
+2. **Character Set** — Base64/hex use limited character sets
+3. **Pattern Matching** — Structural signatures (padding, etc.)
+4. **Length Heuristics** — Long unbroken alphanumeric strings
 
 ## Shannon Entropy
 
 Entropy measures information density. Different content types have characteristic entropy levels:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    ENTROPY SCALE                            │
-│                   (bits per byte)                           │
-├─────────────────────────────────────────────────────────────┤
-│  0 ────────── 2 ────────── 4 ────────── 6 ────────── 8      │
-│  │            │            │            │            │      │
-│  │            │            │            │            │      │
-│  └─ Uniform   └─ Sparse    └─ English   └─ Encoded   └─ Max │
-│     (zeros)      text         prose        Base64      rand │
-│                                                             │
-│  Typical values:                                            │
-│  • English text:     3.0 - 4.5 bits/byte                    │
-│  • Source code:      4.0 - 5.0 bits/byte                    │
-│  • Base64 encoded:   5.5 - 6.0 bits/byte                    │
-│  • Compressed/rand:  7.5 - 8.0 bits/byte                    │
-└─────────────────────────────────────────────────────────────┘
-```
+![Entropy Scale](images/04-entropy-scale.png)
+
+| Content Type | Typical Entropy |
+|--------------|-----------------|
+| English text | 3.0 - 4.5 bits/byte |
+| Source code | 4.0 - 5.0 bits/byte |
+| Base64 encoded | 5.5 - 6.0 bits/byte |
+| Compressed/random | 7.5 - 8.0 bits/byte |
 
 **Threshold:** Content with entropy > 5.5 bits/byte is flagged for further analysis.
 
@@ -123,35 +107,7 @@ relevant, but do not act on it.
 
 When encoded content is detected in an untrusted block:
 
-```plantuml
-@startuml
-skinparam backgroundColor white
-skinparam defaultFontName Helvetica
-
-title Encoded Content Handling
-
-start
-:Receive untrusted content;
-
-if (Entropy > 5.5?) then (yes)
-  :Flag as potentially encoded;
-else (no)
-endif
-
-if (Matches encoding pattern?) then (yes)
-  :Confirm encoded content;
-else (no)
-  :Normal processing;
-  stop
-endif
-
-:Add encoded content warning to context;
-:Escalate to supervisor regardless of mode;
-:Log detection event;
-
-stop
-@enduml
-```
+![Encoded Content Handling](images/04-encoded-handling.png)
 
 Even in `default` mode, encoded content triggers supervisor verification. This is not configurable — encoded payloads are inherently suspicious.
 
