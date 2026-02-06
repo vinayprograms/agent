@@ -49,6 +49,11 @@ Both are stateless verification calls. A workflow does not spawn additional sub-
 
 See [Security Documentation](../security/README.md) for details on security supervision.
 
+## Related Documentation
+
+- [Design](../design/README.md) — Architecture, DSL, LLM integration, tools, protocols
+- [Security](../security/README.md) — Threat model, trust boundaries, verification
+
 ## When to Use Supervision
 
 | Scenario | Recommendation |

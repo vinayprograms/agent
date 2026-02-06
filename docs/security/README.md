@@ -38,7 +38,10 @@ Both are stateless verification calls, not persistent agents. A workflow does no
 
 **Security checks are always on.** Even goals marked `UNSUPERVISED` (which skip execution supervision) still run security verification on tool calls when untrusted content is present.
 
-See [Execution Model](../execution/README.md) for details on goal supervision.
+## Related Documentation
+
+- [Design](../design/README.md) — Architecture, DSL, LLM integration, tools, protocols
+- [Execution Model](../execution/README.md) — Four-phase execution, supervision modes, verdicts
 
 ## Quick Start
 
