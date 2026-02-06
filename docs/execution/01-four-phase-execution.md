@@ -38,22 +38,6 @@ Before executing, the agent must declare:
 | `predictions` | Expected outcomes |
 | `assumptions` | Things the agent is assuming to be true |
 
-**Example commitment:**
-
-```yaml
-interpretation: "Summarize Q4 revenue data from the CSV file"
-scope:
-  in_bounds: "Read file, extract revenue figures, generate summary"
-  out_bounds: "Modifying the file, sending data externally"
-approach: "Read CSV, parse columns, calculate totals, format summary"
-predictions:
-  - "File contains revenue column"
-  - "Summary will be 2-3 paragraphs"
-assumptions:
-  - "File is valid CSV format"
-  - "Revenue values are numeric"
-```
-
 **Why commit first?**
 
 1. **Accountability** — Agent's interpretation is recorded
@@ -76,58 +60,40 @@ The agent performs the actual work:
 
 | Field | Description |
 |-------|-------------|
-| `commitment_met` | Did execution match the commitment? |
-| `scope_changed` | Did scope expand or shift? |
-| `confidence` | How confident is the agent in the result? (0-1) |
-| `concerns` | Any issues or uncertainties |
+| `commitment_met` | Did execution match the commitment? (yes/no/partial) |
+| `scope_changed` | Did scope expand or shift? (yes/no) |
+| `concerns` | Any issues or uncertainties (list) |
 
-**Example self-assessment:**
-
-```yaml
-commitment_met: true
-scope_changed: false
-confidence: 0.9
-concerns: []
-```
-
-Or with issues:
-
-```yaml
-commitment_met: false
-scope_changed: true
-confidence: 0.6
-concerns:
-  - "File format was JSON, not CSV as assumed"
-  - "Had to make additional assumptions about data structure"
-```
+The self-assessment uses categorical values, not numeric scores. LLMs reason better with qualitative judgments than precise numbers.
 
 ## Checkpoints
 
-Both phases produce checkpoints stored for audit and supervision:
+Both phases produce checkpoints stored for audit and supervision.
 
-```go
-type PreCheckpoint struct {
-    StepID        string
-    Timestamp     time.Time
-    Goal          string
-    Interpretation string
-    Scope         Scope
-    Approach      string
-    Predictions   []string
-    Assumptions   []string
-}
+**Pre-checkpoint (COMMIT):**
 
-type PostCheckpoint struct {
-    StepID        string
-    Timestamp     time.Time
-    ToolsUsed     []ToolCall
-    Output        string
-    CommitmentMet bool
-    ScopeChanged  bool
-    Confidence    float64
-    Concerns      []string
-}
-```
+| Field | Type |
+|-------|------|
+| step_id | string |
+| timestamp | time |
+| goal | string |
+| interpretation | string |
+| scope | in_bounds / out_bounds |
+| approach | string |
+| predictions | list of strings |
+| assumptions | list of strings |
+
+**Post-checkpoint (EXECUTE):**
+
+| Field | Type |
+|-------|------|
+| step_id | string |
+| timestamp | time |
+| tools_used | list of tool calls |
+| output | string |
+| commitment_met | yes / no / partial |
+| scope_changed | yes / no |
+| concerns | list of strings |
 
 ## Unsupervised Execution
 
@@ -145,7 +111,7 @@ Checkpoints are still captured for audit, but RECONCILE and SUPERVISE are skippe
 |-----------|-------------|
 | Trusted operation, no oversight | COMMIT + EXECUTE |
 | Standard supervised step | All four phases |
-| Critical step with self-assessment issues | All four + likely SUPERVISE |
+| Critical step with concerns | All four + likely SUPERVISE |
 | SUPERVISED HUMAN step | All four + human approval |
 
 ---

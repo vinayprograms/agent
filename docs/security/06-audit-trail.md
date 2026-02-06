@@ -23,29 +23,22 @@ Each session generates a fresh Ed25519 keypair:
 
 ## What Gets Signed
 
-The supervisor signs a record after each security decision:
+The supervisor signs a record after each security decision.
 
-```go
-type SignedSecurityRecord struct {
-    // Identity
-    BlockID     string    `json:"block_id"`
-    SessionID   string    `json:"session_id"`
-    Timestamp   time.Time `json:"timestamp"`
-    
-    // What was checked
-    ContentHash string    `json:"content_hash"`  // SHA-256 of block content
-    Trust       string    `json:"trust"`
-    Type        string    `json:"type"`
-    
-    // Verification results
-    Tier1Result string    `json:"tier1_result"`  // "pass" | "escalate"
-    Tier2Result string    `json:"tier2_result"`  // "pass" | "escalate" | "skipped"
-    Tier3Result string    `json:"tier3_result"`  // verdict or "skipped"
-    
-    // The signature
-    Signature   string    `json:"signature"`     // base64(Ed25519(hash(above)))
-}
-```
+**Signed Security Record fields:**
+
+| Field | Description |
+|-------|-------------|
+| block_id | Identifier for the content block |
+| session_id | Session identifier |
+| timestamp | When the decision was made |
+| content_hash | SHA-256 of block content |
+| trust | Trust level (trusted/vetted/untrusted) |
+| type | Block type (instruction/data) |
+| tier1_result | "pass" or "escalate" |
+| tier2_result | "pass", "escalate", or "skipped" |
+| tier3_result | Verdict or "skipped" |
+| signature | Base64-encoded Ed25519 signature |
 
 ## Signing Process
 
@@ -53,70 +46,41 @@ type SignedSecurityRecord struct {
 
 **Canonical JSON**: Fields sorted alphabetically, consistent whitespace. Ensures same content always produces same hash.
 
+**Process:**
+1. Security check completes
+2. Create record with all fields except signature
+3. Serialize to canonical JSON
+4. Hash with SHA-256
+5. Sign hash with session private key
+6. Attach signature to record
+7. Store in session log
+
 ## Session Log Structure
 
-```json
-{
-  "session_id": "sess_abc123",
-  "started_at": "2026-02-06T19:30:00Z",
-  "public_key": "MCowBQYDK2VwAyEA...",
-  "security_mode": "default",
-  
-  "security_records": [
-    {
-      "block_id": "tool-read-1",
-      "session_id": "sess_abc123",
-      "timestamp": "2026-02-06T19:30:05Z",
-      "content_hash": "a3f2b8c9...",
-      "trust": "untrusted",
-      "type": "data",
-      "tier1_result": "escalate",
-      "tier2_result": "pass",
-      "tier3_result": "skipped",
-      "signature": "MEUCIQD2..."
-    },
-    {
-      "block_id": "tool-bash-1",
-      "session_id": "sess_abc123",
-      "timestamp": "2026-02-06T19:30:10Z",
-      "content_hash": "b4c3d9e0...",
-      "trust": "trusted",
-      "type": "instruction",
-      "tier1_result": "escalate",
-      "tier2_result": "escalate",
-      "tier3_result": "CONTINUE",
-      "signature": "MEYCIQCx..."
-    }
-  ]
-}
-```
+Each session log contains:
+
+| Field | Description |
+|-------|-------------|
+| session_id | Unique session identifier |
+| started_at | Session start timestamp |
+| public_key | Ed25519 public key for verification |
+| security_mode | "default" or "paranoid" |
+| security_records | Array of signed records |
 
 ## Verification
 
-Auditors can verify any record:
+Auditors verify records by:
+1. Extracting the record (without signature field)
+2. Serializing to canonical JSON
+3. Hashing with SHA-256
+4. Verifying Ed25519 signature against session public key
 
-```go
-func VerifySecurityRecord(record SignedSecurityRecord, publicKey ed25519.PublicKey) bool {
-    // Recreate canonical JSON (without signature field)
-    recordCopy := record
-    recordCopy.Signature = ""
-    canonical, _ := json.Marshal(recordCopy)
-    
-    // Hash
-    hash := sha256.Sum256(canonical)
-    
-    // Decode signature
-    sig, _ := base64.StdEncoding.DecodeString(record.Signature)
-    
-    // Verify
-    return ed25519.Verify(publicKey, hash[:], sig)
-}
-```
+If verification fails, the record has been tampered with.
 
 ## What The Trail Proves
 
-| If you see... | It means... |
-|---------------|-------------|
+| Observation | Meaning |
+|-------------|---------|
 | Valid signature on record | Supervisor actually made this decision |
 | tier1_result = "pass" | No untrusted content was present |
 | tier3_result = "CONTINUE" | Supervisor judged action as safe |
@@ -133,22 +97,22 @@ An attacker who compromises the agent cannot forge signatures:
 
 **Limitation**: An attacker with memory access during the session could extract the private key. Defense against this requires hardware security modules (HSMs), which are out of scope for this system.
 
-## Storage Recommendations
+## Storage Configuration
 
 ```toml
 [security.audit]
-# Where to store session logs with signatures
 log_path = "/var/log/agent/security/"
-
-# Retention
 retention_days = 90
-
-# Optional: Ship to external SIEM
-siem_endpoint = "https://siem.example.com/ingest"
-siem_token_env = "SIEM_API_TOKEN"
 ```
 
-For compliance-critical deployments:
+| Setting | Description |
+|---------|-------------|
+| log_path | Directory for session logs |
+| retention_days | How long to keep logs |
+
+Optional SIEM integration available for shipping logs to external systems.
+
+**For compliance-critical deployments:**
 - Ship logs to immutable storage (S3 with Object Lock, WORM storage)
 - Include logs in regular backup verification
 - Set up alerting on verification failures

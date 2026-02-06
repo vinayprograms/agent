@@ -19,13 +19,9 @@ The supervision system supports three modes, from lightest to strictest:
 The fastest execution path. Only COMMIT and EXECUTE phases run.
 
 ```
-# Agentfile
 UNSUPERVISED
-
 NAME quick-analysis
-GOAL "Analyze the log file"
-  read logs/app.log
-  summarize findings
+GOAL "Analyze the log file and report errors"
 ```
 
 **Behavior:**
@@ -45,14 +41,9 @@ GOAL "Analyze the log file"
 The default for production. All four phases run, but supervisor only engages when reconcile flags issues.
 
 ```
-# Agentfile
 SUPERVISED
-
 NAME data-pipeline
-GOAL "Process customer data"
-  fetch from API
-  transform records
-  store results
+GOAL "Process customer data and generate report"
 ```
 
 **Behavior:**
@@ -71,14 +62,9 @@ GOAL "Process customer data"
 Maximum oversight. Supervisor always runs, and human approval required.
 
 ```
-# Agentfile
 SUPERVISED HUMAN
-
 NAME production-deploy
-GOAL "Deploy to production"
-  run tests
-  build artifacts
-  deploy to servers
+GOAL "Deploy version 2.1 to production servers"
 ```
 
 **Behavior:**
@@ -96,76 +82,52 @@ GOAL "Deploy to production"
 
 ## Pre-Flight Check
 
-Before execution begins, the system validates supervision requirements:
+Before execution begins, the system validates supervision requirements.
 
-```go
-func (e *Executor) PreFlight() error {
-    for _, step := range e.workflow.Steps {
-        if step.RequiresHuman() && !e.hasHumanConnection() {
-            return fmt.Errorf(
-                "step %q requires SUPERVISED HUMAN but no human connection available",
-                step.ID,
-            )
-        }
-    }
-    return nil
-}
-```
-
-**If SUPERVISED HUMAN is required but no human connection exists → fail immediately.**
+If SUPERVISED HUMAN is required but no human connection exists → **fail immediately**.
 
 Don't start a workflow that will inevitably stall waiting for a human who isn't there.
 
 ## Configuration
 
-### Global (in Agentfile)
+### Global Supervision (in Agentfile)
+
+Place at top of file — applies to all goals:
 
 ```
-# At top of file - applies to all steps
 SUPERVISED
-
 NAME my-workflow
-...
+GOAL "First goal - supervised"
+GOAL "Second goal - also supervised"
 ```
 
-### Per-Step Override
+### Per-Goal Supervision
+
+Override for specific goals:
 
 ```
 NAME mixed-workflow
-
-# Unsupervised step
-GOAL "Read configuration"
-  read config.yaml
-
-# Supervised step (overrides global)
-SUPERVISED
-GOAL "Modify database"
-  update records
-
-# Human-required step
-SUPERVISED HUMAN
-GOAL "Delete user data"
-  remove records
+GOAL "Read configuration file"
+SUPERVISED GOAL "Modify database records"
+SUPERVISED HUMAN GOAL "Delete user accounts"
 ```
 
-### In agent.toml
+### Default Mode (in agent.toml)
+
+When not specified in Agentfile:
 
 ```toml
 [supervision]
-# Default mode when not specified in Agentfile
 default_mode = "supervised"  # unsupervised | supervised | supervised_human
-
-# Model for supervisor
 model = "claude-sonnet"
-
-# Timeout waiting for human approval
 human_timeout_seconds = 300
 ```
 
 ## Mode Inheritance
 
-| Global Setting | Step Setting | Result |
+| Global Setting | Goal Setting | Result |
 |----------------|--------------|--------|
+| (none) | (none) | Uses default_mode from config |
 | UNSUPERVISED | (none) | UNSUPERVISED |
 | UNSUPERVISED | SUPERVISED | SUPERVISED |
 | SUPERVISED | (none) | SUPERVISED |
@@ -174,7 +136,7 @@ human_timeout_seconds = 300
 | SUPERVISED HUMAN | (none) | SUPERVISED HUMAN |
 | SUPERVISED HUMAN | UNSUPERVISED | **Error** (cannot downgrade) |
 
-**Rule:** Steps can escalate supervision but not reduce it below global level when global is SUPERVISED HUMAN.
+**Rule:** Goals can escalate supervision but cannot reduce it below global level when global is SUPERVISED HUMAN.
 
 ---
 

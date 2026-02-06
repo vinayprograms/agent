@@ -6,20 +6,21 @@ The Agentfile defines a workflow using a flat, declarative syntax:
 
 ```
 NAME deploy-service
-INPUT version, environment
+INPUT version
+INPUT environment
 
 SUPERVISED
 
-GOAL "Build and test"
-  run tests
-  build docker image
-
-SUPERVISED HUMAN
-GOAL "Deploy to {environment}"
-  push image to registry
-  update kubernetes deployment
-  verify health checks
+GOAL "Build and test version {version}"
+SUPERVISED HUMAN GOAL "Deploy to {environment} servers"
+GOAL "Verify deployment health"
 ```
+
+**Key syntax rules:**
+- One instruction per line
+- No indentation or nesting
+- GOAL followed by a single quoted string
+- Supervision keywords precede GOAL on the same line
 
 ## Execution Flow
 
@@ -27,110 +28,49 @@ GOAL "Deploy to {environment}"
 
 ## Parsing Phase
 
-The lexer/parser converts the Agentfile into an AST:
+The lexer/parser converts the Agentfile into a workflow structure:
 
-```go
-type Workflow struct {
-    Name        string
-    Inputs      []Input
-    Supervised  bool      // Global supervision flag
-    HumanOnly   bool      // Global human requirement
-    Steps       []Step
-}
+| Field | Description |
+|-------|-------------|
+| Name | Workflow identifier |
+| Inputs | Required parameters |
+| Supervised | Global supervision flag |
+| HumanOnly | Global human requirement |
+| Goals | List of goal definitions |
 
-type Step struct {
-    Kind        StepKind  // GOAL, AGENT, RUN
-    Content     string
-    Supervised  bool      // Step-level override
-    HumanOnly   bool
-}
-```
+Each goal has:
+
+| Field | Description |
+|-------|-------------|
+| Content | The goal string |
+| Supervised | Goal-level override |
+| HumanOnly | Goal-level human requirement |
 
 ## Pre-Flight Validation
 
 Before execution begins:
 
 1. **Check supervision requirements**
-   - If any step requires SUPERVISED HUMAN
+   - If any goal requires SUPERVISED HUMAN
    - And no human connection available
    - → Fail immediately
 
 2. **Validate inputs**
    - All declared INPUTs must be provided
-   - Type checking if specified
 
 3. **Tool availability**
    - Referenced tools must be registered
    - Permissions checked against policy
 
-```go
-func (e *Executor) PreFlight() error {
-    // Check human requirements
-    for _, step := range e.workflow.Steps {
-        if step.RequiresHuman() && !e.hasHumanConnection() {
-            return ErrNoHumanAvailable
-        }
-    }
-    
-    // Validate inputs
-    for _, input := range e.workflow.Inputs {
-        if _, ok := e.providedInputs[input.Name]; !ok {
-            return fmt.Errorf("missing required input: %s", input.Name)
-        }
-    }
-    
-    return nil
-}
-```
+## Goal Execution
 
-## Step Execution
+Each goal goes through the appropriate phases based on its supervision setting:
 
-Each step goes through the appropriate phases:
-
-```go
-func (e *Executor) executeStep(step Step) error {
-    // Phase 1: COMMIT
-    preCP, err := e.commitPhase(step)
-    if err != nil {
-        return err
-    }
-    e.checkpoints.SavePre(step.ID, preCP)
-    
-    // Phase 2: EXECUTE
-    postCP, err := e.executePhase(step, preCP)
-    if err != nil {
-        return err
-    }
-    e.checkpoints.SavePost(step.ID, postCP)
-    
-    // Skip remaining phases if unsupervised
-    if !e.isSupervised(step) {
-        return nil
-    }
-    
-    // Phase 3: RECONCILE
-    flags := e.reconcilePhase(postCP)
-    
-    // Phase 4: SUPERVISE (if needed)
-    if len(flags) > 0 || e.requiresHuman(step) {
-        verdict, err := e.supervisePhase(step, preCP, postCP, flags)
-        if err != nil {
-            return err
-        }
-        
-        switch verdict.Action {
-        case CONTINUE:
-            return nil
-        case REORIENT:
-            return e.reorientAndRetry(step, verdict.Correction)
-        case PAUSE:
-            return e.pauseForHuman(step, verdict)
-        }
-    }
-    
-    return nil
-}
-```
+| Supervision | Phases |
+|-------------|--------|
+| UNSUPERVISED | COMMIT → EXECUTE |
+| SUPERVISED | COMMIT → EXECUTE → RECONCILE → (SUPERVISE if flagged) |
+| SUPERVISED HUMAN | COMMIT → EXECUTE → RECONCILE → SUPERVISE → HUMAN |
 
 ## Sub-Agent Spawning
 
@@ -148,29 +88,11 @@ The `spawn_agents` tool enables parallel sub-agent execution:
 | Permissions | Own policy, cannot escalate |
 | Return | Result only, no side channels |
 
-**Example:**
-
-```
-NAME orchestrator
-
-GOAL "Analyze multiple repos"
-  spawn_agents:
-    - task: "Analyze repo A"
-      agent: code-reviewer
-    - task: "Analyze repo B"  
-      agent: code-reviewer
-    - task: "Analyze repo C"
-      agent: code-reviewer
-  
-  collect results
-  generate combined report
-```
-
-**Sub-agent execution:**
-- All three run in parallel
+**Sub-agents:**
+- Run in parallel when multiple are spawned
 - Each has isolated context
 - Results collected by orchestrator
-- Sub-agents cannot spawn further agents
+- Cannot spawn further sub-agents
 
 ## Error Handling
 
@@ -185,8 +107,8 @@ GOAL "Analyze multiple repos"
 ## Workflow Completion
 
 A workflow completes when:
-- All steps execute successfully, OR
-- A step receives PAUSE verdict with no human resolution, OR
+- All goals execute successfully, OR
+- A goal receives PAUSE verdict with no human resolution, OR
 - An unrecoverable error occurs
 
 **On completion:**

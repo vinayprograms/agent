@@ -15,9 +15,8 @@ The reconciler examines the post-checkpoint and flags issues:
 | Trigger | Condition | Severity |
 |---------|-----------|----------|
 | `concerns_raised` | Agent reported concerns in self-assessment | Medium |
-| `commitment_not_met` | Agent says commitment wasn't met | High |
+| `commitment_not_met` | Agent says commitment wasn't fully met | High |
 | `scope_deviation` | Scope changed during execution | High |
-| `low_confidence` | Confidence < 0.7 | Medium |
 | `excess_assumptions` | More than 3 assumptions made | Low |
 
 **If any flags are raised → proceed to SUPERVISE.**
@@ -51,37 +50,17 @@ When reconcile flags an issue, the supervisor LLM evaluates the situation:
 
 **Supervisor returns a verdict:** CONTINUE, REORIENT, or PAUSE.
 
-## Supervisor Prompt Structure
+## Supervisor Evaluation
 
-```
-You are a supervisor agent evaluating execution quality.
+The supervisor considers:
 
-ORIGINAL GOAL:
-{goal}
+1. Did the agent correctly interpret the goal?
+2. Did the agent stay within declared scope?
+3. Was the intended outcome achieved?
+4. Are the raised concerns valid?
+5. Is the output appropriate for the task?
 
-AGENT COMMITMENT:
-{pre_checkpoint}
-
-EXECUTION TRACE:
-{tool_calls_and_results}
-
-AGENT SELF-ASSESSMENT:
-{post_checkpoint}
-
-RECONCILE FLAGS:
-{flags}
-
-Evaluate whether the agent:
-1. Correctly interpreted the goal
-2. Stayed within declared scope
-3. Achieved the intended outcome
-4. Raised appropriate concerns
-
-Respond with:
-- VERDICT: CONTINUE | REORIENT | PAUSE
-- REASONING: Brief explanation
-- CORRECTION: (if REORIENT) Specific guidance for the agent
-```
+Based on this evaluation, the supervisor issues one of three verdicts (see [Chapter 5](05-supervisor-verdicts.md)).
 
 ## Checkpoint Storage
 
@@ -89,59 +68,39 @@ All checkpoints are persisted for audit:
 
 ![Checkpoint Structure](images/03-checkpoint-structure.png)
 
-```go
-type CheckpointStore interface {
-    SavePre(stepID string, cp PreCheckpoint) error
-    SavePost(stepID string, cp PostCheckpoint) error
-    SaveSupervision(stepID string, record SupervisionRecord) error
-    
-    GetStepHistory(stepID string) (*StepHistory, error)
-    GetSessionHistory(sessionID string) ([]StepHistory, error)
-}
-```
+The checkpoint store provides:
+- Save pre-checkpoint after COMMIT
+- Save post-checkpoint after EXECUTE
+- Save supervision record after SUPERVISE
+- Query step history by ID
+- Query full session history
 
 ## Example: Reconcile → Supervise Flow
 
-**Step:** Summarize customer data from API
+**Goal:** Summarize customer data from API
 
 **Pre-checkpoint (COMMIT):**
-```yaml
-interpretation: "Fetch customer records and generate summary"
-scope:
-  in_bounds: "Read from customer API, format summary"
-  out_bounds: "Modifying customer records, external calls"
-assumptions:
-  - "API returns JSON"
-  - "Customer records have name and email fields"
-```
+- Interpretation: Fetch customer records and generate summary
+- Scope in bounds: Read from customer API, format summary
+- Scope out of bounds: Modifying customer records, external calls
+- Assumptions: API returns JSON, records have name and email fields
 
 **Post-checkpoint (EXECUTE):**
-```yaml
-commitment_met: false
-scope_changed: true
-confidence: 0.5
-concerns:
-  - "API returned paginated results, had to make multiple calls"
-  - "Some records missing email field"
-  - "Called external validation service to verify emails"
-```
+- Commitment met: partial
+- Scope changed: yes
+- Concerns:
+  - API returned paginated results, had to make multiple calls
+  - Some records missing email field
+  - Called external validation service to verify emails
 
 **Reconcile flags:**
-- `commitment_not_met`: true
+- `commitment_not_met`: true (partial)
 - `scope_deviation`: true (called external service)
-- `low_confidence`: true (0.5)
 - `concerns_raised`: true
 
-**Supervisor verdict:**
-```
-VERDICT: REORIENT
-REASONING: Agent called external validation service which was outside 
-declared scope. The core task of summarizing is valid, but external 
-calls were not authorized.
-CORRECTION: Complete the summary using only data from the customer API. 
-Do not call external services. Note missing emails in the summary 
-rather than attempting to validate them.
-```
+**Supervisor verdict:** REORIENT
+
+The agent called an external validation service which was outside declared scope. Supervisor provides correction to complete the summary using only data from the customer API.
 
 ---
 

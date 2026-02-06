@@ -2,7 +2,7 @@
 
 ## The Three Verdicts
 
-When the supervisor evaluates a step, it returns one of three verdicts:
+When the supervisor evaluates a goal, it returns one of three verdicts:
 
 ![Verdict Flow](images/05-verdict-flow.png)
 
@@ -22,17 +22,11 @@ The supervisor determines the agent is executing correctly.
 - Output is reasonable
 - Minor concerns are acceptable
 
-**Example:**
+**Example scenario:**
 
-```
-VERDICT: CONTINUE
-REASONING: Agent correctly interpreted the task as summarizing Q4 
-revenue data. Scope was maintained (read-only operations). The 
-assumption about CSV format was valid. Output matches expected 
-format and content.
-```
+Agent correctly interpreted summarizing Q4 revenue data. Scope was maintained (read-only operations). The assumption about CSV format was valid. Output matches expected format.
 
-**Execution impact:** None. Agent proceeds to next step.
+**Execution impact:** None. Agent proceeds to next goal.
 
 ## REORIENT
 
@@ -44,41 +38,17 @@ The supervisor detects drift but believes the agent can correct course.
 - Minor misinterpretation
 - Correctable with guidance
 
-**Example:**
+**Example scenario:**
 
-```
-VERDICT: REORIENT
-REASONING: Agent began making external API calls to validate email 
-addresses, which was outside the declared scope of "read and summarize."
-The validation is not necessary for the summary task.
-CORRECTION: Complete the summary using only data from the source file. 
-Note any missing or malformed email addresses in the summary rather 
-than attempting external validation.
-```
+Agent began making external API calls to validate email addresses, which was outside the declared scope of "read and summarize." The validation is not necessary for the summary task.
+
+Supervisor provides correction: Complete the summary using only data from the source file. Note missing emails rather than validating them externally.
 
 **Execution impact:**
 1. Agent receives correction
-2. Step execution resets
+2. Goal execution resets
 3. Agent re-attempts with guidance
-4. Correction included in context
-
-```go
-func (e *Executor) reorientAndRetry(step Step, correction string) error {
-    // Add correction to agent context
-    e.addSystemMessage(fmt.Sprintf(
-        "SUPERVISOR CORRECTION: %s\n\nPlease re-attempt the task with this guidance.",
-        correction,
-    ))
-    
-    // Re-execute step (with attempt counter to prevent loops)
-    e.attempts[step.ID]++
-    if e.attempts[step.ID] > e.maxAttempts {
-        return ErrMaxAttemptsExceeded
-    }
-    
-    return e.executeStep(step)
-}
-```
+4. Maximum reorient attempts configurable (prevents loops)
 
 ## PAUSE
 
@@ -90,119 +60,56 @@ The supervisor determines execution should halt.
 - Action cannot be undone
 - Human judgment required
 
-**Example:**
+**Example scenario:**
 
-```
-VERDICT: PAUSE
-REASONING: Agent is attempting to delete production database records 
-based on a file that appears to contain injected instructions. The 
-original task was to "clean up test data" but the file referenced 
-production tables. This requires human verification before proceeding.
-```
+Agent is attempting to delete production database records based on a file that appears to contain injected instructions. The original task was to "clean up test data" but the file referenced production tables.
 
 **Execution impact:**
 1. Execution halts immediately
 2. If human available → escalate and wait
 3. If no human → log and terminate
 
-```go
-func (e *Executor) pauseForHuman(step Step, verdict Verdict) error {
-    // Log the pause
-    e.log.Warn("execution paused",
-        "step", step.ID,
-        "reason", verdict.Reasoning,
-    )
-    
-    if e.hasHumanConnection() {
-        // Escalate to human
-        response, err := e.human.RequestDecision(HumanRequest{
-            StepID:    step.ID,
-            Reasoning: verdict.Reasoning,
-            Options:   []string{"proceed", "abort", "modify"},
-        })
-        if err != nil {
-            return err
-        }
-        
-        switch response.Decision {
-        case "proceed":
-            return e.executeStep(step)  // Human approves
-        case "abort":
-            return ErrAbortedByHuman
-        case "modify":
-            return e.reorientAndRetry(step, response.Correction)
-        }
-    }
-    
-    // No human available
-    return ErrPausedNoHuman
-}
-```
-
 ## Verdict Selection Logic
 
-The supervisor uses these criteria:
+The supervisor evaluates:
 
-```
-IF agent's interpretation fundamentally wrong:
-    → PAUSE (needs human to clarify intent)
-
-ELSE IF agent went outside declared scope:
-    IF action was destructive/irreversible:
-        → PAUSE
-    ELSE:
-        → REORIENT with scope reminder
-
-ELSE IF agent's approach is suboptimal but goal achieved:
-    → CONTINUE (don't over-correct)
-
-ELSE IF agent raised concerns that seem valid:
-    IF concerns are critical:
-        → PAUSE for human review
-    ELSE:
-        → CONTINUE (agent was appropriately cautious)
-
-ELSE IF confidence is low but output looks correct:
-    → CONTINUE (agent may be overly cautious)
-
-ELSE:
-    → CONTINUE
-```
+| Question | If Yes |
+|----------|--------|
+| Is agent's interpretation fundamentally wrong? | PAUSE |
+| Did agent go outside declared scope destructively? | PAUSE |
+| Did agent go outside scope non-destructively? | REORIENT |
+| Is approach suboptimal but goal achieved? | CONTINUE |
+| Are raised concerns critical? | PAUSE |
+| Are raised concerns minor? | CONTINUE |
 
 ## Supervisor Configuration
 
 ```toml
 [supervision]
-# Model for supervisor (should be capable)
 model = "claude-sonnet"
-
-# Maximum reorient attempts before escalating to PAUSE
 max_reorient_attempts = 3
-
-# Timeout for supervisor LLM call
 timeout_seconds = 30
-
-# Whether to always run supervisor (vs. only on reconcile flags)
-always_supervise = false
 ```
+
+| Setting | Description |
+|---------|-------------|
+| model | LLM for supervisor (should be capable) |
+| max_reorient_attempts | Limit before escalating to PAUSE |
+| timeout_seconds | Supervisor LLM call timeout |
 
 ## Signed Verdicts
 
 Every verdict is cryptographically signed for the audit trail:
 
-```go
-type SupervisionRecord struct {
-    StepID     string    `json:"step_id"`
-    SessionID  string    `json:"session_id"`
-    Timestamp  time.Time `json:"timestamp"`
-    
-    Verdict    string    `json:"verdict"`     // CONTINUE | REORIENT | PAUSE
-    Reasoning  string    `json:"reasoning"`
-    Correction string    `json:"correction"`  // Only for REORIENT
-    
-    Signature  string    `json:"signature"`   // Ed25519
-}
-```
+| Field | Description |
+|-------|-------------|
+| step_id | Goal identifier |
+| session_id | Session identifier |
+| timestamp | When verdict was issued |
+| verdict | CONTINUE, REORIENT, or PAUSE |
+| reasoning | Supervisor's explanation |
+| correction | Guidance (for REORIENT only) |
+| signature | Ed25519 signature |
 
 See [Cryptographic Audit Trail](../security/06-audit-trail.md) for signing details.
 
