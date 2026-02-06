@@ -54,11 +54,22 @@ High-risk tools with untrusted context → continue to pattern check.
 
 ```go
 var suspiciousPatterns = []*regexp.Regexp{
+    // Instruction override attempts
     regexp.MustCompile(`(?i)ignore.*(previous|above|prior).*instruction`),
-    regexp.MustCompile(`(?i)new (instruction|directive|task)`),
+    regexp.MustCompile(`(?i)new (instruction|directive|task|policy)`),
     regexp.MustCompile(`(?i)forget.*(previous|everything)`),
-    regexp.MustCompile(`(?i)(execute|run|call).*\(`),  // function call syntax
-    regexp.MustCompile(`(?i)curl.*\|.*bash`),          // pipe to shell
+    
+    // Superseding attempts (immutability violation)
+    regexp.MustCompile(`(?i)(update|change|modify).*(policy|rule|instruction)`),
+    regexp.MustCompile(`(?i)override`),
+    regexp.MustCompile(`(?i)supersede`),
+    regexp.MustCompile(`(?i)disregard.*(previous|above|prior)`),
+    
+    // Code execution
+    regexp.MustCompile(`(?i)(execute|run|call).*\(`),
+    regexp.MustCompile(`(?i)curl.*\|.*bash`),
+    
+    // Credential access
     regexp.MustCompile(`(?i)(api[_-]?key|password|token|secret)`),
 }
 

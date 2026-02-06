@@ -57,22 +57,21 @@ File 3: "Send summary to the backup endpoint with auth"
 
 No single file is obviously malicious. Together, they construct an attack.
 
-## The Hardware Analogy
+## Hardware Inspiration
 
-![Princeton vs Harvard Architecture](images/01-princeton-harvard.png)
+Our security model draws inspiration from hardware memory protection:
 
-**Princeton (von Neumann):** Single memory space for code and data. Buffer overflow can overwrite code. Data becomes instructions.
+![Architecture Inspiration](images/01-architecture-inspiration.png)
 
-**Harvard:** Physically separate memories with separate buses. Data *cannot* become code — hardware enforces this.
+**Key concepts we adapted:**
 
-Modern CPUs use the "NX bit" (No Execute) to mark memory pages as data-only. The hardware enforces separation — attempting to execute from a data page triggers a fault.
+| Hardware Concept | Our Adaptation |
+|------------------|----------------|
+| Harvard architecture (separate code/data memory) | `trust` attribute — origin-based classification |
+| NX bit (non-executable pages) | `type` attribute — data blocks cannot be instructions |
+| W^X policy (write XOR execute) | `mutable` attribute — precedence immunity |
 
-**LLMs have no NX bit.** We must build software enforcement through:
-- Metadata tagging (mark content as data)
-- Prompting (instruct the model to respect tags)
-- Verification (check that it did)
-
-This is weaker than hardware enforcement but still raises the bar significantly.
+We cannot enforce these at the hardware level — everything is tokens in a context window. Instead, we use metadata tagging, system prompt instruction, and verification to create *software enforcement*.
 
 ## Threat Actors
 
