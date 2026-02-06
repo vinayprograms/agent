@@ -22,7 +22,7 @@ The Agentfile is a flat, declarative workflow definition language. Inspired by D
 | SUPERVISED | Enable execution supervision |
 | HUMAN | Require human approval (with SUPERVISED) |
 | UNSUPERVISED | Disable supervision for goal |
-| SECURITY | Set security mode (default, paranoid) |
+| SECURITY | Set security mode |
 
 ## Syntax Rules
 
