@@ -869,3 +869,162 @@ func TestExecutor_GoalWithStructuredOutput(t *testing.T) {
 	}
 }
 
+
+// Test supervision helpers
+func boolPtr(b bool) *bool { return &b }
+
+// Test isSupervised with goal-level override
+func TestExecutor_IsSupervised_GoalOverride(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name:       "test",
+		Supervised: true, // workflow is supervised
+		Goals: []agentfile.Goal{
+			{Name: "normal", Outcome: "Do something"},
+			{Name: "unsupervised", Outcome: "Quick task", Supervised: boolPtr(false)},
+		},
+	}
+
+	exec := NewExecutor(wf, nil, nil, nil)
+
+	// Normal goal inherits from workflow
+	if !exec.isSupervised(&wf.Goals[0]) {
+		t.Error("expected normal goal to be supervised (inherited)")
+	}
+
+	// Unsupervised goal overrides
+	if exec.isSupervised(&wf.Goals[1]) {
+		t.Error("expected unsupervised goal to NOT be supervised (overridden)")
+	}
+}
+
+// Test isSupervised with workflow default
+func TestExecutor_IsSupervised_WorkflowDefault(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name:       "test",
+		Supervised: false, // workflow is NOT supervised
+		Goals: []agentfile.Goal{
+			{Name: "normal", Outcome: "Do something"},
+			{Name: "supervised", Outcome: "Critical task", Supervised: boolPtr(true)},
+		},
+	}
+
+	exec := NewExecutor(wf, nil, nil, nil)
+
+	// Normal goal inherits from workflow (not supervised)
+	if exec.isSupervised(&wf.Goals[0]) {
+		t.Error("expected normal goal to NOT be supervised (inherited)")
+	}
+
+	// Supervised goal overrides
+	if !exec.isSupervised(&wf.Goals[1]) {
+		t.Error("expected supervised goal to be supervised (overridden)")
+	}
+}
+
+// Test requiresHuman
+func TestExecutor_RequiresHuman(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name:       "test",
+		Supervised: true,
+		HumanOnly:  false,
+		Goals: []agentfile.Goal{
+			{Name: "auto", Outcome: "Auto supervised"},
+			{Name: "human", Outcome: "Needs human", Supervised: boolPtr(true), HumanOnly: true},
+		},
+	}
+
+	exec := NewExecutor(wf, nil, nil, nil)
+
+	if exec.requiresHuman(&wf.Goals[0]) {
+		t.Error("expected auto goal to NOT require human")
+	}
+
+	if !exec.requiresHuman(&wf.Goals[1]) {
+		t.Error("expected human goal to require human")
+	}
+}
+
+// Test PreFlight with no human required
+func TestExecutor_PreFlight_NoHumanRequired(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name:       "test",
+		Supervised: true,
+		HumanOnly:  false,
+		Goals: []agentfile.Goal{
+			{Name: "analyze", Outcome: "Analyze data"},
+		},
+	}
+
+	exec := NewExecutor(wf, nil, nil, nil)
+	err := exec.PreFlight()
+
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+// Test PreFlight with human required but available
+func TestExecutor_PreFlight_HumanAvailable(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name:       "test",
+		Supervised: true,
+		HumanOnly:  true, // workflow requires human
+		Goals: []agentfile.Goal{
+			{Name: "deploy", Outcome: "Deploy to prod"},
+		},
+	}
+
+	exec := NewExecutor(wf, nil, nil, nil)
+	exec.humanAvailable = true
+
+	err := exec.PreFlight()
+	if err != nil {
+		t.Errorf("expected no error when human available, got: %v", err)
+	}
+}
+
+// Test PreFlight with human required but NOT available
+func TestExecutor_PreFlight_HumanNotAvailable(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name:       "test",
+		Supervised: true,
+		HumanOnly:  true, // workflow requires human
+		Goals: []agentfile.Goal{
+			{Name: "deploy", Outcome: "Deploy to prod"},
+		},
+	}
+
+	exec := NewExecutor(wf, nil, nil, nil)
+	exec.humanAvailable = false
+
+	err := exec.PreFlight()
+	if err == nil {
+		t.Error("expected error when human required but not available")
+	}
+	if !strings.Contains(err.Error(), "human supervision") {
+		t.Errorf("expected error about human supervision, got: %v", err)
+	}
+}
+
+// Test PreFlight with goal-level human requirement
+func TestExecutor_PreFlight_GoalRequiresHuman(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name:       "test",
+		Supervised: false, // workflow not supervised
+		Goals: []agentfile.Goal{
+			{Name: "analyze", Outcome: "Analyze data"},
+			{Name: "deploy", Outcome: "Deploy to prod", Supervised: boolPtr(true), HumanOnly: true},
+		},
+	}
+
+	exec := NewExecutor(wf, nil, nil, nil)
+	exec.humanAvailable = false
+
+	err := exec.PreFlight()
+	if err == nil {
+		t.Error("expected error when goal requires human but not available")
+	}
+	if !strings.Contains(err.Error(), "deploy") {
+		t.Errorf("expected error to mention 'deploy', got: %v", err)
+	}
+}
