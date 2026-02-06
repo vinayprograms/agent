@@ -141,12 +141,7 @@ NAME high-security-workflow
 GOAL process "Handle untrusted input"
 ```
 
-| Mode | Behavior |
-|------|----------|
-| default | Security checks when flagged |
-| paranoid | Full verification on every action |
-
-Agentfile setting overrides config (more restrictive wins). See [Security Modes](../security/07-security-modes.md).
+See [Security Modes](../security/07-security-modes.md) for details.
 
 ---
 
