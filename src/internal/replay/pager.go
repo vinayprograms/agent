@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -107,6 +108,14 @@ type pagerModel struct {
 	watcher    *fsnotify.Watcher
 	lastUpdate time.Time
 	eventCount int // Track event count to show in live mode
+
+	// Search state
+	searching    bool
+	searchInput  textinput.Model
+	searchQuery  string
+	searchLines  []int // Line numbers matching search
+	searchIndex  int   // Current match index
+	searchFailed bool  // No matches found
 }
 
 func (m *pagerModel) Init() tea.Cmd {
@@ -146,6 +155,33 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds []tea.Cmd
 	)
 
+	// Handle search input mode
+	if m.searching {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "enter":
+				// Execute search
+				m.searchQuery = m.searchInput.Value()
+				m.searching = false
+				m.executeSearch()
+				if len(m.searchLines) > 0 {
+					m.jumpToMatch(0)
+				}
+				return m, nil
+			case "esc", "ctrl+c":
+				// Cancel search
+				m.searching = false
+				m.searchQuery = ""
+				m.searchLines = nil
+				m.searchFailed = false
+				return m, nil
+			}
+		}
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case fileChangedMsg:
 		// File changed - reload content but preserve scroll position
@@ -174,8 +210,17 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c", "esc":
+		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			// Clear search highlight if searching, otherwise quit
+			if m.searchQuery != "" {
+				m.searchQuery = ""
+				m.searchLines = nil
+				m.searchFailed = false
+			} else {
+				return m, tea.Quit
+			}
 		case "g":
 			// Go to top
 			m.viewport.GotoTop()
@@ -186,6 +231,33 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Follow mode - jump to bottom (useful in live mode)
 			if m.live {
 				m.viewport.GotoBottom()
+			}
+		case "/":
+			// Start search
+			m.searching = true
+			m.searchInput = textinput.New()
+			m.searchInput.Placeholder = "Search..."
+			m.searchInput.Focus()
+			m.searchInput.CharLimit = 100
+			m.searchInput.Width = 40
+			if m.searchQuery != "" {
+				m.searchInput.SetValue(m.searchQuery)
+			}
+			return m, textinput.Blink
+		case "n":
+			// Next match
+			if len(m.searchLines) > 0 {
+				m.searchIndex = (m.searchIndex + 1) % len(m.searchLines)
+				m.jumpToMatch(m.searchIndex)
+			}
+		case "N":
+			// Previous match
+			if len(m.searchLines) > 0 {
+				m.searchIndex--
+				if m.searchIndex < 0 {
+					m.searchIndex = len(m.searchLines) - 1
+				}
+				m.jumpToMatch(m.searchIndex)
 			}
 		}
 
@@ -215,6 +287,57 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// executeSearch finds all lines matching the search query.
+func (m *pagerModel) executeSearch() {
+	m.searchLines = nil
+	m.searchIndex = 0
+	m.searchFailed = false
+
+	if m.searchQuery == "" {
+		return
+	}
+
+	query := strings.ToLower(m.searchQuery)
+	lines := strings.Split(m.viewport.View(), "\n")
+	
+	// Also search the raw content since viewport view might be scrolled
+	contentLines := strings.Split(m.content, "\n")
+	
+	for i, line := range contentLines {
+		if strings.Contains(strings.ToLower(line), query) {
+			m.searchLines = append(m.searchLines, i)
+		}
+	}
+
+	if len(m.searchLines) == 0 {
+		m.searchFailed = true
+	}
+	
+	_ = lines // Suppress unused warning
+}
+
+// jumpToMatch scrolls to the given match index.
+func (m *pagerModel) jumpToMatch(index int) {
+	if index < 0 || index >= len(m.searchLines) {
+		return
+	}
+	
+	lineNum := m.searchLines[index]
+	// Center the match on screen if possible
+	targetOffset := lineNum - m.viewport.Height/2
+	if targetOffset < 0 {
+		targetOffset = 0
+	}
+	maxOffset := m.viewport.TotalLineCount() - m.viewport.Height
+	if targetOffset > maxOffset {
+		targetOffset = maxOffset
+	}
+	if maxOffset < 0 {
+		targetOffset = 0
+	}
+	m.viewport.YOffset = targetOffset
+}
+
 func (m *pagerModel) View() string {
 	if !m.ready {
 		return "\n  Loading..."
@@ -239,19 +362,40 @@ func (m *pagerModel) View() string {
 
 	info := fmt.Sprintf(" %d%% ", percent)
 	
-	// Build help text based on mode
-	var help string
-	if m.live {
-		liveIndicator := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("10")). // Green
-			Render("● LIVE")
-		help = fmt.Sprintf(" %s │ q: quit │ f: follow │ ↑/↓: scroll │ g/G: top/bottom ", liveIndicator)
-	} else {
-		help = " q: quit │ ↑/↓: scroll │ g/G: top/bottom │ pgup/pgdn "
-	}
+	var footer string
 	
-	footer := pagerHelpStyle.Render(help) + pagerInfoStyle.Render(strings.Repeat("─", max(0, m.viewport.Width-lipgloss.Width(help)-lipgloss.Width(info)))) + pagerInfoStyle.Render(info)
+	if m.searching {
+		// Search input mode
+		searchPrompt := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")).
+			Render("/")
+		footer = searchPrompt + m.searchInput.View()
+	} else {
+		// Build help text based on mode and state
+		var help string
+		
+		if m.searchFailed {
+			notFound := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("9")).
+				Render("Pattern not found")
+			help = fmt.Sprintf(" %s │ /: search ", notFound)
+		} else if len(m.searchLines) > 0 {
+			matchInfo := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("11")).
+				Render(fmt.Sprintf("[%d/%d]", m.searchIndex+1, len(m.searchLines)))
+			help = fmt.Sprintf(" %s │ n/N: next/prev │ /: search │ esc: clear ", matchInfo)
+		} else if m.live {
+			liveIndicator := lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("10")).
+				Render("● LIVE")
+			help = fmt.Sprintf(" %s │ q: quit │ /: search │ f: follow │ g/G: top/bottom ", liveIndicator)
+		} else {
+			help = " q: quit │ /: search │ n/N: next/prev │ g/G: top/bottom "
+		}
+		
+		footer = pagerHelpStyle.Render(help) + pagerInfoStyle.Render(strings.Repeat("─", max(0, m.viewport.Width-lipgloss.Width(help)-lipgloss.Width(info)))) + pagerInfoStyle.Render(info)
+	}
 
 	return header + "\n" + m.viewport.View() + "\n" + footer
 }

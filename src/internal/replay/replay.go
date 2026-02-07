@@ -298,11 +298,14 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		}
 
 	case session.EventToolCall:
+		// Show agent attribution if present (for sub-agents)
+		agentPrefix := r.getAgentPrefix(event)
 		corr := ""
 		if event.CorrelationID != "" {
 			corr = dimStyle.Render(fmt.Sprintf(" [%s]", event.CorrelationID))
 		}
-		fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
+		fmt.Fprintf(r.output, "%s │ %s │ %s%s %s%s\n", seqNum, ts,
+			agentPrefix,
 			toolStyle.Render("TOOL CALL:"),
 			valueStyle.Render(event.Tool),
 			corr)
@@ -311,14 +314,17 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		}
 
 	case session.EventToolResult:
+		agentPrefix := r.getAgentPrefix(event)
 		if event.Error != "" {
-			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
+			fmt.Fprintf(r.output, "%s │ %s │ %s%s %s %s\n", seqNum, ts,
+				agentPrefix,
 				toolStyle.Render("TOOL RESULT:"),
 				errorStyle.Render(event.Tool+" FAILED"),
 				dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 			r.printError(event.Error)
 		} else {
-			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
+			fmt.Fprintf(r.output, "%s │ %s │ %s%s %s %s\n", seqNum, ts,
+				agentPrefix,
 				toolStyle.Render("TOOL RESULT:"),
 				valueStyle.Render(event.Tool),
 				dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
@@ -554,6 +560,31 @@ func (r *Replayer) getSecurityContext(event *session.Event) string {
 	}
 	
 	return dimStyle.Render(fmt.Sprintf(" [%s]", context))
+}
+
+// getAgentPrefix returns a formatted agent name prefix for sub-agent attribution.
+func (r *Replayer) getAgentPrefix(event *session.Event) string {
+	if event.Agent == "" && event.AgentRole == "" {
+		return ""
+	}
+	
+	// Use role if available (more descriptive for dynamic agents)
+	name := event.AgentRole
+	if name == "" {
+		name = event.Agent
+	}
+	
+	// Truncate long names
+	if len(name) > 20 {
+		name = name[:17] + "..."
+	}
+	
+	// Magenta for sub-agents (matches color scheme from MEMORY)
+	subagentStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("13")). // Magenta
+		Bold(true)
+	
+	return subagentStyle.Render(fmt.Sprintf("[%s] ", name))
 }
 
 // actionStyle returns style for security actions.

@@ -60,6 +60,10 @@ type Executor struct {
 	// Sub-agent support
 	subAgentRunner *subagent.Runner
 	packagePaths   []string
+	
+	// Sub-agent context (for attribution in logs)
+	currentAgentName string // Name of current sub-agent (empty = main agent)
+	currentAgentRole string // Role of current sub-agent (for dynamic agents)
 
 	// Session logging
 	session        *session.Session
@@ -294,6 +298,8 @@ func (e *Executor) logToolCall(name string, args map[string]interface{}) {
 		Goal:      e.currentGoal,
 		Tool:      name,
 		Args:      args,
+		Agent:     e.currentAgentName,
+		AgentRole: e.currentAgentRole,
 		Timestamp: time.Now(),
 	})
 	e.sessionManager.Update(e.session)
@@ -329,6 +335,8 @@ func (e *Executor) logToolResult(name string, result interface{}, err error, dur
 		Tool:       name,
 		Content:    content,
 		DurationMs: duration.Milliseconds(),
+		Agent:      e.currentAgentName,
+		AgentRole:  e.currentAgentRole,
 		Timestamp:  time.Now(),
 	}
 	if err != nil {
@@ -607,6 +615,16 @@ func (e *Executor) initSubAgentRunner() {
 
 // spawnDynamicAgent spawns a sub-agent with the given role and task.
 func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, outputs []string) (string, error) {
+	// Set sub-agent context for attribution in logs
+	previousName := e.currentAgentName
+	previousRole := e.currentAgentRole
+	e.currentAgentName = role // Use role as name for dynamic agents
+	e.currentAgentRole = role
+	defer func() {
+		e.currentAgentName = previousName
+		e.currentAgentRole = previousRole
+	}()
+
 	// Build system prompt for the sub-agent
 	systemPrompt := fmt.Sprintf("You are a %s. Complete the following task thoroughly and return your findings.\n\nTask: %s", role, task)
 

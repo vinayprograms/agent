@@ -92,6 +92,10 @@ type Event struct {
 	CorrelationID string `json:"corr_id,omitempty"` // Links related events (e.g., tool_call -> security checks -> tool_result)
 	ParentSeqID   uint64 `json:"parent,omitempty"`  // Parent event sequence ID (for nesting)
 
+	// Agent context - for sub-agent attribution
+	Agent     string `json:"agent,omitempty"`      // Agent name (for sub-agents)
+	AgentRole string `json:"agent_role,omitempty"` // Agent role (for dynamic sub-agents)
+
 	// Context - where in execution this happened
 	Goal string `json:"goal,omitempty"` // Current goal name
 	Step string `json:"step,omitempty"` // Current step (for workflow steps)
