@@ -1592,7 +1592,13 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	// Check if it's an MCP tool
 	if strings.HasPrefix(tc.Name, "mcp_") {
 		result, err := e.executeMCPTool(ctx, tc)
-		e.logToolResult(tc.Name, result, err, time.Since(start))
+		duration := time.Since(start)
+		e.logToolResult(tc.Name, result, err, duration)
+		
+		// MCP tools return external content - register as untrusted
+		if err == nil && result != nil {
+			e.registerUntrustedResult(tc.Name, result)
+		}
 		return result, err
 	}
 
@@ -1611,6 +1617,11 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 
 	// Log the tool result
 	e.logToolResult(tc.Name, result, err, duration)
+	
+	// Register external tool results as untrusted content
+	if err == nil && result != nil && isExternalTool(tc.Name) {
+		e.registerUntrustedResult(tc.Name, result)
+	}
 
 	if err != nil && e.OnToolError != nil {
 		e.OnToolError(tc.Name, tc.Args, err)
@@ -1621,6 +1632,47 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	}
 
 	return result, err
+}
+
+// isExternalTool returns true if the tool fetches external/untrusted content.
+func isExternalTool(name string) bool {
+	externalTools := map[string]bool{
+		"web_fetch":  true,
+		"web_search": true,
+	}
+	return externalTools[name]
+}
+
+// registerUntrustedResult registers tool result as untrusted content block.
+func (e *Executor) registerUntrustedResult(toolName string, result interface{}) {
+	if e.securityVerifier == nil {
+		return
+	}
+	
+	// Convert result to string for block registration
+	var content string
+	switch v := result.(type) {
+	case string:
+		content = v
+	case []byte:
+		content = string(v)
+	default:
+		// JSON serialize complex results
+		if data, err := json.Marshal(v); err == nil {
+			content = string(data)
+		} else {
+			content = fmt.Sprintf("%v", v)
+		}
+	}
+	
+	// Skip empty results
+	if content == "" || content == "null" {
+		return
+	}
+	
+	// Register as untrusted content block
+	source := fmt.Sprintf("tool:%s", toolName)
+	e.AddUntrustedContent(content, source)
 }
 
 // toolResult holds the result of a parallel tool execution.
