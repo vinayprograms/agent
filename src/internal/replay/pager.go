@@ -99,21 +99,22 @@ type fileChangedMsg struct{}
 
 // pagerModel is the Bubble Tea model for the pager.
 type pagerModel struct {
-	viewport   viewport.Model
-	title      string
-	content    string
-	ready      bool
-	live       bool
-	renderFunc func() (string, error)
-	watcher    *fsnotify.Watcher
-	lastUpdate time.Time
-	eventCount int // Track event count to show in live mode
+	viewport       viewport.Model
+	title          string
+	content        string
+	wrappedContent string // Wrapped content for accurate line searching
+	ready          bool
+	live           bool
+	renderFunc     func() (string, error)
+	watcher        *fsnotify.Watcher
+	lastUpdate     time.Time
+	eventCount     int // Track event count to show in live mode
 
 	// Search state
 	searching    bool
 	searchInput  textinput.Model
 	searchQuery  string
-	searchLines  []int // Line numbers matching search
+	searchLines  []int // Line numbers matching search (in wrapped content)
 	searchIndex  int   // Current match index
 	searchFailed bool  // No matches found
 }
@@ -191,8 +192,8 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				oldLineCount := m.viewport.TotalLineCount()
 				
 				m.content = newContent
-				wrapped := wrapContent(m.content, m.viewport.Width)
-				m.viewport.SetContent(wrapped)
+				m.wrappedContent = wrapContent(m.content, m.viewport.Width)
+				m.viewport.SetContent(m.wrappedContent)
 				m.lastUpdate = time.Now()
 				
 				// Try to preserve position
@@ -203,13 +204,24 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Content grew - stay at same position
 					m.viewport.YOffset = oldOffset
 				}
+				
+				// Re-run search if active
+				if m.searchQuery != "" {
+					m.executeSearch()
+				}
 			}
 		}
 		// Continue watching
 		cmds = append(cmds, m.watchFile())
 
 	case tea.KeyMsg:
-		switch msg.String() {
+		// Ignore modifier-only key presses (cmd, alt, ctrl, shift by themselves)
+		keyStr := msg.String()
+		if keyStr == "" || keyStr == "ctrl" || keyStr == "alt" || keyStr == "shift" || keyStr == "super" {
+			return m, nil
+		}
+		
+		switch keyStr {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "esc":
@@ -269,15 +281,19 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport = viewport.New(msg.Width, msg.Height-headerHeight-footerHeight)
 			m.viewport.YPosition = headerHeight
 			// Wrap content to terminal width
-			wrapped := wrapContent(m.content, msg.Width)
-			m.viewport.SetContent(wrapped)
+			m.wrappedContent = wrapContent(m.content, msg.Width)
+			m.viewport.SetContent(m.wrappedContent)
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height - headerHeight - footerHeight
 			// Re-wrap on resize
-			wrapped := wrapContent(m.content, msg.Width)
-			m.viewport.SetContent(wrapped)
+			m.wrappedContent = wrapContent(m.content, msg.Width)
+			m.viewport.SetContent(m.wrappedContent)
+			// Re-run search if active (line numbers may have changed)
+			if m.searchQuery != "" {
+				m.executeSearch()
+			}
 		}
 	}
 
@@ -287,7 +303,7 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// executeSearch finds all lines matching the search query.
+// executeSearch finds all lines matching the search query in wrapped content.
 func (m *pagerModel) executeSearch() {
 	m.searchLines = nil
 	m.searchIndex = 0
@@ -298,10 +314,9 @@ func (m *pagerModel) executeSearch() {
 	}
 
 	query := strings.ToLower(m.searchQuery)
-	lines := strings.Split(m.viewport.View(), "\n")
 	
-	// Also search the raw content since viewport view might be scrolled
-	contentLines := strings.Split(m.content, "\n")
+	// Search the wrapped content (what's actually displayed)
+	contentLines := strings.Split(m.wrappedContent, "\n")
 	
 	for i, line := range contentLines {
 		if strings.Contains(strings.ToLower(line), query) {
@@ -312,8 +327,6 @@ func (m *pagerModel) executeSearch() {
 	if len(m.searchLines) == 0 {
 		m.searchFailed = true
 	}
-	
-	_ = lines // Suppress unused warning
 }
 
 // jumpToMatch scrolls to the given match index.
