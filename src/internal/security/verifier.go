@@ -238,21 +238,17 @@ func (v *Verifier) tier1Check(toolName string, args map[string]interface{}, agen
 		result.RelatedBlocks = relevantBlocks // All contributing blocks
 	}
 
+	// Collect pattern findings but don't let patterns override block selection
+	// The block should be selected based on content correlation, not pattern presence
 	for _, block := range blocksToCheck {
 		patterns := DetectSuspiciousPatterns(block.Content)
 		for _, p := range patterns {
 			result.Reasons = append(result.Reasons, "pattern:"+p.Name)
-			if result.Block == nil {
-				result.Block = block
-			}
 		}
 
 		// Check 5: Encoded content
 		if HasEncodedContent(block.Content) {
 			result.Reasons = append(result.Reasons, "encoded_content")
-			if result.Block == nil {
-				result.Block = block
-			}
 		}
 	}
 
