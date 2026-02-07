@@ -2,6 +2,7 @@
 
 # Variables
 BINARY_NAME := agent
+REPLAY_BINARY := agent-replay
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -28,28 +29,49 @@ GOBUILD := CGO_ENABLED=$(CGO_ENABLED) $(GO) build $(LDFLAGS)
 # =============================================================================
 
 .PHONY: build
-build: ## Build the agent binary
+build: ## Build agent and agent-replay binaries
+	@echo "Building $(BINARY_NAME) and $(REPLAY_BINARY) $(VERSION)..."
+	@mkdir -p $(BIN_DIR)
+	@cd $(SRC_DIR) && $(GOBUILD) -o ../$(BIN_DIR)/$(BINARY_NAME) ./cmd/agent
+	@cd $(SRC_DIR) && $(GOBUILD) -o ../$(BIN_DIR)/$(REPLAY_BINARY) ./cmd/replay
+	@echo "Built: $(BIN_DIR)/$(BINARY_NAME), $(BIN_DIR)/$(REPLAY_BINARY)"
+
+.PHONY: build-agent
+build-agent: ## Build only the agent binary
 	@echo "Building $(BINARY_NAME) $(VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	@cd $(SRC_DIR) && $(GOBUILD) -o ../$(BIN_DIR)/$(BINARY_NAME) ./cmd/agent
 	@echo "Built: $(BIN_DIR)/$(BINARY_NAME)"
 
+.PHONY: build-replay
+build-replay: ## Build only the replay binary
+	@echo "Building $(REPLAY_BINARY) $(VERSION)..."
+	@mkdir -p $(BIN_DIR)
+	@cd $(SRC_DIR) && $(GOBUILD) -o ../$(BIN_DIR)/$(REPLAY_BINARY) ./cmd/replay
+	@echo "Built: $(BIN_DIR)/$(REPLAY_BINARY)"
+
 .PHONY: build-static
-build-static: ## Build a fully static binary (for containers)
-	@echo "Building static $(BINARY_NAME) $(VERSION)..."
+build-static: ## Build fully static binaries (for containers)
+	@echo "Building static binaries $(VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	@cd $(SRC_DIR) && CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-static ./cmd/agent
-	@echo "Built: $(BIN_DIR)/$(BINARY_NAME)-static"
+	@cd $(SRC_DIR) && CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-static ./cmd/replay
+	@echo "Built: $(BIN_DIR)/$(BINARY_NAME)-static, $(BIN_DIR)/$(REPLAY_BINARY)-static"
 
 .PHONY: build-all
 build-all: ## Build for all platforms
 	@echo "Building for all platforms..."
 	@mkdir -p $(BIN_DIR)
 	@cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/agent
+	@cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-linux-amd64 ./cmd/replay
 	@cd $(SRC_DIR) && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/agent
+	@cd $(SRC_DIR) && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-linux-arm64 ./cmd/replay
 	@cd $(SRC_DIR) && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/agent
+	@cd $(SRC_DIR) && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-darwin-amd64 ./cmd/replay
 	@cd $(SRC_DIR) && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/agent
+	@cd $(SRC_DIR) && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-darwin-arm64 ./cmd/replay
 	@cd $(SRC_DIR) && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/agent
+	@cd $(SRC_DIR) && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-windows-amd64.exe ./cmd/replay
 	@echo "Built binaries in $(BIN_DIR)/"
 
 # =============================================================================
@@ -57,12 +79,13 @@ build-all: ## Build for all platforms
 # =============================================================================
 
 .PHONY: install
-install: build ## Install to ~/.local/bin
+install: build ## Install both binaries to ~/.local/bin
 	@echo "Installing to $(INSTALL_DIR)..."
 	@mkdir -p $(INSTALL_DIR)
 	@cp $(BIN_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
-	@chmod 755 $(INSTALL_DIR)/$(BINARY_NAME)
-	@echo "Installed: $(INSTALL_DIR)/$(BINARY_NAME)"
+	@cp $(BIN_DIR)/$(REPLAY_BINARY) $(INSTALL_DIR)/$(REPLAY_BINARY)
+	@chmod 755 $(INSTALL_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(REPLAY_BINARY)
+	@echo "Installed: $(INSTALL_DIR)/$(BINARY_NAME), $(INSTALL_DIR)/$(REPLAY_BINARY)"
 	@echo ""
 	@echo "Make sure $(INSTALL_DIR) is in your PATH:"
 	@echo "  export PATH=\"\$$HOME/.local/bin:\$$PATH\""
@@ -71,13 +94,14 @@ install: build ## Install to ~/.local/bin
 install-system: build ## Install to /usr/local/bin (requires sudo)
 	@echo "Installing to /usr/local/bin..."
 	@sudo cp $(BIN_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
-	@sudo chmod 755 /usr/local/bin/$(BINARY_NAME)
-	@echo "Installed: /usr/local/bin/$(BINARY_NAME)"
+	@sudo cp $(BIN_DIR)/$(REPLAY_BINARY) /usr/local/bin/$(REPLAY_BINARY)
+	@sudo chmod 755 /usr/local/bin/$(BINARY_NAME) /usr/local/bin/$(REPLAY_BINARY)
+	@echo "Installed: /usr/local/bin/$(BINARY_NAME), /usr/local/bin/$(REPLAY_BINARY)"
 
 .PHONY: uninstall
 uninstall: ## Remove from ~/.local/bin
-	@echo "Removing $(INSTALL_DIR)/$(BINARY_NAME)..."
-	@rm -f $(INSTALL_DIR)/$(BINARY_NAME)
+	@echo "Removing $(INSTALL_DIR)/$(BINARY_NAME) and $(REPLAY_BINARY)..."
+	@rm -f $(INSTALL_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(REPLAY_BINARY)
 	@echo "Uninstalled."
 
 # =============================================================================
