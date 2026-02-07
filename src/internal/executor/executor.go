@@ -19,6 +19,7 @@ import (
 	"github.com/openclaw/headless-agent/internal/session"
 	"github.com/openclaw/headless-agent/internal/skills"
 	"github.com/openclaw/headless-agent/internal/subagent"
+	"github.com/openclaw/headless-agent/internal/security"
 	"github.com/openclaw/headless-agent/internal/supervision"
 	"github.com/openclaw/headless-agent/internal/tools"
 )
@@ -86,6 +87,9 @@ type Executor struct {
 	OnSubAgentStart    func(name string, input map[string]string)
 	OnSubAgentComplete func(name string, output string)
 	OnSupervisionEvent func(stepID string, phase string, data interface{})
+
+	// Security verifier
+	securityVerifier *security.Verifier
 }
 
 // NewExecutor creates a new executor.
@@ -119,6 +123,42 @@ func NewExecutorWithFactory(wf *agentfile.Workflow, factory llm.ProviderFactory,
 	}
 	e.initSpawner()
 	return e
+}
+
+// SetSecurityVerifier sets the security verifier for tool call verification.
+func (e *Executor) SetSecurityVerifier(v *security.Verifier) {
+	e.securityVerifier = v
+	e.logger.Info("security verifier attached", nil)
+}
+
+// verifyToolCall checks a tool call against the security verifier if configured.
+func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map[string]interface{}) error {
+	if e.securityVerifier == nil {
+		return nil // No security verifier configured
+	}
+
+	result, err := e.securityVerifier.VerifyToolCall(ctx, toolName, args, e.currentGoal)
+	if err != nil {
+		return fmt.Errorf("security verification error: %w", err)
+	}
+
+	if !result.Allowed {
+		e.logger.Warn("tool call denied by security verifier", map[string]interface{}{
+			"tool":   toolName,
+			"reason": result.DenyReason,
+		})
+		return fmt.Errorf("security: %s", result.DenyReason)
+	}
+
+	return nil
+}
+
+// AddUntrustedContent registers untrusted content with the security verifier.
+func (e *Executor) AddUntrustedContent(content, source string) {
+	if e.securityVerifier == nil {
+		return
+	}
+	e.securityVerifier.AddBlock(security.TrustUntrusted, security.TypeData, true, content, source)
 }
 
 // initSpawner wires up the spawn_agent tool to this executor
@@ -1261,6 +1301,15 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 // executeTool executes a tool call (built-in or MCP).
 func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (interface{}, error) {
 	start := time.Now()
+	
+	// Security verification before execution
+	if err := e.verifyToolCall(ctx, tc.Name, tc.Args); err != nil {
+		e.logToolResult(tc.Name, nil, err, time.Since(start))
+		if e.OnToolError != nil {
+			e.OnToolError(tc.Name, tc.Args, err)
+		}
+		return nil, err
+	}
 	
 	// Log the tool call
 	e.logToolCall(tc.Name, tc.Args)

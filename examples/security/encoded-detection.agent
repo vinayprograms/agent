@@ -1,0 +1,11 @@
+# Encoded Content Detection Example
+# Demonstrates detection of encoded payloads in untrusted content
+
+NAME encoded-detection-demo
+
+# This example shows how the security system detects and flags
+# potentially malicious encoded content (Base64, hex, URL encoding)
+
+INPUT encoded_data="SGVsbG8gV29ybGQh"  # Base64 encoded "Hello World!"
+
+GOAL "Process the encoded data safely"

@@ -1,0 +1,11 @@
+# Paranoid Security Example
+# Demonstrates paranoid mode - all untrusted tool calls go to full supervision
+
+NAME paranoid-security-demo
+
+# In paranoid mode, Tier 2 is skipped - suspicious tool calls go straight
+# to Tier 3 (full supervisor review)
+
+INPUT user_query="What files are in /etc?"
+
+GOAL "Answer the user query safely" SUPERVISED

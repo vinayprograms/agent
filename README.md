@@ -347,6 +347,51 @@ allow_domains = ["api.github.com", "*.example.com"]
 rate_limit = 10
 ```
 
+## Security Framework
+
+The agent includes a comprehensive security framework to defend against prompt injection and other attacks when processing untrusted content.
+
+### Key Features
+
+- **Trust-Tagged Content Blocks**: All content is tagged with trust levels (`trusted`, `vetted`, `untrusted`) and types (`instruction`, `data`)
+- **Tiered Verification Pipeline**: Three-tier verification for tool calls involving untrusted content
+- **Encoded Content Detection**: Detects Base64, hex, and URL encoding that could hide malicious payloads
+- **Pattern Detection**: Identifies suspicious patterns like command injection, path traversal, and privilege escalation attempts
+- **Cryptographic Audit Trail**: Ed25519 signatures for all security decisions
+
+### Verification Tiers
+
+| Tier | Method | Cost | When Used |
+|------|--------|------|-----------|
+| **Tier 1** | Deterministic checks | Free | Always (patterns, entropy, trust) |
+| **Tier 2** | Cheap model triage | Low | If T1 flags concerns (default mode) |
+| **Tier 3** | Full supervisor | High | If T2 flags concerns, or paranoid mode |
+
+### Security Modes
+
+- **default**: Efficient tiered verification (T1 → T2 → T3)
+- **paranoid**: Skip T2, all flagged content goes directly to T3 supervision
+
+### Configuration
+
+Add to `agent.toml`:
+
+```toml
+[security]
+mode = "default"          # or "paranoid"
+user_trust = "untrusted"  # trust level for user messages
+```
+
+### High-Risk Tools
+
+These tools receive extra scrutiny when untrusted content is in context:
+- `bash` - Shell command execution
+- `write` - File system writes  
+- `web_fetch` - External HTTP requests
+- `spawn_agent` - Sub-agent creation
+
+See `examples/security/` for example configurations and `docs/security/` for detailed documentation.
+
 ## Agentfile Syntax
 
 ```

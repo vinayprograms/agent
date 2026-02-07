@@ -1,0 +1,10 @@
+# Basic Security Example
+# Demonstrates default security mode with tiered verification
+
+NAME basic-security-demo
+
+# Define inputs - file content will be treated as untrusted
+INPUT file_path="./sample.txt"
+
+# Goal with SUPERVISED modifier triggers supervision if needed
+GOAL "Analyze the file and summarize its contents" SUPERVISED
