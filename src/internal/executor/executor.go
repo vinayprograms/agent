@@ -302,24 +302,29 @@ func (e *Executor) logEvent(eventType, content string) {
 }
 
 // logToolCall logs a tool call event to the session.
-func (e *Executor) logToolCall(name string, args map[string]interface{}) {
+// Returns a correlation ID that should be passed to logToolResult.
+func (e *Executor) logToolCall(name string, args map[string]interface{}) string {
+	corrID := fmt.Sprintf("tool-%d", time.Now().UnixNano())
+	
 	if e.session == nil || e.sessionManager == nil {
-		return
+		return corrID
 	}
 	e.session.Events = append(e.session.Events, session.Event{
-		Type:      session.EventToolCall,
-		Goal:      e.currentGoal,
-		Tool:      name,
-		Args:      args,
-		Agent:     e.currentAgentName,
-		AgentRole: e.currentAgentRole,
-		Timestamp: time.Now(),
+		Type:          session.EventToolCall,
+		CorrelationID: corrID,
+		Goal:          e.currentGoal,
+		Tool:          name,
+		Args:          args,
+		Agent:         e.currentAgentName,
+		AgentRole:     e.currentAgentRole,
+		Timestamp:     time.Now(),
 	})
 	e.sessionManager.Update(e.session)
+	return corrID
 }
 
 // logToolResult logs a tool result event to the session.
-func (e *Executor) logToolResult(name string, result interface{}, err error, duration time.Duration) {
+func (e *Executor) logToolResult(name string, args map[string]interface{}, corrID string, result interface{}, err error, duration time.Duration) {
 	// Structured logging to stdout
 	e.logger.ToolResult(name, duration, err)
 
@@ -343,14 +348,16 @@ func (e *Executor) logToolResult(name string, result interface{}, err error, dur
 	}
 
 	event := session.Event{
-		Type:       session.EventToolResult,
-		Goal:       e.currentGoal,
-		Tool:       name,
-		Content:    content,
-		DurationMs: duration.Milliseconds(),
-		Agent:      e.currentAgentName,
-		AgentRole:  e.currentAgentRole,
-		Timestamp:  time.Now(),
+		Type:          session.EventToolResult,
+		CorrelationID: corrID,
+		Goal:          e.currentGoal,
+		Tool:          name,
+		Args:          args,
+		Content:       content,
+		DurationMs:    duration.Milliseconds(),
+		Agent:         e.currentAgentName,
+		AgentRole:     e.currentAgentRole,
+		Timestamp:     time.Now(),
 	}
 	if err != nil {
 		event.Error = err.Error()
@@ -1640,21 +1647,21 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 
 	// Security verification before execution
 	if err := e.verifyToolCall(ctx, tc.Name, tc.Args); err != nil {
-		e.logToolResult(tc.Name, nil, err, time.Since(start))
+		e.logToolResult(tc.Name, tc.Args, "", nil, err, time.Since(start))
 		if e.OnToolError != nil {
 			e.OnToolError(tc.Name, tc.Args, err)
 		}
 		return nil, err
 	}
 
-	// Log the tool call
-	e.logToolCall(tc.Name, tc.Args)
+	// Log the tool call (returns correlation ID for linking to result)
+	corrID := e.logToolCall(tc.Name, tc.Args)
 
 	// Check if it's an MCP tool
 	if strings.HasPrefix(tc.Name, "mcp_") {
 		result, err := e.executeMCPTool(ctx, tc)
 		duration := time.Since(start)
-		e.logToolResult(tc.Name, result, err, duration)
+		e.logToolResult(tc.Name, tc.Args, corrID, result, err, duration)
 
 		// MCP tools return external content - register as untrusted
 		if err == nil && result != nil {
@@ -1677,7 +1684,7 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	duration := time.Since(start)
 
 	// Log the tool result
-	e.logToolResult(tc.Name, result, err, duration)
+	e.logToolResult(tc.Name, tc.Args, corrID, result, err, duration)
 
 	// Register external tool results as untrusted content
 	if err == nil && result != nil && isExternalTool(tc.Name) {

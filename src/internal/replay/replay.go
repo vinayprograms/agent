@@ -315,19 +315,29 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	case session.EventToolResult:
 		agentPrefix := r.getAgentPrefix(event)
+		corr := ""
+		if event.CorrelationID != "" {
+			corr = dimStyle.Render(fmt.Sprintf(" [%s]", event.CorrelationID))
+		}
+		// Show key args inline for context (e.g., query for web_search, url for web_fetch)
+		argsHint := r.getArgsHint(event.Tool, event.Args)
 		if event.Error != "" {
-			fmt.Fprintf(r.output, "%s │ %s │ %s%s %s %s\n", seqNum, ts,
+			fmt.Fprintf(r.output, "%s │ %s │ %s%s %s%s %s%s\n", seqNum, ts,
 				agentPrefix,
 				toolStyle.Render("TOOL RESULT:"),
 				errorStyle.Render(event.Tool+" FAILED"),
-				dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
+				argsHint,
+				dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)),
+				corr)
 			r.printError(event.Error)
 		} else {
-			fmt.Fprintf(r.output, "%s │ %s │ %s%s %s %s\n", seqNum, ts,
+			fmt.Fprintf(r.output, "%s │ %s │ %s%s %s%s %s%s\n", seqNum, ts,
 				agentPrefix,
 				toolStyle.Render("TOOL RESULT:"),
 				valueStyle.Render(event.Tool),
-				dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
+				argsHint,
+				dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)),
+				corr)
 			if r.verbose && event.Content != "" {
 				r.printContent(event.Content)
 			}
@@ -614,6 +624,54 @@ func (r *Replayer) actionStyle(action string) lipgloss.Style {
 	default:
 		return valueStyle
 	}
+}
+
+// getArgsHint returns a concise hint about key args for tool result display.
+// Shows query for web_search, url for web_fetch, path for read/write, etc.
+func (r *Replayer) getArgsHint(toolName string, args map[string]interface{}) string {
+	if args == nil {
+		return ""
+	}
+	
+	var hint string
+	switch toolName {
+	case "web_search":
+		if q, ok := args["query"].(string); ok {
+			hint = truncateHint(q, 60)
+		}
+	case "web_fetch":
+		if u, ok := args["url"].(string); ok {
+			hint = truncateHint(u, 80)
+		}
+	case "read", "write", "glob", "ls":
+		if p, ok := args["path"].(string); ok {
+			hint = truncateHint(p, 80)
+		}
+	case "bash":
+		if cmd, ok := args["command"].(string); ok {
+			hint = truncateHint(cmd, 60)
+		}
+	case "spawn_agent", "spawn_agents":
+		if task, ok := args["task"].(string); ok {
+			hint = truncateHint(task, 60)
+		}
+	}
+	
+	if hint == "" {
+		return ""
+	}
+	return dimStyle.Render(fmt.Sprintf(" [%s]", hint))
+}
+
+// truncateHint truncates a string to maxLen, adding ... if needed.
+func truncateHint(s string, maxLen int) string {
+	// Remove newlines for single-line display
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.TrimSpace(s)
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
 
 // printContent prints verbose content.
