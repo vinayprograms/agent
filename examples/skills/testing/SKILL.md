@@ -3,7 +3,7 @@ name: testing
 description: Write and manage unit tests, integration tests, and test suites. Use when user asks about testing, test coverage, or quality assurance.
 license: MIT
 metadata:
-  author: openclaw
+  author: vinayprograms
   version: "1.0"
 ---
 

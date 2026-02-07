@@ -3,7 +3,7 @@ name: git-workflow
 description: Manage git operations including branching, commits, and pull requests. Use when working with version control or when user mentions git, commits, branches, or PRs.
 license: MIT
 metadata:
-  author: openclaw
+  author: vinayprograms
   version: "1.0"
 allowed-tools: Bash(git:*)
 ---

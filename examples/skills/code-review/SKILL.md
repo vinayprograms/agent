@@ -3,7 +3,7 @@ name: code-review
 description: Performs comprehensive code reviews focusing on bugs, security issues, performance, and best practices. Use when reviewing pull requests, patches, or code changes.
 license: MIT
 metadata:
-  author: openclaw
+  author: vinayprograms
   version: "1.0"
 ---
 
