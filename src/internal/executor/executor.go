@@ -148,40 +148,40 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		if result.Tier1.Block != nil {
 			blockID = result.Tier1.Block.ID
 		}
-		e.logSecurityTier1(toolName, blockID, result.Tier1.Pass, result.Tier1.Reasons)
-	}
-	
-	if result.Tier2 != nil {
-		blockID := ""
-		if result.Tier1 != nil && result.Tier1.Block != nil {
-			blockID = result.Tier1.Block.ID
-		}
-		e.logSecurityTier2(toolName, blockID, result.Tier2.Suspicious, "triage", 0)
-	}
-	
-	if result.Tier3 != nil {
-		blockID := ""
-		if result.Tier1 != nil && result.Tier1.Block != nil {
-			blockID = result.Tier1.Block.ID
-		}
-		e.logSecurityTier3(toolName, blockID, string(result.Tier3.Verdict), result.Tier3.Reason, "supervisor", 0)
+		e.logSecurityStatic(toolName, blockID, result.Tier1.Pass, result.Tier1.Reasons)
 	}
 
-	// Determine tier path
-	tierPath := "T1"
 	if result.Tier2 != nil {
-		tierPath = "T1→T2"
+		blockID := ""
+		if result.Tier1 != nil && result.Tier1.Block != nil {
+			blockID = result.Tier1.Block.ID
+		}
+		e.logSecurityTriage(toolName, blockID, result.Tier2.Suspicious, "triage", 0)
+	}
+
+	if result.Tier3 != nil {
+		blockID := ""
+		if result.Tier1 != nil && result.Tier1.Block != nil {
+			blockID = result.Tier1.Block.ID
+		}
+		e.logSecuritySupervisor(toolName, blockID, string(result.Tier3.Verdict), result.Tier3.Reason, "supervisor", 0)
+	}
+
+	// Determine check path
+	checkPath := "static"
+	if result.Tier2 != nil {
+		checkPath = "static→triage"
 	}
 	if result.Tier3 != nil {
-		tierPath = "T1→T2→T3"
+		checkPath = "static→triage→supervisor"
 	}
 
 	if !result.Allowed {
-		e.logSecurityDecision(toolName, "deny", result.DenyReason, "", tierPath)
+		e.logSecurityDecision(toolName, "deny", result.DenyReason, "", checkPath)
 		return fmt.Errorf("security: %s", result.DenyReason)
 	}
-	
-	e.logSecurityDecision(toolName, "allow", "verified", "", tierPath)
+
+	e.logSecurityDecision(toolName, "allow", "verified", "", checkPath)
 	return nil
 }
 
@@ -191,7 +191,7 @@ func (e *Executor) AddUntrustedContent(content, source string) {
 		return
 	}
 	block := e.securityVerifier.AddBlock(security.TrustUntrusted, security.TypeData, true, content, source)
-	
+
 	// Log to session with XML representation
 	xmlBlock := fmt.Sprintf(`<block id="%s" trust="untrusted" type="data" source="%s" mutable="true">%s</block>`,
 		block.ID, source, truncateForLog(content, 200))
@@ -307,7 +307,7 @@ func (e *Executor) logToolResult(name string, result interface{}, err error, dur
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
-	
+
 	// Convert result to string for content
 	var content string
 	switch v := result.(type) {
@@ -322,7 +322,7 @@ func (e *Executor) logToolResult(name string, result interface{}, err error, dur
 			content = fmt.Sprintf("%v", result)
 		}
 	}
-	
+
 	event := session.Event{
 		Type:       session.EventToolResult,
 		Goal:       e.currentGoal,
@@ -487,37 +487,37 @@ func (e *Executor) logSecurityBlock(blockID, trust, blockType, source, xmlBlock 
 	e.sessionManager.Update(e.session)
 }
 
-// logSecurityTier1 logs Tier 1 deterministic check to session.
-func (e *Executor) logSecurityTier1(tool, blockID string, pass bool, flags []string) {
+// logSecurityStatic logs static/deterministic check to session.
+func (e *Executor) logSecurityStatic(tool, blockID string, pass bool, flags []string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
 	e.session.Events = append(e.session.Events, session.Event{
-		Type:      session.EventSecurityTier1,
+		Type:      session.EventSecurityStatic,
 		Tool:      tool,
 		Timestamp: time.Now(),
 		Meta: &session.EventMeta{
-			Tier:    1,
-			BlockID: blockID,
-			Pass:    pass,
-			Flags:   flags,
+			CheckName: "static",
+			BlockID:   blockID,
+			Pass:      pass,
+			Flags:     flags,
 		},
 	})
 	e.sessionManager.Update(e.session)
 }
 
-// logSecurityTier2 logs Tier 2 triage check to session.
-func (e *Executor) logSecurityTier2(tool, blockID string, suspicious bool, model string, latencyMs int64) {
+// logSecurityTriage logs LLM triage check to session.
+func (e *Executor) logSecurityTriage(tool, blockID string, suspicious bool, model string, latencyMs int64) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
 	e.session.Events = append(e.session.Events, session.Event{
-		Type:       session.EventSecurityTier2,
+		Type:       session.EventSecurityTriage,
 		Tool:       tool,
 		DurationMs: latencyMs,
 		Timestamp:  time.Now(),
 		Meta: &session.EventMeta{
-			Tier:       2,
+			CheckName:  "triage",
 			BlockID:    blockID,
 			Suspicious: suspicious,
 			Model:      model,
@@ -527,18 +527,18 @@ func (e *Executor) logSecurityTier2(tool, blockID string, suspicious bool, model
 	e.sessionManager.Update(e.session)
 }
 
-// logSecurityTier3 logs Tier 3 supervisor check to session.
-func (e *Executor) logSecurityTier3(tool, blockID, verdict, reason, model string, latencyMs int64) {
+// logSecuritySupervisor logs supervisor review to session.
+func (e *Executor) logSecuritySupervisor(tool, blockID, verdict, reason, model string, latencyMs int64) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
 	e.session.Events = append(e.session.Events, session.Event{
-		Type:       session.EventSecurityTier3,
+		Type:       session.EventSecuritySupervisor,
 		Tool:       tool,
 		DurationMs: latencyMs,
 		Timestamp:  time.Now(),
 		Meta: &session.EventMeta{
-			Tier:      3,
+			CheckName: "supervisor",
 			BlockID:   blockID,
 			Verdict:   verdict,
 			Reason:    reason,
@@ -550,7 +550,7 @@ func (e *Executor) logSecurityTier3(tool, blockID, verdict, reason, model string
 }
 
 // logSecurityDecision logs final security decision to session.
-func (e *Executor) logSecurityDecision(tool, action, reason, trust, tiers string) {
+func (e *Executor) logSecurityDecision(tool, action, reason, trust, checkPath string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -559,10 +559,10 @@ func (e *Executor) logSecurityDecision(tool, action, reason, trust, tiers string
 		Tool:      tool,
 		Timestamp: time.Now(),
 		Meta: &session.EventMeta{
-			Action: action,
-			Reason: reason,
-			Trust:  trust,
-			Tiers:  tiers,
+			Action:    action,
+			Reason:    reason,
+			Trust:     trust,
+			CheckPath: checkPath,
 		},
 	})
 	e.sessionManager.Update(e.session)
@@ -925,7 +925,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		reconcileStart := time.Now()
 		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
 		reconcileDuration := time.Since(reconcileStart).Milliseconds()
-		
+
 		if e.checkpointStore != nil {
 			if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
 				e.logger.Warn("failed to save reconcile result", map[string]interface{}{
@@ -937,7 +937,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		}
 		// Log reconcile phase to session
 		e.logPhaseReconcile(goal.Name, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
-		
+
 		if e.OnSupervisionEvent != nil {
 			e.OnSupervisionEvent(goal.Name, "reconcile", reconcileResult)
 		}
@@ -955,7 +955,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				humanRequired,
 			)
 			superviseDuration := time.Since(superviseStart).Milliseconds()
-			
+
 			if err != nil {
 				return nil, fmt.Errorf("supervision failed: %w", err)
 			}
@@ -971,7 +971,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			}
 			// Log supervise phase to session
 			e.logPhaseSupervise(goal.Name, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, humanRequired, superviseDuration)
-			
+
 			if e.OnSupervisionEvent != nil {
 				e.OnSupervisionEvent(goal.Name, "supervise", superviseResult)
 			}
@@ -1021,7 +1021,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 func (e *Executor) commitPhase(ctx context.Context, goal *agentfile.Goal, prompt string) *checkpoint.PreCheckpoint {
 	start := time.Now()
 	e.logger.PhaseStart("COMMIT", goal.Name, "")
-	
+
 	commitPrompt := fmt.Sprintf(`Before executing this goal, declare your intent:
 
 GOAL: %s
@@ -1102,7 +1102,7 @@ Respond with a JSON object:
 // executePhase runs the actual goal execution loop.
 func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, prompt string) (output string, toolsUsed []string, toolCallsMade bool, err error) {
 	start := time.Now()
-	
+
 	// Build system message with skills context
 	systemMsg := "You are a helpful assistant executing a workflow goal."
 
@@ -1402,7 +1402,7 @@ func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfil
 		if result.Error != nil {
 			return "", fmt.Errorf("sub-agent %s failed: %w", result.Name, result.Error)
 		}
-		
+
 		// Find the agent to check for structured outputs
 		agent := e.findAgent(result.Name)
 		if agent != nil && len(agent.Outputs) > 0 {
@@ -1446,7 +1446,7 @@ func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfil
 		"Synthesize these agent responses into a coherent answer:\n\n%s",
 		strings.Join(agentOutputStrings, "\n\n"),
 	)
-	
+
 	// Add structured output instruction for synthesis if goal has outputs
 	if len(goal.Outputs) > 0 {
 		synthesisPrompt += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
@@ -1509,7 +1509,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 			}
 
 			prompt := e.interpolate(goal.Outcome)
-			
+
 			// Use agent's prompt as system message, or generic if none
 			systemPrompt := "You are a helpful assistant."
 			if agent.Prompt != "" {
@@ -1576,7 +1576,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 // executeTool executes a tool call (built-in or MCP).
 func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (interface{}, error) {
 	start := time.Now()
-	
+
 	// Security verification before execution
 	if err := e.verifyToolCall(ctx, tc.Name, tc.Args); err != nil {
 		e.logToolResult(tc.Name, nil, err, time.Since(start))
@@ -1585,16 +1585,16 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 		}
 		return nil, err
 	}
-	
+
 	// Log the tool call
 	e.logToolCall(tc.Name, tc.Args)
-	
+
 	// Check if it's an MCP tool
 	if strings.HasPrefix(tc.Name, "mcp_") {
 		result, err := e.executeMCPTool(ctx, tc)
 		duration := time.Since(start)
 		e.logToolResult(tc.Name, result, err, duration)
-		
+
 		// MCP tools return external content - register as untrusted
 		if err == nil && result != nil {
 			e.registerUntrustedResult(tc.Name, result)
@@ -1617,7 +1617,7 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 
 	// Log the tool result
 	e.logToolResult(tc.Name, result, err, duration)
-	
+
 	// Register external tool results as untrusted content
 	if err == nil && result != nil && isExternalTool(tc.Name) {
 		e.registerUntrustedResult(tc.Name, result)
@@ -1648,7 +1648,7 @@ func (e *Executor) registerUntrustedResult(toolName string, result interface{}) 
 	if e.securityVerifier == nil {
 		return
 	}
-	
+
 	// Convert result to string for block registration
 	var content string
 	switch v := result.(type) {
@@ -1664,12 +1664,12 @@ func (e *Executor) registerUntrustedResult(toolName string, result interface{}) 
 			content = fmt.Sprintf("%v", v)
 		}
 	}
-	
+
 	// Skip empty results
 	if content == "" || content == "null" {
 		return
 	}
-	
+
 	// Register as untrusted content block
 	source := fmt.Sprintf("tool:%s", toolName)
 	e.AddUntrustedContent(content, source)

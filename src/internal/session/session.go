@@ -50,10 +50,15 @@ const (
 
 	// Security events
 	EventSecurityBlock    = "security_block"    // Untrusted content registered
-	EventSecurityTier1    = "security_tier1"    // Deterministic check
-	EventSecurityTier2    = "security_tier2"    // Triage check
-	EventSecurityTier3    = "security_tier3"    // Supervisor check
+	EventSecurityStatic   = "security_static"   // Static/deterministic checks (patterns, entropy)
+	EventSecurityTriage   = "security_triage"   // LLM triage for suspicious content
+	EventSecuritySupervisor = "security_supervisor" // Full supervisor review
 	EventSecurityDecision = "security_decision" // Final decision
+
+	// Deprecated: use the descriptive names above
+	EventSecurityTier1 = EventSecurityStatic
+	EventSecurityTier2 = EventSecurityTriage
+	EventSecurityTier3 = EventSecuritySupervisor
 )
 
 // Session represents a workflow execution session.
@@ -127,15 +132,19 @@ type EventMeta struct {
 	BlockType  string   `json:"block_type,omitempty"` // instruction, data
 	Source     string   `json:"source,omitempty"`     // Where content came from
 	Entropy    float64  `json:"entropy,omitempty"`    // Shannon entropy (0.0-8.0)
-	Tier       int      `json:"tier,omitempty"`       // Security tier (1, 2, 3)
-	Pass       bool     `json:"pass,omitempty"`       // Tier check passed
+	CheckName  string   `json:"check,omitempty"`      // static, triage, supervisor
+	Pass       bool     `json:"pass,omitempty"`       // Check passed
 	Flags      []string `json:"flags,omitempty"`      // Security flags detected
-	Suspicious bool     `json:"suspicious,omitempty"` // Triage result (Tier 2)
+	Suspicious bool     `json:"suspicious,omitempty"` // Triage result
 	Action     string   `json:"action,omitempty"`     // allow, deny, modify
 	Reason     string   `json:"reason,omitempty"`     // Decision reason
-	Tiers      string   `json:"tiers,omitempty"`      // Verification path (T1, T1→T2, T1→T2→T3)
-	TierPath   string   `json:"tier_path,omitempty"`  // Alias for Tiers
+	CheckPath  string   `json:"check_path,omitempty"` // Verification path (static, static→triage, static→triage→supervisor)
 	XMLBlock   string   `json:"xml,omitempty"`        // Full XML block for forensic tools
+
+	// Deprecated: use CheckName/CheckPath instead
+	Tier     int    `json:"tier,omitempty"`      // 1=static, 2=triage, 3=supervisor
+	Tiers    string `json:"tiers,omitempty"`     // Old tier path format
+	TierPath string `json:"tier_path,omitempty"` // Alias for Tiers
 
 	// Checkpoint
 	CheckpointType string `json:"ckpt_type,omitempty"` // pre, post, reconcile, supervise

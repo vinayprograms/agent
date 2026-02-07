@@ -176,27 +176,75 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	case session.EventSecurityBlock:
 		if event.Meta != nil {
-			fmt.Fprintf(r.output, "%4d │ %s │ 🔒 SECURITY BLOCK: %s (trust=%s, entropy=%.2f)\n", 
+			fmt.Fprintf(r.output, "%4d │ %s │ 🔒 UNTRUSTED CONTENT: %s (trust=%s, entropy=%.2f)\n", 
 				seq, ts, event.Meta.BlockID, event.Meta.Trust, event.Meta.Entropy)
 		}
 
-	case session.EventSecurityTier1, session.EventSecurityTier2, session.EventSecurityTier3:
-		tier := 0
+	case session.EventSecurityStatic:
 		pass := true
 		if event.Meta != nil {
-			tier = event.Meta.Tier
 			pass = event.Meta.Pass
 		}
-		status := "✓"
+		status := "✓ pass"
 		if !pass {
-			status = "✗"
+			status = "✗ flagged"
 		}
-		fmt.Fprintf(r.output, "%4d │ %s │ 🛡️  TIER %d: %s\n", seq, ts, tier, status)
+		fmt.Fprintf(r.output, "%4d │ %s │ 🛡️  STATIC CHECK: %s\n", seq, ts, status)
+		if r.verbose && event.Meta != nil && len(event.Meta.Flags) > 0 {
+			r.printIndented("     │ ", fmt.Sprintf("flags=%v", event.Meta.Flags))
+		}
+
+	case session.EventSecurityTriage:
+		suspicious := false
+		if event.Meta != nil {
+			suspicious = event.Meta.Suspicious
+		}
+		status := "✓ benign"
+		if suspicious {
+			status = "⚠ suspicious → escalating"
+		}
+		fmt.Fprintf(r.output, "%4d │ %s │ 🔍 LLM TRIAGE: %s\n", seq, ts, status)
+
+	case session.EventSecuritySupervisor:
+		action := "allow"
+		reason := ""
+		if event.Meta != nil {
+			if event.Meta.Action != "" {
+				action = event.Meta.Action
+			}
+			reason = event.Meta.Reason
+		}
+		fmt.Fprintf(r.output, "%4d │ %s │ 👁️  SUPERVISOR: %s", seq, ts, action)
+		if reason != "" {
+			fmt.Fprintf(r.output, " (%s)", reason)
+		}
+		fmt.Fprintf(r.output, "\n")
 
 	case session.EventSecurityDecision:
 		if event.Meta != nil {
-			fmt.Fprintf(r.output, "%4d │ %s │ ⚖️  SECURITY: %s (%s)\n", 
-				seq, ts, event.Meta.Action, event.Meta.Reason)
+			action := event.Meta.Action
+			// Make action more readable
+			actionDisplay := action
+			switch action {
+			case "allow":
+				actionDisplay = "✓ ALLOW"
+			case "deny":
+				actionDisplay = "✗ DENY"
+			case "modify":
+				actionDisplay = "⚠ MODIFY"
+			}
+			path := event.Meta.CheckPath
+			if path == "" && event.Meta.Tiers != "" {
+				path = event.Meta.Tiers // fallback to old format
+			}
+			fmt.Fprintf(r.output, "%4d │ %s │ ⚖️  DECISION: %s", seq, ts, actionDisplay)
+			if event.Meta.Reason != "" {
+				fmt.Fprintf(r.output, " - %s", event.Meta.Reason)
+			}
+			if path != "" {
+				fmt.Fprintf(r.output, " [%s]", path)
+			}
+			fmt.Fprintf(r.output, "\n")
 		}
 
 	case session.EventCheckpoint:
