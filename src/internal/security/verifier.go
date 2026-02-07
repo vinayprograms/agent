@@ -185,6 +185,7 @@ func (v *Verifier) VerifyToolCall(ctx context.Context, toolName string, args map
 type Tier1Result struct {
 	Pass          bool
 	Reasons       []string
+	SkipReason    string   // Why escalation was skipped (for forensic clarity)
 	Block         *Block   // The primary untrusted block that triggered escalation
 	RelatedBlocks []*Block // All blocks whose content is used in this tool call
 }
@@ -195,12 +196,14 @@ func (v *Verifier) tier1Check(toolName string, args map[string]interface{}) *Tie
 	// Check 1: Any untrusted content in context?
 	untrustedBlocks := v.getUntrustedBlocks()
 	if len(untrustedBlocks) == 0 {
+		result.SkipReason = "no_untrusted_content"
 		return result // No untrusted content - pass
 	}
 
 	// Check 2: Is this a high-risk tool?
 	isHighRisk := HighRiskTools[toolName]
 	if !isHighRisk {
+		result.SkipReason = fmt.Sprintf("low_risk_tool:%s", toolName)
 		return result // Low-risk tool - pass
 	}
 

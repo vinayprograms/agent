@@ -437,6 +437,11 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			fmt.Fprintf(r.output, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("related: %v", event.Meta.RelatedBlocks)))
 		}
+		// Show skip reason (why escalation didn't happen)
+		if event.Meta != nil && event.Meta.SkipReason != "" {
+			fmt.Fprintf(r.output, "      │          │   %s\n",
+				dimStyle.Render(fmt.Sprintf("no escalation: %s", event.Meta.SkipReason)))
+		}
 
 	case session.EventSecurityTriage:
 		status := successStyle.Render("benign")
@@ -451,6 +456,11 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s%s%s\n", seqNum, ts,
 			securityStyle.Render("SECURITY: triage"),
 			status, model, context)
+		// Show skip reason (why supervisor wasn't invoked)
+		if event.Meta != nil && event.Meta.SkipReason != "" {
+			fmt.Fprintf(r.output, "      │          │   %s\n",
+				dimStyle.Render(fmt.Sprintf("no escalation: %s", event.Meta.SkipReason)))
+		}
 		if r.verbose && event.Meta != nil {
 			r.printLLMDetails(event.Meta)
 		}

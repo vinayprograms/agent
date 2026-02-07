@@ -156,7 +156,7 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		for _, b := range result.Tier1.RelatedBlocks {
 			relatedBlockIDs = append(relatedBlockIDs, b.ID)
 		}
-		e.logSecurityStatic(toolName, blockID, relatedBlockIDs, result.Tier1.Pass, result.Tier1.Reasons)
+		e.logSecurityStatic(toolName, blockID, relatedBlockIDs, result.Tier1.Pass, result.Tier1.Reasons, result.Tier1.SkipReason)
 	}
 
 	if result.Tier2 != nil {
@@ -164,7 +164,12 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		if result.Tier1 != nil && result.Tier1.Block != nil {
 			blockID = result.Tier1.Block.ID
 		}
-		e.logSecurityTriage(toolName, blockID, result.Tier2.Suspicious, "triage", 0)
+		// Set skip reason if triage determined benign (not escalating to supervisor)
+		skipReason := ""
+		if !result.Tier2.Suspicious {
+			skipReason = "triage_benign"
+		}
+		e.logSecurityTriage(toolName, blockID, result.Tier2.Suspicious, "triage", 0, skipReason)
 	}
 
 	if result.Tier3 != nil {
@@ -510,7 +515,7 @@ func (e *Executor) logSecurityBlock(blockID, trust, blockType, source, xmlBlock 
 }
 
 // logSecurityStatic logs static/deterministic check to session.
-func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []string, pass bool, flags []string) {
+func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []string, pass bool, flags []string, skipReason string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -524,18 +529,19 @@ func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []str
 			RelatedBlocks: relatedBlockIDs,
 			Pass:          pass,
 			Flags:         flags,
+			SkipReason:    skipReason,
 		},
 	})
 	e.sessionManager.Update(e.session)
 }
 
 // logSecurityTriage logs LLM triage check to session.
-func (e *Executor) logSecurityTriage(tool, blockID string, suspicious bool, model string, latencyMs int64) {
-	e.logSecurityTriageWithDetails(tool, blockID, suspicious, model, latencyMs, "", "", "")
+func (e *Executor) logSecurityTriage(tool, blockID string, suspicious bool, model string, latencyMs int64, skipReason string) {
+	e.logSecurityTriageWithDetails(tool, blockID, suspicious, model, latencyMs, "", "", "", skipReason)
 }
 
 // logSecurityTriageWithDetails logs LLM triage with full details.
-func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious bool, model string, latencyMs int64, prompt, response, thinking string) {
+func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious bool, model string, latencyMs int64, prompt, response, thinking, skipReason string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -553,6 +559,7 @@ func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious
 			Prompt:     prompt,
 			Response:   response,
 			Thinking:   thinking,
+			SkipReason: skipReason,
 		},
 	})
 	e.sessionManager.Update(e.session)

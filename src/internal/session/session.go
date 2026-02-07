@@ -139,14 +139,15 @@ type EventMeta struct {
 	Trust         string   `json:"trust,omitempty"`          // trusted, vetted, untrusted
 	BlockType     string   `json:"block_type,omitempty"`     // instruction, data
 	Source        string   `json:"source,omitempty"`         // Where content came from
-	Entropy    float64  `json:"entropy,omitempty"`    // Shannon entropy (0.0-8.0)
-	CheckName  string   `json:"check,omitempty"`      // static, triage, supervisor
-	Pass       bool     `json:"pass,omitempty"`       // Check passed
-	Flags      []string `json:"flags,omitempty"`      // Security flags detected
-	Suspicious bool     `json:"suspicious,omitempty"` // Triage result
-	Action     string   `json:"action,omitempty"`     // allow, deny, modify
-	Reason     string   `json:"reason,omitempty"`     // Decision reason
-	CheckPath  string   `json:"check_path,omitempty"` // Verification path (static, static→triage, static→triage→supervisor)
+	Entropy       float64  `json:"entropy,omitempty"`        // Shannon entropy (0.0-8.0)
+	CheckName     string   `json:"check,omitempty"`          // static, triage, supervisor
+	Pass          bool     `json:"pass,omitempty"`           // Check passed
+	Flags         []string `json:"flags,omitempty"`          // Security flags detected
+	Suspicious    bool     `json:"suspicious,omitempty"`     // Triage result
+	Action        string   `json:"action,omitempty"`         // allow, deny, modify
+	Reason        string   `json:"reason,omitempty"`         // Decision reason
+	CheckPath     string   `json:"check_path,omitempty"`     // Verification path (static, static→triage, static→triage→supervisor)
+	SkipReason    string   `json:"skip_reason,omitempty"`    // Why escalation was skipped (e.g., "low_risk_tool", "no_untrusted_content", "triage_benign")
 	XMLBlock   string   `json:"xml,omitempty"`        // Full XML block for forensic tools
 
 	// Deprecated: use CheckName/CheckPath instead
