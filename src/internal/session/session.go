@@ -126,6 +126,9 @@ type EventMeta struct {
 	Human         bool     `json:"human,omitempty"`          // Human intervention required/occurred
 	HumanRequired bool     `json:"human_required,omitempty"` // Alias for Human field
 
+	// Supervisor identification
+	SupervisorType string `json:"supervisor_type,omitempty"` // "execution" or "security"
+
 	// Security
 	BlockID    string   `json:"block_id,omitempty"`   // Content block ID (b0001, b0002, ...)
 	Trust      string   `json:"trust,omitempty"`      // trusted, vetted, untrusted
@@ -150,11 +153,16 @@ type EventMeta struct {
 	CheckpointType string `json:"ckpt_type,omitempty"` // pre, post, reconcile, supervise
 	CheckpointID   string `json:"ckpt_id,omitempty"`   // Checkpoint identifier
 
-	// LLM details (for assistant events)
+	// LLM details
 	Model     string `json:"model,omitempty"`      // Model used
 	LatencyMs int64  `json:"latency_ms,omitempty"` // LLM call latency
 	TokensIn  int    `json:"tokens_in,omitempty"`  // Input tokens
 	TokensOut int    `json:"tokens_out,omitempty"` // Output tokens
+
+	// Full LLM interaction (for forensic replay)
+	Prompt   string `json:"prompt,omitempty"`   // Full prompt sent to LLM
+	Response string `json:"response,omitempty"` // Full LLM response
+	Thinking string `json:"thinking,omitempty"` // LLM thinking/reasoning (if available)
 }
 
 // nextSeqID returns the next sequence ID for this session.

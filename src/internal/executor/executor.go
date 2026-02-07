@@ -429,6 +429,11 @@ func (e *Executor) logPhaseReconcile(goal, step string, triggers []string, escal
 
 // logPhaseSupervise logs the SUPERVISE phase to session.
 func (e *Executor) logPhaseSupervise(goal, step, verdict, guidance string, humanRequired bool, durationMs int64) {
+	e.logPhaseSuperviseWithDetails(goal, step, verdict, guidance, humanRequired, durationMs, "execution", "", "", "", "")
+}
+
+// logPhaseSuperviseWithDetails logs the SUPERVISE phase with full LLM details.
+func (e *Executor) logPhaseSuperviseWithDetails(goal, step, verdict, guidance string, humanRequired bool, durationMs int64, supervisorType, model, prompt, response, thinking string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -439,11 +444,16 @@ func (e *Executor) logPhaseSupervise(goal, step, verdict, guidance string, human
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
 		Meta: &session.EventMeta{
-			Phase:         "SUPERVISE",
-			Verdict:       verdict,
-			Guidance:      guidance,
-			HumanRequired: humanRequired,
-			Result:        verdict,
+			Phase:          "SUPERVISE",
+			SupervisorType: supervisorType,
+			Verdict:        verdict,
+			Guidance:       guidance,
+			HumanRequired:  humanRequired,
+			Result:         verdict,
+			Model:          model,
+			Prompt:         prompt,
+			Response:       response,
+			Thinking:       thinking,
 		},
 	})
 	e.sessionManager.Update(e.session)
@@ -508,6 +518,11 @@ func (e *Executor) logSecurityStatic(tool, blockID string, pass bool, flags []st
 
 // logSecurityTriage logs LLM triage check to session.
 func (e *Executor) logSecurityTriage(tool, blockID string, suspicious bool, model string, latencyMs int64) {
+	e.logSecurityTriageWithDetails(tool, blockID, suspicious, model, latencyMs, "", "", "")
+}
+
+// logSecurityTriageWithDetails logs LLM triage with full details.
+func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious bool, model string, latencyMs int64, prompt, response, thinking string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -522,6 +537,9 @@ func (e *Executor) logSecurityTriage(tool, blockID string, suspicious bool, mode
 			Suspicious: suspicious,
 			Model:      model,
 			LatencyMs:  latencyMs,
+			Prompt:     prompt,
+			Response:   response,
+			Thinking:   thinking,
 		},
 	})
 	e.sessionManager.Update(e.session)
@@ -529,6 +547,11 @@ func (e *Executor) logSecurityTriage(tool, blockID string, suspicious bool, mode
 
 // logSecuritySupervisor logs supervisor review to session.
 func (e *Executor) logSecuritySupervisor(tool, blockID, verdict, reason, model string, latencyMs int64) {
+	e.logSecuritySupervisorWithDetails(tool, blockID, verdict, reason, model, latencyMs, "", "", "")
+}
+
+// logSecuritySupervisorWithDetails logs supervisor review with full LLM details.
+func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reason, model string, latencyMs int64, prompt, response, thinking string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -538,12 +561,16 @@ func (e *Executor) logSecuritySupervisor(tool, blockID, verdict, reason, model s
 		DurationMs: latencyMs,
 		Timestamp:  time.Now(),
 		Meta: &session.EventMeta{
-			CheckName: "supervisor",
-			BlockID:   blockID,
-			Verdict:   verdict,
-			Reason:    reason,
-			Model:     model,
-			LatencyMs: latencyMs,
+			SupervisorType: "security",
+			CheckName:      "supervisor",
+			BlockID:        blockID,
+			Verdict:        verdict,
+			Reason:         reason,
+			Model:          model,
+			LatencyMs:      latencyMs,
+			Prompt:         prompt,
+			Response:       response,
+			Thinking:       thinking,
 		},
 	})
 	e.sessionManager.Update(e.session)

@@ -166,12 +166,26 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	case session.EventPhaseSupervise:
 		verdict := "CONTINUE"
-		if event.Meta != nil && event.Meta.Verdict != "" {
-			verdict = event.Meta.Verdict
+		supervisorType := "execution"
+		if event.Meta != nil {
+			if event.Meta.Verdict != "" {
+				verdict = event.Meta.Verdict
+			}
+			if event.Meta.SupervisorType != "" {
+				supervisorType = event.Meta.SupervisorType
+			}
 		}
-		fmt.Fprintf(r.output, "%4d │ %s │ 👁️  SUPERVISE: %s (%dms)\n", seq, ts, verdict, event.DurationMs)
-		if r.verbose && event.Meta != nil && event.Meta.Correction != "" {
-			r.printIndented("     │ ", "correction: "+truncate(event.Meta.Correction, 100))
+		fmt.Fprintf(r.output, "%4d │ %s │ 👁️  SUPERVISOR [%s]: %s (%dms)\n", seq, ts, strings.ToUpper(supervisorType), verdict, event.DurationMs)
+		if event.Meta != nil {
+			if event.Meta.Model != "" {
+				r.printIndented("     │ ", fmt.Sprintf("model: %s", event.Meta.Model))
+			}
+			if event.Meta.Correction != "" {
+				r.printIndented("     │ ", "correction: "+truncate(event.Meta.Correction, 100))
+			}
+			if r.verbose {
+				r.printLLMDetails(event.Meta)
+			}
 		}
 
 	case session.EventSecurityBlock:
@@ -196,29 +210,49 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	case session.EventSecurityTriage:
 		suspicious := false
+		model := ""
 		if event.Meta != nil {
 			suspicious = event.Meta.Suspicious
+			model = event.Meta.Model
 		}
 		status := "✓ benign"
 		if suspicious {
 			status = "⚠ suspicious → escalating"
 		}
-		fmt.Fprintf(r.output, "%4d │ %s │ 🔍 LLM TRIAGE: %s\n", seq, ts, status)
+		fmt.Fprintf(r.output, "%4d │ %s │ 🔍 LLM TRIAGE: %s", seq, ts, status)
+		if model != "" {
+			fmt.Fprintf(r.output, " [%s]", model)
+		}
+		fmt.Fprintf(r.output, "\n")
+		if r.verbose && event.Meta != nil {
+			r.printLLMDetails(event.Meta)
+		}
 
 	case session.EventSecuritySupervisor:
 		action := "allow"
 		reason := ""
+		model := ""
 		if event.Meta != nil {
 			if event.Meta.Action != "" {
 				action = event.Meta.Action
 			}
+			if event.Meta.Verdict != "" {
+				action = event.Meta.Verdict
+			}
 			reason = event.Meta.Reason
+			model = event.Meta.Model
 		}
-		fmt.Fprintf(r.output, "%4d │ %s │ 👁️  SUPERVISOR: %s", seq, ts, action)
+		fmt.Fprintf(r.output, "%4d │ %s │ 👁️  SUPERVISOR [SECURITY]: %s", seq, ts, action)
 		if reason != "" {
-			fmt.Fprintf(r.output, " (%s)", reason)
+			fmt.Fprintf(r.output, " - %s", reason)
+		}
+		if model != "" {
+			fmt.Fprintf(r.output, " [%s]", model)
 		}
 		fmt.Fprintf(r.output, "\n")
+		if r.verbose && event.Meta != nil {
+			r.printLLMDetails(event.Meta)
+		}
 
 	case session.EventSecurityDecision:
 		if event.Meta != nil {
@@ -264,6 +298,47 @@ func (r *Replayer) printIndented(prefix string, text string) {
 		if line != "" {
 			fmt.Fprintf(r.output, "%s    %s\n", prefix, line)
 		}
+	}
+}
+
+// printLLMDetails prints full LLM interaction details for forensic analysis.
+func (r *Replayer) printLLMDetails(meta *session.EventMeta) {
+	if meta == nil {
+		return
+	}
+
+	// Print thinking first if available
+	if meta.Thinking != "" {
+		fmt.Fprintf(r.output, "     │     ┌─ THINKING ─────────────────────────────────────────────────\n")
+		r.printBlock("     │     │ ", meta.Thinking)
+		fmt.Fprintf(r.output, "     │     └────────────────────────────────────────────────────────────\n")
+	}
+
+	// Print prompt
+	if meta.Prompt != "" {
+		fmt.Fprintf(r.output, "     │     ┌─ PROMPT ───────────────────────────────────────────────────\n")
+		r.printBlock("     │     │ ", meta.Prompt)
+		fmt.Fprintf(r.output, "     │     └────────────────────────────────────────────────────────────\n")
+	}
+
+	// Print response
+	if meta.Response != "" {
+		fmt.Fprintf(r.output, "     │     ┌─ RESPONSE ─────────────────────────────────────────────────\n")
+		r.printBlock("     │     │ ", meta.Response)
+		fmt.Fprintf(r.output, "     │     └────────────────────────────────────────────────────────────\n")
+	}
+}
+
+// printBlock prints a block of text with line prefix, handling long lines.
+func (r *Replayer) printBlock(prefix string, text string) {
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		// Wrap long lines
+		for len(line) > 70 {
+			fmt.Fprintf(r.output, "%s%s\n", prefix, line[:70])
+			line = line[70:]
+		}
+		fmt.Fprintf(r.output, "%s%s\n", prefix, line)
 	}
 }
 
