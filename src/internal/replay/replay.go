@@ -14,36 +14,51 @@ import (
 	"github.com/vinayprograms/agent/internal/session"
 )
 
-// Styles for different elements
+// Component color scheme - each component has a distinct, consistent color
 var (
-	// Header styles
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("14")) // Cyan
+	// Structural / metadata
+	dimStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("8")) // Gray - timestamps, metadata
 
 	labelStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8")) // Gray
+			Foreground(lipgloss.Color("8")) // Gray - labels
 
 	valueStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")) // White - values
+
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("15")) // White bold - headers
+
+	// Main agent flow - default/white
+	flowStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("15")) // White
 
-	// Timeline styles
-	seqStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8")).
-			Width(5).
-			Align(lipgloss.Right)
-
-	timeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
-
-	// Event type styles
-	goalStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("13")) // Magenta
-
+	// Tools - Blue
 	toolStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("12")) // Blue
 
+	// Execution supervisor - Yellow
+	execSupervisorStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("11")) // Yellow
+
+	// Security (supervisor + checks) - Cyan
+	securityStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("14")) // Cyan
+
+	securitySupervisorStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("14")) // Cyan bold
+
+	// Sub-agents - Magenta
+	subagentStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("13")) // Magenta
+
+	subagentDimStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("5")) // Magenta dim
+
+	// Outcomes
 	successStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("10")) // Green
 
@@ -53,17 +68,16 @@ var (
 	warnStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("11")) // Yellow
 
-	supervisorStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("11")) // Yellow
+	// Timeline
+	seqStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("8")).
+			Width(5).
+			Align(lipgloss.Right)
 
-	securityStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("14")) // Cyan
+	timeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("8"))
 
-	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8")) // Gray
-
-	// Content block styles
+	// Content blocks
 	blockHeaderStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("8")).
 				Italic(true)
@@ -130,11 +144,11 @@ func (r *Replayer) Replay(sess *session.Session) error {
 	fmt.Fprintln(r.output, divider)
 	switch sess.Status {
 	case session.StatusComplete:
-		fmt.Fprintln(r.output, successStyle.Render("✓ COMPLETED"))
+		fmt.Fprintln(r.output, successStyle.Render("COMPLETED"))
 	case session.StatusFailed:
-		fmt.Fprintf(r.output, "%s %s\n", errorStyle.Render("✗ FAILED:"), valueStyle.Render(sess.Error))
+		fmt.Fprintf(r.output, "%s %s\n", errorStyle.Render("FAILED:"), valueStyle.Render(sess.Error))
 	default:
-		fmt.Fprintln(r.output, warnStyle.Render("⋯ RUNNING"))
+		fmt.Fprintln(r.output, warnStyle.Render("RUNNING"))
 	}
 	fmt.Fprintln(r.output)
 
@@ -158,7 +172,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 	// Show goal transitions
 	if event.Goal != "" && event.Goal != *lastGoal {
 		fmt.Fprintln(r.output)
-		fmt.Fprintf(r.output, "%s %s\n", goalStyle.Render("▶ GOAL:"), valueStyle.Render(event.Goal))
+		fmt.Fprintf(r.output, "%s %s\n", flowStyle.Render("GOAL:"), valueStyle.Render(event.Goal))
 		fmt.Fprintln(r.output)
 		*lastGoal = event.Goal
 	}
@@ -170,22 +184,21 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 	// Format based on event type
 	switch event.Type {
 	case session.EventWorkflowStart:
-		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, goalStyle.Render("▶ WORKFLOW START"))
+		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("WORKFLOW START"))
 
 	case session.EventWorkflowEnd:
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
-			goalStyle.Render("◼ WORKFLOW END"),
+			flowStyle.Render("WORKFLOW END"),
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 
 	case session.EventGoalStart:
-		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
-			dimStyle.Render("┌─"),
-			labelStyle.Render("GOAL START"))
+		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts,
+			flowStyle.Render("GOAL START"))
 
 	case session.EventGoalEnd:
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
-			dimStyle.Render("└─"),
-			labelStyle.Render(fmt.Sprintf("GOAL END (%dms)", event.DurationMs)))
+			flowStyle.Render("GOAL END"),
+			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 		if r.verbose && event.Content != "" {
 			r.printContent(event.Content)
 		}
@@ -197,13 +210,13 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		}
 
 	case session.EventUser:
-		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, valueStyle.Render("👤 USER"))
+		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("USER"))
 		if r.verbose && event.Content != "" {
 			r.printContent(event.Content)
 		}
 
 	case session.EventAssistant:
-		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, valueStyle.Render("🤖 ASSISTANT"))
+		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("ASSISTANT"))
 		if r.verbose && event.Content != "" {
 			r.printContent(event.Content)
 		}
@@ -214,7 +227,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			corr = dimStyle.Render(fmt.Sprintf(" [%s]", event.CorrelationID))
 		}
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
-			toolStyle.Render("🔧 TOOL:"),
+			toolStyle.Render("TOOL CALL:"),
 			valueStyle.Render(event.Tool),
 			corr)
 		if r.verbose && len(event.Args) > 0 {
@@ -224,13 +237,13 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 	case session.EventToolResult:
 		if event.Error != "" {
 			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
-				errorStyle.Render("✗ RESULT:"),
-				valueStyle.Render(event.Tool),
+				toolStyle.Render("TOOL RESULT:"),
+				errorStyle.Render(event.Tool+" FAILED"),
 				dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 			r.printError(event.Error)
 		} else {
 			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
-				successStyle.Render("✓ RESULT:"),
+				toolStyle.Render("TOOL RESULT:"),
 				valueStyle.Render(event.Tool),
 				dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 			if r.verbose && event.Content != "" {
@@ -240,7 +253,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	case session.EventPhaseCommit:
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
-			labelStyle.Render("📝 COMMIT"),
+			flowStyle.Render("COMMIT"),
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 		if r.verbose && event.Meta != nil && event.Meta.Confidence != "" {
 			fmt.Fprintf(r.output, "      │          │   %s\n",
@@ -249,7 +262,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	case session.EventPhaseExecute:
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
-			labelStyle.Render("⚙️  EXECUTE"),
+			flowStyle.Render("EXECUTE"),
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 
 	case session.EventPhaseReconcile:
@@ -258,7 +271,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			status = warnStyle.Render("ESCALATE")
 		}
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
-			labelStyle.Render("🔍 RECONCILE:"),
+			flowStyle.Render("RECONCILE:"),
 			status,
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 		if r.verbose && event.Meta != nil && len(event.Meta.Triggers) > 0 {
@@ -278,8 +291,15 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			}
 		}
 		verdictStyled := r.verdictStyle(verdict).Render(verdict)
+		// Use appropriate style based on supervisor type
+		var supervStyle lipgloss.Style
+		if supervisorType == "SECURITY" {
+			supervStyle = securitySupervisorStyle
+		} else {
+			supervStyle = execSupervisorStyle
+		}
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
-			supervisorStyle.Render(fmt.Sprintf("👁️  SUPERVISOR [%s]:", supervisorType)),
+			supervStyle.Render(fmt.Sprintf("SUPERVISOR [%s]:", supervisorType)),
 			verdictStyled,
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 		if event.Meta != nil {
@@ -299,18 +319,18 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 	case session.EventSecurityBlock:
 		if event.Meta != nil {
 			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
-				securityStyle.Render("🔒 UNTRUSTED:"),
+				securityStyle.Render("UNTRUSTED CONTENT:"),
 				valueStyle.Render(event.Meta.BlockID),
 				dimStyle.Render(fmt.Sprintf("(trust=%s, entropy=%.2f)", event.Meta.Trust, event.Meta.Entropy)))
 		}
 
 	case session.EventSecurityStatic:
-		status := successStyle.Render("✓ pass")
+		status := successStyle.Render("pass")
 		if event.Meta != nil && !event.Meta.Pass {
-			status = warnStyle.Render("✗ flagged")
+			status = warnStyle.Render("flagged")
 		}
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
-			securityStyle.Render("🛡️  STATIC CHECK:"),
+			securityStyle.Render("STATIC CHECK:"),
 			status)
 		if r.verbose && event.Meta != nil && len(event.Meta.Flags) > 0 {
 			fmt.Fprintf(r.output, "      │          │   %s\n",
@@ -318,16 +338,16 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		}
 
 	case session.EventSecurityTriage:
-		status := successStyle.Render("✓ benign")
+		status := successStyle.Render("benign")
 		if event.Meta != nil && event.Meta.Suspicious {
-			status = warnStyle.Render("⚠ suspicious → escalating")
+			status = warnStyle.Render("suspicious - escalating")
 		}
 		model := ""
 		if event.Meta != nil && event.Meta.Model != "" {
 			model = dimStyle.Render(fmt.Sprintf(" [%s]", event.Meta.Model))
 		}
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
-			securityStyle.Render("🔍 LLM TRIAGE:"),
+			securityStyle.Render("TRIAGE:"),
 			status, model)
 		if r.verbose && event.Meta != nil {
 			r.printLLMDetails(event.Meta)
@@ -349,7 +369,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			model = dimStyle.Render(fmt.Sprintf(" [%s]", event.Meta.Model))
 		}
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
-			supervisorStyle.Render("👁️  SUPERVISOR [SECURITY]:"),
+			securitySupervisorStyle.Render("SUPERVISOR [SECURITY]:"),
 			actionStyled, model)
 		if event.Meta != nil && event.Meta.Reason != "" {
 			fmt.Fprintf(r.output, "      │          │   %s\n",
@@ -372,7 +392,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 				pathStr = dimStyle.Render(fmt.Sprintf(" [%s]", path))
 			}
 			fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
-				securityStyle.Render("⚖️  DECISION:"),
+				securityStyle.Render("DECISION:"),
 				actionDisplay, pathStr)
 			if event.Meta.Reason != "" {
 				fmt.Fprintf(r.output, "      │          │   %s\n",
@@ -383,7 +403,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 	case session.EventCheckpoint:
 		if event.Meta != nil {
 			fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
-				dimStyle.Render("💾 CHECKPOINT:"),
+				dimStyle.Render("CHECKPOINT:"),
 				valueStyle.Render(event.Meta.CheckpointType))
 		}
 
