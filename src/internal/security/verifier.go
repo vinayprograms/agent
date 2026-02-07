@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/openclaw/headless-agent/internal/llm"
 	"github.com/openclaw/headless-agent/internal/logging"
@@ -101,17 +100,6 @@ func (v *Verifier) AddBlock(trust TrustLevel, typ BlockType, mutable bool, conte
 	block := NewBlock(id, trust, typ, mutable, content, source)
 	v.blocks = append(v.blocks, block)
 
-	// Calculate entropy for forensic logging
-	entropy := ShannonEntropy([]byte(content))
-	
-	v.logger.SecurityBlockAdded(block.ID, string(block.Trust), string(block.Type), source, entropy)
-	v.logger.Debug("block added", map[string]interface{}{
-		"id":     block.ID,
-		"trust":  string(block.Trust),
-		"type":   string(block.Type),
-		"source": source,
-	})
-
 	return block
 }
 
@@ -137,50 +125,22 @@ func (v *Verifier) VerifyToolCall(ctx context.Context, toolName string, args map
 	if tier1Result.Pass {
 		// No untrusted content or low-risk tool - allow
 		v.recordDecision(tier1Result.Block, "pass", "skipped", "skipped")
-		v.logger.SecurityDecision(toolName, "allow", "tier1_pass", "", "T1")
 		return result, nil
 	}
 
-	v.logger.Info("tier 1 escalated", map[string]interface{}{
-		"tool":    toolName,
-		"reasons": tier1Result.Reasons,
-	})
-
 	// Tier 2: Cheap model triage (skip in paranoid mode - go straight to T3)
 	if v.mode != ModeParanoid && v.triage != nil {
-		tier2Start := time.Now()
 		tier2Result, err := v.tier2Check(ctx, toolName, args, tier1Result.Block)
-		tier2Latency := time.Since(tier2Start).Milliseconds()
-		
-		if err != nil {
-			v.logger.Error("tier 2 error", map[string]interface{}{"error": err.Error()})
-			// Continue to tier 3 on error
-		} else {
+		if err == nil {
 			result.Tier2 = tier2Result
-
-			// Log tier 2 result
-			blockID := "unknown"
-			if tier1Result.Block != nil {
-				blockID = tier1Result.Block.ID
-			}
-			confidence := "no"
-			if tier2Result.Suspicious {
-				confidence = "yes"
-			}
-			v.logger.SecurityTier2(blockID, tier2Result.Suspicious, confidence, "triage", tier2Latency)
 
 			if !tier2Result.Suspicious {
 				// Triage cleared
 				v.recordDecision(tier1Result.Block, "escalate", "pass", "skipped")
-				v.logger.SecurityDecision(toolName, "allow", "tier2_pass", "", "T1→T2")
 				return result, nil
 			}
-
-			v.logger.Info("tier 2 escalated", map[string]interface{}{
-				"tool":   toolName,
-				"reason": tier2Result.Reason,
-			})
 		}
+		// Continue to tier 3 on error
 	}
 
 	// Tier 3: Full supervisor
@@ -189,45 +149,30 @@ func (v *Verifier) VerifyToolCall(ctx context.Context, toolName string, args map
 		result.Allowed = false
 		result.DenyReason = "no security supervisor configured, denying high-risk action"
 		v.recordDecision(tier1Result.Block, "escalate", "escalate", "denied:no_supervisor")
-		v.logger.SecurityDeny(toolName, "no_supervisor", 3)
 		return result, nil
 	}
 
-	tier3Start := time.Now()
 	tier3Result, err := v.tier3Check(ctx, toolName, args, originalGoal, tier1Result)
-	tier3Latency := time.Since(tier3Start).Milliseconds()
-	
 	if err != nil {
 		result.Allowed = false
 		result.DenyReason = fmt.Sprintf("tier 3 error: %v", err)
 		v.recordDecision(tier1Result.Block, "escalate", "escalate", "error")
-		v.logger.SecurityDeny(toolName, err.Error(), 3)
 		return result, nil
 	}
 
 	result.Tier3 = tier3Result
 	tier3Log := string(tier3Result.Verdict)
 
-	// Log tier 3 result
-	blockID := "unknown"
-	if tier1Result.Block != nil {
-		blockID = tier1Result.Block.ID
-	}
-	v.logger.SecurityTier3(blockID, string(tier3Result.Verdict), tier3Result.Reason, "supervisor", tier3Latency)
-
 	switch tier3Result.Verdict {
 	case VerdictAllow:
 		result.Allowed = true
-		v.logger.SecurityDecision(toolName, "allow", tier3Result.Reason, string(tier1Result.Block.Trust), "T1→T2→T3")
 	case VerdictDeny:
 		result.Allowed = false
 		result.DenyReason = tier3Result.Reason
-		v.logger.SecurityDeny(toolName, tier3Result.Reason, 3)
 	case VerdictModify:
 		result.Allowed = false
 		result.DenyReason = tier3Result.Reason
 		result.Modification = tier3Result.Correction
-		v.logger.SecurityDecision(toolName, "modify", tier3Result.Reason, "", "T1→T2→T3")
 	}
 
 	v.recordDecision(tier1Result.Block, "escalate", "escalate", tier3Log)
@@ -248,15 +193,13 @@ func (v *Verifier) tier1Check(toolName string, args map[string]interface{}) *Tie
 	// Check 1: Any untrusted content in context?
 	untrustedBlocks := v.getUntrustedBlocks()
 	if len(untrustedBlocks) == 0 {
-		v.logger.SecurityTier1("none", true, nil)
 		return result // No untrusted content - pass
 	}
 
 	// Check 2: Is this a high-risk tool?
 	isHighRisk := HighRiskTools[toolName]
 	if !isHighRisk {
-		v.logger.SecurityTier1("none", true, []string{"low_risk_tool"})
-		return result // Low-risk tool - pass with logging
+		return result // Low-risk tool - pass
 	}
 
 	result.Pass = false
@@ -286,13 +229,6 @@ func (v *Verifier) tier1Check(toolName string, args map[string]interface{}) *Tie
 	if result.Block == nil && len(untrustedBlocks) > 0 {
 		result.Block = untrustedBlocks[0]
 	}
-
-	// Forensic logging
-	blockID := "unknown"
-	if result.Block != nil {
-		blockID = result.Block.ID
-	}
-	v.logger.SecurityTier1(blockID, false, result.Reasons)
 
 	return result
 }

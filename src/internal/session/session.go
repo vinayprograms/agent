@@ -28,6 +28,20 @@ const (
 	EventToolResult = "tool_result" // Tool result (fed back to LLM)
 	EventGoalStart = "goal_start"
 	EventGoalEnd   = "goal_end"
+	
+	// Supervision events (four-phase execution)
+	EventPhaseCommit    = "phase_commit"    // COMMIT phase - agent declares intent
+	EventPhaseExecute   = "phase_execute"   // EXECUTE phase - do work
+	EventPhaseReconcile = "phase_reconcile" // RECONCILE phase - static checks
+	EventPhaseSupervise = "phase_supervise" // SUPERVISE phase - LLM judgment
+	EventCheckpoint     = "checkpoint"      // Checkpoint saved
+	
+	// Security events
+	EventSecurityBlock    = "security_block"    // Untrusted content registered
+	EventSecurityTier1    = "security_tier1"    // Deterministic check
+	EventSecurityTier2    = "security_tier2"    // Triage check
+	EventSecurityTier3    = "security_tier3"    // Supervisor check
+	EventSecurityDecision = "security_decision" // Final decision
 )
 
 // Session represents a workflow execution session.
@@ -48,14 +62,56 @@ type Session struct {
 // Event represents a single entry in the session log.
 // All events are in chronological order for easy reading.
 type Event struct {
-	Type      string                 `json:"type"`                // system, user, assistant, tool_call, tool_result, goal_start, goal_end
+	Type      string                 `json:"type"`                // system, user, assistant, tool_call, tool_result, goal_start, goal_end, phase_*, security_*
 	Goal      string                 `json:"goal,omitempty"`      // Current goal context
+	Step      string                 `json:"step,omitempty"`      // Current step context
 	Content   string                 `json:"content,omitempty"`   // Message content or tool result
 	Tool      string                 `json:"tool,omitempty"`      // Tool name (for tool_call/tool_result)
 	Args      map[string]interface{} `json:"args,omitempty"`      // Tool arguments
 	Error     string                 `json:"error,omitempty"`     // Error message if failed
-	DurationMs int64                 `json:"duration_ms,omitempty"` // Tool execution time
+	DurationMs int64                 `json:"duration_ms,omitempty"` // Execution time
 	Timestamp time.Time              `json:"timestamp"`
+	
+	// Forensic metadata for supervision/security
+	Metadata *EventMetadata `json:"metadata,omitempty"` // Structured forensic data
+}
+
+// EventMetadata contains detailed forensic information.
+// Serialized as XML-style attributes in the JSON for structured analysis.
+type EventMetadata struct {
+	// Phase execution
+	Phase       string   `json:"phase,omitempty"`       // COMMIT, EXECUTE, RECONCILE, SUPERVISE
+	Result      string   `json:"result,omitempty"`      // Phase result or verdict
+	Commitment  string   `json:"commitment,omitempty"`  // Agent's declared intent
+	Confidence  string   `json:"confidence,omitempty"`  // high, medium, low
+	Triggers    []string `json:"triggers,omitempty"`    // Reconcile triggers
+	Escalate    bool     `json:"escalate,omitempty"`    // Whether to escalate
+	Verdict     string   `json:"verdict,omitempty"`     // CONTINUE, REORIENT, PAUSE
+	Guidance    string   `json:"guidance,omitempty"`    // Supervisor guidance
+	HumanRequired bool   `json:"human_required,omitempty"`
+	
+	// Security
+	BlockID     string   `json:"block_id,omitempty"`    // Content block ID
+	Trust       string   `json:"trust,omitempty"`       // trusted, vetted, untrusted
+	BlockType   string   `json:"block_type,omitempty"`  // instruction, data
+	Source      string   `json:"source,omitempty"`      // Content source
+	Entropy     float64  `json:"entropy,omitempty"`     // Shannon entropy
+	Tier        int      `json:"tier,omitempty"`        // Security tier (1, 2, 3)
+	Pass        bool     `json:"pass,omitempty"`        // Tier check passed
+	Flags       []string `json:"flags,omitempty"`       // Security flags
+	Suspicious  bool     `json:"suspicious,omitempty"`  // Triage result
+	Model       string   `json:"model,omitempty"`       // LLM model used
+	LatencyMs   int64    `json:"latency_ms,omitempty"`  // LLM call latency
+	Action      string   `json:"action,omitempty"`      // allow, deny, modify
+	Reason      string   `json:"reason,omitempty"`      // Decision reason
+	Tiers       string   `json:"tiers,omitempty"`       // Tier path (T1, T1→T2, T1→T2→T3)
+	
+	// Checkpoint
+	CheckpointType string `json:"checkpoint_type,omitempty"` // pre, post, reconcile, supervise
+	CheckpointID   string `json:"checkpoint_id,omitempty"`
+	
+	// XML representation for forensic tools
+	XMLBlock string `json:"xml_block,omitempty"` // Full XML block with trust/type attributes
 }
 
 // Message represents an LLM message (kept for backwards compatibility).

@@ -142,14 +142,46 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		return fmt.Errorf("security verification error: %w", err)
 	}
 
-	if !result.Allowed {
-		e.logger.Warn("tool call denied by security verifier", map[string]interface{}{
-			"tool":   toolName,
-			"reason": result.DenyReason,
-		})
-		return fmt.Errorf("security: %s", result.DenyReason)
+	// Log security decision to session
+	if result.Tier1 != nil {
+		blockID := ""
+		if result.Tier1.Block != nil {
+			blockID = result.Tier1.Block.ID
+		}
+		e.logSecurityTier1(toolName, blockID, result.Tier1.Pass, result.Tier1.Reasons)
+	}
+	
+	if result.Tier2 != nil {
+		blockID := ""
+		if result.Tier1 != nil && result.Tier1.Block != nil {
+			blockID = result.Tier1.Block.ID
+		}
+		e.logSecurityTier2(toolName, blockID, result.Tier2.Suspicious, "triage", 0)
+	}
+	
+	if result.Tier3 != nil {
+		blockID := ""
+		if result.Tier1 != nil && result.Tier1.Block != nil {
+			blockID = result.Tier1.Block.ID
+		}
+		e.logSecurityTier3(toolName, blockID, string(result.Tier3.Verdict), result.Tier3.Reason, "supervisor", 0)
 	}
 
+	// Determine tier path
+	tierPath := "T1"
+	if result.Tier2 != nil {
+		tierPath = "T1→T2"
+	}
+	if result.Tier3 != nil {
+		tierPath = "T1→T2→T3"
+	}
+
+	if !result.Allowed {
+		e.logSecurityDecision(toolName, "deny", result.DenyReason, "", tierPath)
+		return fmt.Errorf("security: %s", result.DenyReason)
+	}
+	
+	e.logSecurityDecision(toolName, "allow", "verified", "", tierPath)
 	return nil
 }
 
@@ -158,7 +190,21 @@ func (e *Executor) AddUntrustedContent(content, source string) {
 	if e.securityVerifier == nil {
 		return
 	}
-	e.securityVerifier.AddBlock(security.TrustUntrusted, security.TypeData, true, content, source)
+	block := e.securityVerifier.AddBlock(security.TrustUntrusted, security.TypeData, true, content, source)
+	
+	// Log to session with XML representation
+	xmlBlock := fmt.Sprintf(`<block id="%s" trust="untrusted" type="data" source="%s" mutable="true">%s</block>`,
+		block.ID, source, truncateForLog(content, 200))
+	entropy := security.ShannonEntropy([]byte(content))
+	e.logSecurityBlock(block.ID, "untrusted", "data", source, xmlBlock, entropy)
+}
+
+// truncateForLog truncates a string for logging purposes.
+func truncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // initSpawner wires up the spawn_agent tool to this executor
@@ -316,6 +362,208 @@ func (e *Executor) logGoalEnd(goalName, output string) {
 		Goal:      goalName,
 		Content:   output,
 		Timestamp: time.Now(),
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// --- Forensic Session Logging ---
+
+// logPhaseCommit logs the COMMIT phase to session.
+func (e *Executor) logPhaseCommit(goal, commitment, confidence string, durationMs int64) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:       session.EventPhaseCommit,
+		Goal:       goal,
+		DurationMs: durationMs,
+		Timestamp:  time.Now(),
+		Metadata: &session.EventMetadata{
+			Phase:      "COMMIT",
+			Commitment: commitment,
+			Confidence: confidence,
+			Result:     confidence,
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logPhaseExecute logs the EXECUTE phase to session.
+func (e *Executor) logPhaseExecute(goal, result string, durationMs int64) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:       session.EventPhaseExecute,
+		Goal:       goal,
+		DurationMs: durationMs,
+		Timestamp:  time.Now(),
+		Metadata: &session.EventMetadata{
+			Phase:  "EXECUTE",
+			Result: result,
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logPhaseReconcile logs the RECONCILE phase to session.
+func (e *Executor) logPhaseReconcile(goal, step string, triggers []string, escalate bool, durationMs int64) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:       session.EventPhaseReconcile,
+		Goal:       goal,
+		Step:       step,
+		DurationMs: durationMs,
+		Timestamp:  time.Now(),
+		Metadata: &session.EventMetadata{
+			Phase:    "RECONCILE",
+			Triggers: triggers,
+			Escalate: escalate,
+			Result:   fmt.Sprintf("escalate=%v", escalate),
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logPhaseSupervise logs the SUPERVISE phase to session.
+func (e *Executor) logPhaseSupervise(goal, step, verdict, guidance string, humanRequired bool, durationMs int64) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:       session.EventPhaseSupervise,
+		Goal:       goal,
+		Step:       step,
+		DurationMs: durationMs,
+		Timestamp:  time.Now(),
+		Metadata: &session.EventMetadata{
+			Phase:         "SUPERVISE",
+			Verdict:       verdict,
+			Guidance:      guidance,
+			HumanRequired: humanRequired,
+			Result:        verdict,
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logCheckpoint logs a checkpoint save to session.
+func (e *Executor) logCheckpoint(checkpointType, goal, step, checkpointID string) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:      session.EventCheckpoint,
+		Goal:      goal,
+		Step:      step,
+		Timestamp: time.Now(),
+		Metadata: &session.EventMetadata{
+			CheckpointType: checkpointType,
+			CheckpointID:   checkpointID,
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logSecurityBlock logs untrusted content registration to session.
+func (e *Executor) logSecurityBlock(blockID, trust, blockType, source, xmlBlock string, entropy float64) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:      session.EventSecurityBlock,
+		Timestamp: time.Now(),
+		Metadata: &session.EventMetadata{
+			BlockID:   blockID,
+			Trust:     trust,
+			BlockType: blockType,
+			Source:    source,
+			Entropy:   entropy,
+			XMLBlock:  xmlBlock,
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logSecurityTier1 logs Tier 1 deterministic check to session.
+func (e *Executor) logSecurityTier1(tool, blockID string, pass bool, flags []string) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:      session.EventSecurityTier1,
+		Tool:      tool,
+		Timestamp: time.Now(),
+		Metadata: &session.EventMetadata{
+			Tier:    1,
+			BlockID: blockID,
+			Pass:    pass,
+			Flags:   flags,
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logSecurityTier2 logs Tier 2 triage check to session.
+func (e *Executor) logSecurityTier2(tool, blockID string, suspicious bool, model string, latencyMs int64) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:       session.EventSecurityTier2,
+		Tool:       tool,
+		DurationMs: latencyMs,
+		Timestamp:  time.Now(),
+		Metadata: &session.EventMetadata{
+			Tier:       2,
+			BlockID:    blockID,
+			Suspicious: suspicious,
+			Model:      model,
+			LatencyMs:  latencyMs,
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logSecurityTier3 logs Tier 3 supervisor check to session.
+func (e *Executor) logSecurityTier3(tool, blockID, verdict, reason, model string, latencyMs int64) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:       session.EventSecurityTier3,
+		Tool:       tool,
+		DurationMs: latencyMs,
+		Timestamp:  time.Now(),
+		Metadata: &session.EventMetadata{
+			Tier:      3,
+			BlockID:   blockID,
+			Verdict:   verdict,
+			Reason:    reason,
+			Model:     model,
+			LatencyMs: latencyMs,
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logSecurityDecision logs final security decision to session.
+func (e *Executor) logSecurityDecision(tool, action, reason, trust, tiers string) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:      session.EventSecurityDecision,
+		Tool:      tool,
+		Timestamp: time.Now(),
+		Metadata: &session.EventMetadata{
+			Action: action,
+			Reason: reason,
+			Trust:  trust,
+			Tiers:  tiers,
+		},
 	})
 	e.sessionManager.Update(e.session)
 }
@@ -638,7 +886,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				"error": err.Error(),
 			})
 		} else {
-			e.logger.CheckpointSaved("pre", goal.Name, "", preCheckpoint.StepID)
+			e.logCheckpoint("pre", goal.Name, "", preCheckpoint.StepID)
 		}
 		if e.OnSupervisionEvent != nil {
 			e.OnSupervisionEvent(goal.Name, "commit", preCheckpoint)
@@ -662,7 +910,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				"error": err.Error(),
 			})
 		} else {
-			e.logger.CheckpointSaved("post", goal.Name, "", postCheckpoint.StepID)
+			e.logCheckpoint("post", goal.Name, "", postCheckpoint.StepID)
 		}
 		if e.OnSupervisionEvent != nil {
 			e.OnSupervisionEvent(goal.Name, "execute", postCheckpoint)
@@ -674,27 +922,29 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	// ============================================
 	if supervised && e.supervisor != nil && preCheckpoint != nil && postCheckpoint != nil {
 		// RECONCILE: Static pattern checks
+		reconcileStart := time.Now()
 		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
+		reconcileDuration := time.Since(reconcileStart).Milliseconds()
+		
 		if e.checkpointStore != nil {
 			if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
 				e.logger.Warn("failed to save reconcile result", map[string]interface{}{
 					"error": err.Error(),
 				})
 			} else {
-				e.logger.CheckpointSaved("reconcile", goal.Name, "", reconcileResult.StepID)
+				e.logCheckpoint("reconcile", goal.Name, reconcileResult.StepID, reconcileResult.StepID)
 			}
 		}
+		// Log reconcile phase to session
+		e.logPhaseReconcile(goal.Name, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
+		
 		if e.OnSupervisionEvent != nil {
 			e.OnSupervisionEvent(goal.Name, "reconcile", reconcileResult)
 		}
 
 		// SUPERVISE: LLM evaluation (only if reconcile triggered)
 		if reconcileResult.Supervise {
-			e.logger.Info("supervision triggered", map[string]interface{}{
-				"goal":     goal.Name,
-				"triggers": reconcileResult.Triggers,
-			})
-
+			superviseStart := time.Now()
 			decisionTrail := e.checkpointStore.GetDecisionTrail()
 			superviseResult, err := e.supervisor.Supervise(
 				ctx,
@@ -704,6 +954,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				decisionTrail,
 				humanRequired,
 			)
+			superviseDuration := time.Since(superviseStart).Milliseconds()
+			
 			if err != nil {
 				return nil, fmt.Errorf("supervision failed: %w", err)
 			}
@@ -714,9 +966,12 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 						"error": err.Error(),
 					})
 				} else {
-					e.logger.CheckpointSaved("supervise", goal.Name, "", superviseResult.StepID)
+					e.logCheckpoint("supervise", goal.Name, superviseResult.StepID, superviseResult.StepID)
 				}
 			}
+			// Log supervise phase to session
+			e.logPhaseSupervise(goal.Name, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, humanRequired, superviseDuration)
+			
 			if e.OnSupervisionEvent != nil {
 				e.OnSupervisionEvent(goal.Name, "supervise", superviseResult)
 			}
@@ -837,9 +1092,9 @@ Respond with a JSON object:
 		pre.Confidence = "medium"
 	}
 
-	// Log commitment for forensics
-	e.logger.CommitPhase(goal.Name, "", pre.Interpretation)
-	e.logger.PhaseComplete("COMMIT", goal.Name, "", time.Since(start), pre.Confidence)
+	// Log commitment to session for forensics
+	durationMs := time.Since(start).Milliseconds()
+	e.logPhaseCommit(goal.Name, pre.Interpretation, pre.Confidence, durationMs)
 
 	return pre
 }
@@ -847,7 +1102,6 @@ Respond with a JSON object:
 // executePhase runs the actual goal execution loop.
 func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, prompt string) (output string, toolsUsed []string, toolCallsMade bool, err error) {
 	start := time.Now()
-	e.logger.PhaseStart("EXECUTE", goal.Name, "")
 	
 	// Build system message with skills context
 	systemMsg := "You are a helpful assistant executing a workflow goal."
@@ -894,7 +1148,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 			if e.OnLLMError != nil {
 				e.OnLLMError(err)
 			}
-			e.logger.PhaseComplete("EXECUTE", goal.Name, "", time.Since(start), "error")
+			e.logPhaseExecute(goal.Name, "error", time.Since(start).Milliseconds())
 			return "", nil, toolCallsMade, fmt.Errorf("LLM error: %w", err)
 		}
 
@@ -923,7 +1177,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 			for tool := range toolsUsedMap {
 				toolsUsed = append(toolsUsed, tool)
 			}
-			e.logger.PhaseComplete("EXECUTE", goal.Name, "", time.Since(start), "complete")
+			e.logPhaseExecute(goal.Name, "complete", time.Since(start).Milliseconds())
 			return resp.Content, toolsUsed, toolCallsMade, nil
 		}
 
