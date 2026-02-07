@@ -150,6 +150,48 @@ func (r *Replayer) ReplayInteractive(sess *session.Session) error {
 	return p.Run(buf.String())
 }
 
+// ReplayFileLive loads and replays with live file watching.
+func (r *Replayer) ReplayFileLive(path string) error {
+	// Create render function that reloads the file
+	renderFunc := func() (string, error) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("failed to read session file: %w", err)
+		}
+
+		var sess session.Session
+		if err := json.Unmarshal(data, &sess); err != nil {
+			return "", fmt.Errorf("failed to parse session: %w", err)
+		}
+
+		// Render to string
+		var buf strings.Builder
+		oldOutput := r.output
+		r.output = &buf
+		err = r.Replay(&sess)
+		r.output = oldOutput
+		
+		if err != nil {
+			return "", err
+		}
+		return buf.String(), nil
+	}
+
+	// Initial render to get session info for title
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read session file: %w", err)
+	}
+	var sess session.Session
+	if err := json.Unmarshal(data, &sess); err != nil {
+		return fmt.Errorf("failed to parse session: %w", err)
+	}
+
+	title := fmt.Sprintf("Session: %s (LIVE)", sess.ID)
+	p := NewPager(title, "")
+	return p.RunLive(path, renderFunc)
+}
+
 // Replay outputs a formatted timeline of session events.
 func (r *Replayer) Replay(sess *session.Session) error {
 	// Header

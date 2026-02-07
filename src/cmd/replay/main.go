@@ -24,6 +24,7 @@ func main() {
 	// Parse flags
 	verbose := false
 	noInteractive := false
+	liveMode := false
 	var paths []string
 
 	for i := 0; i < len(args); i++ {
@@ -32,6 +33,8 @@ func main() {
 			verbose = true
 		case args[i] == "--no-pager":
 			noInteractive = true
+		case args[i] == "-f" || args[i] == "--follow" || args[i] == "--live":
+			liveMode = true
 		case args[i] == "-h" || args[i] == "--help":
 			printUsage()
 			os.Exit(0)
@@ -49,6 +52,31 @@ func main() {
 	if len(paths) == 0 {
 		printUsage()
 		os.Exit(1)
+	}
+
+	// Live mode only works with a single file
+	if liveMode {
+		if len(paths) != 1 {
+			fmt.Fprintf(os.Stderr, "error: --follow only works with a single session file\n")
+			os.Exit(1)
+		}
+		// Check it's a file, not a directory
+		info, err := os.Stat(paths[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if info.IsDir() {
+			fmt.Fprintf(os.Stderr, "error: --follow requires a file, not a directory\n")
+			os.Exit(1)
+		}
+
+		r := replay.New(os.Stdout, verbose)
+		if err := r.ReplayFileLive(paths[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	// Expand directories to session files
@@ -86,12 +114,14 @@ func printUsage() {
 Usage:
   agent-replay [options] <session.json>...
   agent-replay [options] <directory>
+  agent-replay -f <session.json>        # Live mode
 
 Arguments:
   <session.json>    One or more session log files
   <directory>       Directory containing session logs (*.json)
 
 Options:
+  -f, --follow      Live mode - watch file for changes and reload
   -v, --verbose     Show full message and result content
   --no-pager        Disable interactive pager (for piping)
   --version         Show version
@@ -102,12 +132,13 @@ Examples:
   agent-replay -v session1.json session2.json
   agent-replay ./sessions/              # All .json files in directory
   agent-replay --no-pager session.json | grep SECURITY
+  agent-replay -f session.json          # Watch for live updates
 
 Navigation (interactive mode):
   ↑/↓, j/k          Scroll line by line
   PgUp/PgDn         Scroll by page
   g/G               Jump to top/bottom
-  /                 Search (TODO)
+  f                 Follow (jump to bottom, useful in live mode)
   q, Esc            Quit`)
 }
 

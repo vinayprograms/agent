@@ -4,10 +4,12 @@ package replay
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fsnotify/fsnotify"
 	"github.com/muesli/reflow/wordwrap"
 )
 
@@ -55,16 +57,87 @@ func (p *pager) Run(content string) error {
 	return err
 }
 
+// RunLive starts the interactive pager with live file watching.
+func (p *pager) RunLive(filePath string, renderFunc func() (string, error)) error {
+	// Initial render
+	content, err := renderFunc()
+	if err != nil {
+		return err
+	}
+
+	// Set up file watcher
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to create watcher: %w", err)
+	}
+
+	if err := watcher.Add(filePath); err != nil {
+		watcher.Close()
+		return fmt.Errorf("failed to watch file: %w", err)
+	}
+
+	prog := tea.NewProgram(
+		&pagerModel{
+			title:      p.title,
+			content:    content,
+			live:       true,
+			renderFunc: renderFunc,
+			watcher:    watcher,
+		},
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+	)
+
+	_, err = prog.Run()
+	watcher.Close()
+	return err
+}
+
+// fileChangedMsg is sent when the watched file changes.
+type fileChangedMsg struct{}
+
 // pagerModel is the Bubble Tea model for the pager.
 type pagerModel struct {
-	viewport viewport.Model
-	title    string
-	content  string
-	ready    bool
+	viewport   viewport.Model
+	title      string
+	content    string
+	ready      bool
+	live       bool
+	renderFunc func() (string, error)
+	watcher    *fsnotify.Watcher
+	lastUpdate time.Time
+	eventCount int // Track event count to show in live mode
 }
 
 func (m *pagerModel) Init() tea.Cmd {
+	if m.live && m.watcher != nil {
+		return m.watchFile()
+	}
 	return nil
+}
+
+// watchFile returns a command that waits for file changes.
+func (m *pagerModel) watchFile() tea.Cmd {
+	return func() tea.Msg {
+		for {
+			select {
+			case event, ok := <-m.watcher.Events:
+				if !ok {
+					return nil
+				}
+				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+					// Debounce: wait a bit for writes to settle
+					time.Sleep(100 * time.Millisecond)
+					return fileChangedMsg{}
+				}
+			case _, ok := <-m.watcher.Errors:
+				if !ok {
+					return nil
+				}
+				// Ignore errors, keep watching
+			}
+		}
+	}
 }
 
 func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -74,6 +147,31 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	)
 
 	switch msg := msg.(type) {
+	case fileChangedMsg:
+		// File changed - reload content but preserve scroll position
+		if m.renderFunc != nil {
+			if newContent, err := m.renderFunc(); err == nil {
+				oldOffset := m.viewport.YOffset
+				oldLineCount := m.viewport.TotalLineCount()
+				
+				m.content = newContent
+				wrapped := wrapContent(m.content, m.viewport.Width)
+				m.viewport.SetContent(wrapped)
+				m.lastUpdate = time.Now()
+				
+				// Try to preserve position
+				newLineCount := m.viewport.TotalLineCount()
+				if oldOffset <= newLineCount-m.viewport.Height {
+					m.viewport.YOffset = oldOffset
+				} else if oldOffset > 0 && newLineCount > oldLineCount {
+					// Content grew - stay at same position
+					m.viewport.YOffset = oldOffset
+				}
+			}
+		}
+		// Continue watching
+		cmds = append(cmds, m.watchFile())
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
@@ -84,6 +182,11 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "G":
 			// Go to bottom
 			m.viewport.GotoBottom()
+		case "f", "F":
+			// Follow mode - jump to bottom (useful in live mode)
+			if m.live {
+				m.viewport.GotoBottom()
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -135,7 +238,19 @@ func (m *pagerModel) View() string {
 	}
 
 	info := fmt.Sprintf(" %d%% ", percent)
-	help := " q: quit │ ↑/↓: scroll │ g/G: top/bottom │ pgup/pgdn "
+	
+	// Build help text based on mode
+	var help string
+	if m.live {
+		liveIndicator := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("10")). // Green
+			Render("● LIVE")
+		help = fmt.Sprintf(" %s │ q: quit │ f: follow │ ↑/↓: scroll │ g/G: top/bottom ", liveIndicator)
+	} else {
+		help = " q: quit │ ↑/↓: scroll │ g/G: top/bottom │ pgup/pgdn "
+	}
+	
 	footer := pagerHelpStyle.Render(help) + pagerInfoStyle.Render(strings.Repeat("─", max(0, m.viewport.Width-lipgloss.Width(help)-lipgloss.Width(info)))) + pagerInfoStyle.Render(info)
 
 	return header + "\n" + m.viewport.View() + "\n" + footer
