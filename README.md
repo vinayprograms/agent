@@ -403,6 +403,9 @@ NAME workflow-name
 INPUT required_param
 INPUT optional_param DEFAULT "value"
 
+# Security mode (optional - defaults to "default")
+SECURITY default    # or: SECURITY paranoid
+
 # Agents reference prompts, skills, or packages (with optional structured output)
 AGENT researcher FROM agents/researcher.md -> findings, sources
 AGENT critic FROM skills/code-review -> issues, recommendations
@@ -410,9 +413,16 @@ AGENT helper "Inline prompt for helper" -> result
 AGENT scanner FROM security.agent REQUIRES "reasoning-heavy"
 
 # Goals define what to accomplish (with optional structured output)
+# Supervision modifiers: SUPERVISED (LLM) or SUPERVISED HUMAN
 GOAL name "Inline description with $variables" -> output1, output2
 GOAL name FROM path/to/goal.md -> outputs
 GOAL name "Description" -> summary, recommendations USING agent1, agent2
+GOAL sensitive_task "Handle with care" SUPERVISED           # LLM supervision
+GOAL critical_task "Requires human approval" SUPERVISED HUMAN
+
+# Explicit UNSUPERVISED section (overrides global supervision)
+UNSUPERVISED
+GOAL fast_task "No supervision needed"
 
 # Steps execute goals
 RUN step_name USING goal1, goal2, goal3
