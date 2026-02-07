@@ -116,6 +116,35 @@ Only invoked when:
 - 15% pass at Tier 2  
 - 5% reach Tier 3
 
+## No Approval Caching
+
+Each `VerifyToolCall` runs the full pipeline fresh. There is no caching of previous verification results.
+
+**Why no caching?** The same untrusted block can be benign for one operation but dangerous for another:
+
+| Tool Call | Block Content | Verdict |
+|-----------|---------------|---------|
+| `web_fetch(url from block)` | URL to documentation site | ALLOW |
+| `bash(command from block)` | Same block, different usage | DENY |
+
+Caching "block X is safe" would miss context-dependent attacks where benign-looking content is repurposed for malicious operations.
+
+**Implication:** A single untrusted block may be checked many times during execution. In a typical agent run:
+
+- Block registered from `web_fetch` result
+- Checked again when content used in `write` call
+- Checked again when content influences `spawn_agent` task
+- Checked again for each subsequent high-risk tool call
+
+For an agent run with 50 tool calls where 30 are high-risk after untrusted content exists, expect ~30 triage calls. At ~100ms and ~$0.0001 per triage call:
+
+| Metric | Value |
+|--------|-------|
+| Latency overhead | ~3 seconds total |
+| Cost overhead | ~$0.003 |
+
+This is acceptable for the security guarantee it provides. The design prioritizes safety over micro-optimization.
+
 ## Configuration
 
 ```toml
