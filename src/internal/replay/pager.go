@@ -149,7 +149,7 @@ func max(a, b int) int {
 }
 
 // wrapContent wraps each line to fit within the given width.
-// Preserves ANSI escape codes and handles indentation.
+// Preserves ANSI escape codes and maintains table column alignment.
 func wrapContent(content string, width int) string {
 	if width <= 0 {
 		return content
@@ -161,11 +161,54 @@ func wrapContent(content string, width int) string {
 	for _, line := range lines {
 		if lipgloss.Width(line) <= width {
 			result = append(result, line)
-		} else {
-			// Use wordwrap which handles ANSI codes
-			wrapped := wordwrap.String(line, width)
-			result = append(result, strings.Split(wrapped, "\n")...)
+			continue
 		}
+
+		// Detect if this is a table row (has │ separators)
+		// Format: "  seq │ timestamp │ content"
+		if strings.Contains(line, "│") {
+			// Find the last │ and calculate indent for continuation
+			lastPipe := strings.LastIndex(line, "│")
+			if lastPipe > 0 && lastPipe < len(line)-1 {
+				// Calculate visual width of prefix (up to and including last │ plus space)
+				prefix := line[:lastPipe+1]
+				prefixWidth := lipgloss.Width(prefix) + 1 // +1 for space after │
+				
+				// Calculate available content width
+				contentWidth := width - prefixWidth
+				if contentWidth < 20 {
+					contentWidth = 20 // Minimum content width
+				}
+				
+				// Extract content after the last │
+				contentStart := lastPipe + 1
+				// Skip leading space
+				for contentStart < len(line) && line[contentStart] == ' ' {
+					contentStart++
+				}
+				contentPart := line[contentStart:]
+				
+				// Wrap the content portion
+				wrapped := wordwrap.String(contentPart, contentWidth)
+				wrappedLines := strings.Split(wrapped, "\n")
+				
+				// Build continuation indent (spaces to align with content column)
+				contIndent := strings.Repeat(" ", prefixWidth)
+				
+				// First line keeps original prefix
+				result = append(result, line[:contentStart]+wrappedLines[0])
+				
+				// Continuation lines get the indent
+				for i := 1; i < len(wrappedLines); i++ {
+					result = append(result, contIndent+wrappedLines[i])
+				}
+				continue
+			}
+		}
+		
+		// Non-table line: simple wrap
+		wrapped := wordwrap.String(line, width)
+		result = append(result, strings.Split(wrapped, "\n")...)
 	}
 
 	return strings.Join(result, "\n")
