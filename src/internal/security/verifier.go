@@ -3,6 +3,7 @@ package security
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/vinayprograms/agent/internal/llm"
@@ -205,32 +206,109 @@ func (v *Verifier) tier1Check(toolName string, args map[string]interface{}) *Tie
 	result.Pass = false
 	result.Reasons = append(result.Reasons, "high_risk_tool:"+toolName)
 
-	// Check 3: Suspicious patterns in untrusted content
+	// Serialize args for pattern matching
+	argsStr := fmt.Sprintf("%v", args)
+
+	// Check 3: Find which block's content is being used in this tool call
+	// This is simple taint tracking - check if args contain data from any block
+	var relevantBlock *Block
 	for _, block := range untrustedBlocks {
+		if v.argsContainBlockData(argsStr, block) {
+			relevantBlock = block
+			break
+		}
+	}
+
+	// Check 4: Suspicious patterns in the relevant block (or all if none found)
+	blocksToCheck := untrustedBlocks
+	if relevantBlock != nil {
+		blocksToCheck = []*Block{relevantBlock}
+		result.Block = relevantBlock
+	}
+
+	for _, block := range blocksToCheck {
 		patterns := DetectSuspiciousPatterns(block.Content)
 		for _, p := range patterns {
 			result.Reasons = append(result.Reasons, "pattern:"+p.Name)
-			result.Block = block
+			if result.Block == nil {
+				result.Block = block
+			}
 		}
 
-		// Check 4: Encoded content
+		// Check 5: Encoded content
 		if HasEncodedContent(block.Content) {
 			result.Reasons = append(result.Reasons, "encoded_content")
-			result.Block = block
+			if result.Block == nil {
+				result.Block = block
+			}
 		}
 	}
 
 	// Check args for suspicious patterns
-	argsStr := fmt.Sprintf("%v", args)
 	if HasSuspiciousPatterns(argsStr) {
 		result.Reasons = append(result.Reasons, "suspicious_args")
 	}
 
+	// If still no block identified, use the most recent one (not the first)
 	if result.Block == nil && len(untrustedBlocks) > 0 {
-		result.Block = untrustedBlocks[0]
+		result.Block = untrustedBlocks[len(untrustedBlocks)-1]
 	}
 
 	return result
+}
+
+// argsContainBlockData checks if tool arguments contain data from a block.
+// This is a simple substring match - full taint tracking would be more sophisticated.
+func (v *Verifier) argsContainBlockData(argsStr string, block *Block) bool {
+	// Extract meaningful substrings from block content to check
+	// For URLs, check if any URL from the block appears in args
+	urls := extractURLs(block.Content)
+	for _, url := range urls {
+		if len(url) > 20 && containsIgnoreCase(argsStr, url) {
+			return true
+		}
+	}
+
+	// For other content, check if significant portions appear
+	// (Skip very short content to avoid false positives)
+	if len(block.Content) > 100 {
+		// Check if a meaningful chunk of block content appears in args
+		// Use a sliding window of 50 chars
+		for i := 0; i+50 <= len(block.Content) && i < 500; i += 25 {
+			chunk := block.Content[i : i+50]
+			if containsIgnoreCase(argsStr, chunk) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// extractURLs extracts URLs from content.
+func extractURLs(content string) []string {
+	var urls []string
+	// Simple URL extraction - look for http:// or https://
+	words := strings.Fields(content)
+	for _, word := range words {
+		// Clean up common JSON/markdown artifacts
+		word = strings.Trim(word, `"',[]{}()`)
+		if strings.HasPrefix(word, "http://") || strings.HasPrefix(word, "https://") {
+			// Truncate at common terminators
+			for _, term := range []string{`"`, `'`, `\u003c`, `>`, ` `, `\n`} {
+				if idx := strings.Index(word, term); idx > 0 {
+					word = word[:idx]
+				}
+			}
+			urls = append(urls, word)
+		}
+	}
+	return urls
+}
+
+// containsIgnoreCase checks if s contains substr (case-insensitive).
+func containsIgnoreCase(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
 
 func (v *Verifier) tier2Check(ctx context.Context, toolName string, args map[string]interface{}, block *Block) (*TriageResult, error) {
