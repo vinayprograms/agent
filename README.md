@@ -403,6 +403,9 @@ NAME workflow-name
 INPUT required_param
 INPUT optional_param DEFAULT "value"
 
+# Global setting - execution is supervised
+SUPERVISED
+
 # Security mode (optional - defaults to "default")
 SECURITY default    # or: SECURITY paranoid
 
@@ -420,9 +423,8 @@ GOAL name "Description" -> summary, recommendations USING agent1, agent2
 GOAL sensitive_task "Handle with care" SUPERVISED           # LLM supervision
 GOAL critical_task "Requires human approval" SUPERVISED HUMAN
 
-# Explicit UNSUPERVISED section (overrides global supervision)
-UNSUPERVISED
-GOAL fast_task "No supervision needed"
+# Mark goal as UNSUPERVISED when SUPERVISED is applied globally.
+GOAL fast_task "No supervision needed" UNSUPERVISED
 
 # Steps execute goals
 RUN step_name USING goal1, goal2, goal3
