@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/wordwrap"
 )
 
 // Pager is an interactive terminal pager for session replay.
@@ -92,11 +93,16 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.ready {
 			m.viewport = viewport.New(msg.Width, msg.Height-headerHeight-footerHeight)
 			m.viewport.YPosition = headerHeight
-			m.viewport.SetContent(m.content)
+			// Wrap content to terminal width
+			wrapped := wrapContent(m.content, msg.Width)
+			m.viewport.SetContent(wrapped)
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height - headerHeight - footerHeight
+			// Re-wrap on resize
+			wrapped := wrapContent(m.content, msg.Width)
+			m.viewport.SetContent(wrapped)
 		}
 	}
 
@@ -140,4 +146,27 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// wrapContent wraps each line to fit within the given width.
+// Preserves ANSI escape codes and handles indentation.
+func wrapContent(content string, width int) string {
+	if width <= 0 {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	var result []string
+
+	for _, line := range lines {
+		if lipgloss.Width(line) <= width {
+			result = append(result, line)
+		} else {
+			// Use wordwrap which handles ANSI codes
+			wrapped := wordwrap.String(line, width)
+			result = append(result, strings.Split(wrapped, "\n")...)
+		}
+	}
+
+	return strings.Join(result, "\n")
 }
