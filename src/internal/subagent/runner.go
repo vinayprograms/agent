@@ -8,14 +8,14 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/openclaw/headless-agent/internal/agentfile"
-	"github.com/openclaw/headless-agent/internal/config"
-	"github.com/openclaw/headless-agent/internal/llm"
-	"github.com/openclaw/headless-agent/internal/mcp"
-	"github.com/openclaw/headless-agent/internal/packaging"
-	"github.com/openclaw/headless-agent/internal/policy"
-	"github.com/openclaw/headless-agent/internal/skills"
-	"github.com/openclaw/headless-agent/internal/tools"
+	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/config"
+	"github.com/vinayprograms/agent/internal/llm"
+	"github.com/vinayprograms/agent/internal/mcp"
+	"github.com/vinayprograms/agent/internal/packaging"
+	"github.com/vinayprograms/agent/internal/policy"
+	"github.com/vinayprograms/agent/internal/skills"
+	"github.com/vinayprograms/agent/internal/tools"
 )
 
 // Runner spawns and manages sub-agents.

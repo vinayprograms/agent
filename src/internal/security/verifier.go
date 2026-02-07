@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/openclaw/headless-agent/internal/llm"
-	"github.com/openclaw/headless-agent/internal/logging"
+	"github.com/vinayprograms/agent/internal/llm"
+	"github.com/vinayprograms/agent/internal/logging"
 )
 
 // Mode represents the security operation mode.

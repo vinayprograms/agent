@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openclaw/headless-agent/internal/checkpoint"
+	"github.com/vinayprograms/agent/internal/checkpoint"
 )
 
 func TestReconcile_NoTriggers(t *testing.T) {

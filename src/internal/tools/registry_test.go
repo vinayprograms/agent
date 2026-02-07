@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openclaw/headless-agent/internal/policy"
+	"github.com/vinayprograms/agent/internal/policy"
 )
 
 // R5.1.1: Register built-in tools at startup

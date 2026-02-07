@@ -1,4 +1,4 @@
-module github.com/openclaw/headless-agent
+module github.com/vinayprograms/agent
 
 go 1.25.5
 

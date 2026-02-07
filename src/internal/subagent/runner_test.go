@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openclaw/headless-agent/internal/agentfile"
-	"github.com/openclaw/headless-agent/internal/llm"
+	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/llm"
 )
 
 func TestNewRunner(t *testing.T) {

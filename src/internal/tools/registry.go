@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openclaw/headless-agent/internal/policy"
+	"github.com/vinayprograms/agent/internal/policy"
 )
 
 // Tool represents an executable tool.

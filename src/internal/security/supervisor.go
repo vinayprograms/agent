@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/openclaw/headless-agent/internal/llm"
+	"github.com/vinayprograms/agent/internal/llm"
 )
 
 // SecuritySupervisor performs Tier 3 full LLM-based security verification.

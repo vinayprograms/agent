@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/openclaw/headless-agent/internal/llm"
+	"github.com/vinayprograms/agent/internal/llm"
 )
 
 // Triage performs Tier 2 cheap model triage on a potentially suspicious action.

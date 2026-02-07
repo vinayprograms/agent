@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openclaw/headless-agent/internal/policy"
-	"github.com/openclaw/headless-agent/internal/tools"
+	"github.com/vinayprograms/agent/internal/policy"
+	"github.com/vinayprograms/agent/internal/tools"
 )
 
 // TestSecurity_PathTraversal tests that path traversal attacks are blocked.

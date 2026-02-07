@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/openclaw/headless-agent/internal/skills"
+	"github.com/vinayprograms/agent/internal/skills"
 )
 
 // LoadOptions configures how Agentfiles are loaded.

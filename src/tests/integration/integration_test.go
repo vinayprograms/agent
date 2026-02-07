@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/openclaw/headless-agent/internal/agentfile"
-	"github.com/openclaw/headless-agent/internal/executor"
-	"github.com/openclaw/headless-agent/internal/llm"
-	"github.com/openclaw/headless-agent/internal/policy"
-	"github.com/openclaw/headless-agent/internal/tools"
+	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/llm"
+	"github.com/vinayprograms/agent/internal/policy"
+	"github.com/vinayprograms/agent/internal/tools"
 )
 
 // TestParserToExecutor tests the full flow from parsing to execution.
