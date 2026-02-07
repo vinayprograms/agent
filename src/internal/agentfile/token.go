@@ -25,6 +25,7 @@ const (
 	TokenSUPERVISED
 	TokenHUMAN
 	TokenUNSUPERVISED
+	TokenSECURITY
 
 	// Literals
 	TokenIdent   // identifier
@@ -75,6 +76,8 @@ func (t TokenType) String() string {
 		return "HUMAN"
 	case TokenUNSUPERVISED:
 		return "UNSUPERVISED"
+	case TokenSECURITY:
+		return "SECURITY"
 	case TokenIdent:
 		return "IDENT"
 	case TokenString:
@@ -118,6 +121,7 @@ var keywords = map[string]TokenType{
 	"SUPERVISED":   TokenSUPERVISED,
 	"HUMAN":        TokenHUMAN,
 	"UNSUPERVISED": TokenUNSUPERVISED,
+	"SECURITY":     TokenSECURITY,
 }
 
 // LookupIdent checks if an identifier is a keyword.

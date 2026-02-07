@@ -7,14 +7,15 @@ type Node interface {
 
 // Workflow represents the root AST node of an Agentfile.
 type Workflow struct {
-	Name       string
-	BaseDir    string // directory containing the Agentfile
-	Supervised bool   // global supervision enabled (SUPERVISED at top)
-	HumanOnly  bool   // global human-only mode (SUPERVISED HUMAN at top)
-	Inputs     []Input
-	Agents     []Agent
-	Goals      []Goal
-	Steps      []Step
+	Name         string
+	BaseDir      string // directory containing the Agentfile
+	Supervised   bool   // global supervision enabled (SUPERVISED at top)
+	HumanOnly    bool   // global human-only mode (SUPERVISED HUMAN at top)
+	SecurityMode string // "default" or "paranoid" (SECURITY directive)
+	Inputs       []Input
+	Agents       []Agent
+	Goals        []Goal
+	Steps        []Step
 }
 
 func (w *Workflow) node() {}

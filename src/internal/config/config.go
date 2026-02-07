@@ -20,6 +20,7 @@ type Config struct {
 	Session   SessionConfig         `toml:"session"`
 	MCP       MCPConfig             `toml:"mcp"`        // MCP tool servers
 	Skills    SkillsConfig          `toml:"skills"`     // Agent Skills
+	Security  SecurityConfig        `toml:"security"`   // Security framework
 }
 
 // AgentConfig contains agent identification settings.
@@ -80,6 +81,13 @@ type MCPServerConfig struct {
 // SkillsConfig contains Agent Skills configuration.
 type SkillsConfig struct {
 	Paths []string `toml:"paths"` // Directories to search for skills
+}
+
+// SecurityConfig contains security framework configuration.
+type SecurityConfig struct {
+	Mode       string `toml:"mode"`        // "default" or "paranoid"
+	UserTrust  string `toml:"user_trust"`  // Trust level for user messages: "trusted", "vetted", "untrusted"
+	TriageLLM  string `toml:"triage_llm"`  // Profile name for Tier 2 triage (cheap/fast model)
 }
 
 // New creates a new config with defaults.

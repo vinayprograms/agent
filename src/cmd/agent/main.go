@@ -17,6 +17,7 @@ import (
 	"github.com/openclaw/headless-agent/internal/llm"
 	"github.com/openclaw/headless-agent/internal/packaging"
 	"github.com/openclaw/headless-agent/internal/policy"
+	"github.com/openclaw/headless-agent/internal/security"
 	"github.com/openclaw/headless-agent/internal/session"
 	"github.com/openclaw/headless-agent/internal/setup"
 	"github.com/openclaw/headless-agent/internal/telemetry"
@@ -355,6 +356,49 @@ func runWorkflow(args []string) {
 
 	// Create executor
 	exec := executor.NewExecutor(wf, provider, registry, pol)
+
+	// Set up security verifier if configured or if workflow has security mode
+	securityMode := security.ModeDefault
+	if cfg.Security.Mode == "paranoid" || wf.SecurityMode == "paranoid" {
+		securityMode = security.ModeParanoid
+	}
+	
+	// Determine user trust level
+	userTrust := security.TrustUntrusted // Default to untrusted
+	switch cfg.Security.UserTrust {
+	case "trusted":
+		userTrust = security.TrustTrusted
+	case "vetted":
+		userTrust = security.TrustVetted
+	}
+	
+	// Create triage provider for Tier 2 (use small_llm if configured, otherwise skip T2)
+	var triageProvider llm.Provider
+	if cfg.Security.TriageLLM != "" {
+		triageCfg := cfg.GetProfile(cfg.Security.TriageLLM)
+		triageProviderName := triageCfg.Provider
+		if triageProviderName == "" {
+			triageProviderName = llm.InferProviderFromModel(triageCfg.Model)
+		}
+		triageProvider, _ = llm.NewFantasyProvider(llm.FantasyConfig{
+			Provider:  triageProviderName,
+			Model:     triageCfg.Model,
+			APIKey:    globalCreds.GetAPIKey(triageProviderName),
+			MaxTokens: triageCfg.MaxTokens,
+		})
+	} else if cfg.SmallLLM.Model != "" {
+		// Fall back to small_llm for triage
+		smallProviderName := cfg.SmallLLM.Provider
+		if smallProviderName == "" {
+			smallProviderName = llm.InferProviderFromModel(cfg.SmallLLM.Model)
+		}
+		triageProvider, _ = llm.NewFantasyProvider(llm.FantasyConfig{
+			Provider:  smallProviderName,
+			Model:     cfg.SmallLLM.Model,
+			APIKey:    globalCreds.GetAPIKey(smallProviderName),
+			MaxTokens: cfg.SmallLLM.MaxTokens,
+		})
+	}
 	
 	// Set up sub-agent callbacks
 	exec.OnSubAgentStart = func(name string, input map[string]string) {
@@ -393,6 +437,21 @@ func runWorkflow(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating session: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Create and attach security verifier
+	securityVerifier, err := security.NewVerifier(security.Config{
+		Mode:               securityMode,
+		UserTrust:          userTrust,
+		TriageProvider:     triageProvider,
+		SupervisorProvider: provider, // Use main provider for Tier 3 supervision
+	}, sess.ID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to create security verifier: %v\n", err)
+	} else {
+		exec.SetSecurityVerifier(securityVerifier)
+		defer securityVerifier.Destroy()
+		fmt.Fprintf(os.Stderr, "🔒 Security: mode=%s, user_trust=%s\n", securityMode, userTrust)
 	}
 
 	// Connect session to executor for detailed logging
