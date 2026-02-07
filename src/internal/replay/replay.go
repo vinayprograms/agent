@@ -357,25 +357,30 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	case session.EventPhaseSupervise:
 		verdict := "CONTINUE"
-		supervisorType := "EXECUTION"
+		supervisorType := "execution"
 		if event.Meta != nil {
 			if event.Meta.Verdict != "" {
 				verdict = event.Meta.Verdict
 			}
 			if event.Meta.SupervisorType != "" {
-				supervisorType = strings.ToUpper(event.Meta.SupervisorType)
+				supervisorType = strings.ToLower(event.Meta.SupervisorType)
 			}
 		}
 		verdictStyled := r.verdictStyle(verdict).Render(verdict)
-		// Use appropriate style based on supervisor type
-		var supervStyle lipgloss.Style
-		if supervisorType == "SECURITY" {
-			supervStyle = securitySupervisorStyle
+		
+		// Format based on supervisor type
+		var label string
+		var style lipgloss.Style
+		if supervisorType == "security" {
+			label = "SECURITY: supervisor"
+			style = securitySupervisorStyle
 		} else {
-			supervStyle = execSupervisorStyle
+			label = "SUPERVISOR"
+			style = execSupervisorStyle
 		}
+		
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
-			supervStyle.Render(fmt.Sprintf("SUPERVISOR [%s]:", supervisorType)),
+			style.Render(label),
 			verdictStyled,
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 		if event.Meta != nil {
@@ -394,10 +399,13 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	case session.EventSecurityBlock:
 		if event.Meta != nil {
-			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
-				securityStyle.Render("UNTRUSTED CONTENT:"),
+			// Show what tool/content this relates to
+			context := r.getSecurityContext(event)
+			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s%s\n", seqNum, ts,
+				securityStyle.Render("SECURITY: untrusted content"),
 				valueStyle.Render(event.Meta.BlockID),
-				dimStyle.Render(fmt.Sprintf("(trust=%s, entropy=%.2f)", event.Meta.Trust, event.Meta.Entropy)))
+				dimStyle.Render(fmt.Sprintf("(entropy=%.2f)", event.Meta.Entropy)),
+				context)
 		}
 
 	case session.EventSecurityStatic:
@@ -405,10 +413,11 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		if event.Meta != nil && !event.Meta.Pass {
 			status = warnStyle.Render("flagged")
 		}
-		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
-			securityStyle.Render("STATIC CHECK:"),
-			status)
-		if r.verbose && event.Meta != nil && len(event.Meta.Flags) > 0 {
+		context := r.getSecurityContext(event)
+		fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
+			securityStyle.Render("SECURITY: static check"),
+			status, context)
+		if event.Meta != nil && len(event.Meta.Flags) > 0 {
 			fmt.Fprintf(r.output, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("flags: %v", event.Meta.Flags)))
 		}
@@ -422,9 +431,10 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		if event.Meta != nil && event.Meta.Model != "" {
 			model = dimStyle.Render(fmt.Sprintf(" [%s]", event.Meta.Model))
 		}
-		fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
-			securityStyle.Render("TRIAGE:"),
-			status, model)
+		context := r.getSecurityContext(event)
+		fmt.Fprintf(r.output, "%s │ %s │ %s %s%s%s\n", seqNum, ts,
+			securityStyle.Render("SECURITY: triage"),
+			status, model, context)
 		if r.verbose && event.Meta != nil {
 			r.printLLMDetails(event.Meta)
 		}
@@ -444,9 +454,10 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		if event.Meta != nil && event.Meta.Model != "" {
 			model = dimStyle.Render(fmt.Sprintf(" [%s]", event.Meta.Model))
 		}
-		fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
-			securitySupervisorStyle.Render("SUPERVISOR [SECURITY]:"),
-			actionStyled, model)
+		context := r.getSecurityContext(event)
+		fmt.Fprintf(r.output, "%s │ %s │ %s %s%s%s\n", seqNum, ts,
+			securitySupervisorStyle.Render("SECURITY: supervisor"),
+			actionStyled, model, context)
 		if event.Meta != nil && event.Meta.Reason != "" {
 			fmt.Fprintf(r.output, "      │          │   %s\n",
 				dimStyle.Render(event.Meta.Reason))
@@ -467,9 +478,10 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			if path != "" {
 				pathStr = dimStyle.Render(fmt.Sprintf(" [%s]", path))
 			}
-			fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
-				securityStyle.Render("DECISION:"),
-				actionDisplay, pathStr)
+			context := r.getSecurityContext(event)
+			fmt.Fprintf(r.output, "%s │ %s │ %s %s%s%s\n", seqNum, ts,
+				securityStyle.Render("SECURITY: decision"),
+				actionDisplay, pathStr, context)
 			if event.Meta.Reason != "" {
 				fmt.Fprintf(r.output, "      │          │   %s\n",
 					dimStyle.Render(event.Meta.Reason))
@@ -500,6 +512,39 @@ func (r *Replayer) verdictStyle(verdict string) lipgloss.Style {
 	default:
 		return valueStyle
 	}
+}
+
+// getSecurityContext returns a formatted string showing what the security check relates to.
+func (r *Replayer) getSecurityContext(event *session.Event) string {
+	// Try to find context from various fields
+	var context string
+	
+	// Check tool name first (most specific)
+	if event.Tool != "" {
+		context = event.Tool
+	} else if event.Meta != nil && event.Meta.Source != "" {
+		// Source might be "tool:web_fetch" or similar
+		context = event.Meta.Source
+	} else if event.CorrelationID != "" {
+		// Use correlation ID (might be tool call ID)
+		// Truncate if it looks like a UUID
+		corr := event.CorrelationID
+		if len(corr) > 12 && strings.Contains(corr, "-") {
+			corr = corr[:8] + "..."
+		}
+		context = corr
+	}
+	
+	if context == "" {
+		return ""
+	}
+	
+	// Truncate long contexts
+	if len(context) > 25 {
+		context = context[:22] + "..."
+	}
+	
+	return dimStyle.Render(fmt.Sprintf(" ← %s", context))
 }
 
 // actionStyle returns style for security actions.
