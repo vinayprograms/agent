@@ -970,6 +970,7 @@ func runSetup() {
 // replaySession replays a session from a JSON file for forensic analysis.
 func replaySession(args []string) {
 	verbose := false
+	noInteractive := false
 	var sessionPath string
 
 	// Parse args
@@ -977,22 +978,43 @@ func replaySession(args []string) {
 		switch {
 		case args[i] == "-v" || args[i] == "--verbose":
 			verbose = true
+		case args[i] == "--no-pager":
+			noInteractive = true
 		case !strings.HasPrefix(args[i], "-"):
 			sessionPath = args[i]
 		}
 	}
 
 	if sessionPath == "" {
-		fmt.Fprintf(os.Stderr, "Usage: agent replay [-v|--verbose] <session.json>\n")
+		fmt.Fprintf(os.Stderr, "Usage: agent replay [-v|--verbose] [--no-pager] <session.json>\n")
 		fmt.Fprintf(os.Stderr, "\nReplays a session for forensic analysis.\n")
 		fmt.Fprintf(os.Stderr, "\nOptions:\n")
 		fmt.Fprintf(os.Stderr, "  -v, --verbose    Show full message and result content\n")
+		fmt.Fprintf(os.Stderr, "  --no-pager       Disable interactive pager (for piping)\n")
 		os.Exit(1)
 	}
 
 	r := replay.New(os.Stdout, verbose)
-	if err := r.ReplayFile(sessionPath); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+
+	// Use interactive pager when stdout is a TTY and not disabled
+	if !noInteractive && isTerminal(os.Stdout) {
+		if err := r.ReplayFileInteractive(sessionPath); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		if err := r.ReplayFile(sessionPath); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	}
+}
+
+// isTerminal checks if the given file is a terminal.
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }

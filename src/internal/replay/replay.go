@@ -116,6 +116,40 @@ func (r *Replayer) ReplayFile(path string) error {
 	return r.Replay(&sess)
 }
 
+// ReplayFileInteractive loads and replays with interactive pager.
+func (r *Replayer) ReplayFileInteractive(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read session file: %w", err)
+	}
+
+	var sess session.Session
+	if err := json.Unmarshal(data, &sess); err != nil {
+		return fmt.Errorf("failed to parse session: %w", err)
+	}
+
+	return r.ReplayInteractive(&sess)
+}
+
+// ReplayInteractive outputs a formatted timeline using an interactive pager.
+func (r *Replayer) ReplayInteractive(sess *session.Session) error {
+	// Render to string buffer first
+	var buf strings.Builder
+	oldOutput := r.output
+	r.output = &buf
+	
+	if err := r.Replay(sess); err != nil {
+		r.output = oldOutput
+		return err
+	}
+	r.output = oldOutput
+
+	// Launch pager
+	title := fmt.Sprintf("Session: %s", sess.ID)
+	p := NewPager(title, buf.String())
+	return p.Run(buf.String())
+}
+
 // Replay outputs a formatted timeline of session events.
 func (r *Replayer) Replay(sess *session.Session) error {
 	// Header
