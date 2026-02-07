@@ -378,7 +378,7 @@ func (e *Executor) logPhaseCommit(goal, commitment, confidence string, durationM
 		Goal:       goal,
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
-		Metadata: &session.EventMetadata{
+		Meta: &session.EventMeta{
 			Phase:      "COMMIT",
 			Commitment: commitment,
 			Confidence: confidence,
@@ -398,7 +398,7 @@ func (e *Executor) logPhaseExecute(goal, result string, durationMs int64) {
 		Goal:       goal,
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
-		Metadata: &session.EventMetadata{
+		Meta: &session.EventMeta{
 			Phase:  "EXECUTE",
 			Result: result,
 		},
@@ -417,7 +417,7 @@ func (e *Executor) logPhaseReconcile(goal, step string, triggers []string, escal
 		Step:       step,
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
-		Metadata: &session.EventMetadata{
+		Meta: &session.EventMeta{
 			Phase:    "RECONCILE",
 			Triggers: triggers,
 			Escalate: escalate,
@@ -438,7 +438,7 @@ func (e *Executor) logPhaseSupervise(goal, step, verdict, guidance string, human
 		Step:       step,
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
-		Metadata: &session.EventMetadata{
+		Meta: &session.EventMeta{
 			Phase:         "SUPERVISE",
 			Verdict:       verdict,
 			Guidance:      guidance,
@@ -459,7 +459,7 @@ func (e *Executor) logCheckpoint(checkpointType, goal, step, checkpointID string
 		Goal:      goal,
 		Step:      step,
 		Timestamp: time.Now(),
-		Metadata: &session.EventMetadata{
+		Meta: &session.EventMeta{
 			CheckpointType: checkpointType,
 			CheckpointID:   checkpointID,
 		},
@@ -475,7 +475,7 @@ func (e *Executor) logSecurityBlock(blockID, trust, blockType, source, xmlBlock 
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:      session.EventSecurityBlock,
 		Timestamp: time.Now(),
-		Metadata: &session.EventMetadata{
+		Meta: &session.EventMeta{
 			BlockID:   blockID,
 			Trust:     trust,
 			BlockType: blockType,
@@ -496,7 +496,7 @@ func (e *Executor) logSecurityTier1(tool, blockID string, pass bool, flags []str
 		Type:      session.EventSecurityTier1,
 		Tool:      tool,
 		Timestamp: time.Now(),
-		Metadata: &session.EventMetadata{
+		Meta: &session.EventMeta{
 			Tier:    1,
 			BlockID: blockID,
 			Pass:    pass,
@@ -516,7 +516,7 @@ func (e *Executor) logSecurityTier2(tool, blockID string, suspicious bool, model
 		Tool:       tool,
 		DurationMs: latencyMs,
 		Timestamp:  time.Now(),
-		Metadata: &session.EventMetadata{
+		Meta: &session.EventMeta{
 			Tier:       2,
 			BlockID:    blockID,
 			Suspicious: suspicious,
@@ -537,7 +537,7 @@ func (e *Executor) logSecurityTier3(tool, blockID, verdict, reason, model string
 		Tool:       tool,
 		DurationMs: latencyMs,
 		Timestamp:  time.Now(),
-		Metadata: &session.EventMetadata{
+		Meta: &session.EventMeta{
 			Tier:      3,
 			BlockID:   blockID,
 			Verdict:   verdict,
@@ -558,7 +558,7 @@ func (e *Executor) logSecurityDecision(tool, action, reason, trust, tiers string
 		Type:      session.EventSecurityDecision,
 		Tool:      tool,
 		Timestamp: time.Now(),
-		Metadata: &session.EventMetadata{
+		Meta: &session.EventMeta{
 			Action: action,
 			Reason: reason,
 			Trust:  trust,

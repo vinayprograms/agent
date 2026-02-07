@@ -17,6 +17,7 @@ import (
 	"github.com/vinayprograms/agent/internal/llm"
 	"github.com/vinayprograms/agent/internal/packaging"
 	"github.com/vinayprograms/agent/internal/policy"
+	"github.com/vinayprograms/agent/internal/replay"
 	"github.com/vinayprograms/agent/internal/security"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/setup"
@@ -76,6 +77,8 @@ func main() {
 		generateKeys(args)
 	case "setup":
 		runSetup()
+	case "replay":
+		replaySession(args)
 	case "version":
 		fmt.Printf("agent version %s (commit: %s, built: %s)\n", version, commit, buildTime)
 	case "help", "-h", "--help":
@@ -115,6 +118,7 @@ Commands:
   install <pkg>         Install a package
   keygen                Generate signing key pair
   setup                 Interactive setup wizard
+  replay <session.json> Replay session for forensic analysis
   version               Show version
   help                  Show this help
 
@@ -138,6 +142,9 @@ Install Options:
   --no-deps             Skip dependency installation
   --dry-run             Show what would be installed
   --key <key.pub>       Verify with public key
+
+Replay Options:
+  -v, --verbose         Show full message and result content
 
 Keygen Options:
   --output, -o <path>   Output path prefix (creates .pem and .pub)`)
@@ -955,6 +962,36 @@ func generateKeys(args []string) {
 
 func runSetup() {
 	if err := setup.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// replaySession replays a session from a JSON file for forensic analysis.
+func replaySession(args []string) {
+	verbose := false
+	var sessionPath string
+
+	// Parse args
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "-v" || args[i] == "--verbose":
+			verbose = true
+		case !strings.HasPrefix(args[i], "-"):
+			sessionPath = args[i]
+		}
+	}
+
+	if sessionPath == "" {
+		fmt.Fprintf(os.Stderr, "Usage: agent replay [-v|--verbose] <session.json>\n")
+		fmt.Fprintf(os.Stderr, "\nReplays a session for forensic analysis.\n")
+		fmt.Fprintf(os.Stderr, "\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "  -v, --verbose    Show full message and result content\n")
+		os.Exit(1)
+	}
+
+	r := replay.New(os.Stdout, verbose)
+	if err := r.ReplayFile(sessionPath); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

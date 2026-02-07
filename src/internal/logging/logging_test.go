@@ -81,6 +81,7 @@ func TestLogger_ToolCall(t *testing.T) {
 	var buf bytes.Buffer
 	logger := New()
 	logger.SetOutput(&buf)
+	logger.SetLevel(LevelDebug) // ToolCall logs at Debug level
 
 	logger.ToolCall("read", map[string]interface{}{"path": "/tmp/test"})
 

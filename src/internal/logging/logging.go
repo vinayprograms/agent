@@ -1,4 +1,6 @@
-// Package logging provides structured, standards-compliant logging.
+// Package logging provides real-time log output derived from session events.
+// The session JSON is THE forensic record. This package provides optional
+// real-time console output for monitoring, derived from session events.
 package logging
 
 import (
@@ -21,6 +23,7 @@ const (
 )
 
 // Logger provides structured logging to stdout.
+// This is for real-time monitoring only - forensic analysis uses session JSON.
 type Logger struct {
 	mu        sync.Mutex
 	output    io.Writer
@@ -132,15 +135,18 @@ func (l *Logger) log(level Level, msg string, fields ...map[string]interface{}) 
 	l.output.Write([]byte(line))
 }
 
-// ToolCall logs a tool invocation.
+// --- Event-derived logging methods ---
+// These are called by the executor after adding events to session.
+// They provide real-time console output without duplicating data.
+
+// ToolCall logs a tool invocation (real-time output).
 func (l *Logger) ToolCall(tool string, args map[string]interface{}) {
-	// Don't log args to avoid PII - just log tool name
-	l.Info("tool_call", map[string]interface{}{
+	l.Debug("tool_call", map[string]interface{}{
 		"tool": tool,
 	})
 }
 
-// ToolResult logs a tool result.
+// ToolResult logs a tool result (real-time output).
 func (l *Logger) ToolResult(tool string, duration time.Duration, err error) {
 	fields := map[string]interface{}{
 		"tool":     tool,
@@ -152,15 +158,6 @@ func (l *Logger) ToolResult(tool string, duration time.Duration, err error) {
 	} else {
 		l.Debug("tool_result", fields)
 	}
-}
-
-// SecurityWarning logs a security-related warning.
-func (l *Logger) SecurityWarning(msg string, fields map[string]interface{}) {
-	if fields == nil {
-		fields = make(map[string]interface{})
-	}
-	fields["security"] = true
-	l.Warn(msg, fields)
 }
 
 // GoalStart logs the start of a goal execution.
@@ -194,42 +191,45 @@ func (l *Logger) ExecutionComplete(workflow string, duration time.Duration, stat
 	})
 }
 
-// --- Forensic Logging for Supervision ---
-
-// PhaseStart logs the start of an execution phase (COMMIT, EXECUTE, RECONCILE, SUPERVISE).
+// PhaseStart logs the start of an execution phase.
 func (l *Logger) PhaseStart(phase, goal, step string) {
-	l.Info("phase_start", map[string]interface{}{
+	l.Debug("phase_start", map[string]interface{}{
 		"phase": phase,
 		"goal":  goal,
-		"step":  step,
 	})
 }
 
 // PhaseComplete logs the completion of an execution phase.
 func (l *Logger) PhaseComplete(phase, goal, step string, duration time.Duration, result string) {
-	l.Info("phase_complete", map[string]interface{}{
+	l.Debug("phase_complete", map[string]interface{}{
 		"phase":    phase,
 		"goal":     goal,
-		"step":     step,
 		"duration": duration.String(),
 		"result":   result,
 	})
 }
 
-// CommitPhase logs the COMMIT phase details.
-func (l *Logger) CommitPhase(goal, step string, commitment string) {
-	l.Info("commit_phase", map[string]interface{}{
-		"phase":      "COMMIT",
-		"goal":       goal,
-		"step":       step,
-		"commitment": commitment,
+// SecurityWarning logs a security-related warning.
+func (l *Logger) SecurityWarning(msg string, fields map[string]interface{}) {
+	if fields == nil {
+		fields = make(map[string]interface{})
+	}
+	fields["security"] = true
+	l.Warn(msg, fields)
+}
+
+// SecurityDecision logs a security decision (real-time output).
+func (l *Logger) SecurityDecision(tool, action, reason string) {
+	l.Debug("security", map[string]interface{}{
+		"tool":   tool,
+		"action": action,
+		"reason": reason,
 	})
 }
 
 // ReconcilePhase logs the RECONCILE phase details.
 func (l *Logger) ReconcilePhase(goal, step string, triggers []string, escalate bool) {
-	l.Info("reconcile_phase", map[string]interface{}{
-		"phase":    "RECONCILE",
+	l.Debug("reconcile_phase", map[string]interface{}{
 		"goal":     goal,
 		"step":     step,
 		"triggers": strings.Join(triggers, ","),
@@ -239,8 +239,7 @@ func (l *Logger) ReconcilePhase(goal, step string, triggers []string, escalate b
 
 // SupervisePhase logs the SUPERVISE phase details.
 func (l *Logger) SupervisePhase(goal, step string, verdict, reason string) {
-	l.Info("supervise_phase", map[string]interface{}{
-		"phase":   "SUPERVISE",
+	l.Debug("supervise_phase", map[string]interface{}{
 		"goal":    goal,
 		"step":    step,
 		"verdict": verdict,
@@ -248,7 +247,7 @@ func (l *Logger) SupervisePhase(goal, step string, verdict, reason string) {
 	})
 }
 
-// SupervisorVerdict logs supervisor decisions for forensic analysis.
+// SupervisorVerdict logs supervisor decisions.
 func (l *Logger) SupervisorVerdict(goal, step, verdict, guidance string, humanRequired bool) {
 	l.Info("supervisor_verdict", map[string]interface{}{
 		"goal":           goal,
@@ -256,85 +255,5 @@ func (l *Logger) SupervisorVerdict(goal, step, verdict, guidance string, humanRe
 		"verdict":        verdict,
 		"guidance":       guidance,
 		"human_required": humanRequired,
-	})
-}
-
-// --- Forensic Logging for Security ---
-
-// SecurityBlockAdded logs when untrusted content is registered.
-func (l *Logger) SecurityBlockAdded(blockID, trust, blockType, source string, entropy float64) {
-	l.Info("security_block_added", map[string]interface{}{
-		"block_id":   blockID,
-		"trust":      trust,
-		"type":       blockType,
-		"source":     source,
-		"entropy":    fmt.Sprintf("%.2f", entropy),
-		"security":   true,
-	})
-}
-
-// SecurityTier1 logs Tier 1 deterministic check results.
-func (l *Logger) SecurityTier1(blockID string, pass bool, flags []string) {
-	l.Info("security_tier1", map[string]interface{}{
-		"block_id": blockID,
-		"pass":     pass,
-		"flags":    strings.Join(flags, ","),
-		"security": true,
-	})
-}
-
-// SecurityTier2 logs Tier 2 triage results.
-func (l *Logger) SecurityTier2(blockID string, escalate bool, confidence string, model string, latencyMs int64) {
-	l.Info("security_tier2", map[string]interface{}{
-		"block_id":   blockID,
-		"escalate":   escalate,
-		"confidence": confidence,
-		"model":      model,
-		"latency_ms": latencyMs,
-		"security":   true,
-	})
-}
-
-// SecurityTier3 logs Tier 3 supervisor verdict.
-func (l *Logger) SecurityTier3(blockID string, verdict, reason, model string, latencyMs int64) {
-	l.Info("security_tier3", map[string]interface{}{
-		"block_id":   blockID,
-		"verdict":    verdict,
-		"reason":     reason,
-		"model":      model,
-		"latency_ms": latencyMs,
-		"security":   true,
-	})
-}
-
-// SecurityDecision logs a final security decision.
-func (l *Logger) SecurityDecision(tool, action, reason string, trust string, tiers string) {
-	l.Info("security_decision", map[string]interface{}{
-		"tool":     tool,
-		"action":   action,
-		"reason":   reason,
-		"trust":    trust,
-		"tiers":    tiers,
-		"security": true,
-	})
-}
-
-// SecurityDeny logs when a tool call is denied.
-func (l *Logger) SecurityDeny(tool, reason string, tier int) {
-	l.Warn("security_deny", map[string]interface{}{
-		"tool":     tool,
-		"reason":   reason,
-		"tier":     tier,
-		"security": true,
-	})
-}
-
-// CheckpointSaved logs when a checkpoint is saved.
-func (l *Logger) CheckpointSaved(checkpointType, goal, step, checkpointID string) {
-	l.Debug("checkpoint_saved", map[string]interface{}{
-		"type":          checkpointType,
-		"goal":          goal,
-		"step":          step,
-		"checkpoint_id": checkpointID,
 	})
 }

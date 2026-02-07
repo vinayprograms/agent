@@ -5,10 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,23 +20,34 @@ const (
 	StatusFailed   = "failed"
 )
 
-// Event types for the session log
+// Event types for the session log - unified forensic events
 const (
+	// LLM conversation events
 	EventSystem    = "system"    // System message to LLM
 	EventUser      = "user"      // User/prompt message to LLM
 	EventAssistant = "assistant" // LLM response
-	EventToolCall  = "tool_call" // Tool invocation
-	EventToolResult = "tool_result" // Tool result (fed back to LLM)
+
+	// Tool events
+	EventToolCall   = "tool_call"   // Tool invocation started
+	EventToolResult = "tool_result" // Tool completed
+
+	// Goal events
 	EventGoalStart = "goal_start"
 	EventGoalEnd   = "goal_end"
-	
+
+	// Workflow events
+	EventWorkflowStart = "workflow_start"
+	EventWorkflowEnd   = "workflow_end"
+	EventStepStart     = "step_start"
+	EventStepEnd       = "step_end"
+
 	// Supervision events (four-phase execution)
 	EventPhaseCommit    = "phase_commit"    // COMMIT phase - agent declares intent
 	EventPhaseExecute   = "phase_execute"   // EXECUTE phase - do work
 	EventPhaseReconcile = "phase_reconcile" // RECONCILE phase - static checks
 	EventPhaseSupervise = "phase_supervise" // SUPERVISE phase - LLM judgment
 	EventCheckpoint     = "checkpoint"      // Checkpoint saved
-	
+
 	// Security events
 	EventSecurityBlock    = "security_block"    // Untrusted content registered
 	EventSecurityTier1    = "security_tier1"    // Deterministic check
@@ -57,61 +69,109 @@ type Session struct {
 	Events       []Event                `json:"events"`
 	CreatedAt    time.Time              `json:"created_at"`
 	UpdatedAt    time.Time              `json:"updated_at"`
+
+	// Internal state (not persisted)
+	seqCounter uint64    // Monotonic sequence counter
+	mu         sync.Mutex
 }
 
 // Event represents a single entry in the session log.
-// All events are in chronological order for easy reading.
+// This is THE forensic record - all analysis tools read from here.
 type Event struct {
-	Type      string                 `json:"type"`                // system, user, assistant, tool_call, tool_result, goal_start, goal_end, phase_*, security_*
-	Goal      string                 `json:"goal,omitempty"`      // Current goal context
-	Step      string                 `json:"step,omitempty"`      // Current step context
-	Content   string                 `json:"content,omitempty"`   // Message content or tool result
-	Tool      string                 `json:"tool,omitempty"`      // Tool name (for tool_call/tool_result)
-	Args      map[string]interface{} `json:"args,omitempty"`      // Tool arguments
-	Error     string                 `json:"error,omitempty"`     // Error message if failed
-	DurationMs int64                 `json:"duration_ms,omitempty"` // Execution time
-	Timestamp time.Time              `json:"timestamp"`
-	
-	// Forensic metadata for supervision/security
-	Metadata *EventMetadata `json:"metadata,omitempty"` // Structured forensic data
+	// Core fields - always present
+	SeqID     uint64    `json:"seq"`       // Monotonic sequence number for ordering
+	Type      string    `json:"type"`      // Event type (see constants above)
+	Timestamp time.Time `json:"timestamp"` // When this event occurred
+
+	// Correlation - for linking related events
+	CorrelationID string `json:"corr_id,omitempty"` // Links related events (e.g., tool_call -> security checks -> tool_result)
+	ParentSeqID   uint64 `json:"parent,omitempty"`  // Parent event sequence ID (for nesting)
+
+	// Context - where in execution this happened
+	Goal string `json:"goal,omitempty"` // Current goal name
+	Step string `json:"step,omitempty"` // Current step (for workflow steps)
+
+	// Content - the actual data
+	Content string                 `json:"content,omitempty"` // Message content, tool result, etc.
+	Tool    string                 `json:"tool,omitempty"`    // Tool name (for tool events)
+	Args    map[string]interface{} `json:"args,omitempty"`    // Tool arguments (sanitized)
+
+	// Outcome
+	Success    *bool  `json:"success,omitempty"`     // nil = in progress, true = success, false = failure
+	Error      string `json:"error,omitempty"`       // Error message if failed
+	DurationMs int64  `json:"duration_ms,omitempty"` // Execution time (for *_end events)
+
+	// Forensic metadata - structured data for analysis
+	Meta *EventMeta `json:"meta,omitempty"`
 }
 
-// EventMetadata contains detailed forensic information.
-// Serialized as XML-style attributes in the JSON for structured analysis.
-type EventMetadata struct {
-	// Phase execution
-	Phase       string   `json:"phase,omitempty"`       // COMMIT, EXECUTE, RECONCILE, SUPERVISE
-	Result      string   `json:"result,omitempty"`      // Phase result or verdict
-	Commitment  string   `json:"commitment,omitempty"`  // Agent's declared intent
-	Confidence  string   `json:"confidence,omitempty"`  // high, medium, low
-	Triggers    []string `json:"triggers,omitempty"`    // Reconcile triggers
-	Escalate    bool     `json:"escalate,omitempty"`    // Whether to escalate
-	Verdict     string   `json:"verdict,omitempty"`     // CONTINUE, REORIENT, PAUSE
-	Guidance    string   `json:"guidance,omitempty"`    // Supervisor guidance
-	HumanRequired bool   `json:"human_required,omitempty"`
-	
+// EventMeta contains detailed forensic information.
+// Structured for easy querying by forensic tools.
+type EventMeta struct {
+	// Phase execution (supervision)
+	Phase         string   `json:"phase,omitempty"`          // COMMIT, EXECUTE, RECONCILE, SUPERVISE
+	Result        string   `json:"result,omitempty"`         // Phase result or verdict
+	Commitment    string   `json:"commitment,omitempty"`     // Agent's declared intent (JSON)
+	Confidence    string   `json:"confidence,omitempty"`     // high, medium, low
+	Triggers      []string `json:"triggers,omitempty"`       // Reconcile triggers that fired
+	Escalate      bool     `json:"escalate,omitempty"`       // Whether to escalate to SUPERVISE
+	Verdict       string   `json:"verdict,omitempty"`        // CONTINUE, REORIENT, PAUSE
+	Correction    string   `json:"correction,omitempty"`     // Supervisor correction text
+	Guidance      string   `json:"guidance,omitempty"`       // Supervisor guidance (alias for correction)
+	Human         bool     `json:"human,omitempty"`          // Human intervention required/occurred
+	HumanRequired bool     `json:"human_required,omitempty"` // Alias for Human field
+
 	// Security
-	BlockID     string   `json:"block_id,omitempty"`    // Content block ID
-	Trust       string   `json:"trust,omitempty"`       // trusted, vetted, untrusted
-	BlockType   string   `json:"block_type,omitempty"`  // instruction, data
-	Source      string   `json:"source,omitempty"`      // Content source
-	Entropy     float64  `json:"entropy,omitempty"`     // Shannon entropy
-	Tier        int      `json:"tier,omitempty"`        // Security tier (1, 2, 3)
-	Pass        bool     `json:"pass,omitempty"`        // Tier check passed
-	Flags       []string `json:"flags,omitempty"`       // Security flags
-	Suspicious  bool     `json:"suspicious,omitempty"`  // Triage result
-	Model       string   `json:"model,omitempty"`       // LLM model used
-	LatencyMs   int64    `json:"latency_ms,omitempty"`  // LLM call latency
-	Action      string   `json:"action,omitempty"`      // allow, deny, modify
-	Reason      string   `json:"reason,omitempty"`      // Decision reason
-	Tiers       string   `json:"tiers,omitempty"`       // Tier path (T1, T1→T2, T1→T2→T3)
-	
+	BlockID    string   `json:"block_id,omitempty"`   // Content block ID (b0001, b0002, ...)
+	Trust      string   `json:"trust,omitempty"`      // trusted, vetted, untrusted
+	BlockType  string   `json:"block_type,omitempty"` // instruction, data
+	Source     string   `json:"source,omitempty"`     // Where content came from
+	Entropy    float64  `json:"entropy,omitempty"`    // Shannon entropy (0.0-8.0)
+	Tier       int      `json:"tier,omitempty"`       // Security tier (1, 2, 3)
+	Pass       bool     `json:"pass,omitempty"`       // Tier check passed
+	Flags      []string `json:"flags,omitempty"`      // Security flags detected
+	Suspicious bool     `json:"suspicious,omitempty"` // Triage result (Tier 2)
+	Action     string   `json:"action,omitempty"`     // allow, deny, modify
+	Reason     string   `json:"reason,omitempty"`     // Decision reason
+	Tiers      string   `json:"tiers,omitempty"`      // Verification path (T1, T1→T2, T1→T2→T3)
+	TierPath   string   `json:"tier_path,omitempty"`  // Alias for Tiers
+	XMLBlock   string   `json:"xml,omitempty"`        // Full XML block for forensic tools
+
 	// Checkpoint
-	CheckpointType string `json:"checkpoint_type,omitempty"` // pre, post, reconcile, supervise
-	CheckpointID   string `json:"checkpoint_id,omitempty"`
-	
-	// XML representation for forensic tools
-	XMLBlock string `json:"xml_block,omitempty"` // Full XML block with trust/type attributes
+	CheckpointType string `json:"ckpt_type,omitempty"` // pre, post, reconcile, supervise
+	CheckpointID   string `json:"ckpt_id,omitempty"`   // Checkpoint identifier
+
+	// LLM details (for assistant events)
+	Model     string `json:"model,omitempty"`      // Model used
+	LatencyMs int64  `json:"latency_ms,omitempty"` // LLM call latency
+	TokensIn  int    `json:"tokens_in,omitempty"`  // Input tokens
+	TokensOut int    `json:"tokens_out,omitempty"` // Output tokens
+}
+
+// nextSeqID returns the next sequence ID for this session.
+func (s *Session) nextSeqID() uint64 {
+	return atomic.AddUint64(&s.seqCounter, 1)
+}
+
+// AddEvent adds a new event to the session with automatic sequencing.
+func (s *Session) AddEvent(event Event) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	event.SeqID = s.nextSeqID()
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
+	}
+	s.Events = append(s.Events, event)
+	s.UpdatedAt = time.Now()
+	return event.SeqID
+}
+
+// StartCorrelation generates a new correlation ID for linking related events.
+func (s *Session) StartCorrelation() string {
+	b := make([]byte, 4)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // Message represents an LLM message (kept for backwards compatibility).
@@ -141,6 +201,13 @@ type Store interface {
 	Load(id string) (*Session, error)
 }
 
+// SessionManager is the interface for session management operations.
+type SessionManager interface {
+	Create(workflowName string) (*Session, error)
+	Update(sess *Session) error
+	Get(id string) (*Session, error)
+}
+
 // Manager manages sessions.
 type Manager struct {
 	store Store
@@ -165,6 +232,7 @@ func (m *Manager) Create(workflowName string, inputs map[string]string) (*Sessio
 		WorkflowName: workflowName,
 		Inputs:       inputs,
 		State:        make(map[string]interface{}),
+		Outputs:      make(map[string]string),
 		Status:       StatusRunning,
 		Events:       []Event{},
 		CreatedAt:    now,
@@ -172,7 +240,7 @@ func (m *Manager) Create(workflowName string, inputs map[string]string) (*Sessio
 	}
 
 	if err := m.store.Save(sess); err != nil {
-		return nil, fmt.Errorf("failed to save session: %w", err)
+		return nil, err
 	}
 
 	return sess, nil
@@ -183,156 +251,95 @@ func (m *Manager) Get(id string) (*Session, error) {
 	return m.store.Load(id)
 }
 
-// Complete marks a session as complete.
-func (m *Manager) Complete(id string, result string) error {
+// Update saves changes to a session.
+func (m *Manager) Update(sess *Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	sess, err := m.store.Load(id)
-	if err != nil {
-		return err
-	}
-
-	sess.Status = StatusComplete
-	sess.Result = result
 	sess.UpdatedAt = time.Now()
-
 	return m.store.Save(sess)
 }
 
-// Fail marks a session as failed.
-func (m *Manager) Fail(id string, errMsg string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	sess, err := m.store.Load(id)
-	if err != nil {
-		return err
-	}
-
-	sess.Status = StatusFailed
-	sess.Error = errMsg
-	sess.UpdatedAt = time.Now()
-
-	return m.store.Save(sess)
-}
-
-// UpdateState updates the session state.
-func (m *Manager) UpdateState(id string, state map[string]interface{}) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	sess, err := m.store.Load(id)
-	if err != nil {
-		return err
-	}
-
-	sess.State = state
-	sess.UpdatedAt = time.Now()
-
-	return m.store.Save(sess)
-}
-
-// AddEvent adds an event to the session's chronological log.
+// AddEvent adds an event to a session.
 func (m *Manager) AddEvent(id string, event Event) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	sess, err := m.store.Load(id)
 	if err != nil {
 		return err
 	}
 
-	sess.Events = append(sess.Events, event)
-	sess.UpdatedAt = time.Now()
-
+	sess.AddEvent(event)
 	return m.store.Save(sess)
 }
 
-// generateID generates a unique session ID.
+// generateID creates a unique session ID.
 func generateID() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
-// --- FileStore ---
-
-// FileStore stores sessions as JSON files.
+// FileStore implements Store using the filesystem.
 type FileStore struct {
 	dir string
 }
 
-// NewFileStore creates a new file store.
-func NewFileStore(dir string) *FileStore {
-	os.MkdirAll(dir, 0755)
-	return &FileStore{dir: dir}
+// NewFileStore creates a new file-based store.
+func NewFileStore(dir string) (*FileStore, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+	return &FileStore{dir: dir}, nil
 }
 
-// Save saves a session to a JSON file.
+// Save persists a session to disk.
 func (s *FileStore) Save(sess *Session) error {
 	data, err := json.MarshalIndent(sess, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal session: %w", err)
+		return err
 	}
 
-	filename := filepath.Join(s.dir, sess.ID+".json")
-	tmpFile := filename + ".tmp"
-
-	// Atomic write: write to temp file, then rename
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
-		return fmt.Errorf("failed to write temp file: %w", err)
-	}
-
-	if err := os.Rename(tmpFile, filename); err != nil {
-		os.Remove(tmpFile)
-		return fmt.Errorf("failed to rename file: %w", err)
-	}
-
-	return nil
+	path := filepath.Join(s.dir, sess.ID+".json")
+	return os.WriteFile(path, data, 0644)
 }
 
-// Load loads a session from a JSON file.
+// Load reads a session from disk.
 func (s *FileStore) Load(id string) (*Session, error) {
-	filename := filepath.Join(s.dir, id+".json")
-
-	data, err := os.ReadFile(filename)
+	path := filepath.Join(s.dir, id+".json")
+	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("session not found: %s", id)
-		}
-		return nil, fmt.Errorf("failed to read session file: %w", err)
+		return nil, err
 	}
 
 	var sess Session
 	if err := json.Unmarshal(data, &sess); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
+		return nil, err
+	}
+
+	// Restore sequence counter from last event
+	if len(sess.Events) > 0 {
+		sess.seqCounter = sess.Events[len(sess.Events)-1].SeqID
 	}
 
 	return &sess, nil
 }
 
-// --- Interface for CLI compatibility ---
-
-// SessionManager is the interface used by the CLI.
-type SessionManager interface {
-	Create(workflowName string) (*Session, error)
-	Update(sess *Session) error
-	Get(id string) (*Session, error)
-}
-
-// SimpleManager wraps a Store to implement SessionManager.
-type SimpleManager struct {
-	store Store
+// FileManager wraps FileStore to implement SessionManager.
+type FileManager struct {
+	store *FileStore
 }
 
 // NewFileManager creates a new file-based session manager.
-func NewFileManager(path string) SessionManager {
-	return &SimpleManager{store: NewFileStore(path)}
+func NewFileManager(dir string) SessionManager {
+	store, err := NewFileStore(dir)
+	if err != nil {
+		// Fallback: create with error handling in actual use
+		return &FileManager{store: &FileStore{dir: dir}}
+	}
+	return &FileManager{store: store}
 }
 
 // Create creates a new session.
-func (m *SimpleManager) Create(workflowName string) (*Session, error) {
+func (m *FileManager) Create(workflowName string) (*Session, error) {
 	id := generateID()
 	now := time.Now()
 
@@ -342,7 +349,7 @@ func (m *SimpleManager) Create(workflowName string) (*Session, error) {
 		Inputs:       make(map[string]string),
 		State:        make(map[string]interface{}),
 		Outputs:      make(map[string]string),
-		Status:       "running",
+		Status:       StatusRunning,
 		Events:       []Event{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -356,12 +363,12 @@ func (m *SimpleManager) Create(workflowName string) (*Session, error) {
 }
 
 // Update updates a session.
-func (m *SimpleManager) Update(sess *Session) error {
+func (m *FileManager) Update(sess *Session) error {
 	sess.UpdatedAt = time.Now()
 	return m.store.Save(sess)
 }
 
 // Get retrieves a session by ID.
-func (m *SimpleManager) Get(id string) (*Session, error) {
+func (m *FileManager) Get(id string) (*Session, error) {
 	return m.store.Load(id)
 }

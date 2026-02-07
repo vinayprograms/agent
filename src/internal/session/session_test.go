@@ -11,7 +11,10 @@ import (
 // R7.1.1: Create new session for workflow run
 func TestSession_Create(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := NewFileStore(tmpDir)
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
 	mgr := NewManager(store)
 
 	sess, err := mgr.Create("test-workflow", map[string]string{"input1": "value1"})
@@ -36,7 +39,10 @@ func TestSession_Create(t *testing.T) {
 // R7.1.2: Generate unique session ID
 func TestSession_UniqueIDs(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := NewFileStore(tmpDir)
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
 	mgr := NewManager(store)
 
 	ids := make(map[string]bool)
@@ -52,14 +58,19 @@ func TestSession_UniqueIDs(t *testing.T) {
 // R7.1.5: Mark session complete or failed
 func TestSession_Complete(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := NewFileStore(tmpDir)
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
 	mgr := NewManager(store)
 
 	sess, _ := mgr.Create("workflow", nil)
 	
-	err := mgr.Complete(sess.ID, "result data")
+	sess.Status = StatusComplete
+	sess.Result = "result data"
+	err = mgr.Update(sess)
 	if err != nil {
-		t.Fatalf("complete error: %v", err)
+		t.Fatalf("update error: %v", err)
 	}
 
 	loaded, _ := mgr.Get(sess.ID)
@@ -73,14 +84,19 @@ func TestSession_Complete(t *testing.T) {
 
 func TestSession_Fail(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := NewFileStore(tmpDir)
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
 	mgr := NewManager(store)
 
 	sess, _ := mgr.Create("workflow", nil)
 	
-	err := mgr.Fail(sess.ID, "something went wrong")
+	sess.Status = StatusFailed
+	sess.Error = "something went wrong"
+	err = mgr.Update(sess)
 	if err != nil {
-		t.Fatalf("fail error: %v", err)
+		t.Fatalf("update error: %v", err)
 	}
 
 	loaded, _ := mgr.Get(sess.ID)
@@ -95,16 +111,17 @@ func TestSession_Fail(t *testing.T) {
 // R7.2.1: Persist execution state after each goal
 func TestSession_UpdateState(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := NewFileStore(tmpDir)
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
 	mgr := NewManager(store)
 
 	sess, _ := mgr.Create("workflow", nil)
 	
-	state := map[string]interface{}{
-		"goal1": "result1",
-		"iteration": 5,
-	}
-	err := mgr.UpdateState(sess.ID, state)
+	sess.State["goal1"] = "result1"
+	sess.State["iteration"] = 5
+	err = mgr.Update(sess)
 	if err != nil {
 		t.Fatalf("update state error: %v", err)
 	}
@@ -118,7 +135,10 @@ func TestSession_UpdateState(t *testing.T) {
 // R7.2.2: Persist events (formerly messages)
 func TestSession_AddEvent(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := NewFileStore(tmpDir)
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
 	mgr := NewManager(store)
 
 	sess, _ := mgr.Create("workflow", nil)
@@ -129,7 +149,7 @@ func TestSession_AddEvent(t *testing.T) {
 		Goal:      "goal1",
 		Timestamp: time.Now(),
 	}
-	err := mgr.AddEvent(sess.ID, event)
+	err = mgr.AddEvent(sess.ID, event)
 	if err != nil {
 		t.Fatalf("add event error: %v", err)
 	}
@@ -149,7 +169,10 @@ func TestSession_AddEvent(t *testing.T) {
 // R7.2.3: Persist tool call events
 func TestSession_AddToolCallEvent(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := NewFileStore(tmpDir)
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
 	mgr := NewManager(store)
 
 	sess, _ := mgr.Create("workflow", nil)
@@ -161,7 +184,7 @@ func TestSession_AddToolCallEvent(t *testing.T) {
 		Goal:       "goal1",
 		Timestamp:  time.Now(),
 	}
-	err := mgr.AddEvent(sess.ID, event)
+	err = mgr.AddEvent(sess.ID, event)
 	if err != nil {
 		t.Fatalf("add tool call event error: %v", err)
 	}
@@ -178,7 +201,10 @@ func TestSession_AddToolCallEvent(t *testing.T) {
 // R7.3.5 / R7.4.1: Query session by ID
 func TestSession_GetByID(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := NewFileStore(tmpDir)
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
 	mgr := NewManager(store)
 
 	sess, _ := mgr.Create("workflow", nil)
@@ -195,10 +221,13 @@ func TestSession_GetByID(t *testing.T) {
 
 func TestSession_GetNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := NewFileStore(tmpDir)
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
 	mgr := NewManager(store)
 
-	_, err := mgr.Get("nonexistent")
+	_, err = mgr.Get("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent session")
 	}
@@ -207,7 +236,10 @@ func TestSession_GetNotFound(t *testing.T) {
 // R7.4.1-R7.4.3: FileStore implementation
 func TestFileStore_AtomicWrite(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := NewFileStore(tmpDir)
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
 	mgr := NewManager(store)
 
 	sess, _ := mgr.Create("workflow", nil)
@@ -330,5 +362,49 @@ func TestSQLiteStore_ToolCallEvents(t *testing.T) {
 	}
 	if loaded.Events[0].Tool != "write" {
 		t.Errorf("expected tool 'write', got %s", loaded.Events[0].Tool)
+	}
+}
+
+// Test sequence ID generation
+func TestSession_SequenceIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
+	mgr := NewManager(store)
+
+	sess, _ := mgr.Create("workflow", nil)
+	
+	// Add multiple events
+	for i := 0; i < 5; i++ {
+		mgr.AddEvent(sess.ID, Event{Type: EventUser, Content: "test", Timestamp: time.Now()})
+	}
+
+	loaded, _ := mgr.Get(sess.ID)
+	if len(loaded.Events) != 5 {
+		t.Fatalf("expected 5 events, got %d", len(loaded.Events))
+	}
+	
+	// Verify sequence IDs are monotonic
+	for i := 0; i < len(loaded.Events); i++ {
+		if loaded.Events[i].SeqID != uint64(i+1) {
+			t.Errorf("event %d: expected seq %d, got %d", i, i+1, loaded.Events[i].SeqID)
+		}
+	}
+}
+
+// Test correlation IDs
+func TestSession_CorrelationID(t *testing.T) {
+	sess := &Session{}
+	
+	corr1 := sess.StartCorrelation()
+	corr2 := sess.StartCorrelation()
+	
+	if corr1 == "" {
+		t.Error("correlation ID should not be empty")
+	}
+	if corr1 == corr2 {
+		t.Error("correlation IDs should be unique")
 	}
 }
