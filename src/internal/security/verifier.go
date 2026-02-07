@@ -183,9 +183,10 @@ func (v *Verifier) VerifyToolCall(ctx context.Context, toolName string, args map
 
 // Tier1Result holds the result of deterministic checks.
 type Tier1Result struct {
-	Pass    bool
-	Reasons []string
-	Block   *Block // The untrusted block that triggered escalation
+	Pass          bool
+	Reasons       []string
+	Block         *Block   // The primary untrusted block that triggered escalation
+	RelatedBlocks []*Block // All blocks whose content is used in this tool call
 }
 
 func (v *Verifier) tier1Check(toolName string, args map[string]interface{}) *Tier1Result {
@@ -209,21 +210,21 @@ func (v *Verifier) tier1Check(toolName string, args map[string]interface{}) *Tie
 	// Serialize args for pattern matching
 	argsStr := fmt.Sprintf("%v", args)
 
-	// Check 3: Find which block's content is being used in this tool call
+	// Check 3: Find ALL blocks whose content is being used in this tool call
 	// This is simple taint tracking - check if args contain data from any block
-	var relevantBlock *Block
+	var relevantBlocks []*Block
 	for _, block := range untrustedBlocks {
 		if v.argsContainBlockData(argsStr, block) {
-			relevantBlock = block
-			break
+			relevantBlocks = append(relevantBlocks, block)
 		}
 	}
 
-	// Check 4: Suspicious patterns in the relevant block (or all if none found)
+	// Check 4: Suspicious patterns in relevant blocks (or all if none found)
 	blocksToCheck := untrustedBlocks
-	if relevantBlock != nil {
-		blocksToCheck = []*Block{relevantBlock}
-		result.Block = relevantBlock
+	if len(relevantBlocks) > 0 {
+		blocksToCheck = relevantBlocks
+		result.Block = relevantBlocks[0] // Primary block for reporting
+		result.RelatedBlocks = relevantBlocks // All contributing blocks
 	}
 
 	for _, block := range blocksToCheck {

@@ -432,6 +432,11 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			fmt.Fprintf(r.output, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("flags: %v", event.Meta.Flags)))
 		}
+		// Show related blocks if multiple contributed
+		if event.Meta != nil && len(event.Meta.RelatedBlocks) > 1 {
+			fmt.Fprintf(r.output, "      │          │   %s\n",
+				dimStyle.Render(fmt.Sprintf("related: %v", event.Meta.RelatedBlocks)))
+		}
 
 	case session.EventSecurityTriage:
 		status := successStyle.Render("benign")

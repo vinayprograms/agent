@@ -149,10 +149,14 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 	// Log security decision to session
 	if result.Tier1 != nil {
 		blockID := ""
+		var relatedBlockIDs []string
 		if result.Tier1.Block != nil {
 			blockID = result.Tier1.Block.ID
 		}
-		e.logSecurityStatic(toolName, blockID, result.Tier1.Pass, result.Tier1.Reasons)
+		for _, b := range result.Tier1.RelatedBlocks {
+			relatedBlockIDs = append(relatedBlockIDs, b.ID)
+		}
+		e.logSecurityStatic(toolName, blockID, relatedBlockIDs, result.Tier1.Pass, result.Tier1.Reasons)
 	}
 
 	if result.Tier2 != nil {
@@ -506,7 +510,7 @@ func (e *Executor) logSecurityBlock(blockID, trust, blockType, source, xmlBlock 
 }
 
 // logSecurityStatic logs static/deterministic check to session.
-func (e *Executor) logSecurityStatic(tool, blockID string, pass bool, flags []string) {
+func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []string, pass bool, flags []string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -515,10 +519,11 @@ func (e *Executor) logSecurityStatic(tool, blockID string, pass bool, flags []st
 		Tool:      tool,
 		Timestamp: time.Now(),
 		Meta: &session.EventMeta{
-			CheckName: "static",
-			BlockID:   blockID,
-			Pass:      pass,
-			Flags:     flags,
+			CheckName:     "static",
+			BlockID:       blockID,
+			RelatedBlocks: relatedBlockIDs,
+			Pass:          pass,
+			Flags:         flags,
 		},
 	})
 	e.sessionManager.Update(e.session)

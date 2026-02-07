@@ -134,10 +134,11 @@ type EventMeta struct {
 	SupervisorType string `json:"supervisor_type,omitempty"` // "execution" or "security"
 
 	// Security
-	BlockID    string   `json:"block_id,omitempty"`   // Content block ID (b0001, b0002, ...)
-	Trust      string   `json:"trust,omitempty"`      // trusted, vetted, untrusted
-	BlockType  string   `json:"block_type,omitempty"` // instruction, data
-	Source     string   `json:"source,omitempty"`     // Where content came from
+	BlockID       string   `json:"block_id,omitempty"`       // Content block ID (b0001, b0002, ...)
+	RelatedBlocks []string `json:"related_blocks,omitempty"` // All blocks whose content contributed to this action
+	Trust         string   `json:"trust,omitempty"`          // trusted, vetted, untrusted
+	BlockType     string   `json:"block_type,omitempty"`     // instruction, data
+	Source        string   `json:"source,omitempty"`         // Where content came from
 	Entropy    float64  `json:"entropy,omitempty"`    // Shannon entropy (0.0-8.0)
 	CheckName  string   `json:"check,omitempty"`      // static, triage, supervisor
 	Pass       bool     `json:"pass,omitempty"`       // Check passed
