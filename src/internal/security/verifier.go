@@ -92,6 +92,11 @@ func NewVerifier(cfg Config, sessionID string) (*Verifier, error) {
 
 // AddBlock adds a content block to the context.
 func (v *Verifier) AddBlock(trust TrustLevel, typ BlockType, mutable bool, content, source string) *Block {
+	return v.AddBlockWithContext(trust, typ, mutable, content, source, "")
+}
+
+// AddBlockWithContext adds a content block with an agent context identifier.
+func (v *Verifier) AddBlockWithContext(trust TrustLevel, typ BlockType, mutable bool, content, source, agentContext string) *Block {
 	v.blocksMu.Lock()
 	defer v.blocksMu.Unlock()
 
@@ -99,6 +104,7 @@ func (v *Verifier) AddBlock(trust TrustLevel, typ BlockType, mutable bool, conte
 	id := fmt.Sprintf("b%04d", v.blockCounter)
 
 	block := NewBlock(id, trust, typ, mutable, content, source)
+	block.AgentContext = agentContext
 	v.blocks = append(v.blocks, block)
 
 	return block
@@ -113,14 +119,15 @@ var HighRiskTools = map[string]bool{
 }
 
 // VerifyToolCall runs the tiered verification pipeline for a tool call.
-func (v *Verifier) VerifyToolCall(ctx context.Context, toolName string, args map[string]interface{}, originalGoal string) (*VerificationResult, error) {
+// agentContext filters blocks to only those from the same agent (empty = all blocks).
+func (v *Verifier) VerifyToolCall(ctx context.Context, toolName string, args map[string]interface{}, originalGoal, agentContext string) (*VerificationResult, error) {
 	result := &VerificationResult{
 		Allowed:  true,
 		ToolName: toolName,
 	}
 
 	// Tier 1: Deterministic checks
-	tier1Result := v.tier1Check(toolName, args)
+	tier1Result := v.tier1Check(toolName, args, agentContext)
 	result.Tier1 = tier1Result
 
 	if tier1Result.Pass {
@@ -190,11 +197,12 @@ type Tier1Result struct {
 	RelatedBlocks []*Block // All blocks whose content is used in this tool call
 }
 
-func (v *Verifier) tier1Check(toolName string, args map[string]interface{}) *Tier1Result {
+func (v *Verifier) tier1Check(toolName string, args map[string]interface{}, agentContext string) *Tier1Result {
 	result := &Tier1Result{Pass: true}
 
 	// Check 1: Any untrusted content in context?
-	untrustedBlocks := v.getUntrustedBlocks()
+	// Filter by agent context if specified
+	untrustedBlocks := v.getUntrustedBlocksForContext(agentContext)
 	if len(untrustedBlocks) == 0 {
 		result.SkipReason = "no_untrusted_content"
 		return result // No untrusted content - pass
@@ -340,12 +348,28 @@ func (v *Verifier) tier3Check(ctx context.Context, toolName string, args map[str
 }
 
 func (v *Verifier) getUntrustedBlocks() []*Block {
+	return v.getUntrustedBlocksForContext("")
+}
+
+// getUntrustedBlocksForContext returns untrusted blocks filtered by agent context.
+// If agentContext is empty, returns all untrusted blocks.
+// If agentContext is set, returns blocks matching that context OR blocks with no context (shared blocks).
+func (v *Verifier) getUntrustedBlocksForContext(agentContext string) []*Block {
 	v.blocksMu.RLock()
 	defer v.blocksMu.RUnlock()
 
 	var untrusted []*Block
 	for _, b := range v.blocks {
-		if b.Trust == TrustUntrusted {
+		if b.Trust != TrustUntrusted {
+			continue
+		}
+		// If no filter, include all
+		if agentContext == "" {
+			untrusted = append(untrusted, b)
+			continue
+		}
+		// Include if block matches context OR has no context (shared)
+		if b.AgentContext == agentContext || b.AgentContext == "" {
 			untrusted = append(untrusted, b)
 		}
 	}

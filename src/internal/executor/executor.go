@@ -141,7 +141,9 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		return nil // No security verifier configured
 	}
 
-	result, err := e.securityVerifier.VerifyToolCall(ctx, toolName, args, e.currentGoal)
+	// Use current agent role as context for block filtering in multi-agent scenarios
+	agentContext := e.currentAgentRole
+	result, err := e.securityVerifier.VerifyToolCall(ctx, toolName, args, e.currentGoal, agentContext)
 	if err != nil {
 		return fmt.Errorf("security verification error: %w", err)
 	}
@@ -203,11 +205,13 @@ func (e *Executor) AddUntrustedContent(content, source string) {
 	if e.securityVerifier == nil {
 		return
 	}
-	block := e.securityVerifier.AddBlock(security.TrustUntrusted, security.TypeData, true, content, source)
+	// Use current agent role as context for block association in multi-agent scenarios
+	agentContext := e.currentAgentRole
+	block := e.securityVerifier.AddBlockWithContext(security.TrustUntrusted, security.TypeData, true, content, source, agentContext)
 
 	// Log to session with XML representation
-	xmlBlock := fmt.Sprintf(`<block id="%s" trust="untrusted" type="data" source="%s" mutable="true">%s</block>`,
-		block.ID, source, truncateForLog(content, 200))
+	xmlBlock := fmt.Sprintf(`<block id="%s" trust="untrusted" type="data" source="%s" mutable="true" agent="%s">%s</block>`,
+		block.ID, source, agentContext, truncateForLog(content, 200))
 	entropy := security.ShannonEntropy([]byte(content))
 	e.logSecurityBlock(block.ID, "untrusted", "data", source, xmlBlock, entropy)
 }

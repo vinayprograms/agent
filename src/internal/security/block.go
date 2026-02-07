@@ -45,6 +45,10 @@ type Block struct {
 	// Source describes where the content came from (for debugging).
 	Source string `json:"source,omitempty"`
 
+	// AgentContext identifies which agent/sub-agent created this block.
+	// Used to filter blocks during security checks in multi-agent scenarios.
+	AgentContext string `json:"agent_context,omitempty"`
+
 	// TaintedBy lists IDs of blocks that influenced this block.
 	TaintedBy []string `json:"tainted_by,omitempty"`
 }
