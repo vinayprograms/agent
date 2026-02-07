@@ -102,25 +102,25 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 	case session.EventGoalEnd:
 		fmt.Fprintf(r.output, "%4d │ %s │ └─ GOAL END (%dms)\n", seq, ts, event.DurationMs)
 		if r.verbose && event.Content != "" {
-			r.printIndented("     │ ", truncate(event.Content, 200))
+			r.printBlock("     │     ", event.Content)
 		}
 
 	case session.EventSystem:
 		fmt.Fprintf(r.output, "%4d │ %s │ 📋 SYSTEM\n", seq, ts)
-		if r.verbose {
-			r.printIndented("     │ ", truncate(event.Content, 500))
+		if r.verbose && event.Content != "" {
+			r.printBlock("     │     ", event.Content)
 		}
 
 	case session.EventUser:
 		fmt.Fprintf(r.output, "%4d │ %s │ 👤 USER\n", seq, ts)
-		if r.verbose {
-			r.printIndented("     │ ", truncate(event.Content, 500))
+		if r.verbose && event.Content != "" {
+			r.printBlock("     │     ", event.Content)
 		}
 
 	case session.EventAssistant:
 		fmt.Fprintf(r.output, "%4d │ %s │ 🤖 ASSISTANT\n", seq, ts)
-		if r.verbose {
-			r.printIndented("     │ ", truncate(event.Content, 500))
+		if r.verbose && event.Content != "" {
+			r.printBlock("     │     ", event.Content)
 		}
 
 	case session.EventToolCall:
@@ -130,7 +130,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		}
 		fmt.Fprintf(r.output, "%4d │ %s │ 🔧 TOOL CALL: %s%s\n", seq, ts, event.Tool, corr)
 		if r.verbose && len(event.Args) > 0 {
-			r.printIndented("     │ ", formatArgs(event.Args))
+			r.printBlock("     │     ", formatArgsFull(event.Args))
 		}
 
 	case session.EventToolResult:
@@ -140,9 +140,9 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		}
 		fmt.Fprintf(r.output, "%4d │ %s │ %s TOOL RESULT: %s (%dms)\n", seq, ts, status, event.Tool, event.DurationMs)
 		if event.Error != "" {
-			r.printIndented("     │ ", "ERROR: "+event.Error)
+			r.printBlock("     │     ", "ERROR: "+event.Error)
 		} else if r.verbose && event.Content != "" {
-			r.printIndented("     │ ", truncate(event.Content, 200))
+			r.printBlock("     │     ", event.Content)
 		}
 
 	case session.EventPhaseCommit:
@@ -329,20 +329,15 @@ func (r *Replayer) printLLMDetails(meta *session.EventMeta) {
 	}
 }
 
-// printBlock prints a block of text with line prefix, handling long lines.
+// printBlock prints a block of text with line prefix (no truncation).
 func (r *Replayer) printBlock(prefix string, text string) {
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
-		// Wrap long lines
-		for len(line) > 70 {
-			fmt.Fprintf(r.output, "%s%s\n", prefix, line[:70])
-			line = line[70:]
-		}
 		fmt.Fprintf(r.output, "%s%s\n", prefix, line)
 	}
 }
 
-// truncate truncates a string to max length.
+// truncate truncates a string to max length (used for non-verbose summaries).
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
@@ -359,7 +354,7 @@ func formatMap(m map[string]string) string {
 	return strings.Join(parts, ", ")
 }
 
-// formatArgs formats tool arguments for display.
+// formatArgs formats tool arguments for display (truncated for summary).
 func formatArgs(args map[string]interface{}) string {
 	var parts []string
 	for k, v := range args {
@@ -371,4 +366,13 @@ func formatArgs(args map[string]interface{}) string {
 		parts = append(parts, fmt.Sprintf("%s=%s", k, s))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// formatArgsFull formats tool arguments without truncation.
+func formatArgsFull(args map[string]interface{}) string {
+	var parts []string
+	for k, v := range args {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+	}
+	return strings.Join(parts, "\n")
 }
