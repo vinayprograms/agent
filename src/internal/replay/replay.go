@@ -399,13 +399,18 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	case session.EventSecurityBlock:
 		if event.Meta != nil {
-			// Show what tool/content this relates to
-			context := r.getSecurityContext(event)
+			// For untrusted content, show block ID prominently (it's the key identifier)
+			sourceInfo := ""
+			if event.Meta.Source != "" {
+				sourceInfo = dimStyle.Render(fmt.Sprintf(" ← %s", event.Meta.Source))
+			} else if event.Tool != "" {
+				sourceInfo = dimStyle.Render(fmt.Sprintf(" ← %s", event.Tool))
+			}
 			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s%s\n", seqNum, ts,
 				securityStyle.Render("SECURITY: untrusted content"),
 				valueStyle.Render(event.Meta.BlockID),
 				dimStyle.Render(fmt.Sprintf("(entropy=%.2f)", event.Meta.Entropy)),
-				context)
+				sourceInfo)
 		}
 
 	case session.EventSecurityStatic:
@@ -516,35 +521,39 @@ func (r *Replayer) verdictStyle(verdict string) lipgloss.Style {
 
 // getSecurityContext returns a formatted string showing what the security check relates to.
 func (r *Replayer) getSecurityContext(event *session.Event) string {
-	// Try to find context from various fields
-	var context string
+	var parts []string
 	
-	// Check tool name first (most specific)
+	// Block ID is the most important identifier for forensic analysis
+	if event.Meta != nil && event.Meta.BlockID != "" {
+		parts = append(parts, event.Meta.BlockID)
+	}
+	
+	// Add source/tool for additional context
 	if event.Tool != "" {
-		context = event.Tool
+		parts = append(parts, event.Tool)
 	} else if event.Meta != nil && event.Meta.Source != "" {
-		// Source might be "tool:web_fetch" or similar
-		context = event.Meta.Source
+		parts = append(parts, event.Meta.Source)
 	} else if event.CorrelationID != "" {
-		// Use correlation ID (might be tool call ID)
-		// Truncate if it looks like a UUID
+		// Use correlation ID if nothing else
 		corr := event.CorrelationID
 		if len(corr) > 12 && strings.Contains(corr, "-") {
 			corr = corr[:8] + "..."
 		}
-		context = corr
+		parts = append(parts, corr)
 	}
 	
-	if context == "" {
+	if len(parts) == 0 {
 		return ""
 	}
 	
-	// Truncate long contexts
-	if len(context) > 25 {
-		context = context[:22] + "..."
+	context := strings.Join(parts, " ")
+	
+	// Truncate if too long
+	if len(context) > 35 {
+		context = context[:32] + "..."
 	}
 	
-	return dimStyle.Render(fmt.Sprintf(" ← %s", context))
+	return dimStyle.Render(fmt.Sprintf(" [%s]", context))
 }
 
 // actionStyle returns style for security actions.
