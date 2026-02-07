@@ -637,6 +637,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			e.logger.Warn("failed to save pre-checkpoint", map[string]interface{}{
 				"error": err.Error(),
 			})
+		} else {
+			e.logger.CheckpointSaved("pre", goal.Name, "", preCheckpoint.StepID)
 		}
 		if e.OnSupervisionEvent != nil {
 			e.OnSupervisionEvent(goal.Name, "commit", preCheckpoint)
@@ -659,6 +661,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			e.logger.Warn("failed to save post-checkpoint", map[string]interface{}{
 				"error": err.Error(),
 			})
+		} else {
+			e.logger.CheckpointSaved("post", goal.Name, "", postCheckpoint.StepID)
 		}
 		if e.OnSupervisionEvent != nil {
 			e.OnSupervisionEvent(goal.Name, "execute", postCheckpoint)
@@ -676,6 +680,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				e.logger.Warn("failed to save reconcile result", map[string]interface{}{
 					"error": err.Error(),
 				})
+			} else {
+				e.logger.CheckpointSaved("reconcile", goal.Name, "", reconcileResult.StepID)
 			}
 		}
 		if e.OnSupervisionEvent != nil {
@@ -707,6 +713,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 					e.logger.Warn("failed to save supervise result", map[string]interface{}{
 						"error": err.Error(),
 					})
+				} else {
+					e.logger.CheckpointSaved("supervise", goal.Name, "", superviseResult.StepID)
 				}
 			}
 			if e.OnSupervisionEvent != nil {
@@ -756,6 +764,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 
 // commitPhase asks the agent to declare its intent before execution.
 func (e *Executor) commitPhase(ctx context.Context, goal *agentfile.Goal, prompt string) *checkpoint.PreCheckpoint {
+	start := time.Now()
+	e.logger.PhaseStart("COMMIT", goal.Name, "")
+	
 	commitPrompt := fmt.Sprintf(`Before executing this goal, declare your intent:
 
 GOAL: %s
@@ -792,6 +803,7 @@ Respond with a JSON object:
 		e.logger.Warn("commit phase LLM error", map[string]interface{}{"error": err.Error()})
 		pre.Confidence = "low"
 		pre.Assumptions = []string{"Failed to get commitment from agent"}
+		e.logger.PhaseComplete("COMMIT", goal.Name, "", time.Since(start), "error")
 		return pre
 	}
 
@@ -825,11 +837,18 @@ Respond with a JSON object:
 		pre.Confidence = "medium"
 	}
 
+	// Log commitment for forensics
+	e.logger.CommitPhase(goal.Name, "", pre.Interpretation)
+	e.logger.PhaseComplete("COMMIT", goal.Name, "", time.Since(start), pre.Confidence)
+
 	return pre
 }
 
 // executePhase runs the actual goal execution loop.
 func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, prompt string) (output string, toolsUsed []string, toolCallsMade bool, err error) {
+	start := time.Now()
+	e.logger.PhaseStart("EXECUTE", goal.Name, "")
+	
 	// Build system message with skills context
 	systemMsg := "You are a helpful assistant executing a workflow goal."
 
@@ -875,6 +894,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 			if e.OnLLMError != nil {
 				e.OnLLMError(err)
 			}
+			e.logger.PhaseComplete("EXECUTE", goal.Name, "", time.Since(start), "error")
 			return "", nil, toolCallsMade, fmt.Errorf("LLM error: %w", err)
 		}
 
@@ -903,6 +923,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 			for tool := range toolsUsedMap {
 				toolsUsed = append(toolsUsed, tool)
 			}
+			e.logger.PhaseComplete("EXECUTE", goal.Name, "", time.Since(start), "complete")
 			return resp.Content, toolsUsed, toolCallsMade, nil
 		}
 

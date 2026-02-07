@@ -193,3 +193,148 @@ func (l *Logger) ExecutionComplete(workflow string, duration time.Duration, stat
 		"status":   status,
 	})
 }
+
+// --- Forensic Logging for Supervision ---
+
+// PhaseStart logs the start of an execution phase (COMMIT, EXECUTE, RECONCILE, SUPERVISE).
+func (l *Logger) PhaseStart(phase, goal, step string) {
+	l.Info("phase_start", map[string]interface{}{
+		"phase": phase,
+		"goal":  goal,
+		"step":  step,
+	})
+}
+
+// PhaseComplete logs the completion of an execution phase.
+func (l *Logger) PhaseComplete(phase, goal, step string, duration time.Duration, result string) {
+	l.Info("phase_complete", map[string]interface{}{
+		"phase":    phase,
+		"goal":     goal,
+		"step":     step,
+		"duration": duration.String(),
+		"result":   result,
+	})
+}
+
+// CommitPhase logs the COMMIT phase details.
+func (l *Logger) CommitPhase(goal, step string, commitment string) {
+	l.Info("commit_phase", map[string]interface{}{
+		"phase":      "COMMIT",
+		"goal":       goal,
+		"step":       step,
+		"commitment": commitment,
+	})
+}
+
+// ReconcilePhase logs the RECONCILE phase details.
+func (l *Logger) ReconcilePhase(goal, step string, triggers []string, escalate bool) {
+	l.Info("reconcile_phase", map[string]interface{}{
+		"phase":    "RECONCILE",
+		"goal":     goal,
+		"step":     step,
+		"triggers": strings.Join(triggers, ","),
+		"escalate": escalate,
+	})
+}
+
+// SupervisePhase logs the SUPERVISE phase details.
+func (l *Logger) SupervisePhase(goal, step string, verdict, reason string) {
+	l.Info("supervise_phase", map[string]interface{}{
+		"phase":   "SUPERVISE",
+		"goal":    goal,
+		"step":    step,
+		"verdict": verdict,
+		"reason":  reason,
+	})
+}
+
+// SupervisorVerdict logs supervisor decisions for forensic analysis.
+func (l *Logger) SupervisorVerdict(goal, step, verdict, guidance string, humanRequired bool) {
+	l.Info("supervisor_verdict", map[string]interface{}{
+		"goal":           goal,
+		"step":           step,
+		"verdict":        verdict,
+		"guidance":       guidance,
+		"human_required": humanRequired,
+	})
+}
+
+// --- Forensic Logging for Security ---
+
+// SecurityBlockAdded logs when untrusted content is registered.
+func (l *Logger) SecurityBlockAdded(blockID, trust, blockType, source string, entropy float64) {
+	l.Info("security_block_added", map[string]interface{}{
+		"block_id":   blockID,
+		"trust":      trust,
+		"type":       blockType,
+		"source":     source,
+		"entropy":    fmt.Sprintf("%.2f", entropy),
+		"security":   true,
+	})
+}
+
+// SecurityTier1 logs Tier 1 deterministic check results.
+func (l *Logger) SecurityTier1(blockID string, pass bool, flags []string) {
+	l.Info("security_tier1", map[string]interface{}{
+		"block_id": blockID,
+		"pass":     pass,
+		"flags":    strings.Join(flags, ","),
+		"security": true,
+	})
+}
+
+// SecurityTier2 logs Tier 2 triage results.
+func (l *Logger) SecurityTier2(blockID string, escalate bool, confidence string, model string, latencyMs int64) {
+	l.Info("security_tier2", map[string]interface{}{
+		"block_id":   blockID,
+		"escalate":   escalate,
+		"confidence": confidence,
+		"model":      model,
+		"latency_ms": latencyMs,
+		"security":   true,
+	})
+}
+
+// SecurityTier3 logs Tier 3 supervisor verdict.
+func (l *Logger) SecurityTier3(blockID string, verdict, reason, model string, latencyMs int64) {
+	l.Info("security_tier3", map[string]interface{}{
+		"block_id":   blockID,
+		"verdict":    verdict,
+		"reason":     reason,
+		"model":      model,
+		"latency_ms": latencyMs,
+		"security":   true,
+	})
+}
+
+// SecurityDecision logs a final security decision.
+func (l *Logger) SecurityDecision(tool, action, reason string, trust string, tiers string) {
+	l.Info("security_decision", map[string]interface{}{
+		"tool":     tool,
+		"action":   action,
+		"reason":   reason,
+		"trust":    trust,
+		"tiers":    tiers,
+		"security": true,
+	})
+}
+
+// SecurityDeny logs when a tool call is denied.
+func (l *Logger) SecurityDeny(tool, reason string, tier int) {
+	l.Warn("security_deny", map[string]interface{}{
+		"tool":     tool,
+		"reason":   reason,
+		"tier":     tier,
+		"security": true,
+	})
+}
+
+// CheckpointSaved logs when a checkpoint is saved.
+func (l *Logger) CheckpointSaved(checkpointType, goal, step, checkpointID string) {
+	l.Debug("checkpoint_saved", map[string]interface{}{
+		"type":          checkpointType,
+		"goal":          goal,
+		"step":          step,
+		"checkpoint_id": checkpointID,
+	})
+}

@@ -81,6 +81,7 @@ func (s *Supervisor) SetHumanAvailable(available bool) {
 // Reconcile performs static pattern checks on checkpoint data.
 // Returns triggers that indicate need for supervision.
 func (s *Supervisor) Reconcile(pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint) *checkpoint.ReconcileResult {
+	start := time.Now()
 	result := &checkpoint.ReconcileResult{
 		StepID:    pre.StepID,
 		Timestamp: time.Now(),
@@ -121,11 +122,18 @@ func (s *Supervisor) Reconcile(pre *checkpoint.PreCheckpoint, post *checkpoint.P
 	result.Triggers = triggers
 	result.Supervise = len(triggers) > 0
 
+	// Forensic logging
+	s.logger.ReconcilePhase("", pre.StepID, triggers, result.Supervise)
+	s.logger.PhaseComplete("RECONCILE", "", pre.StepID, time.Since(start), fmt.Sprintf("supervise=%v", result.Supervise))
+
 	return result
 }
 
 // Supervise evaluates the agent's work and decides whether to continue, reorient, or pause.
 func (s *Supervisor) Supervise(ctx context.Context, pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, decisionTrail []*checkpoint.Checkpoint, requiresHuman bool) (*checkpoint.SuperviseResult, error) {
+	start := time.Now()
+	s.logger.PhaseStart("SUPERVISE", "", pre.StepID)
+	
 	result := &checkpoint.SuperviseResult{
 		StepID:    pre.StepID,
 		Timestamp: time.Now(),
@@ -143,6 +151,7 @@ func (s *Supervisor) Supervise(ctx context.Context, pre *checkpoint.PreCheckpoin
 		Messages: messages,
 	})
 	if err != nil {
+		s.logger.Error("supervisor_llm_error", map[string]interface{}{"error": err.Error()})
 		return nil, fmt.Errorf("supervisor LLM error: %w", err)
 	}
 
@@ -152,10 +161,14 @@ func (s *Supervisor) Supervise(ctx context.Context, pre *checkpoint.PreCheckpoin
 	result.Correction = correction
 	result.Question = question
 
+	// Log initial verdict
+	s.logger.SupervisePhase("", pre.StepID, string(verdict), correction)
+
 	// Handle PAUSE verdict
 	if verdict == VerdictPause {
 		if requiresHuman && !s.humanAvailable {
 			// Hard fail - workflow requires human but none available
+			s.logger.SupervisorVerdict("", pre.StepID, "PAUSE_FAILED", "human required but unavailable", true)
 			return nil, fmt.Errorf("supervision requires human input but no human is available")
 		}
 
@@ -171,14 +184,17 @@ func (s *Supervisor) Supervise(ctx context.Context, pre *checkpoint.PreCheckpoin
 				// Human provided input, reorient with it
 				result.Verdict = string(VerdictReorient)
 				result.Correction = input
+				s.logger.SupervisorVerdict("", pre.StepID, "REORIENT", "human provided input", true)
 			case <-time.After(s.humanInputTimeout):
 				if requiresHuman {
+					s.logger.SupervisorVerdict("", pre.StepID, "PAUSE_TIMEOUT", "human input timeout", true)
 					return nil, fmt.Errorf("human input timeout - workflow requires human approval")
 				}
 				// Timeout without required human - supervisor decides
 				s.logger.Warn("human input timeout, supervisor will decide", nil)
 				result.Verdict = string(VerdictContinue)
 				result.Correction = "Proceeding without human input (timeout). Review output carefully."
+				s.logger.SupervisorVerdict("", pre.StepID, "CONTINUE", "timeout fallback", false)
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
@@ -192,9 +208,14 @@ func (s *Supervisor) Supervise(ctx context.Context, pre *checkpoint.PreCheckpoin
 			}
 			result.Verdict = string(autonomousResp.verdict)
 			result.Correction = autonomousResp.correction
+			s.logger.SupervisorVerdict("", pre.StepID, string(autonomousResp.verdict), "autonomous decision", false)
 		}
+	} else {
+		// Log non-PAUSE verdicts
+		s.logger.SupervisorVerdict("", pre.StepID, string(verdict), correction, false)
 	}
 
+	s.logger.PhaseComplete("SUPERVISE", "", pre.StepID, time.Since(start), result.Verdict)
 	return result, nil
 }
 
