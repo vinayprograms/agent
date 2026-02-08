@@ -16,15 +16,51 @@ default_deny = false  # Set to true for production
 # Extra patterns: format is "name:regex"
 # These are checked in addition to built-in patterns like ignore_previous, curl_pipe_bash, etc.
 extra_patterns = [
-    # "exfil_attempt:(?i)send.*to.*external",
-    # "data_leak:(?i)upload.*credentials",
+    # Data exfiltration attempts
+    "exfil_curl:(?i)curl\\s+.*(-d|--data).*\\$",
+    "exfil_wget:(?i)wget\\s+--post",
+    "exfil_nc:(?i)(nc|netcat)\\s+-.*\\d+",
+    # Privilege escalation
+    "sudo_attempt:(?i)sudo\\s+",
+    "su_attempt:(?i)\\bsu\\s+-",
+    "chmod_dangerous:(?i)chmod\\s+(777|\\+s)",
+    # Reverse shells
+    "reverse_shell_bash:(?i)bash\\s+-i\\s+>&",
+    "reverse_shell_nc:(?i)(nc|netcat)\\s+-e\\s+/bin/(ba)?sh",
+    # Environment probing
+    "env_dump:(?i)(printenv|env\\s*$|set\\s*$)",
+    "aws_creds:(?i)aws\\s+configure|~/.aws/credentials",
+    # Remote code loading
+    "python_exec:(?i)python.*-c\\s+['\"].*import",
+    "node_eval:(?i)node\\s+-e",
 ]
 # Extra keywords: simple case-insensitive word matches
 # These are checked in addition to built-in keywords like api_key, password, secret, etc.
 extra_keywords = [
-    # "internal_only",
-    # "confidential",
-    # "proprietary",
+    # Classification labels
+    "confidential",
+    "internal_only",
+    "proprietary",
+    "do_not_share",
+    # Cloud credentials
+    "aws_access_key",
+    "aws_secret_key",
+    "azure_client_secret",
+    "gcp_service_account",
+    # Database
+    "connection_string",
+    "db_password",
+    "mongodb_uri",
+    "postgres_password",
+    # Auth tokens
+    "bearer_token",
+    "refresh_token",
+    "jwt_secret",
+    "oauth_secret",
+    # SSH/TLS
+    "ssh_private_key",
+    "ssl_key",
+    "pem_file",
 ]
 
 # Web Tool Security
