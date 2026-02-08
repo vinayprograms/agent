@@ -426,13 +426,21 @@ func runWorkflow(args []string) {
 		fmt.Fprintf(os.Stderr, "✓ Completed goal: %s\n", name)
 		telem.LogEvent("goal_complete", map[string]interface{}{"goal": name})
 	}
-	exec.OnToolCall = func(name string, args map[string]interface{}, result interface{}) {
-		fmt.Fprintf(os.Stderr, "  → Tool: %s\n", name)
-		telem.LogEvent("tool_call", map[string]interface{}{"tool": name, "args": args})
+	exec.OnToolCall = func(name string, args map[string]interface{}, result interface{}, agentRole string) {
+		if agentRole != "" && agentRole != "main" {
+			fmt.Fprintf(os.Stderr, "  → [%s] Tool: %s\n", agentRole, name)
+		} else {
+			fmt.Fprintf(os.Stderr, "  → Tool: %s\n", name)
+		}
+		telem.LogEvent("tool_call", map[string]interface{}{"tool": name, "args": args, "agent": agentRole})
 	}
-	exec.OnToolError = func(name string, args map[string]interface{}, err error) {
-		fmt.Fprintf(os.Stderr, "  ✗ Tool error [%s]: %v\n", name, err)
-		telem.LogEvent("tool_error", map[string]interface{}{"tool": name, "error": err.Error()})
+	exec.OnToolError = func(name string, args map[string]interface{}, err error, agentRole string) {
+		if agentRole != "" && agentRole != "main" {
+			fmt.Fprintf(os.Stderr, "  ✗ [%s] Tool error [%s]: %v\n", agentRole, name, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "  ✗ Tool error [%s]: %v\n", name, err)
+		}
+		telem.LogEvent("tool_error", map[string]interface{}{"tool": name, "error": err.Error(), "agent": agentRole})
 	}
 	exec.OnLLMError = func(err error) {
 		fmt.Fprintf(os.Stderr, "  ✗ LLM error: %v\n", err)

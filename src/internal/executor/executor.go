@@ -112,8 +112,8 @@ type Executor struct {
 	// Callbacks
 	OnGoalStart        func(name string)
 	OnGoalComplete     func(name string, output string)
-	OnToolCall         func(name string, args map[string]interface{}, result interface{})
-	OnToolError        func(name string, args map[string]interface{}, err error)
+	OnToolCall         func(name string, args map[string]interface{}, result interface{}, agentRole string)
+	OnToolError        func(name string, args map[string]interface{}, err error, agentRole string)
 	OnLLMError         func(err error)
 	OnSkillLoaded      func(name string)
 	OnMCPToolCall      func(server, tool string, args map[string]interface{}, result interface{})
@@ -1681,12 +1681,15 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 // executeTool executes a tool call (built-in or MCP).
 func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (interface{}, error) {
 	start := time.Now()
+	
+	// Get agent identity early for error callbacks
+	agentID := getAgentIdentity(ctx)
 
 	// Security verification before execution
 	if err := e.verifyToolCall(ctx, tc.Name, tc.Args); err != nil {
 		e.logToolResult(ctx, tc.Name, tc.Args, "", nil, err, time.Since(start))
 		if e.OnToolError != nil {
-			e.OnToolError(tc.Name, tc.Args, err)
+			e.OnToolError(tc.Name, tc.Args, err, agentID.Role)
 		}
 		return nil, err
 	}
@@ -1729,11 +1732,11 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	}
 
 	if err != nil && e.OnToolError != nil {
-		e.OnToolError(tc.Name, tc.Args, err)
+		e.OnToolError(tc.Name, tc.Args, err, agentID.Role)
 	}
 
 	if e.OnToolCall != nil {
-		e.OnToolCall(tc.Name, tc.Args, result)
+		e.OnToolCall(tc.Name, tc.Args, result, agentID.Role)
 	}
 
 	return result, err
