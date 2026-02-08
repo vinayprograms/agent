@@ -119,6 +119,12 @@ type pagerModel struct {
 	searchFailed bool  // No matches found
 }
 
+// Search highlight style - bright yellow background like vim
+var searchHighlightStyle = lipgloss.NewStyle().
+	Background(lipgloss.Color("226")). // Bright yellow
+	Foreground(lipgloss.Color("0")).   // Black text
+	Bold(true)
+
 func (m *pagerModel) Init() tea.Cmd {
 	if m.live && m.watcher != nil {
 		return m.watchFile()
@@ -176,6 +182,8 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchQuery = ""
 				m.searchLines = nil
 				m.searchFailed = false
+				// Restore original content (remove highlighting)
+				m.viewport.SetContent(m.wrappedContent)
 				return m, nil
 			}
 		}
@@ -230,6 +238,8 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchQuery = ""
 				m.searchLines = nil
 				m.searchFailed = false
+				// Restore original content (remove highlighting)
+				m.viewport.SetContent(m.wrappedContent)
 			} else {
 				return m, tea.Quit
 			}
@@ -303,13 +313,16 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// executeSearch finds all lines matching the search query in wrapped content.
+// executeSearch finds all lines matching the search query in wrapped content
+// and updates the viewport with highlighted matches.
 func (m *pagerModel) executeSearch() {
 	m.searchLines = nil
 	m.searchIndex = 0
 	m.searchFailed = false
 
 	if m.searchQuery == "" {
+		// Restore original content
+		m.viewport.SetContent(m.wrappedContent)
 		return
 	}
 
@@ -317,16 +330,65 @@ func (m *pagerModel) executeSearch() {
 	
 	// Search the wrapped content (what's actually displayed)
 	contentLines := strings.Split(m.wrappedContent, "\n")
+	highlightedLines := make([]string, len(contentLines))
 	
 	for i, line := range contentLines {
-		if strings.Contains(strings.ToLower(line), query) {
+		lowerLine := strings.ToLower(line)
+		if strings.Contains(lowerLine, query) {
 			m.searchLines = append(m.searchLines, i)
+			// Highlight all occurrences in this line
+			highlightedLines[i] = highlightMatches(line, m.searchQuery)
+		} else {
+			highlightedLines[i] = line
 		}
 	}
 
 	if len(m.searchLines) == 0 {
 		m.searchFailed = true
+		// Keep original content on failed search
+		m.viewport.SetContent(m.wrappedContent)
+	} else {
+		// Update viewport with highlighted content
+		m.viewport.SetContent(strings.Join(highlightedLines, "\n"))
 	}
+}
+
+// highlightMatches highlights all case-insensitive occurrences of query in line.
+func highlightMatches(line, query string) string {
+	if query == "" {
+		return line
+	}
+	
+	lowerLine := strings.ToLower(line)
+	lowerQuery := strings.ToLower(query)
+	
+	var result strings.Builder
+	lastEnd := 0
+	
+	for {
+		idx := strings.Index(lowerLine[lastEnd:], lowerQuery)
+		if idx == -1 {
+			break
+		}
+		
+		// Absolute position in original line
+		matchStart := lastEnd + idx
+		matchEnd := matchStart + len(query)
+		
+		// Append text before match
+		result.WriteString(line[lastEnd:matchStart])
+		
+		// Append highlighted match (preserving original case)
+		matchText := line[matchStart:matchEnd]
+		result.WriteString(searchHighlightStyle.Render(matchText))
+		
+		lastEnd = matchEnd
+	}
+	
+	// Append remaining text
+	result.WriteString(line[lastEnd:])
+	
+	return result.String()
 }
 
 // jumpToMatch scrolls to the given match index.
