@@ -53,8 +53,10 @@ func isBillingError(err error) bool {
 
 // FantasyAdapter wraps a fantasy.LanguageModel to implement our Provider interface.
 type FantasyAdapter struct {
-	model     fantasy.LanguageModel
-	maxTokens int
+	model        fantasy.LanguageModel
+	maxTokens    int
+	providerName string
+	thinking     ThinkingConfig
 }
 
 // NewFantasyAdapter creates a new adapter wrapping a fantasy LanguageModel.
@@ -62,6 +64,16 @@ func NewFantasyAdapter(model fantasy.LanguageModel, maxTokens int) *FantasyAdapt
 	return &FantasyAdapter{
 		model:     model,
 		maxTokens: maxTokens,
+	}
+}
+
+// NewFantasyAdapterWithThinking creates a new adapter with thinking support.
+func NewFantasyAdapterWithThinking(model fantasy.LanguageModel, maxTokens int, providerName string, thinking ThinkingConfig) *FantasyAdapter {
+	return &FantasyAdapter{
+		model:        model,
+		maxTokens:    maxTokens,
+		providerName: providerName,
+		thinking:     thinking,
 	}
 }
 
@@ -134,6 +146,14 @@ func (a *FantasyAdapter) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		MaxOutputTokens: &maxTokens,
 	}
 
+	// Add thinking/reasoning options if configured
+	if a.thinking.Level != "" && a.thinking.Level != ThinkingOff {
+		thinkingLevel := ResolveThinkingLevel(a.thinking, req.Messages, req.Tools)
+		if thinkingLevel != ThinkingOff {
+			call.ProviderOptions = a.buildThinkingOptions(thinkingLevel)
+		}
+	}
+
 	// Generate with retry and exponential backoff
 	var resp *fantasy.Response
 	var err error
@@ -189,6 +209,10 @@ func (a *FantasyAdapter) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 			result.Content += c.Text
 		case fantasy.TextContent:
 			result.Content += c.Text
+		case *fantasy.ReasoningContent:
+			result.Thinking += c.Text
+		case fantasy.ReasoningContent:
+			result.Thinking += c.Text
 		case *fantasy.ToolCallContent:
 			var args map[string]interface{}
 			json.Unmarshal([]byte(c.Input), &args)
@@ -209,6 +233,39 @@ func (a *FantasyAdapter) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	}
 
 	return result, nil
+}
+
+// buildThinkingOptions creates provider-specific thinking options.
+func (a *FantasyAdapter) buildThinkingOptions(level ThinkingLevel) fantasy.ProviderOptions {
+	switch a.providerName {
+	case "anthropic":
+		budget := ThinkingLevelToAnthropicBudget(level, a.thinking.BudgetTokens)
+		if budget > 0 {
+			return anthropic.NewProviderOptions(&anthropic.ProviderOptions{
+				Thinking: &anthropic.ThinkingProviderOption{
+					BudgetTokens: budget,
+				},
+			})
+		}
+	case "openai":
+		// Map our levels to OpenAI reasoning effort
+		var effort openai.ReasoningEffort
+		switch level {
+		case ThinkingHigh:
+			effort = openai.ReasoningEffortHigh
+		case ThinkingMedium:
+			effort = openai.ReasoningEffortMedium
+		case ThinkingLow:
+			effort = openai.ReasoningEffortLow
+		default:
+			effort = openai.ReasoningEffortMinimal
+		}
+		return openai.NewProviderOptions(&openai.ProviderOptions{
+			ReasoningEffort: &effort,
+		})
+	}
+
+	return nil
 }
 
 // InferProviderFromModel returns the provider name based on model name patterns.
@@ -348,6 +405,7 @@ func NewProvider(cfg FantasyConfig) (Provider, error) {
 			BaseURL:   cfg.BaseURL,
 			Model:     cfg.Model,
 			MaxTokens: cfg.MaxTokens,
+			Thinking:  cfg.Thinking,
 		})
 	}
 
@@ -359,6 +417,11 @@ func NewProvider(cfg FantasyConfig) (Provider, error) {
 	model, err := fantasyProvider.LanguageModel(context.Background(), cfg.Model)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get model %s: %w", cfg.Model, err)
+	}
+
+	// Use thinking-enabled adapter if thinking is configured
+	if cfg.Thinking.Level != "" && cfg.Thinking.Level != ThinkingOff {
+		return NewFantasyAdapterWithThinking(model, cfg.MaxTokens, cfg.Provider, cfg.Thinking), nil
 	}
 
 	return NewFantasyAdapter(model, cfg.MaxTokens), nil

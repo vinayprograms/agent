@@ -38,6 +38,7 @@ type ChatRequest struct {
 // ChatResponse represents a chat response from the LLM.
 type ChatResponse struct {
 	Content      string             `json:"content"`
+	Thinking     string             `json:"thinking,omitempty"`
 	ToolCalls    []ToolCallResponse `json:"tool_calls,omitempty"`
 	StopReason   string             `json:"stop_reason"`
 	InputTokens  int                `json:"input_tokens"`
@@ -53,11 +54,12 @@ type Provider interface {
 
 // FantasyConfig holds configuration for the Fantasy adapter.
 type FantasyConfig struct {
-	Provider  string `json:"provider"`  // anthropic, openai, google, groq, mistral, openai-compat
-	Model     string `json:"model"`
-	APIKey    string `json:"api_key"`
-	MaxTokens int    `json:"max_tokens"`
-	BaseURL   string `json:"base_url"` // Custom API endpoint (for OpenRouter, LiteLLM, Ollama, LMStudio)
+	Provider  string         `json:"provider"`  // anthropic, openai, google, groq, mistral, openai-compat
+	Model     string         `json:"model"`
+	APIKey    string         `json:"api_key"`
+	MaxTokens int            `json:"max_tokens"`
+	BaseURL   string         `json:"base_url"` // Custom API endpoint (for OpenRouter, LiteLLM, Ollama, LMStudio)
+	Thinking  ThinkingConfig `json:"thinking"` // Thinking/reasoning configuration
 }
 
 // Validate validates the configuration.

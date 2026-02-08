@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type OllamaCloudProvider struct {
 	baseURL   string
 	model     string
 	maxTokens int
+	thinking  ThinkingConfig
 	client    *http.Client
 }
 
@@ -26,6 +28,7 @@ type OllamaCloudConfig struct {
 	BaseURL   string // defaults to https://ollama.com
 	Model     string
 	MaxTokens int
+	Thinking  ThinkingConfig
 }
 
 // NewOllamaCloudProvider creates a new Ollama Cloud provider.
@@ -52,6 +55,7 @@ func NewOllamaCloudProvider(cfg OllamaCloudConfig) (*OllamaCloudProvider, error)
 		baseURL:   baseURL,
 		model:     cfg.Model,
 		maxTokens: maxTokens,
+		thinking:  cfg.Thinking,
 		client: &http.Client{
 			Timeout: 5 * time.Minute,
 		},
@@ -60,9 +64,10 @@ func NewOllamaCloudProvider(cfg OllamaCloudConfig) (*OllamaCloudProvider, error)
 
 // ollamaMessage represents a message in Ollama's API format.
 type ollamaMessage struct {
-	Role      string         `json:"role"`
-	Content   string         `json:"content"`
-	ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
+	Role      string             `json:"role"`
+	Content   string             `json:"content"`
+	Thinking  string             `json:"thinking,omitempty"`
+	ToolCalls []ollamaToolCall   `json:"tool_calls,omitempty"`
 }
 
 // ollamaToolCall represents a tool call in Ollama's format.
@@ -95,6 +100,7 @@ type ollamaChatRequest struct {
 	Messages []ollamaMessage `json:"messages"`
 	Tools    []ollamaTool    `json:"tools,omitempty"`
 	Stream   bool            `json:"stream"`
+	Think    interface{}     `json:"think,omitempty"` // bool or "low"/"medium"/"high"
 	Options  *ollamaOptions  `json:"options,omitempty"`
 }
 
@@ -158,11 +164,24 @@ func (p *OllamaCloudProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 		maxTokens = req.MaxTokens
 	}
 
+	// Determine thinking level
+	thinkingLevel := ResolveThinkingLevel(p.thinking, req.Messages, req.Tools)
+	var thinkParam interface{}
+	if thinkingLevel != ThinkingOff {
+		// GPT-OSS uses string levels, others use bool
+		if isGPTOSSModel(p.model) {
+			thinkParam = string(thinkingLevel)
+		} else {
+			thinkParam = true
+		}
+	}
+
 	ollamaReq := ollamaChatRequest{
 		Model:    p.model,
 		Messages: messages,
 		Tools:    tools,
 		Stream:   false,
+		Think:    thinkParam,
 		Options: &ollamaOptions{
 			NumPredict: maxTokens,
 		},
@@ -206,6 +225,7 @@ func (p *OllamaCloudProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 	// Convert response
 	result := &ChatResponse{
 		Content:      resp.Message.Content,
+		Thinking:     resp.Message.Thinking,
 		StopReason:   resp.DoneReason,
 		InputTokens:  resp.PromptEvalCount,
 		OutputTokens: resp.EvalCount,
@@ -267,4 +287,9 @@ func (p *OllamaCloudProvider) doRequest(ctx context.Context, req ollamaChatReque
 	}
 
 	return &resp, nil
+}
+
+// isGPTOSSModel checks if the model is GPT-OSS which uses string think levels.
+func isGPTOSSModel(model string) bool {
+	return strings.Contains(strings.ToLower(model), "gpt-oss")
 }
