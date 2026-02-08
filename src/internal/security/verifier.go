@@ -240,21 +240,34 @@ func (v *Verifier) tier1Check(toolName string, args map[string]interface{}, agen
 
 	// Collect pattern findings but don't let patterns override block selection
 	// The block should be selected based on content correlation, not pattern presence
+	// Use a set to deduplicate pattern names across multiple blocks
+	seenReasons := make(map[string]bool)
+	
 	for _, block := range blocksToCheck {
 		patterns := DetectSuspiciousPatterns(block.Content)
 		for _, p := range patterns {
-			result.Reasons = append(result.Reasons, "pattern:"+p.Name)
+			reason := "pattern:" + p.Name
+			if !seenReasons[reason] {
+				seenReasons[reason] = true
+				result.Reasons = append(result.Reasons, reason)
+			}
 		}
 
 		// Check 5: Encoded content
 		if HasEncodedContent(block.Content) {
-			result.Reasons = append(result.Reasons, "encoded_content")
+			if !seenReasons["encoded_content"] {
+				seenReasons["encoded_content"] = true
+				result.Reasons = append(result.Reasons, "encoded_content")
+			}
 		}
 	}
 
 	// Check args for suspicious patterns
 	if HasSuspiciousPatterns(argsStr) {
-		result.Reasons = append(result.Reasons, "suspicious_args")
+		if !seenReasons["suspicious_args"] {
+			seenReasons["suspicious_args"] = true
+			result.Reasons = append(result.Reasons, "suspicious_args")
+		}
 	}
 
 	// If still no block identified, use the most recent one (not the first)
