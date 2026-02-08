@@ -1,0 +1,57 @@
+digraph SubAgentModel {
+    label="Sub-Agent Execution Model"
+    labelloc="t"
+    fontsize=18
+    fontname="Arial"
+    rankdir=TB
+    nodesep=0.6
+    ranksep=0.8
+    
+    node [fontname="Arial", fontsize=11]
+    edge [fontname="Arial", fontsize=10]
+    
+    // Orchestrator
+    subgraph cluster_orchestrator {
+        label=""
+        style="dashed,rounded"
+        color="#666666"
+        
+        orchestrator [label="Orchestrator" shape=box style="rounded,filled" fillcolor="#cce5ff" width=2]
+        spawn_tool [label="spawn_agents tool" shape=box style="rounded,filled" fillcolor="white" width=1.5]
+        
+        orchestrator -> spawn_tool [style=invis]
+    }
+    
+    // Constraints note
+    constraints [label="Depth = 1 only\nNo shared state" shape=note style=filled fillcolor="#ffffcc"]
+    
+    // Sub-agents
+    subgraph cluster_subagents {
+        label=""
+        style=invis
+        
+        sub1 [label="Sub-Agent 1" shape=box style="rounded,filled" fillcolor="#ccffcc" width=1.2]
+        sub2 [label="Sub-Agent 2" shape=box style="rounded,filled" fillcolor="#ccffcc" width=1.2]
+        sub3 [label="Sub-Agent 3" shape=box style="rounded,filled" fillcolor="#ccffcc" width=1.2]
+    }
+    
+    // Features note
+    features [label="- Separate context\n- Own tool permissions\n- Cannot spawn sub-agents\n- Returns result only" shape=box style="rounded,filled" fillcolor="#e6ffe6" fontsize=10]
+    
+    // Supervision note (NEW)
+    supervision [label="Inherits supervision from\nparent goal (if SUPERVISED)" shape=box style="rounded,filled" fillcolor="#fff0cc" fontsize=10]
+    
+    // Edges
+    spawn_tool -> sub1 [label="isolated"]
+    spawn_tool -> sub2 [label="isolated"]
+    spawn_tool -> sub3 [label="isolated"]
+    
+    orchestrator -> constraints [style=dashed arrowhead=none]
+    
+    sub1 -> features [style=invis]
+    sub3 -> supervision [style=invis]
+    
+    // Layout
+    {rank=same; sub1; sub2; sub3}
+    {rank=same; features; supervision}
+}

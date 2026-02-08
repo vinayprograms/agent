@@ -1,0 +1,93 @@
+digraph SecurityModes {
+    label="Security Modes"
+    labelloc="t"
+    fontsize=18
+    fontname="Arial"
+    rankdir=TB
+    nodesep=0.4
+    ranksep=0.5
+    
+    node [fontname="Arial", fontsize=11]
+    
+    // Force horizontal layout with a hidden row
+    subgraph {
+        rank=same
+        node [style=invis, width=0, height=0]
+        _a -> _b -> _c [style=invis]
+    }
+    
+    // DEFAULT mode cluster
+    subgraph cluster_default {
+        label="DEFAULT"
+        labeljust="l"
+        fontname="Arial Bold"
+        fontsize=13
+        style="rounded,filled"
+        fillcolor="#cce5ff"
+        color="#4a90d9"
+        penwidth=2
+        margin=12
+        
+        _a [style=invis, width=0, height=0]
+        
+        subgraph {
+            rank=same
+            d1 [label="Trust vetted blocks" shape=box style="rounded,filled" fillcolor="white"]
+            d2 [label="Smart escalation" shape=box style="rounded,filled" fillcolor="white"]
+            d3 [label="Tiered verification" shape=box style="rounded,filled" fillcolor="white"]
+        }
+        d_note [label="Balanced\ncost/security" shape=note style=filled fillcolor="#ffffcc"]
+        
+        d1 -> d_note [style=invis]
+    }
+    
+    // PARANOID mode cluster
+    subgraph cluster_paranoid {
+        label="PARANOID"
+        labeljust="l"
+        fontname="Arial Bold"
+        fontsize=13
+        style="rounded,filled"
+        fillcolor="#ffcccc"
+        color="#d94a4a"
+        penwidth=2
+        margin=12
+        
+        _b [style=invis, width=0, height=0]
+        
+        subgraph {
+            rank=same
+            p1 [label="Re-verify vetted" shape=box style="rounded,filled" fillcolor="white"]
+            p2 [label="Every action" shape=box style="rounded,filled" fillcolor="white"]
+            p3 [label="Full verification" shape=box style="rounded,filled" fillcolor="white"]
+        }
+        p_note [label="Maximum\nsecurity" shape=note style=filled fillcolor="#ffffcc"]
+        
+        p1 -> p_note [style=invis]
+    }
+    
+    // RESEARCH mode cluster
+    subgraph cluster_research {
+        label="RESEARCH"
+        labeljust="l"
+        fontname="Arial Bold"
+        fontsize=13
+        style="rounded,filled"
+        fillcolor="#e5ffe5"
+        color="#4ad94a"
+        penwidth=2
+        margin=12
+        
+        _c [style=invis, width=0, height=0]
+        
+        subgraph {
+            rank=same
+            r1 [label="Scope-aware" shape=box style="rounded,filled" fillcolor="white"]
+            r2 [label="Defensive framing" shape=box style="rounded,filled" fillcolor="white"]
+            r3 [label="Boundary enforcement" shape=box style="rounded,filled" fillcolor="white"]
+        }
+        r_note [label="Security research\nwithin scope" shape=note style=filled fillcolor="#ffffcc"]
+        
+        r1 -> r_note [style=invis]
+    }
+}
