@@ -70,7 +70,11 @@ enabled = false
 - `gemini-*`, `gemma-*` → Google
 - `mistral-*`, `mixtral-*`, `codestral-*` → Mistral
 
-Set `provider` explicitly only for ambiguous model names or OpenAI-compatible endpoints (e.g., Groq).
+Set `provider` explicitly for:
+- Ambiguous model names
+- OpenAI-compatible endpoints (Groq, OpenRouter, LiteLLM)
+- Local Ollama (`ollama` with `base_url`)
+- Ollama Cloud (`ollama-cloud`)
 
 #### 3. Set API Keys
 
@@ -648,6 +652,8 @@ The agent uses [Catwalk](https://github.com/charmbracelet/catwalk) for model dis
 | Google | `google` | `GOOGLE_API_KEY` | Gemini models |
 | Groq | `groq` | `GROQ_API_KEY` | Fast inference |
 | Mistral | `mistral` | `MISTRAL_API_KEY` | Mistral models |
+| Ollama (local) | `ollama` | — | Requires `base_url` |
+| Ollama Cloud | `ollama-cloud` | `OLLAMA_API_KEY` | Hosted models |
 
 ### Custom Endpoints (OpenRouter, LiteLLM, Ollama, etc.)
 
@@ -668,7 +674,7 @@ provider = "litellm"
 model = "gpt-4"
 base_url = "http://localhost:4000"
 
-# Ollama
+# Local Ollama (uses OpenAI-compatible endpoint)
 [llm]
 provider = "ollama"
 model = "llama3:70b"
@@ -686,6 +692,29 @@ provider = "openai-compat"
 model = "any-model"
 base_url = "https://my-api.example.com/v1"
 ```
+
+### Ollama Cloud
+
+Ollama Cloud provides hosted models accessible via API. Use the native `ollama-cloud` provider:
+
+```toml
+# agent.toml
+[llm]
+provider = "ollama-cloud"
+model = "gpt-oss:120b"  # or any model from ollama.com/search?c=cloud
+```
+
+```toml
+# credentials.toml
+[ollama-cloud]
+api_key = "your-ollama-api-key"  # from ollama.com/settings/keys
+```
+
+Available models: [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud)
+
+**Note:** This is different from local Ollama. For local Ollama, use `provider = "ollama"` with `base_url = "http://localhost:11434/v1"`.
+
+### Proxying Native Providers
 
 You can also use `base_url` with native providers to proxy requests:
 

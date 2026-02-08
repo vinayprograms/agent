@@ -305,6 +305,10 @@ func createFantasyProvider(providerName, apiKey, baseURL string) (fantasy.Provid
 			openaicompat.WithAPIKey(apiKey),
 			openaicompat.WithName(providerName),
 		)
+	case "ollama-cloud":
+		// Ollama Cloud uses a native provider, not fantasy - return nil here
+		// The caller (NewProvider) handles this case specially
+		return nil, fmt.Errorf("ollama-cloud requires native provider")
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", providerName)
 	}
@@ -336,6 +340,16 @@ func NewProvider(cfg FantasyConfig) (Provider, error) {
 		return nil, err
 	}
 	cfg.ApplyDefaults()
+
+	// Handle ollama-cloud specially - it uses a native provider, not fantasy
+	if cfg.Provider == "ollama-cloud" {
+		return NewOllamaCloudProvider(OllamaCloudConfig{
+			APIKey:    cfg.APIKey,
+			BaseURL:   cfg.BaseURL,
+			Model:     cfg.Model,
+			MaxTokens: cfg.MaxTokens,
+		})
+	}
 
 	fantasyProvider, err := createFantasyProvider(cfg.Provider, cfg.APIKey, cfg.BaseURL)
 	if err != nil {
