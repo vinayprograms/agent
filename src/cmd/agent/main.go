@@ -276,6 +276,18 @@ func runWorkflow(args []string) {
 	}
 	pol.Workspace = cfg.Agent.Workspace
 
+	// Register custom security patterns and keywords from policy
+	if pol.Security != nil {
+		if len(pol.Security.ExtraPatterns) > 0 {
+			if err := security.RegisterCustomPatterns(pol.Security.ExtraPatterns); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: invalid security pattern in policy: %v\n", err)
+			}
+		}
+		if len(pol.Security.ExtraKeywords) > 0 {
+			security.RegisterCustomKeywords(pol.Security.ExtraKeywords)
+		}
+	}
+
 	// Create LLM provider
 	var provider llm.Provider
 	

@@ -8,6 +8,25 @@ default_deny = false
 default_deny = false  # Set to true for production
 # allowed_tools = ["filesystem:read_file", "filesystem:list_directory", "memory:*"]
 
+# Security Patterns and Keywords
+# ---
+# Extend the built-in security detection with custom patterns and keywords.
+# Patterns are regex-based (for injection detection), keywords are simple word matches.
+[security]
+# Extra patterns: format is "name:regex"
+# These are checked in addition to built-in patterns like ignore_previous, curl_pipe_bash, etc.
+extra_patterns = [
+    # "exfil_attempt:(?i)send.*to.*external",
+    # "data_leak:(?i)upload.*credentials",
+]
+# Extra keywords: simple case-insensitive word matches
+# These are checked in addition to built-in keywords like api_key, password, secret, etc.
+extra_keywords = [
+    # "internal_only",
+    # "confidential",
+    # "proprietary",
+]
+
 # Web Tool Security
 # ---
 # allow_domains restricts which domains can be fetched/searched

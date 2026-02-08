@@ -1,6 +1,7 @@
 package security
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -179,6 +180,39 @@ var sensitiveKeywords = []string{
 	"access_token",
 }
 
+// customPatterns holds user-defined patterns from policy.toml
+var customPatterns []SuspiciousPattern
+
+// customKeywords holds user-defined keywords from policy.toml
+var customKeywords []string
+
+// RegisterCustomPatterns adds user-defined patterns (from policy.toml).
+// Format: "name:regex" e.g., "exfil_attempt:send.*to.*external"
+func RegisterCustomPatterns(patterns []string) error {
+	customPatterns = nil // Reset
+	for _, p := range patterns {
+		parts := strings.SplitN(p, ":", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid pattern format %q (expected name:regex)", p)
+		}
+		name, regex := parts[0], parts[1]
+		compiled, err := regexp.Compile(regex)
+		if err != nil {
+			return fmt.Errorf("invalid regex in pattern %q: %w", name, err)
+		}
+		customPatterns = append(customPatterns, SuspiciousPattern{
+			Name:    name,
+			Pattern: compiled,
+		})
+	}
+	return nil
+}
+
+// RegisterCustomKeywords adds user-defined keywords (from policy.toml).
+func RegisterCustomKeywords(keywords []string) {
+	customKeywords = keywords
+}
+
 // KeywordMatch represents a matched sensitive keyword.
 type KeywordMatch struct {
 	Keyword string
@@ -192,10 +226,23 @@ type PatternMatch struct {
 }
 
 // DetectSuspiciousPatterns scans content for injection-related patterns.
+// Checks both built-in patterns and custom patterns from policy.toml.
 func DetectSuspiciousPatterns(content string) []PatternMatch {
 	var matches []PatternMatch
 
+	// Check built-in patterns
 	for _, sp := range suspiciousPatterns {
+		if match := sp.Pattern.FindString(content); match != "" {
+			matches = append(matches, PatternMatch{
+				Name:    sp.Name,
+				Pattern: sp.Pattern.String(),
+				Match:   match,
+			})
+		}
+	}
+
+	// Check custom patterns from policy.toml
+	for _, sp := range customPatterns {
 		if match := sp.Pattern.FindString(content); match != "" {
 			matches = append(matches, PatternMatch{
 				Name:    sp.Name,
@@ -209,11 +256,20 @@ func DetectSuspiciousPatterns(content string) []PatternMatch {
 }
 
 // DetectSensitiveKeywords scans content for sensitive keywords (not patterns).
+// Checks both built-in keywords and custom keywords from policy.toml.
 func DetectSensitiveKeywords(content string) []KeywordMatch {
 	var matches []KeywordMatch
 	lowerContent := strings.ToLower(content)
 
+	// Check built-in keywords
 	for _, kw := range sensitiveKeywords {
+		if strings.Contains(lowerContent, strings.ToLower(kw)) {
+			matches = append(matches, KeywordMatch{Keyword: kw})
+		}
+	}
+
+	// Check custom keywords from policy.toml
+	for _, kw := range customKeywords {
 		if strings.Contains(lowerContent, strings.ToLower(kw)) {
 			matches = append(matches, KeywordMatch{Keyword: kw})
 		}

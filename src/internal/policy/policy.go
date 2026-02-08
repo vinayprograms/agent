@@ -24,7 +24,8 @@ type Policy struct {
 	HomeDir     string
 	ConfigDir   string // Directory containing agent.toml, policy.toml
 	Tools       map[string]*ToolPolicy
-	MCP         *MCPPolicy // MCP tools policy
+	MCP         *MCPPolicy      // MCP tools policy
+	Security    *SecurityPolicy // Security patterns and keywords
 }
 
 // ToolPolicy represents the policy for a specific tool.
@@ -45,6 +46,15 @@ type MCPPolicy struct {
 	// If not set (nil MCPPolicy), logs a security warning.
 	DefaultDeny  bool
 	AllowedTools []string // List of "server:tool" patterns to allow
+}
+
+// SecurityPolicy contains custom patterns and keywords for content scanning.
+type SecurityPolicy struct {
+	// ExtraPatterns are additional regex patterns to detect (on top of built-ins)
+	// Format: "name:regex" e.g., "exfil_attempt:send.*to.*external"
+	ExtraPatterns []string
+	// ExtraKeywords are additional sensitive keywords to detect (on top of built-ins)
+	ExtraKeywords []string
 }
 
 // tomlPolicy is the TOML representation.
@@ -84,13 +94,17 @@ func LoadFile(path string) (*Policy, error) {
 
 // Parse parses a policy from TOML content.
 func Parse(content string) (*Policy, error) {
-	// First pass: get default_deny and mcp section
+	// First pass: get default_deny, mcp, and security sections
 	var base struct {
 		DefaultDeny bool `toml:"default_deny"`
 		MCP         *struct {
 			DefaultDeny  bool     `toml:"default_deny"`
 			AllowedTools []string `toml:"allowed_tools"`
 		} `toml:"mcp"`
+		Security *struct {
+			ExtraPatterns []string `toml:"extra_patterns"`
+			ExtraKeywords []string `toml:"extra_keywords"`
+		} `toml:"security"`
 	}
 	if _, err := toml.Decode(content, &base); err != nil {
 		return nil, fmt.Errorf("failed to parse policy: %w", err)
@@ -107,6 +121,14 @@ func Parse(content string) (*Policy, error) {
 		}
 	}
 
+	// Parse security policy
+	if base.Security != nil {
+		pol.Security = &SecurityPolicy{
+			ExtraPatterns: base.Security.ExtraPatterns,
+			ExtraKeywords: base.Security.ExtraKeywords,
+		}
+	}
+
 	// Second pass: parse tool sections
 	var raw map[string]interface{}
 	if _, err := toml.Decode(content, &raw); err != nil {
@@ -114,7 +136,7 @@ func Parse(content string) (*Policy, error) {
 	}
 
 	for key, value := range raw {
-		if key == "default_deny" || key == "mcp" {
+		if key == "default_deny" || key == "mcp" || key == "security" {
 			continue
 		}
 
