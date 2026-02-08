@@ -16,12 +16,17 @@ type Mode string
 const (
 	ModeDefault  Mode = "default"
 	ModeParanoid Mode = "paranoid"
+	ModeResearch Mode = "research"
 )
 
 // Config holds security verifier configuration.
 type Config struct {
-	// Mode is the security mode (default or paranoid).
+	// Mode is the security mode (default, paranoid, or research).
 	Mode Mode
+
+	// ResearchScope describes the authorized scope for research mode.
+	// Required when Mode is ModeResearch.
+	ResearchScope string
 
 	// UserTrust is the trust level for user messages.
 	UserTrust TrustLevel
@@ -38,12 +43,13 @@ type Config struct {
 
 // Verifier implements the tiered security verification pipeline.
 type Verifier struct {
-	mode       Mode
-	userTrust  TrustLevel
-	triage     *Triage
-	supervisor *SecuritySupervisor
-	audit      *AuditTrail
-	logger     *logging.Logger
+	mode          Mode
+	researchScope string
+	userTrust     TrustLevel
+	triage        *Triage
+	supervisor    *SecuritySupervisor
+	audit         *AuditTrail
+	logger        *logging.Logger
 
 	// blocks tracks content blocks in the current context
 	blocks   []*Block
@@ -66,11 +72,12 @@ func NewVerifier(cfg Config, sessionID string) (*Verifier, error) {
 	}
 
 	v := &Verifier{
-		mode:      cfg.Mode,
-		userTrust: cfg.UserTrust,
-		audit:     audit,
-		logger:    logger,
-		blocks:    make([]*Block, 0),
+		mode:          cfg.Mode,
+		researchScope: cfg.ResearchScope,
+		userTrust:     cfg.UserTrust,
+		audit:         audit,
+		logger:        logger,
+		blocks:        make([]*Block, 0),
 	}
 
 	if cfg.TriageProvider != nil {
@@ -78,13 +85,14 @@ func NewVerifier(cfg Config, sessionID string) (*Verifier, error) {
 	}
 
 	if cfg.SupervisorProvider != nil {
-		v.supervisor = NewSecuritySupervisor(cfg.SupervisorProvider)
+		v.supervisor = NewSecuritySupervisor(cfg.SupervisorProvider, cfg.Mode, cfg.ResearchScope)
 	}
 
 	logger.Info("security verifier initialized", map[string]interface{}{
-		"mode":       string(cfg.Mode),
-		"user_trust": string(cfg.UserTrust),
-		"session_id": sessionID,
+		"mode":           string(cfg.Mode),
+		"research_scope": cfg.ResearchScope,
+		"user_trust":     string(cfg.UserTrust),
+		"session_id":     sessionID,
 	})
 
 	return v, nil

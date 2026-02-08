@@ -11,7 +11,8 @@ type Workflow struct {
 	BaseDir      string // directory containing the Agentfile
 	Supervised   bool   // global supervision enabled (SUPERVISED at top)
 	HumanOnly    bool   // global human-only mode (SUPERVISED HUMAN at top)
-	SecurityMode string // "default" or "paranoid" (SECURITY directive)
+	SecurityMode string // "default", "paranoid", or "research" (SECURITY directive)
+	SecurityScope string // scope description for research mode (e.g., "authorized pentest of lab environment")
 	Inputs       []Input
 	Agents       []Agent
 	Goals        []Goal

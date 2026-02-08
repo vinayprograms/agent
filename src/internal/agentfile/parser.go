@@ -47,16 +47,26 @@ func (p *Parser) Parse() (*Workflow, error) {
 			}
 			p.skipNewline()
 		case TokenSECURITY:
-			// Security mode: SECURITY default | paranoid
+			// Security mode: SECURITY default | paranoid | research "scope"
 			p.nextToken() // consume SECURITY
 			if p.curToken.Type == TokenIdent {
 				mode := p.curToken.Literal
 				if mode == "default" || mode == "paranoid" {
 					wf.SecurityMode = mode
+					p.nextToken()
+				} else if mode == "research" {
+					wf.SecurityMode = mode
+					p.nextToken()
+					// Research mode requires a scope string
+					if p.curToken.Type == TokenString {
+						wf.SecurityScope = p.curToken.Literal
+						p.nextToken()
+					} else {
+						return nil, fmt.Errorf("line %d: SECURITY research requires a scope description string", p.curToken.Line)
+					}
 				} else {
-					return nil, fmt.Errorf("line %d: invalid security mode %q, expected 'default' or 'paranoid'", p.curToken.Line, mode)
+					return nil, fmt.Errorf("line %d: invalid security mode %q, expected 'default', 'paranoid', or 'research'", p.curToken.Line, mode)
 				}
-				p.nextToken()
 			} else {
 				return nil, fmt.Errorf("line %d: expected security mode after SECURITY, got %s", p.curToken.Line, p.curToken.Type)
 			}

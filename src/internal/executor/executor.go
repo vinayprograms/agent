@@ -124,6 +124,9 @@ type Executor struct {
 
 	// Security verifier
 	securityVerifier *security.Verifier
+
+	// Security research context (for defensive framing in prompts)
+	securityResearchScope string
 }
 
 // NewExecutor creates a new executor.
@@ -163,6 +166,12 @@ func NewExecutorWithFactory(wf *agentfile.Workflow, factory llm.ProviderFactory,
 func (e *Executor) SetSecurityVerifier(v *security.Verifier) {
 	e.securityVerifier = v
 	e.logger.Info("security verifier attached", nil)
+}
+
+// SetSecurityResearchScope sets the security research scope for defensive framing.
+// When set, system prompts will include context indicating authorized security research.
+func (e *Executor) SetSecurityResearchScope(scope string) {
+	e.securityResearchScope = scope
 }
 
 // verifyToolCall checks a tool call against the security verifier if configured.
@@ -684,6 +693,11 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	// Build system prompt for the sub-agent
 	systemPrompt := fmt.Sprintf("You are a %s. Complete the following task thoroughly and return your findings.\n\nTask: %s", role, task)
 
+	// Inject security research framing if enabled
+	if prefix := e.securityResearchPrefix(); prefix != "" {
+		systemPrompt = prefix + systemPrompt
+	}
+
 	// Add structured output instruction if outputs specified
 	userPrompt := task
 	if len(outputs) > 0 {
@@ -1035,6 +1049,29 @@ Respond with a JSON object:
 	}
 
 	return post
+}
+
+// securityResearchPrefix returns the defensive framing prefix for security research mode.
+func (e *Executor) securityResearchPrefix() string {
+	if e.securityResearchScope == "" {
+		return ""
+	}
+	return fmt.Sprintf(`SECURITY RESEARCH CONTEXT:
+You are conducting authorized security research. Your work is legitimate and within scope.
+
+Authorized Scope: %s
+
+This research may involve exploring attack vectors, vulnerability analysis, penetration testing,
+or other offensive security techniques. All activities are authorized for the purpose of
+improving defensive capabilities and security posture.
+
+When explaining security concepts:
+- Focus on understanding threats to build better defenses
+- Document attack vectors so they can be mitigated
+- Analyze vulnerabilities to develop patches and controls
+- Test exploitation to verify defensive measures work
+
+`, e.securityResearchScope)
 }
 
 // OrchestratorSystemPromptPrefix returns the prefix to inject when spawn_agent is available.
@@ -1507,6 +1544,11 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 
 	// Build system message with skills context
 	systemMsg := "You are a helpful assistant executing a workflow goal."
+
+	// Inject security research framing if enabled
+	if prefix := e.securityResearchPrefix(); prefix != "" {
+		systemMsg = prefix + systemMsg
+	}
 
 	// If spawn_agent tool is available, inject orchestrator guidance
 	if e.registry != nil && e.registry.Has("spawn_agent") {

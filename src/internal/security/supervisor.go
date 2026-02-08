@@ -10,12 +10,18 @@ import (
 
 // SecuritySupervisor performs Tier 3 full LLM-based security verification.
 type SecuritySupervisor struct {
-	provider llm.Provider
+	provider      llm.Provider
+	mode          Mode
+	researchScope string
 }
 
 // NewSecuritySupervisor creates a new security supervisor.
-func NewSecuritySupervisor(provider llm.Provider) *SecuritySupervisor {
-	return &SecuritySupervisor{provider: provider}
+func NewSecuritySupervisor(provider llm.Provider, mode Mode, researchScope string) *SecuritySupervisor {
+	return &SecuritySupervisor{
+		provider:      provider,
+		mode:          mode,
+		researchScope: researchScope,
+	}
 }
 
 // SupervisionRequest contains the information for security supervision.
@@ -48,8 +54,14 @@ const (
 func (s *SecuritySupervisor) Evaluate(ctx context.Context, req SupervisionRequest) (*SupervisionResult, error) {
 	prompt := s.buildPrompt(req)
 
+	// Select system prompt based on mode
+	systemPrompt := supervisorSystemPrompt
+	if s.mode == ModeResearch {
+		systemPrompt = s.buildResearchSystemPrompt()
+	}
+
 	messages := []llm.Message{
-		{Role: "system", Content: supervisorSystemPrompt},
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: prompt},
 	}
 
@@ -65,6 +77,42 @@ func (s *SecuritySupervisor) Evaluate(ctx context.Context, req SupervisionReques
 	}
 
 	return s.parseResponse(resp.Content), nil
+}
+
+// buildResearchSystemPrompt creates a system prompt appropriate for security research mode.
+func (s *SecuritySupervisor) buildResearchSystemPrompt() string {
+	return fmt.Sprintf(`You are a security supervisor for an AUTHORIZED SECURITY RESEARCH workflow.
+
+RESEARCH CONTEXT:
+%s
+
+The agent is conducting legitimate security research. This may involve:
+- Exploring attack vectors to understand vulnerabilities
+- Testing exploitation techniques in controlled environments
+- Analyzing malware, exploits, or offensive security tooling
+- Pentesting, vulnerability scanning, or red team activities
+
+YOUR TASK: Ensure the tool call stays within the authorized research scope.
+
+ALLOW the tool call if:
+- It's within the declared research scope
+- It targets authorized systems/environments only
+- It's a reasonable step for security research
+- Even if it looks like "hacking" - security research requires understanding attacks
+
+DENY the tool call ONLY if:
+- It targets systems OUTSIDE the declared scope
+- It attempts to exfiltrate real production data
+- It would cause actual harm to unauthorized systems
+- The scope declaration is being exploited as a loophole
+
+For security research, be PERMISSIVE within scope and STRICT at scope boundaries.
+The goal is enabling legitimate research while preventing scope creep.
+
+Respond with exactly one of:
+ALLOW
+DENY: <specific scope violation>
+MODIFY: <safer alternative that stays in scope>`, s.researchScope)
 }
 
 func (s *SecuritySupervisor) buildPrompt(req SupervisionRequest) string {

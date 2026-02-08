@@ -379,8 +379,12 @@ func runWorkflow(args []string) {
 
 	// Set up security verifier if configured or if workflow has security mode
 	securityMode := security.ModeDefault
+	researchScope := ""
 	if cfg.Security.Mode == "paranoid" || wf.SecurityMode == "paranoid" {
 		securityMode = security.ModeParanoid
+	} else if wf.SecurityMode == "research" {
+		securityMode = security.ModeResearch
+		researchScope = wf.SecurityScope
 	}
 	
 	// Determine user trust level
@@ -470,6 +474,7 @@ func runWorkflow(args []string) {
 	// Create and attach security verifier
 	securityVerifier, err := security.NewVerifier(security.Config{
 		Mode:               securityMode,
+		ResearchScope:      researchScope,
 		UserTrust:          userTrust,
 		TriageProvider:     triageProvider,
 		SupervisorProvider: provider, // Use main provider for Tier 3 supervision
@@ -479,7 +484,16 @@ func runWorkflow(args []string) {
 	} else {
 		exec.SetSecurityVerifier(securityVerifier)
 		defer securityVerifier.Destroy()
-		fmt.Fprintf(os.Stderr, "🔒 Security: mode=%s, user_trust=%s\n", securityMode, userTrust)
+		if securityMode == security.ModeResearch {
+			fmt.Fprintf(os.Stderr, "🔓 Security: mode=research, scope=%q\n", researchScope)
+		} else {
+			fmt.Fprintf(os.Stderr, "🔒 Security: mode=%s, user_trust=%s\n", securityMode, userTrust)
+		}
+	}
+
+	// Set security research scope for defensive framing in prompts
+	if researchScope != "" {
+		exec.SetSecurityResearchScope(researchScope)
 	}
 
 	// Set up execution supervision if workflow has supervised goals
