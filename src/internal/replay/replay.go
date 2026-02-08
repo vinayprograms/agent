@@ -588,8 +588,14 @@ func (r *Replayer) getSecurityContext(event *session.Event) string {
 }
 
 // getAgentPrefix returns a formatted agent name prefix for sub-agent attribution.
+// Returns empty for main agent (role="main") to avoid clutter.
 func (r *Replayer) getAgentPrefix(event *session.Event) string {
 	if event.Agent == "" && event.AgentRole == "" {
+		return ""
+	}
+	
+	// Skip prefix for main agent
+	if event.AgentRole == "main" {
 		return ""
 	}
 	

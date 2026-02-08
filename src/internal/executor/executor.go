@@ -751,7 +751,9 @@ Consider delegating when:
 - Specialized expertise would help (research, analysis, critique, writing, etc.)
 - Work can be parallelized for efficiency
 
-Use spawn_agent(role, task) to delegate work. You coordinate the overall effort and synthesize results.
+Use spawn_agent(role, task) or spawn_agents([...]) to delegate work. You coordinate the overall effort and synthesize results.
+
+IMPORTANT: When spawning multiple agents, use unique, descriptive role names for each (e.g., "market-researcher", "competitor-analyst", "trend-forecaster" instead of three "researcher" agents). This enables clear attribution in logs and debugging.
 
 `
 
