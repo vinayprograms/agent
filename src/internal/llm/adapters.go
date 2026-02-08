@@ -35,6 +35,28 @@ func isRateLimitError(err error) bool {
 		strings.Contains(errStr, "capacity")
 }
 
+// isServerError checks if the error is a transient server error (5xx).
+func isServerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "500") ||
+		strings.Contains(errStr, "502") ||
+		strings.Contains(errStr, "503") ||
+		strings.Contains(errStr, "504") ||
+		strings.Contains(errStr, "internal server error") ||
+		strings.Contains(errStr, "bad gateway") ||
+		strings.Contains(errStr, "service unavailable") ||
+		strings.Contains(errStr, "gateway timeout") ||
+		strings.Contains(errStr, "temporarily unavailable")
+}
+
+// isRetryableError checks if the error is retryable (rate limit or server error).
+func isRetryableError(err error) bool {
+	return isRateLimitError(err) || isServerError(err)
+}
+
 // isBillingError checks if the error is a billing/payment/quota error (fatal, no retry).
 func isBillingError(err error) bool {
 	if err == nil {
@@ -168,14 +190,14 @@ func (a *FantasyAdapter) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 			return nil, fmt.Errorf("billing/payment error (fatal): %w", err)
 		}
 
-		// Only retry rate limit errors
-		if !isRateLimitError(err) {
+		// Only retry transient errors (rate limits, 5xx)
+		if !isRetryableError(err) {
 			return nil, fmt.Errorf("fantasy generate failed: %w", err)
 		}
 
 		// Don't retry if we've exhausted attempts
 		if attempt == maxRetries {
-			return nil, fmt.Errorf("fantasy generate failed after %d retries (rate limited): %w", maxRetries, err)
+			return nil, fmt.Errorf("fantasy generate failed after %d retries: %w", maxRetries, err)
 		}
 
 		// Wait before retrying

@@ -202,12 +202,12 @@ func (p *OllamaCloudProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 			return nil, fmt.Errorf("billing/payment error (fatal): %w", err)
 		}
 
-		if !isRateLimitError(err) {
+		if !isRetryableError(err) {
 			return nil, fmt.Errorf("ollama cloud request failed: %w", err)
 		}
 
 		if attempt == maxRetries {
-			return nil, fmt.Errorf("ollama cloud request failed after %d retries (rate limited): %w", maxRetries, err)
+			return nil, fmt.Errorf("ollama cloud request failed after %d retries: %w", maxRetries, err)
 		}
 
 		select {
