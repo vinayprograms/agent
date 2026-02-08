@@ -24,6 +24,39 @@ import (
 	"github.com/vinayprograms/agent/internal/tools"
 )
 
+// Context keys for agent identity (thread-safe via context propagation)
+type ctxKey int
+
+const (
+	ctxKeyAgentName ctxKey = iota
+	ctxKeyAgentRole
+)
+
+// AgentIdentity holds agent name and role for logging/attribution.
+type AgentIdentity struct {
+	Name string // Agent name (e.g., "researcher", "writer", or workflow name for main)
+	Role string // Agent role (for dynamic sub-agents, same as name; for static agents, defined role)
+}
+
+// withAgentIdentity returns a context with agent identity attached.
+func withAgentIdentity(ctx context.Context, name, role string) context.Context {
+	ctx = context.WithValue(ctx, ctxKeyAgentName, name)
+	ctx = context.WithValue(ctx, ctxKeyAgentRole, role)
+	return ctx
+}
+
+// getAgentIdentity extracts agent identity from context.
+func getAgentIdentity(ctx context.Context) AgentIdentity {
+	var id AgentIdentity
+	if name, ok := ctx.Value(ctxKeyAgentName).(string); ok {
+		id.Name = name
+	}
+	if role, ok := ctx.Value(ctxKeyAgentRole).(string); ok {
+		id.Role = role
+	}
+	return id
+}
+
 // Status represents the execution status.
 type Status string
 
@@ -60,10 +93,6 @@ type Executor struct {
 	// Sub-agent support
 	subAgentRunner *subagent.Runner
 	packagePaths   []string
-	
-	// Sub-agent context (for attribution in logs)
-	currentAgentName string // Name of current sub-agent (empty = main agent)
-	currentAgentRole string // Role of current sub-agent (for dynamic agents)
 
 	// Session logging
 	session        *session.Session
@@ -141,8 +170,9 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		return nil // No security verifier configured
 	}
 
-	// Use current agent role as context for block filtering in multi-agent scenarios
-	agentContext := e.currentAgentRole
+	// Use agent role from context for block filtering in multi-agent scenarios
+	agentID := getAgentIdentity(ctx)
+	agentContext := agentID.Role
 	result, err := e.securityVerifier.VerifyToolCall(ctx, toolName, args, e.currentGoal, agentContext)
 	if err != nil {
 		return fmt.Errorf("security verification error: %w", err)
@@ -201,12 +231,13 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 }
 
 // AddUntrustedContent registers untrusted content with the security verifier.
-func (e *Executor) AddUntrustedContent(content, source string) {
+func (e *Executor) AddUntrustedContent(ctx context.Context, content, source string) {
 	if e.securityVerifier == nil {
 		return
 	}
-	// Use current agent role as context for block association in multi-agent scenarios
-	agentContext := e.currentAgentRole
+	// Use agent role from context for block association in multi-agent scenarios
+	agentID := getAgentIdentity(ctx)
+	agentContext := agentID.Role
 	block := e.securityVerifier.AddBlockWithContext(security.TrustUntrusted, security.TypeData, true, content, source, agentContext)
 
 	// Log to session with XML representation
@@ -303,20 +334,24 @@ func (e *Executor) logEvent(eventType, content string) {
 
 // logToolCall logs a tool call event to the session.
 // Returns a correlation ID that should be passed to logToolResult.
-func (e *Executor) logToolCall(name string, args map[string]interface{}) string {
+func (e *Executor) logToolCall(ctx context.Context, name string, args map[string]interface{}) string {
 	corrID := fmt.Sprintf("tool-%d", time.Now().UnixNano())
 	
 	if e.session == nil || e.sessionManager == nil {
 		return corrID
 	}
+	
+	// Get agent identity from context (thread-safe for parallel execution)
+	agentID := getAgentIdentity(ctx)
+	
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:          session.EventToolCall,
 		CorrelationID: corrID,
 		Goal:          e.currentGoal,
 		Tool:          name,
 		Args:          args,
-		Agent:         e.currentAgentName,
-		AgentRole:     e.currentAgentRole,
+		Agent:         agentID.Name,
+		AgentRole:     agentID.Role,
 		Timestamp:     time.Now(),
 	})
 	e.sessionManager.Update(e.session)
@@ -324,13 +359,16 @@ func (e *Executor) logToolCall(name string, args map[string]interface{}) string 
 }
 
 // logToolResult logs a tool result event to the session.
-func (e *Executor) logToolResult(name string, args map[string]interface{}, corrID string, result interface{}, err error, duration time.Duration) {
+func (e *Executor) logToolResult(ctx context.Context, name string, args map[string]interface{}, corrID string, result interface{}, err error, duration time.Duration) {
 	// Structured logging to stdout
 	e.logger.ToolResult(name, duration, err)
 
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
+	
+	// Get agent identity from context (thread-safe for parallel execution)
+	agentID := getAgentIdentity(ctx)
 
 	// Convert result to string for content
 	var content string
@@ -355,8 +393,8 @@ func (e *Executor) logToolResult(name string, args map[string]interface{}, corrI
 		Args:          args,
 		Content:       content,
 		DurationMs:    duration.Milliseconds(),
-		Agent:         e.currentAgentName,
-		AgentRole:     e.currentAgentRole,
+		Agent:         agentID.Name,
+		AgentRole:     agentID.Role,
 		Timestamp:     time.Now(),
 	}
 	if err != nil {
@@ -638,15 +676,9 @@ func (e *Executor) initSubAgentRunner() {
 
 // spawnDynamicAgent spawns a sub-agent with the given role and task.
 func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, outputs []string) (string, error) {
-	// Set sub-agent context for attribution in logs
-	previousName := e.currentAgentName
-	previousRole := e.currentAgentRole
-	e.currentAgentName = role // Use role as name for dynamic agents
-	e.currentAgentRole = role
-	defer func() {
-		e.currentAgentName = previousName
-		e.currentAgentRole = previousRole
-	}()
+	// Set sub-agent context in context.Context (thread-safe for parallel execution)
+	// This replaces the old shared mutable state approach
+	ctx = withAgentIdentity(ctx, role, role)
 
 	// Build system prompt for the sub-agent
 	systemPrompt := fmt.Sprintf("You are a %s. Complete the following task thoroughly and return your findings.\n\nTask: %s", role, task)
@@ -731,6 +763,9 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 		workflowName = "unnamed"
 	}
 	e.logger.ExecutionStart(workflowName)
+
+	// Set main agent identity in context (workflow name as both name and role)
+	ctx = withAgentIdentity(ctx, workflowName, "main")
 
 	// Pre-flight check for SUPERVISED HUMAN requirements
 	if err := e.PreFlight(); err != nil {
@@ -1647,7 +1682,7 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 
 	// Security verification before execution
 	if err := e.verifyToolCall(ctx, tc.Name, tc.Args); err != nil {
-		e.logToolResult(tc.Name, tc.Args, "", nil, err, time.Since(start))
+		e.logToolResult(ctx, tc.Name, tc.Args, "", nil, err, time.Since(start))
 		if e.OnToolError != nil {
 			e.OnToolError(tc.Name, tc.Args, err)
 		}
@@ -1655,17 +1690,17 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	}
 
 	// Log the tool call (returns correlation ID for linking to result)
-	corrID := e.logToolCall(tc.Name, tc.Args)
+	corrID := e.logToolCall(ctx, tc.Name, tc.Args)
 
 	// Check if it's an MCP tool
 	if strings.HasPrefix(tc.Name, "mcp_") {
 		result, err := e.executeMCPTool(ctx, tc)
 		duration := time.Since(start)
-		e.logToolResult(tc.Name, tc.Args, corrID, result, err, duration)
+		e.logToolResult(ctx, tc.Name, tc.Args, corrID, result, err, duration)
 
 		// MCP tools return external content - register as untrusted
 		if err == nil && result != nil {
-			e.registerUntrustedResult(tc.Name, result)
+			e.registerUntrustedResult(ctx, tc.Name, result)
 		}
 		return result, err
 	}
@@ -1684,11 +1719,11 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	duration := time.Since(start)
 
 	// Log the tool result
-	e.logToolResult(tc.Name, tc.Args, corrID, result, err, duration)
+	e.logToolResult(ctx, tc.Name, tc.Args, corrID, result, err, duration)
 
 	// Register external tool results as untrusted content
 	if err == nil && result != nil && isExternalTool(tc.Name) {
-		e.registerUntrustedResult(tc.Name, result)
+		e.registerUntrustedResult(ctx, tc.Name, result)
 	}
 
 	if err != nil && e.OnToolError != nil {
@@ -1712,7 +1747,7 @@ func isExternalTool(name string) bool {
 }
 
 // registerUntrustedResult registers tool result as untrusted content block.
-func (e *Executor) registerUntrustedResult(toolName string, result interface{}) {
+func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string, result interface{}) {
 	if e.securityVerifier == nil {
 		return
 	}
@@ -1740,7 +1775,7 @@ func (e *Executor) registerUntrustedResult(toolName string, result interface{}) 
 
 	// Register as untrusted content block
 	source := fmt.Sprintf("tool:%s", toolName)
-	e.AddUntrustedContent(content, source)
+	e.AddUntrustedContent(ctx, content, source)
 }
 
 // toolResult holds the result of a parallel tool execution.
