@@ -193,3 +193,26 @@ func (wf *Workflow) GetHumanRequiredStepNames() []string {
 	}
 	return names
 }
+
+// HasSupervisedGoals returns true if any goal is marked SUPERVISED.
+func (wf *Workflow) HasSupervisedGoals() bool {
+	if wf.Supervised {
+		return true
+	}
+	for _, goal := range wf.Goals {
+		if goal.Supervised != nil && *goal.Supervised {
+			return true
+		}
+	}
+	for _, step := range wf.Steps {
+		if step.Supervised != nil && *step.Supervised {
+			return true
+		}
+	}
+	for _, agent := range wf.Agents {
+		if agent.Supervised != nil && *agent.Supervised {
+			return true
+		}
+	}
+	return false
+}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/checkpoint"
 	"github.com/vinayprograms/agent/internal/config"
 	"github.com/vinayprograms/agent/internal/credentials"
 	"github.com/vinayprograms/agent/internal/executor"
@@ -479,6 +480,19 @@ func runWorkflow(args []string) {
 		exec.SetSecurityVerifier(securityVerifier)
 		defer securityVerifier.Destroy()
 		fmt.Fprintf(os.Stderr, "🔒 Security: mode=%s, user_trust=%s\n", securityMode, userTrust)
+	}
+
+	// Set up execution supervision if workflow has supervised goals
+	if wf.HasSupervisedGoals() {
+		checkpointDir := filepath.Join(sessionPath, "checkpoints", sess.ID)
+		checkpointStore, err := checkpoint.NewStore(checkpointDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to create checkpoint store: %v\n", err)
+		} else {
+			// Use main provider for supervision LLM (could be configurable)
+			exec.SetSupervision(checkpointStore, provider, false, nil)
+			fmt.Fprintf(os.Stderr, "👁 Supervision: enabled (four-phase execution)\n")
+		}
 	}
 
 	// Connect session to executor for detailed logging

@@ -98,6 +98,7 @@ type Executor struct {
 	session        *session.Session
 	sessionManager session.SessionManager
 	currentGoal    string
+	currentGoalSupervised bool // Whether the current goal is supervised (inherited by sub-agents)
 
 	// State
 	inputs  map[string]string
@@ -675,9 +676,9 @@ func (e *Executor) initSubAgentRunner() {
 }
 
 // spawnDynamicAgent spawns a sub-agent with the given role and task.
+// Sub-agents go through the same four-phase execution as main goals when supervision is enabled.
 func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, outputs []string) (string, error) {
 	// Set sub-agent context in context.Context (thread-safe for parallel execution)
-	// This replaces the old shared mutable state approach
 	ctx = withAgentIdentity(ctx, role, role)
 
 	// Build system prompt for the sub-agent
@@ -694,16 +695,228 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 		e.OnSubAgentStart(role, map[string]string{"task": task})
 	}
 
-	// Create messages for the sub-agent
+	// Sub-agents inherit supervision from their parent goal
+	// Only supervise if: parent goal is supervised AND supervision infrastructure is available
+	supervised := e.currentGoalSupervised && e.supervisor != nil && e.checkpointStore != nil
+
+	// ============================================
+	// PHASE 1: COMMIT - Sub-agent declares intent
+	// ============================================
+	var preCheckpoint *checkpoint.PreCheckpoint
+	if supervised {
+		preCheckpoint = e.subAgentCommitPhase(ctx, role, task)
+		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
+			e.logger.Warn("failed to save sub-agent pre-checkpoint", map[string]interface{}{
+				"role":  role,
+				"error": err.Error(),
+			})
+		} else {
+			e.logCheckpoint("pre", role, "", preCheckpoint.StepID)
+		}
+		if e.OnSupervisionEvent != nil {
+			e.OnSupervisionEvent(role, "commit", preCheckpoint)
+		}
+	}
+
+	// ============================================
+	// PHASE 2: EXECUTE - Sub-agent does the work
+	// ============================================
+	output, toolsUsed, err := e.subAgentExecutePhase(ctx, role, systemPrompt, userPrompt)
+	if err != nil {
+		return "", err
+	}
+
+	// ============================================
+	// PHASE 3 & 4: RECONCILE & SUPERVISE
+	// ============================================
+	if supervised && preCheckpoint != nil {
+		// Create post-checkpoint with self-assessment
+		postCheckpoint := e.subAgentPostCheckpoint(ctx, role, preCheckpoint, output, toolsUsed)
+		if err := e.checkpointStore.SavePost(postCheckpoint); err != nil {
+			e.logger.Warn("failed to save sub-agent post-checkpoint", map[string]interface{}{
+				"role":  role,
+				"error": err.Error(),
+			})
+		} else {
+			e.logCheckpoint("post", role, "", postCheckpoint.StepID)
+		}
+		if e.OnSupervisionEvent != nil {
+			e.OnSupervisionEvent(role, "execute", postCheckpoint)
+		}
+
+		// RECONCILE: Static pattern checks
+		reconcileStart := time.Now()
+		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
+		reconcileDuration := time.Since(reconcileStart).Milliseconds()
+
+		if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
+			e.logger.Warn("failed to save sub-agent reconcile result", map[string]interface{}{
+				"role":  role,
+				"error": err.Error(),
+			})
+		}
+		e.logPhaseReconcile(role, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
+
+		if e.OnSupervisionEvent != nil {
+			e.OnSupervisionEvent(role, "reconcile", reconcileResult)
+		}
+
+		// SUPERVISE: LLM evaluation (only if reconcile triggered)
+		if reconcileResult.Supervise {
+			superviseStart := time.Now()
+			decisionTrail := e.checkpointStore.GetDecisionTrail()
+			superviseResult, err := e.supervisor.Supervise(
+				ctx,
+				preCheckpoint,
+				postCheckpoint,
+				reconcileResult.Triggers,
+				decisionTrail,
+				false, // Sub-agents don't require human approval
+			)
+			superviseDuration := time.Since(superviseStart).Milliseconds()
+
+			if err != nil {
+				return "", fmt.Errorf("sub-agent supervision failed: %w", err)
+			}
+
+			if err := e.checkpointStore.SaveSupervise(superviseResult); err != nil {
+				e.logger.Warn("failed to save sub-agent supervise result", map[string]interface{}{
+					"role":  role,
+					"error": err.Error(),
+				})
+			}
+			e.logPhaseSupervise(role, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, false, superviseDuration)
+
+			if e.OnSupervisionEvent != nil {
+				e.OnSupervisionEvent(role, "supervise", superviseResult)
+			}
+
+			// Handle verdict
+			switch supervision.Verdict(superviseResult.Verdict) {
+			case supervision.VerdictReorient:
+				// Re-execute with correction
+				e.logger.Info("reorienting sub-agent execution", map[string]interface{}{
+					"role":       role,
+					"correction": superviseResult.Correction,
+				})
+				correctedTask := userPrompt + "\n\n## Supervisor Correction\n" + superviseResult.Correction
+				output, _, err = e.subAgentExecutePhase(ctx, role, systemPrompt, correctedTask)
+				if err != nil {
+					return "", err
+				}
+
+			case supervision.VerdictPause:
+				// Sub-agents don't support human intervention - fail gracefully
+				return "", fmt.Errorf("sub-agent %s paused by supervisor: %s", role, superviseResult.Question)
+			}
+		}
+	}
+
+	if e.OnSubAgentComplete != nil {
+		e.OnSubAgentComplete(role, output)
+	}
+	return output, nil
+}
+
+// subAgentCommitPhase asks the sub-agent to declare its intent before execution.
+func (e *Executor) subAgentCommitPhase(ctx context.Context, role, task string) *checkpoint.PreCheckpoint {
+	start := time.Now()
+	stepID := fmt.Sprintf("subagent:%s", role)
+	e.logger.PhaseStart("COMMIT", role, stepID)
+
+	commitPrompt := fmt.Sprintf(`Before executing this task, declare your intent:
+
+ROLE: %s
+TASK: %s
+
+Respond with a JSON object:
+{
+  "interpretation": "How you understand this task",
+  "scope_in": ["What you will do"],
+  "scope_out": ["What you will NOT do"],
+  "approach": "Your planned approach",
+  "tools_planned": ["tools you expect to use"],
+  "predicted_output": "What you expect to produce",
+  "confidence": "high|medium|low",
+  "assumptions": ["Assumptions you are making"]
+}`, role, task)
+
+	messages := []llm.Message{
+		{Role: "system", Content: "You are declaring your intent before executing a task. Be specific and honest about your plans."},
+		{Role: "user", Content: commitPrompt},
+	}
+
+	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
+		Messages: messages,
+	})
+
+	pre := &checkpoint.PreCheckpoint{
+		StepID:      stepID,
+		StepType:    "SUBAGENT",
+		Instruction: task,
+		Timestamp:   time.Now(),
+		Metadata:    map[string]string{"role": role},
+	}
+
+	if err != nil {
+		e.logger.Warn("sub-agent commit phase LLM error", map[string]interface{}{"role": role, "error": err.Error()})
+		pre.Confidence = "low"
+		pre.Assumptions = []string{"Failed to get commitment from sub-agent"}
+		e.logger.PhaseComplete("COMMIT", role, stepID, time.Since(start), "error")
+		return pre
+	}
+
+	// Parse the JSON response
+	jsonStr := extractJSON(resp.Content)
+	if jsonStr != "" {
+		var commitData struct {
+			Interpretation  string   `json:"interpretation"`
+			ScopeIn         []string `json:"scope_in"`
+			ScopeOut        []string `json:"scope_out"`
+			Approach        string   `json:"approach"`
+			ToolsPlanned    []string `json:"tools_planned"`
+			PredictedOutput string   `json:"predicted_output"`
+			Confidence      string   `json:"confidence"`
+			Assumptions     []string `json:"assumptions"`
+		}
+		if err := json.Unmarshal([]byte(jsonStr), &commitData); err == nil {
+			pre.Interpretation = commitData.Interpretation
+			pre.ScopeIn = commitData.ScopeIn
+			pre.ScopeOut = commitData.ScopeOut
+			pre.Approach = commitData.Approach
+			pre.ToolsPlanned = commitData.ToolsPlanned
+			pre.PredictedOutput = commitData.PredictedOutput
+			pre.Confidence = commitData.Confidence
+			pre.Assumptions = commitData.Assumptions
+		}
+	}
+
+	if pre.Confidence == "" {
+		pre.Confidence = "medium"
+	}
+
+	durationMs := time.Since(start).Milliseconds()
+	e.logPhaseCommit(role, pre.Interpretation, pre.Confidence, durationMs)
+	e.logger.PhaseComplete("COMMIT", role, stepID, time.Since(start), "ok")
+
+	return pre
+}
+
+// subAgentExecutePhase runs the sub-agent execution loop.
+func (e *Executor) subAgentExecutePhase(ctx context.Context, role, systemPrompt, userPrompt string) (output string, toolsUsed []string, err error) {
+	start := time.Now()
+	stepID := fmt.Sprintf("subagent:%s", role)
+	e.logger.PhaseStart("EXECUTE", role, stepID)
+
 	messages := []llm.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}
 
-	// Build tool definitions (excluding spawn_agent to enforce depth=1)
+	// Build tool definitions (excluding spawn_agent and spawn_agents to enforce depth=1)
 	var toolDefs []llm.ToolDef
 	for _, def := range e.registry.Definitions() {
-		if def.Name != "spawn_agent" {
+		if def.Name != "spawn_agent" && def.Name != "spawn_agents" {
 			toolDefs = append(toolDefs, llm.ToolDef{
 				Name:        def.Name,
 				Description: def.Description,
@@ -712,6 +925,8 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 		}
 	}
 
+	toolsUsedMap := make(map[string]bool)
+
 	// Execute sub-agent loop
 	for {
 		resp, err := e.provider.Chat(ctx, llm.ChatRequest{
@@ -719,15 +934,22 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 			Tools:    toolDefs,
 		})
 		if err != nil {
-			return "", fmt.Errorf("sub-agent LLM error: %w", err)
+			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "error")
+			return "", nil, fmt.Errorf("sub-agent LLM error: %w", err)
 		}
 
-		// If no tool calls, we're done
+		// No tool calls = sub-agent complete
 		if len(resp.ToolCalls) == 0 {
-			if e.OnSubAgentComplete != nil {
-				e.OnSubAgentComplete(role, resp.Content)
+			for tool := range toolsUsedMap {
+				toolsUsed = append(toolsUsed, tool)
 			}
-			return resp.Content, nil
+			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "complete")
+			return resp.Content, toolsUsed, nil
+		}
+
+		// Track tools used
+		for _, tc := range resp.ToolCalls {
+			toolsUsedMap[tc.Name] = true
 		}
 
 		// Add assistant message with tool calls
@@ -737,10 +959,82 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 			ToolCalls: resp.ToolCalls,
 		})
 
-		// Execute tool calls in parallel
+		// Execute tool calls in parallel (security verification happens in executeTool)
 		toolMessages := e.executeToolsParallel(ctx, resp.ToolCalls)
 		messages = append(messages, toolMessages...)
 	}
+}
+
+// subAgentPostCheckpoint creates a post-checkpoint with self-assessment for sub-agents.
+func (e *Executor) subAgentPostCheckpoint(ctx context.Context, role string, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
+	assessPrompt := fmt.Sprintf(`You just completed a task. Assess your work:
+
+ROLE: %s
+ORIGINAL TASK: %s
+
+YOUR COMMITMENT:
+- Interpretation: %s
+- Approach: %s
+- Predicted output: %s
+
+ACTUAL OUTPUT:
+%s
+
+TOOLS USED: %s
+
+Respond with a JSON object:
+{
+  "met_commitment": true/false,
+  "deviations": ["Any deviations from your plan"],
+  "concerns": ["Any concerns about your output"],
+  "unexpected": ["Anything unexpected that happened"]
+}`, role, pre.Instruction, pre.Interpretation, pre.Approach, pre.PredictedOutput, output, strings.Join(toolsUsed, ", "))
+
+	messages := []llm.Message{
+		{Role: "system", Content: "You are honestly assessing whether your work met your commitment."},
+		{Role: "user", Content: assessPrompt},
+	}
+
+	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
+		Messages: messages,
+	})
+
+	post := &checkpoint.PostCheckpoint{
+		StepID:       pre.StepID,
+		ActualOutput: output,
+		ToolsUsed:    toolsUsed,
+		Timestamp:    time.Now(),
+	}
+
+	if err != nil {
+		e.logger.Warn("sub-agent post-checkpoint LLM error", map[string]interface{}{"role": role, "error": err.Error()})
+		post.MetCommitment = false
+		post.Concerns = []string{"Failed to get self-assessment from sub-agent"}
+		return post
+	}
+
+	// Parse the JSON response
+	jsonStr := extractJSON(resp.Content)
+	if jsonStr != "" {
+		var assessData struct {
+			MetCommitment bool     `json:"met_commitment"`
+			Deviations    []string `json:"deviations"`
+			Concerns      []string `json:"concerns"`
+			Unexpected    []string `json:"unexpected"`
+		}
+		if err := json.Unmarshal([]byte(jsonStr), &assessData); err == nil {
+			post.MetCommitment = assessData.MetCommitment
+			post.Deviations = assessData.Deviations
+			post.Concerns = assessData.Concerns
+			post.Unexpected = assessData.Unexpected
+		} else {
+			post.MetCommitment = true
+		}
+	} else {
+		post.MetCommitment = true
+	}
+
+	return post
 }
 
 // OrchestratorSystemPromptPrefix returns the prefix to inject when spawn_agent is available.
@@ -979,6 +1273,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	// Determine supervision status
 	supervised := e.isSupervised(goal)
 	humanRequired := e.requiresHuman(goal)
+
+	// Track supervision status for sub-agents spawned during this goal
+	e.currentGoalSupervised = supervised
 
 	// ============================================
 	// PHASE 1: COMMIT - Agent declares intent
