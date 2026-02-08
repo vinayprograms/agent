@@ -240,13 +240,24 @@ func (v *Verifier) tier1Check(toolName string, args map[string]interface{}, agen
 
 	// Collect pattern findings but don't let patterns override block selection
 	// The block should be selected based on content correlation, not pattern presence
-	// Use a set to deduplicate pattern names across multiple blocks
+	// Use a set to deduplicate reasons across multiple blocks
 	seenReasons := make(map[string]bool)
 	
 	for _, block := range blocksToCheck {
+		// Check for injection patterns (regex-based)
 		patterns := DetectSuspiciousPatterns(block.Content)
 		for _, p := range patterns {
 			reason := "pattern:" + p.Name
+			if !seenReasons[reason] {
+				seenReasons[reason] = true
+				result.Reasons = append(result.Reasons, reason)
+			}
+		}
+
+		// Check for sensitive keywords (simple word match)
+		keywords := DetectSensitiveKeywords(block.Content)
+		for _, kw := range keywords {
+			reason := "keyword:" + kw.Keyword
 			if !seenReasons[reason] {
 				seenReasons[reason] = true
 				result.Reasons = append(result.Reasons, reason)

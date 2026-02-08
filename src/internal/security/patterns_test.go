@@ -103,8 +103,8 @@ func TestDetectSuspiciousPatterns(t *testing.T) {
 		{
 			name:    "api key mention",
 			content: "Please provide your api_key",
-			want:    true,
-			pattern: "api_key",
+			want:    false, // api_key is now a keyword, not a pattern
+			pattern: "",
 		},
 		{
 			name:    "normal content",
@@ -164,5 +164,68 @@ func TestContainsSuspiciousContent(t *testing.T) {
 
 	if !hasPattern {
 		t.Errorf("Expected pattern:ignore_previous in reasons, got %v", reasons)
+	}
+}
+
+func TestDetectSensitiveKeywords(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+		keyword string
+	}{
+		{
+			name:    "api_key keyword",
+			content: "Please provide your api_key for authentication",
+			want:    true,
+			keyword: "api_key",
+		},
+		{
+			name:    "password keyword",
+			content: "Enter your password below",
+			want:    true,
+			keyword: "password",
+		},
+		{
+			name:    "secret keyword",
+			content: "The secret is stored securely",
+			want:    true,
+			keyword: "secret",
+		},
+		{
+			name:    "no keywords",
+			content: "The quarterly revenue report shows growth",
+			want:    false,
+		},
+		{
+			name:    "case insensitive",
+			content: "Your API_KEY is required",
+			want:    true,
+			keyword: "api_key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matches := DetectSensitiveKeywords(tt.content)
+			got := len(matches) > 0
+
+			if got != tt.want {
+				t.Errorf("HasSensitiveKeywords() = %v, want %v", got, tt.want)
+			}
+
+			if tt.want && len(matches) > 0 {
+				found := false
+				for _, m := range matches {
+					if m.Keyword == tt.keyword {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("Expected keyword %q, got %v", tt.keyword, matches)
+				}
+			}
+		})
 	}
 }

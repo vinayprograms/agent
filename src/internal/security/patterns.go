@@ -164,9 +164,24 @@ var suspiciousPatterns = []SuspiciousPattern{
 	{Name: "execute_code", Pattern: regexp.MustCompile(`(?i)(execute|run|call|eval)\s*\(`)},
 	{Name: "curl_pipe_bash", Pattern: regexp.MustCompile(`(?i)curl\s+.+\|\s*(ba)?sh`)},
 	{Name: "wget_pipe_bash", Pattern: regexp.MustCompile(`(?i)wget\s+.+\|\s*(ba)?sh`)},
+}
 
-	// Credential access attempts
-	{Name: "api_key", Pattern: regexp.MustCompile(`(?i)(api[_\-]?key|password|token|secret|credential)`)},
+// Sensitive keywords - simple word matches (not injection patterns)
+// These indicate content that may contain or reference credentials
+var sensitiveKeywords = []string{
+	"api_key",
+	"api-key",
+	"apikey",
+	"password",
+	"secret",
+	"credential",
+	"private_key",
+	"access_token",
+}
+
+// KeywordMatch represents a matched sensitive keyword.
+type KeywordMatch struct {
+	Keyword string
 }
 
 // PatternMatch represents a matched suspicious pattern.
@@ -191,6 +206,25 @@ func DetectSuspiciousPatterns(content string) []PatternMatch {
 	}
 
 	return matches
+}
+
+// DetectSensitiveKeywords scans content for sensitive keywords (not patterns).
+func DetectSensitiveKeywords(content string) []KeywordMatch {
+	var matches []KeywordMatch
+	lowerContent := strings.ToLower(content)
+
+	for _, kw := range sensitiveKeywords {
+		if strings.Contains(lowerContent, strings.ToLower(kw)) {
+			matches = append(matches, KeywordMatch{Keyword: kw})
+		}
+	}
+
+	return matches
+}
+
+// HasSensitiveKeywords returns true if any sensitive keywords are detected.
+func HasSensitiveKeywords(content string) bool {
+	return len(DetectSensitiveKeywords(content)) > 0
 }
 
 // HasSuspiciousPatterns returns true if any suspicious patterns are detected.
