@@ -14,12 +14,12 @@ import (
 	"charm.land/fantasy/providers/openaicompat"
 )
 
-// Retry configuration
+// Retry configuration defaults
 const (
-	maxRetries     = 5
-	initialBackoff = 1 * time.Second
-	maxBackoff     = 60 * time.Second
-	backoffFactor  = 2.0
+	defaultMaxRetries   = 5
+	defaultInitBackoff  = 1 * time.Second
+	defaultMaxBackoff   = 60 * time.Second
+	backoffFactor       = 2.0
 )
 
 // isRateLimitError checks if the error is a rate limit error.
@@ -79,6 +79,7 @@ type FantasyAdapter struct {
 	maxTokens    int
 	providerName string
 	thinking     ThinkingConfig
+	retry        RetryConfig
 }
 
 // NewFantasyAdapter creates a new adapter wrapping a fantasy LanguageModel.
@@ -89,14 +90,37 @@ func NewFantasyAdapter(model fantasy.LanguageModel, maxTokens int) *FantasyAdapt
 	}
 }
 
-// NewFantasyAdapterWithThinking creates a new adapter with thinking support.
-func NewFantasyAdapterWithThinking(model fantasy.LanguageModel, maxTokens int, providerName string, thinking ThinkingConfig) *FantasyAdapter {
+// NewFantasyAdapterWithOptions creates a new adapter with full configuration.
+func NewFantasyAdapterWithOptions(model fantasy.LanguageModel, maxTokens int, providerName string, thinking ThinkingConfig, retry RetryConfig) *FantasyAdapter {
 	return &FantasyAdapter{
 		model:        model,
 		maxTokens:    maxTokens,
 		providerName: providerName,
 		thinking:     thinking,
+		retry:        retry,
 	}
+}
+
+// NewFantasyAdapterWithThinking creates a new adapter with thinking support (legacy).
+func NewFantasyAdapterWithThinking(model fantasy.LanguageModel, maxTokens int, providerName string, thinking ThinkingConfig) *FantasyAdapter {
+	return NewFantasyAdapterWithOptions(model, maxTokens, providerName, thinking, RetryConfig{})
+}
+
+// getRetryConfig returns effective retry settings with defaults.
+func (a *FantasyAdapter) getRetryConfig() (maxRetries int, initBackoff, maxBackoff time.Duration) {
+	maxRetries = a.retry.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = defaultMaxRetries
+	}
+	initBackoff = a.retry.InitBackoff
+	if initBackoff <= 0 {
+		initBackoff = defaultInitBackoff
+	}
+	maxBackoff = a.retry.MaxBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = defaultMaxBackoff
+	}
+	return
 }
 
 // Chat implements the Provider interface using fantasy's Generate method.
@@ -175,9 +199,10 @@ func (a *FantasyAdapter) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	}
 
 	// Generate with retry and exponential backoff
+	maxRetries, initBackoff, maxBackoff := a.getRetryConfig()
 	var resp *fantasy.Response
 	var err error
-	backoff := initialBackoff
+	backoff := initBackoff
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		resp, err = a.model.Generate(ctx, call)
@@ -426,6 +451,7 @@ func NewProvider(cfg FantasyConfig) (Provider, error) {
 			Model:     cfg.Model,
 			MaxTokens: cfg.MaxTokens,
 			Thinking:  cfg.Thinking,
+			Retry:     cfg.RetryConfig,
 		})
 	}
 
@@ -439,18 +465,15 @@ func NewProvider(cfg FantasyConfig) (Provider, error) {
 		return nil, fmt.Errorf("failed to get model %s: %w", cfg.Model, err)
 	}
 
-	// Use thinking-enabled adapter if thinking is configured (auto is default when empty)
+	// Use full options adapter (auto thinking is default when empty)
 	thinkingLevel := cfg.Thinking.Level
 	if thinkingLevel == "" {
 		thinkingLevel = ThinkingAuto // Default to auto-detection
 	}
-	if thinkingLevel != ThinkingOff {
-		thinkingCfg := cfg.Thinking
-		thinkingCfg.Level = thinkingLevel
-		return NewFantasyAdapterWithThinking(model, cfg.MaxTokens, cfg.Provider, thinkingCfg), nil
-	}
-
-	return NewFantasyAdapter(model, cfg.MaxTokens), nil
+	thinkingCfg := cfg.Thinking
+	thinkingCfg.Level = thinkingLevel
+	
+	return NewFantasyAdapterWithOptions(model, cfg.MaxTokens, cfg.Provider, thinkingCfg, cfg.RetryConfig), nil
 }
 
 // NewFantasyProvider is an alias for NewProvider.

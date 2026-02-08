@@ -19,6 +19,7 @@ type OllamaCloudProvider struct {
 	model     string
 	maxTokens int
 	thinking  ThinkingConfig
+	retry     RetryConfig
 	client    *http.Client
 }
 
@@ -29,6 +30,7 @@ type OllamaCloudConfig struct {
 	Model     string
 	MaxTokens int
 	Thinking  ThinkingConfig
+	Retry     RetryConfig
 }
 
 // NewOllamaCloudProvider creates a new Ollama Cloud provider.
@@ -56,10 +58,28 @@ func NewOllamaCloudProvider(cfg OllamaCloudConfig) (*OllamaCloudProvider, error)
 		model:     cfg.Model,
 		maxTokens: maxTokens,
 		thinking:  cfg.Thinking,
+		retry:     cfg.Retry,
 		client: &http.Client{
 			Timeout: 5 * time.Minute,
 		},
 	}, nil
+}
+
+// getRetryConfig returns effective retry settings with defaults.
+func (p *OllamaCloudProvider) getRetryConfig() (maxRetries int, initBackoff, maxBackoff time.Duration) {
+	maxRetries = p.retry.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = defaultMaxRetries
+	}
+	initBackoff = p.retry.InitBackoff
+	if initBackoff <= 0 {
+		initBackoff = defaultInitBackoff
+	}
+	maxBackoff = p.retry.MaxBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = defaultMaxBackoff
+	}
+	return
 }
 
 // ollamaMessage represents a message in Ollama's API format.
@@ -188,9 +208,10 @@ func (p *OllamaCloudProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 	}
 
 	// Make request with retry
+	maxRetries, initBackoff, maxBackoff := p.getRetryConfig()
 	var resp *ollamaChatResponse
 	var err error
-	backoff := initialBackoff
+	backoff := initBackoff
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		resp, err = p.doRequest(ctx, ollamaReq)

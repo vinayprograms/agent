@@ -31,12 +31,14 @@ type AgentConfig struct {
 
 // LLMConfig contains LLM provider settings.
 type LLMConfig struct {
-	Provider  string `toml:"provider"`
-	Model     string `toml:"model"`
-	APIKeyEnv string `toml:"api_key_env"`
-	MaxTokens int    `toml:"max_tokens"`
-	BaseURL   string `toml:"base_url"` // Custom API endpoint (OpenRouter, LiteLLM, Ollama, LMStudio)
-	Thinking  string `toml:"thinking"` // Thinking level: auto|off|low|medium|high
+	Provider     string `toml:"provider"`
+	Model        string `toml:"model"`
+	APIKeyEnv    string `toml:"api_key_env"`
+	MaxTokens    int    `toml:"max_tokens"`
+	BaseURL      string `toml:"base_url"`      // Custom API endpoint (OpenRouter, LiteLLM, Ollama, LMStudio)
+	Thinking     string `toml:"thinking"`      // Thinking level: auto|off|low|medium|high
+	MaxRetries   int    `toml:"max_retries"`   // Max retry attempts (default 5)
+	RetryBackoff string `toml:"retry_backoff"` // Max backoff duration (default "60s")
 }
 
 // Profile represents a capability profile mapping to a specific LLM configuration.

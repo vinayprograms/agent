@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/vinayprograms/agent/internal/agentfile"
@@ -300,12 +301,13 @@ func runWorkflow(args []string) {
 	
 	if llmProvider != "" || cfg.LLM.Model != "" {
 		provider, err = llm.NewFantasyProvider(llm.FantasyConfig{
-			Provider:  llmProvider,
-			Model:     cfg.LLM.Model,
-			APIKey:    globalCreds.GetAPIKey(llmProvider),
-			MaxTokens: cfg.LLM.MaxTokens,
-			BaseURL:   cfg.LLM.BaseURL,
-			Thinking:  llm.ThinkingConfig{Level: llm.ThinkingLevel(cfg.LLM.Thinking)},
+			Provider:    llmProvider,
+			Model:       cfg.LLM.Model,
+			APIKey:      globalCreds.GetAPIKey(llmProvider),
+			MaxTokens:   cfg.LLM.MaxTokens,
+			BaseURL:     cfg.LLM.BaseURL,
+			Thinking:    llm.ThinkingConfig{Level: llm.ThinkingLevel(cfg.LLM.Thinking)},
+			RetryConfig: parseRetryConfig(cfg.LLM.MaxRetries, cfg.LLM.RetryBackoff),
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error creating LLM provider: %v\n", err)
@@ -1066,4 +1068,17 @@ func isTerminal(f *os.File) bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// parseRetryConfig converts config values to RetryConfig.
+func parseRetryConfig(maxRetries int, backoffStr string) llm.RetryConfig {
+	cfg := llm.RetryConfig{
+		MaxRetries: maxRetries,
+	}
+	if backoffStr != "" {
+		if d, err := time.ParseDuration(backoffStr); err == nil {
+			cfg.MaxBackoff = d
+		}
+	}
+	return cfg
 }
