@@ -371,6 +371,7 @@ The agent includes a comprehensive security framework to defend against prompt i
 
 - **default**: Efficient tiered verification (T1 → T2 → T3)
 - **paranoid**: Skip T2, all flagged content goes directly to T3 supervision
+- **research**: Security research mode with scope-aware supervision (see below)
 
 ### Configuration
 
@@ -381,6 +382,22 @@ Add to `agent.toml`:
 mode = "default"          # or "paranoid"
 user_trust = "untrusted"  # trust level for user messages
 ```
+
+### Security Research Mode
+
+For legitimate security research (pentesting, vulnerability assessment, malware analysis), use research mode in your Agentfile:
+
+```
+SECURITY research "authorized pentest of internal lab network 192.168.100.0/24"
+```
+
+Research mode:
+- Uses scope-aware supervision (permissive within scope, strict at boundaries)
+- Injects defensive framing into prompts
+- Maintains full audit trail
+- Still blocks actions outside declared scope
+
+See `examples/security-research/` for security research workflow examples.
 
 ### High-Risk Tools
 
@@ -408,6 +425,7 @@ SUPERVISED
 
 # Security mode (optional - defaults to "default")
 SECURITY default    # or: SECURITY paranoid
+SECURITY research "scope description"  # for security research
 
 # Agents reference prompts, skills, or packages (with optional structured output)
 AGENT researcher FROM agents/researcher.md -> findings, sources

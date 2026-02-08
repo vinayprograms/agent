@@ -871,3 +871,106 @@ RUN main USING analyze, deploy, cleanup`
 		t.Errorf("expected deploy and cleanup, got %v", names)
 	}
 }
+
+// TestParser_SecurityMode tests parsing SECURITY directive.
+func TestParser_SecurityMode(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		expectedMode string
+		shouldError  bool
+	}{
+		{
+			name:         "default mode",
+			input:        "SECURITY default\nNAME test\nGOAL g \"do it\"\nRUN r USING g",
+			expectedMode: "default",
+		},
+		{
+			name:         "paranoid mode",
+			input:        "SECURITY paranoid\nNAME test\nGOAL g \"do it\"\nRUN r USING g",
+			expectedMode: "paranoid",
+		},
+		{
+			name:        "invalid mode",
+			input:       "SECURITY invalid\nNAME test",
+			shouldError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := NewParser(NewLexer(tt.input))
+			wf, err := p.Parse()
+
+			if tt.shouldError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if wf.SecurityMode != tt.expectedMode {
+				t.Errorf("expected SecurityMode=%q, got %q", tt.expectedMode, wf.SecurityMode)
+			}
+		})
+	}
+}
+
+// TestParser_SecurityResearchMode tests parsing SECURITY research with scope.
+func TestParser_SecurityResearchMode(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedMode  string
+		expectedScope string
+		shouldError   bool
+	}{
+		{
+			name:          "research mode with scope",
+			input:         `SECURITY research "authorized pentest of lab environment"` + "\nNAME test\nGOAL g \"do it\"\nRUN r USING g",
+			expectedMode:  "research",
+			expectedScope: "authorized pentest of lab environment",
+		},
+		{
+			name:          "research mode with complex scope",
+			input:         `SECURITY research "vulnerability assessment of internal network 192.168.1.0/24"` + "\nNAME test\nGOAL g \"do it\"\nRUN r USING g",
+			expectedMode:  "research",
+			expectedScope: "vulnerability assessment of internal network 192.168.1.0/24",
+		},
+		{
+			name:        "research mode without scope",
+			input:       "SECURITY research\nNAME test",
+			shouldError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := NewParser(NewLexer(tt.input))
+			wf, err := p.Parse()
+
+			if tt.shouldError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if wf.SecurityMode != tt.expectedMode {
+				t.Errorf("expected SecurityMode=%q, got %q", tt.expectedMode, wf.SecurityMode)
+			}
+
+			if wf.SecurityScope != tt.expectedScope {
+				t.Errorf("expected SecurityScope=%q, got %q", tt.expectedScope, wf.SecurityScope)
+			}
+		})
+	}
+}

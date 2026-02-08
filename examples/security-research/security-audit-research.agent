@@ -1,0 +1,64 @@
+# Security Audit with Research Mode Example
+# For audits that need to explore attack vectors in depth
+
+SECURITY research "security architecture review and threat modeling of production system"
+
+NAME security-audit-research
+
+INPUT system_name
+INPUT architecture_docs DEFAULT "docs/architecture.md"
+INPUT threat_profile DEFAULT "external attacker"
+
+GOAL architecture_review "Review the system architecture for $system_name:
+- Analyze the architecture documentation at $architecture_docs
+- Identify all components and their interactions
+- Map data flows and trust boundaries
+- Document authentication and authorization mechanisms
+- Note cryptographic implementations"
+
+GOAL threat_modeling "Perform threat modeling assuming $threat_profile:
+- Identify assets and their value
+- Enumerate threat actors and their capabilities
+- Map attack surfaces
+- Use STRIDE or similar methodology
+- Document potential attack vectors"
+
+GOAL attack_simulation "Simulate attack scenarios (theoretical):
+- Walk through realistic attack chains
+- Identify which controls would be bypassed
+- Assess detection capabilities
+- Evaluate incident response readiness
+- Document gaps in defense-in-depth"
+
+GOAL control_assessment "Assess existing security controls:
+- Authentication strength
+- Authorization granularity
+- Encryption effectiveness
+- Logging and monitoring coverage
+- Incident response procedures
+Rate each control's effectiveness against modeled threats."
+
+GOAL gap_analysis "Identify security gaps:
+- Missing controls
+- Weak implementations
+- Configuration issues
+- Process deficiencies
+- Compliance gaps
+Prioritize by risk and exploitability."
+
+GOAL recommendations "Develop security recommendations:
+- Immediate fixes (critical/high risk)
+- Short-term improvements (medium risk)
+- Strategic initiatives (long-term hardening)
+- Architecture improvements
+- Process and training needs"
+
+GOAL audit_report "Generate comprehensive security audit report:
+- Executive summary with risk rating
+- Detailed findings with evidence
+- Threat model documentation
+- Gap analysis results
+- Prioritized remediation roadmap
+- Appendices with technical details"
+
+RUN audit USING architecture_review, threat_modeling, attack_simulation, control_assessment, gap_analysis, recommendations, audit_report

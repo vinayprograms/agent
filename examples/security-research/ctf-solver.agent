@@ -1,0 +1,49 @@
+# CTF Challenge Solver Example
+# Demonstrates security research mode for Capture The Flag competitions
+
+SECURITY research "solving CTF challenges in authorized competition environment"
+
+NAME ctf-solver
+
+INPUT challenge_description
+INPUT challenge_category DEFAULT "misc"
+INPUT difficulty DEFAULT "medium"
+
+GOAL understand "Analyze the CTF challenge:
+- Parse the challenge description and hints
+- Identify the category: $challenge_category
+- Determine what skills/techniques are needed
+- Research similar past challenges
+- Form initial hypotheses about the solution approach"
+
+GOAL reconnaissance "Gather information about the challenge:
+- For web: analyze the application, find endpoints, check source
+- For crypto: identify the algorithm, look for weaknesses
+- For pwn: analyze the binary, find vulnerabilities
+- For forensics: examine the artifact, extract data
+- For reversing: analyze the binary, understand logic
+Document all findings systematically."
+
+GOAL exploit_development "Develop the exploit or solution:
+- For web: craft payloads, chain vulnerabilities
+- For crypto: implement the attack, break the cipher
+- For pwn: write the exploit, achieve code execution
+- For forensics: extract the hidden data, decode the flag
+- For reversing: understand the algorithm, extract the key
+Show your work step by step."
+
+GOAL flag_extraction "Extract and verify the flag:
+- Apply the developed exploit/solution
+- Capture the flag in the expected format
+- Verify the flag is correct
+- Document the full solution path"
+
+GOAL writeup "Create a CTF writeup:
+- Challenge description and category
+- Solution approach and methodology
+- Step-by-step exploitation process
+- Code/scripts used
+- Lessons learned and techniques to remember
+- Flag (redacted for sharing if needed)"
+
+RUN solve USING understand, reconnaissance, exploit_development, flag_extraction, writeup

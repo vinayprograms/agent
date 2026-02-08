@@ -1,0 +1,46 @@
+# Vulnerability Assessment Example
+# Demonstrates security research mode for web app testing
+
+SECURITY research "vulnerability assessment of internal web application at app.internal.corp"
+
+NAME vuln-assessment
+
+INPUT target_url DEFAULT "https://app.internal.corp"
+INPUT scope DEFAULT "OWASP Top 10"
+
+GOAL recon "Perform reconnaissance on $target_url. Identify:
+- Technology stack (frameworks, languages, servers)
+- Entry points (forms, APIs, file uploads)
+- Authentication mechanisms
+- Session management approach
+Document findings for vulnerability analysis."
+
+GOAL vuln_analysis "Based on reconnaissance findings, analyze potential vulnerabilities:
+- Check for common issues in identified frameworks
+- Review authentication/session security
+- Identify potential injection points
+- Look for misconfigurations
+Focus on $scope categories."
+
+GOAL exploit_verification "For each identified vulnerability:
+- Describe the attack vector
+- Explain exploitation steps (theoretical)
+- Assess impact and severity (CVSS if possible)
+- Note any prerequisites for exploitation
+DO NOT actually exploit - document for remediation."
+
+GOAL remediation "Create remediation recommendations:
+- Prioritized list of fixes
+- Code examples where applicable
+- Configuration changes needed
+- Security headers and controls to add
+- Testing steps to verify fixes"
+
+GOAL report "Generate a professional vulnerability assessment report including:
+- Executive summary
+- Methodology
+- Findings with severity ratings
+- Detailed remediation steps
+- Appendix with technical details"
+
+RUN assessment USING recon, vuln_analysis, exploit_verification, remediation, report
