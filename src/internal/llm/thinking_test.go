@@ -200,3 +200,22 @@ func TestContainsMathExpression(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultThinkingIsAuto(t *testing.T) {
+	// When thinking level is empty string, ResolveThinkingLevel should use heuristic
+	config := ThinkingConfig{Level: ""}
+	
+	// Simple message should get Off (heuristic decides)
+	simpleMessages := []Message{{Role: "user", Content: "Hello"}}
+	result := ResolveThinkingLevel(config, simpleMessages, nil)
+	if result != ThinkingOff {
+		t.Errorf("expected Off for simple hello with empty config, got %s", result)
+	}
+	
+	// Complex message should get High (heuristic decides)
+	complexMessages := []Message{{Role: "user", Content: "Prove that P = NP"}}
+	result = ResolveThinkingLevel(config, complexMessages, nil)
+	if result != ThinkingHigh {
+		t.Errorf("expected High for proof request with empty config, got %s", result)
+	}
+}

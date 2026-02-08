@@ -305,6 +305,7 @@ func runWorkflow(args []string) {
 			APIKey:    globalCreds.GetAPIKey(llmProvider),
 			MaxTokens: cfg.LLM.MaxTokens,
 			BaseURL:   cfg.LLM.BaseURL,
+			Thinking:  llm.ThinkingConfig{Level: llm.ThinkingLevel(cfg.LLM.Thinking)},
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error creating LLM provider: %v\n", err)

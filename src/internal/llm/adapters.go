@@ -146,12 +146,10 @@ func (a *FantasyAdapter) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		MaxOutputTokens: &maxTokens,
 	}
 
-	// Add thinking/reasoning options if configured
-	if a.thinking.Level != "" && a.thinking.Level != ThinkingOff {
-		thinkingLevel := ResolveThinkingLevel(a.thinking, req.Messages, req.Tools)
-		if thinkingLevel != ThinkingOff {
-			call.ProviderOptions = a.buildThinkingOptions(thinkingLevel)
-		}
+	// Add thinking/reasoning options if configured (auto is the default)
+	thinkingLevel := ResolveThinkingLevel(a.thinking, req.Messages, req.Tools)
+	if thinkingLevel != ThinkingOff {
+		call.ProviderOptions = a.buildThinkingOptions(thinkingLevel)
 	}
 
 	// Generate with retry and exponential backoff
@@ -419,9 +417,15 @@ func NewProvider(cfg FantasyConfig) (Provider, error) {
 		return nil, fmt.Errorf("failed to get model %s: %w", cfg.Model, err)
 	}
 
-	// Use thinking-enabled adapter if thinking is configured
-	if cfg.Thinking.Level != "" && cfg.Thinking.Level != ThinkingOff {
-		return NewFantasyAdapterWithThinking(model, cfg.MaxTokens, cfg.Provider, cfg.Thinking), nil
+	// Use thinking-enabled adapter if thinking is configured (auto is default when empty)
+	thinkingLevel := cfg.Thinking.Level
+	if thinkingLevel == "" {
+		thinkingLevel = ThinkingAuto // Default to auto-detection
+	}
+	if thinkingLevel != ThinkingOff {
+		thinkingCfg := cfg.Thinking
+		thinkingCfg.Level = thinkingLevel
+		return NewFantasyAdapterWithThinking(model, cfg.MaxTokens, cfg.Provider, thinkingCfg), nil
 	}
 
 	return NewFantasyAdapter(model, cfg.MaxTokens), nil
