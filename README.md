@@ -724,118 +724,67 @@ The `FROM` clause in `AGENT` declarations supports smart resolution:
 
 ## Sub-Agents
 
-When a goal uses `USING agent1, agent2`, each agent runs as a **true sub-agent** in complete isolation:
+Both static (`AGENT`/`USING`) and dynamic (`spawn_agent`) sub-agents use the **same execution path** with identical capabilities:
 
-- **Own tools** — Only tools declared in the sub-agent's package
-- **Own memory** — Fresh context, no shared state
-- **Own execution loop** — Runs to completion independently
-- **Own context window** — Separate from orchestrator
+- **Parent's tools** — Full access to the parent's tool registry
+- **MCP tools** — All configured MCP servers
+- **Security verification** — 3-tier verification on all tool calls
+- **Supervision phases** — COMMIT/EXECUTE/RECONCILE/SUPERVISE when enabled
+- **Agentic loop** — Full tool-calling loop, not just a single LLM call
+- **No nesting** — `spawn_agent`/`spawn_agents` excluded (depth=1)
 
-### Sub-Agent Architecture
+### Static Sub-Agents (AGENT/USING)
+
+Declare agents in Agentfile with personas and model requirements:
 
 ```
-Orchestrator (Agentfile)
-    ├── spawns → Agent A (isolated .agent package)
-    ├── spawns → Agent B (isolated .agent package)
-    └── synthesizes results when both complete
+AGENT optimist FROM agents/optimist.md REQUIRES "reasoning-heavy"
+AGENT critic FROM agents/devils-advocate.md REQUIRES "fast"
+
+GOAL evaluate "Analyze this decision" USING optimist, critic
 ```
 
-### Constraints
+The `FROM` path loads a persona prompt. The `REQUIRES` profile selects which LLM to use.
 
-- **No nesting** — Sub-agents cannot spawn their own sub-agents
-- **No shared state** — Parent passes input, child returns output
-- **Orchestrator coordinates** — Only the top-level workflow spawns agents
-
-### Example
-
-**orchestrator/Agentfile:**
-```
-NAME code-review
-INPUT code_path
-
-AGENT security FROM security-scanner.agent REQUIRES "reasoning-heavy"
-AGENT style FROM style-checker.agent REQUIRES "fast"
-
-GOAL audit "Review $code_path" USING security, style
-GOAL report "Generate combined report from findings"
-
-RUN main USING audit, report
-```
-
-**security-scanner.agent** (packaged agent):
-```
-NAME security-scanner
-GOAL scan "Scan for vulnerabilities in $code_path"
-RUN main USING scan
-```
-
-When the orchestrator runs `audit`, it:
-1. Spawns `security-scanner.agent` with `code_path` as input
-2. Spawns `style-checker.agent` in parallel
+When the goal runs:
+1. Spawns both agents in parallel (each with full tool access)
+2. Each runs a complete agentic loop with tool calls
 3. Waits for both to complete
 4. Synthesizes their outputs
 
-## Dynamic Sub-Agent Spawning
+### Dynamic Sub-Agents (spawn_agent)
 
-In addition to static sub-agents declared in the Agentfile, the LLM can **dynamically spawn sub-agents** at runtime using the `spawn_agent` tool.
-
-### How It Works
-
-Every agent has access to the `spawn_agent(role, task, outputs)` tool. The system prompt includes orchestrator guidance that encourages delegation when appropriate.
-
-The optional `outputs` parameter enables structured output — when provided, the sub-agent returns JSON with those fields instead of freeform text.
+The LLM can spawn sub-agents at runtime:
 
 ```
-▶ Starting goal: research
-  → Tool: spawn_agent
-  ⊕ Spawning sub-agent: researcher
-    → Tool: web_search
-    → Tool: web_fetch
-  ⊖ Sub-agent complete: researcher
-  → Tool: spawn_agent
-  ⊕ Spawning sub-agent: critic
-  ⊖ Sub-agent complete: critic
-  → Tool: write
-✓ Completed goal: research
+spawn_agent(role: "researcher", task: "Find facts about {topic}")
+spawn_agents(agents: [
+  {role: "optimist", task: "Make the case for..."},
+  {role: "pessimist", task: "Make the case against..."}
+])
 ```
 
-### Example
+The optional `outputs` parameter enables structured output parsing.
 
-**Agentfile:**
-```
-NAME dynamic-research
-INPUT topic
-GOAL research "Research $topic thoroughly, considering multiple perspectives"
-RUN main USING research
-```
+### Unified Execution
 
-**What happens:**
-The LLM receives the goal and decides to delegate:
-```
-spawn_agent(role: "researcher", task: "Find factual information about {topic}")
-spawn_agent(role: "critic", task: "Identify potential biases and limitations")
-spawn_agent(role: "synthesizer", task: "Combine findings into a balanced summary")
-```
-
-### Depth=1 Enforcement
-
-Sub-agents spawned dynamically **cannot spawn their own sub-agents**. The `spawn_agent` tool is automatically excluded from their tool set:
+Both paths flow through the same code:
 
 ```
-Orchestrator (has spawn_agent)
-    ├── researcher (no spawn_agent)
-    ├── critic (no spawn_agent)
-    └── synthesizer (no spawn_agent)
+spawnAgentWithPrompt()
+  └── subAgentExecutePhaseWithProvider()
+        └── executeToolsParallel()
+              └── executeTool()
+                    └── verifyToolCall()  ← security
 ```
-
-This prevents infinite recursion and keeps the execution model simple.
 
 ### When to Use
 
 | Static (AGENT/USING) | Dynamic (spawn_agent) |
 |---------------------|----------------------|
 | Known agents at design time | LLM decides what's needed |
-| Packaged agents with policies | Ad-hoc specialists |
+| Persona defined in files | Ad-hoc specialists |
+| Different model per agent | Same model as parent |
 | Explicit control | Flexible problem decomposition |
 
 Both approaches can be used in the same workflow.

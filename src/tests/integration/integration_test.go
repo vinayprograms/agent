@@ -300,3 +300,70 @@ LOOP main USING refine WITHIN 5
 		t.Errorf("expected at most 5 iterations, got %d", result.Iterations["refine"])
 	}
 }
+
+// TestMultiAgentToolAccess tests that AGENT entries have tool access.
+func TestMultiAgentToolAccess(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create agent file with persona
+	os.MkdirAll(filepath.Join(tmpDir, "agents"), 0755)
+	if err := os.WriteFile(filepath.Join(tmpDir, "agents", "researcher.md"), []byte("You are a researcher. Use available tools to complete your task."), 0644); err != nil {
+		t.Fatalf("failed to write agent file: %v", err)
+	}
+
+	agentfileContent := `NAME agent-tools-test
+AGENT researcher FROM agents/researcher.md
+GOAL research "Research the topic" USING researcher
+RUN main USING research
+`
+	agentfilePath := filepath.Join(tmpDir, "Agentfile")
+	if err := os.WriteFile(agentfilePath, []byte(agentfileContent), 0644); err != nil {
+		t.Fatalf("failed to write Agentfile: %v", err)
+	}
+
+	wf, err := agentfile.LoadFile(agentfilePath)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+
+	// Track tool calls from sub-agent
+	var toolsReceived []string
+	callCount := 0
+	provider := llm.NewMockProvider()
+	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		callCount++
+		// First call should receive tools (sub-agent execution)
+		if callCount == 1 && len(req.Tools) > 0 {
+			for _, tool := range req.Tools {
+				toolsReceived = append(toolsReceived, tool.Name)
+			}
+			// Sub-agent completes without using tools
+			return &llm.ChatResponse{Content: "Research complete"}, nil
+		}
+		return &llm.ChatResponse{Content: "Done"}, nil
+	}
+
+	// Create tool registry with a test tool
+	pol := policy.New()
+	registry := tools.NewRegistry(pol)
+
+	exec := executor.NewExecutor(wf, provider, registry, nil)
+	result, err := exec.Run(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if result.Status != executor.StatusComplete {
+		t.Errorf("expected Complete, got %s", result.Status)
+	}
+
+	// Verify sub-agent received tools (but not spawn_agent/spawn_agents)
+	if len(toolsReceived) == 0 {
+		t.Error("sub-agent did not receive any tools")
+	}
+	for _, name := range toolsReceived {
+		if name == "spawn_agent" || name == "spawn_agents" {
+			t.Errorf("sub-agent should not have access to %s", name)
+		}
+	}
+}

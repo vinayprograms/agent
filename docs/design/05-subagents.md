@@ -7,24 +7,31 @@
 | Static | AGENT/USING in Agentfile | Design time |
 | Dynamic | spawn_agent tool | Runtime (LLM decides) |
 
-Both can be used in the same workflow.
+Both use the **same execution path** and have identical capabilities.
 
 ## Static Sub-Agents
 
 Declare agents in Agentfile, reference in goals:
 
 ```
-AGENT security FROM security-scanner.agent REQUIRES "reasoning-heavy"
-AGENT style FROM style-checker.agent REQUIRES "fast"
+AGENT optimist FROM agents/optimist.md REQUIRES "reasoning-heavy"
+AGENT critic FROM agents/devils-advocate.md REQUIRES "fast"
 
-GOAL audit "Review $code_path" USING security, style
+GOAL evaluate "Analyze this decision" USING optimist, critic
 ```
 
 When the goal runs:
-1. Spawns security-scanner.agent with code_path as input
-2. Spawns style-checker.agent in parallel
-3. Waits for both to complete
-4. Synthesizes their outputs
+1. Spawns both agents in parallel
+2. Each gets the parent's tool registry (minus spawn_agent/spawn_agents)
+3. Each runs a full agentic loop with tool calls
+4. Waits for both to complete
+5. Synthesizes their outputs
+
+The `FROM` path can be:
+- A markdown file with a persona/prompt
+- An `.agent` package for more complex sub-agents
+
+The `REQUIRES` profile selects which LLM provider to use (defined in config).
 
 ## Dynamic Sub-Agents
 
@@ -35,38 +42,48 @@ spawn_agent(role: "researcher", task: "Find facts about {topic}")
 spawn_agent(role: "critic", task: "Identify biases")
 ```
 
-The optional `outputs` parameter enables structured output.
+Or spawn multiple in parallel:
 
-Execution trace:
 ```
-▶ Starting goal: research
-  → Tool: spawn_agent
-  ⊕ Spawning sub-agent: researcher
-    → Tool: web_search
-    → Tool: web_fetch
-  ⊖ Sub-agent complete: researcher
-  → Tool: spawn_agent
-  ⊕ Spawning sub-agent: critic
-  ⊖ Sub-agent complete: critic
-✓ Completed goal: research
+spawn_agents(agents: [
+  {role: "optimist", task: "Make the case for..."},
+  {role: "pessimist", task: "Make the case against..."}
+])
 ```
 
-## Isolation Model
+The optional `outputs` parameter enables structured output parsing.
 
-Each sub-agent runs in complete isolation:
+## Unified Execution
 
-| Aspect | Description |
-|--------|-------------|
-| Own tools | Only tools declared in sub-agent's package |
-| Own memory | Fresh context, no shared state |
-| Own execution loop | Runs to completion independently |
-| Own context window | Separate from orchestrator |
+Both static and dynamic sub-agents use the same execution path:
 
-Nothing is shared. Parent passes input, child returns output.
+| Feature | Static (AGENT) | Dynamic (spawn_agent) |
+|---------|---------------|----------------------|
+| Tool access | Parent's registry | Parent's registry |
+| MCP tools | Yes | Yes |
+| Agentic loop | Yes | Yes |
+| Security verification | Yes | Yes |
+| Supervision phases | Yes (if enabled) | Yes (if enabled) |
+| spawn_agent excluded | Yes | Yes |
+| Session logging | Yes | Yes |
+
+The only differences:
+- **Static**: Persona comes from `FROM` file, model from `REQUIRES`
+- **Dynamic**: Role/task specified at runtime by orchestrator LLM
+
+## Security
+
+All tool calls from sub-agents go through the same 3-tier security verification:
+
+1. **Static analysis** — Policy checks, pattern matching
+2. **Triage** — Fast LLM classification of suspicious calls
+3. **Supervisor** — Full LLM evaluation when triggered
+
+Sub-agents inherit the parent's security context but cannot escalate privileges.
 
 ## Depth = 1
 
-Sub-agents cannot spawn their own sub-agents. The `spawn_agent` tool is excluded from their tool set:
+Sub-agents cannot spawn their own sub-agents. The `spawn_agent` and `spawn_agents` tools are excluded from their tool set:
 
 ```
 Orchestrator (has spawn_agent)
@@ -75,15 +92,27 @@ Orchestrator (has spawn_agent)
     └── synthesizer (no spawn_agent)
 ```
 
-This prevents infinite recursion and keeps execution simple.
+This prevents infinite recursion and keeps execution predictable.
+
+## Supervision
+
+When supervision is enabled, sub-agents go through the same four-phase execution as main goals:
+
+1. **COMMIT** — Sub-agent declares its intent
+2. **EXECUTE** — Sub-agent does the work (with tools)
+3. **RECONCILE** — Static pattern checks on the result
+4. **SUPERVISE** — LLM evaluation if reconcile triggers
+
+Sub-agents inherit supervision from their parent goal. If the parent goal is unsupervised, sub-agents are also unsupervised.
 
 ## When to Use Each
 
 | Static (AGENT/USING) | Dynamic (spawn_agent) |
 |---------------------|----------------------|
 | Known agents at design time | LLM decides what's needed |
-| Packaged agents with policies | Ad-hoc specialists |
+| Persona defined in files | Ad-hoc specialists |
 | Explicit control | Flexible problem decomposition |
+| Different model per agent | Same model as parent |
 
 ---
 
