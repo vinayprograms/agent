@@ -1,0 +1,76 @@
+# Research with Memory
+#
+# Demonstrates how memory enhances research tasks by:
+# - Storing findings from web research
+# - Recalling context from previous sessions
+# - Building on accumulated knowledge
+#
+# Prerequisites:
+# - Enable memory in agent.toml:
+#   [memory]
+#   enabled = true
+#   [memory.embedding]
+#   provider = "openai"
+#
+# Run: agent run examples/memory/research-with-memory.agent
+
+WORKFLOW research-with-memory
+
+INPUT topic "AI safety" # Topic to research
+
+# Check what we already know
+GOAL check-prior-knowledge -> prior_context """
+Before starting research, check if we have any relevant memories.
+
+Use memory_recall to search for memories related to: {{topic}}
+
+If relevant memories are found, summarize what we already know.
+If no relevant memories, note that this is a fresh research topic.
+
+Return a summary of prior knowledge (or lack thereof).
+"""
+
+# Do the research
+GOAL research-topic -> findings """
+Research the topic: {{topic}}
+
+Prior context: {{prior_context}}
+
+1. Use web_search to find recent articles and developments
+2. Use web_fetch on the top 3-5 most relevant URLs
+3. Synthesize the key findings
+
+Build on any prior knowledge we have, don't repeat known information.
+
+Return a structured summary of new findings.
+"""
+
+# Store key insights
+GOAL store-insights """
+Store the most important insights from this research session.
+
+Findings: {{findings}}
+
+Use memory_remember to store 3-5 key insights, each with:
+- Clear, standalone content (should make sense without context)
+- Importance score (0.7-1.0 for key findings)
+- Tags: ["research", "{{topic}}"]
+
+Confirm what was stored.
+"""
+
+# Generate final report
+GOAL generate-report """
+Generate a final research report.
+
+Topic: {{topic}}
+Prior Knowledge: {{prior_context}}
+New Findings: {{findings}}
+
+Create a comprehensive report that:
+1. States what was already known (from memory)
+2. Presents new findings
+3. Identifies gaps for future research
+
+The report should be useful for future sessions.
+"""

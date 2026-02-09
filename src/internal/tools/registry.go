@@ -59,16 +59,39 @@ type CredentialProvider interface {
 
 // Registry holds all registered tools.
 type Registry struct {
-	tools       map[string]Tool
-	policy      *policy.Policy
-	summarizer  Summarizer
-	memoryStore MemoryStore
-	credentials CredentialProvider
+	tools          map[string]Tool
+	policy         *policy.Policy
+	summarizer     Summarizer
+	memoryStore    MemoryStore
+	semanticMemory SemanticMemory
+	credentials    CredentialProvider
 }
 
 // Summarizer provides content summarization for web_fetch
 type Summarizer interface {
 	Summarize(ctx context.Context, content, question string) (string, error)
+}
+
+// SemanticMemory provides semantic memory operations.
+type SemanticMemory interface {
+	Remember(ctx context.Context, content string, meta SemanticMemoryMeta) error
+	Recall(ctx context.Context, query string, limit int) ([]SemanticMemoryResult, error)
+	Forget(ctx context.Context, id string) error
+}
+
+// SemanticMemoryMeta holds metadata for semantic memory.
+type SemanticMemoryMeta struct {
+	Source     string
+	Importance float32
+	Tags       []string
+}
+
+// SemanticMemoryResult is a memory with relevance score.
+type SemanticMemoryResult struct {
+	ID      string   `json:"id"`
+	Content string   `json:"content"`
+	Score   float32  `json:"score"`
+	Tags    []string `json:"tags,omitempty"`
 }
 
 // NewRegistry creates a new registry with built-in tools.
@@ -130,6 +153,14 @@ func (r *Registry) SetMemoryStore(store MemoryStore) {
 	r.Register(&memoryWriteTool{store: store})
 	r.Register(&memoryListTool{store: store})
 	r.Register(&memorySearchTool{store: store})
+}
+
+// SetSemanticMemory sets the semantic memory and registers semantic memory tools
+func (r *Registry) SetSemanticMemory(mem SemanticMemory) {
+	r.semanticMemory = mem
+	r.Register(&memoryRememberTool{memory: mem})
+	r.Register(&memoryRecallTool{memory: mem})
+	r.Register(&memoryForgetTool{memory: mem})
 }
 
 // Register adds a tool to the registry.
@@ -1621,4 +1652,186 @@ func (t *spawnAgentsTool) Execute(ctx context.Context, args map[string]interface
 	}
 
 	return output, nil
+}
+
+// --- Semantic Memory Tools ---
+
+// memoryRememberTool implements the memory_remember tool.
+type memoryRememberTool struct {
+	memory SemanticMemory
+}
+
+func (t *memoryRememberTool) Name() string { return "memory_remember" }
+
+func (t *memoryRememberTool) Description() string {
+	return `Permanently store an important insight, decision, or fact for future sessions.
+
+Use this when you learn something valuable:
+- User preferences and context
+- Project decisions and rationale
+- Domain knowledge and insights
+- Important facts worth remembering
+
+The memory will be semantically searchable - you don't need to pick the perfect key.
+Content is embedded and stored for intelligent recall later.
+
+Parameters:
+  - content (required): The information to remember
+  - importance (optional): 0.0-1.0 score (default 0.5, higher = more important)
+  - tags (optional): List of tags for categorization`
+}
+
+func (t *memoryRememberTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"content": map[string]interface{}{
+				"type":        "string",
+				"description": "The information to remember",
+			},
+			"importance": map[string]interface{}{
+				"type":        "number",
+				"description": "Importance score 0.0-1.0 (default 0.5)",
+			},
+			"tags": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Optional tags for categorization",
+			},
+		},
+		"required": []string{"content"},
+	}
+}
+
+func (t *memoryRememberTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	content, ok := args["content"].(string)
+	if !ok || content == "" {
+		return nil, fmt.Errorf("content is required")
+	}
+
+	meta := SemanticMemoryMeta{
+		Source:     "explicit",
+		Importance: 0.5,
+	}
+
+	if imp, ok := args["importance"].(float64); ok {
+		meta.Importance = float32(imp)
+	}
+
+	if tags, ok := args["tags"].([]interface{}); ok {
+		for _, t := range tags {
+			if s, ok := t.(string); ok {
+				meta.Tags = append(meta.Tags, s)
+			}
+		}
+	}
+
+	if err := t.memory.Remember(ctx, content, meta); err != nil {
+		return nil, fmt.Errorf("failed to store memory: %w", err)
+	}
+
+	return "Memory stored successfully", nil
+}
+
+// memoryRecallTool implements the memory_recall tool.
+type memoryRecallTool struct {
+	memory SemanticMemory
+}
+
+func (t *memoryRecallTool) Name() string { return "memory_recall" }
+
+func (t *memoryRecallTool) Description() string {
+	return `Search your long-term memory for relevant context.
+
+Use this at the start of complex tasks or when the user references past work.
+Returns memories ranked by relevance to your query.
+
+IMPORTANT: Always check memory before saying "I don't know about previous sessions."
+
+The search is semantic - it finds memories by meaning, not just keywords.
+For example, "authentication decision" might find "We chose JWT over sessions because..."
+
+Parameters:
+  - query (required): What you're looking for
+  - limit (optional): Maximum results (default 5)`
+}
+
+func (t *memoryRecallTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"query": map[string]interface{}{
+				"type":        "string",
+				"description": "What you're looking for",
+			},
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum results (default 5)",
+			},
+		},
+		"required": []string{"query"},
+	}
+}
+
+func (t *memoryRecallTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+
+	limit := 5
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+
+	results, err := t.memory.Recall(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("recall failed: %w", err)
+	}
+
+	if len(results) == 0 {
+		return "No relevant memories found", nil
+	}
+
+	return results, nil
+}
+
+// memoryForgetTool implements the memory_forget tool.
+type memoryForgetTool struct {
+	memory SemanticMemory
+}
+
+func (t *memoryForgetTool) Name() string { return "memory_forget" }
+
+func (t *memoryForgetTool) Description() string {
+	return `Delete a memory by ID. Use this to correct mistakes or remove outdated information.
+
+Parameters:
+  - id (required): The memory ID to delete (from recall results)`
+}
+
+func (t *memoryForgetTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id": map[string]interface{}{
+				"type":        "string",
+				"description": "Memory ID to delete",
+			},
+		},
+		"required": []string{"id"},
+	}
+}
+
+func (t *memoryForgetTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	id, ok := args["id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+
+	if err := t.memory.Forget(ctx, id); err != nil {
+		return nil, fmt.Errorf("failed to forget memory: %w", err)
+	}
+
+	return "Memory deleted", nil
 }

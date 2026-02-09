@@ -21,6 +21,7 @@ type Config struct {
 	MCP       MCPConfig             `toml:"mcp"`        // MCP tool servers
 	Skills    SkillsConfig          `toml:"skills"`     // Agent Skills
 	Security  SecurityConfig        `toml:"security"`   // Security framework
+	Memory    MemoryConfig          `toml:"memory"`     // Semantic memory
 }
 
 // AgentConfig contains agent identification settings.
@@ -92,6 +93,21 @@ type SecurityConfig struct {
 	Mode       string `toml:"mode"`        // "default" or "paranoid"
 	UserTrust  string `toml:"user_trust"`  // Trust level for user messages: "trusted", "vetted", "untrusted"
 	TriageLLM  string `toml:"triage_llm"`  // Profile name for Tier 2 triage (cheap/fast model)
+}
+
+// MemoryConfig contains semantic memory settings.
+type MemoryConfig struct {
+	Enabled   bool            `toml:"enabled"`   // Enable semantic memory (default false)
+	Path      string          `toml:"path"`      // Database path (default ~/.agent/memory.db)
+	Embedding EmbeddingConfig `toml:"embedding"` // Embedding provider config
+}
+
+// EmbeddingConfig contains embedding provider settings.
+type EmbeddingConfig struct {
+	Provider  string `toml:"provider"`   // openai, ollama
+	Model     string `toml:"model"`      // Model name (e.g., text-embedding-3-small)
+	APIKeyEnv string `toml:"api_key_env"` // Environment variable for API key
+	BaseURL   string `toml:"base_url"`   // Base URL (for ollama or custom endpoint)
 }
 
 // New creates a new config with defaults.

@@ -17,6 +17,7 @@ import (
 	"github.com/vinayprograms/agent/internal/credentials"
 	"github.com/vinayprograms/agent/internal/executor"
 	"github.com/vinayprograms/agent/internal/llm"
+	"github.com/vinayprograms/agent/internal/memory"
 	"github.com/vinayprograms/agent/internal/packaging"
 	"github.com/vinayprograms/agent/internal/policy"
 	"github.com/vinayprograms/agent/internal/replay"
@@ -363,6 +364,41 @@ func runWorkflow(args []string) {
 	// Set up memory store for memory_read/memory_write tools
 	memoryPath := filepath.Join(sessionPath, "memory.json")
 	registry.SetMemoryStore(tools.NewFileMemoryStore(memoryPath))
+
+	// Set up semantic memory if enabled
+	var semanticMemory *memory.ToolsAdapter
+	if cfg.Memory.Enabled {
+		embedder, err := createEmbeddingProvider(cfg.Memory.Embedding, globalCreds)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error creating embedding provider: %v\n", err)
+			os.Exit(1)
+		}
+
+		memDBPath := cfg.Memory.Path
+		if memDBPath == "" {
+			home, _ := os.UserHomeDir()
+			memDBPath = filepath.Join(home, ".agent", "memory.db")
+		}
+		// Ensure directory exists
+		if err := os.MkdirAll(filepath.Dir(memDBPath), 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "error creating memory directory: %v\n", err)
+			os.Exit(1)
+		}
+
+		memStore, err := memory.NewSQLiteStore(memory.SQLiteConfig{
+			Path:     memDBPath,
+			Embedder: embedder,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error creating memory store: %v\n", err)
+			os.Exit(1)
+		}
+		defer memStore.Close()
+
+		semanticMemory = memory.NewToolsAdapter(memStore)
+		registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
+		fmt.Println("🧠 Semantic memory: enabled")
+	}
 
 	// Create telemetry exporter
 	var telem telemetry.Exporter
@@ -1081,4 +1117,73 @@ func parseRetryConfig(maxRetries int, backoffStr string) llm.RetryConfig {
 		}
 	}
 	return cfg
+}
+
+// createEmbeddingProvider creates an embedding provider based on config.
+func createEmbeddingProvider(cfg config.EmbeddingConfig, creds *credentials.Credentials) (memory.EmbeddingProvider, error) {
+	switch cfg.Provider {
+	case "openai", "":
+		apiKey := ""
+		if cfg.APIKeyEnv != "" {
+			apiKey = os.Getenv(cfg.APIKeyEnv)
+		}
+		if apiKey == "" {
+			apiKey = creds.GetAPIKey("openai")
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("OpenAI API key not found for embeddings")
+		}
+		return memory.NewOpenAIEmbedder(memory.OpenAIConfig{
+			APIKey:  apiKey,
+			Model:   cfg.Model,
+			BaseURL: cfg.BaseURL,
+		}), nil
+
+	case "ollama":
+		baseURL := cfg.BaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:11434"
+		}
+		return memory.NewOllamaEmbedder(memory.OllamaConfig{
+			BaseURL: baseURL,
+			Model:   cfg.Model,
+		}), nil
+
+	default:
+		return nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Provider)
+	}
+}
+
+// semanticMemoryBridge bridges memory.ToolsAdapter to tools.SemanticMemory interface.
+type semanticMemoryBridge struct {
+	adapter *memory.ToolsAdapter
+}
+
+func (b *semanticMemoryBridge) Remember(ctx context.Context, content string, meta tools.SemanticMemoryMeta) error {
+	return b.adapter.Remember(ctx, content, memory.ToolsMemoryMeta{
+		Source:     meta.Source,
+		Importance: meta.Importance,
+		Tags:       meta.Tags,
+	})
+}
+
+func (b *semanticMemoryBridge) Recall(ctx context.Context, query string, limit int) ([]tools.SemanticMemoryResult, error) {
+	results, err := b.adapter.Recall(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]tools.SemanticMemoryResult, len(results))
+	for i, r := range results {
+		out[i] = tools.SemanticMemoryResult{
+			ID:      r.ID,
+			Content: r.Content,
+			Score:   r.Score,
+			Tags:    r.Tags,
+		}
+	}
+	return out, nil
+}
+
+func (b *semanticMemoryBridge) Forget(ctx context.Context, id string) error {
+	return b.adapter.Forget(ctx, id)
 }

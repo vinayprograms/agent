@@ -297,6 +297,50 @@ The classifier analyzes each request before sending:
 | Google | ❌ | Not yet supported |
 | Groq/Mistral | ❌ | Not yet supported |
 
+## Semantic Memory
+
+The agent supports persistent semantic memory across sessions — storing and recalling information by meaning, not just keywords.
+
+### Configuration
+
+```toml
+[memory]
+enabled = true
+path = "~/.agent/memory.db"
+
+[memory.embedding]
+provider = "openai"  # or "ollama"
+model = "text-embedding-3-small"
+```
+
+### Memory Tools
+
+| Tool | Purpose |
+|------|---------|
+| `memory_remember` | Store content with embeddings for semantic search |
+| `memory_recall` | Find relevant memories by meaning |
+| `memory_forget` | Delete a memory by ID |
+
+**Example workflow:**
+```
+# Store an insight
+memory_remember(
+  content: "We decided to use PostgreSQL for better JSON support",
+  importance: 0.8,
+  tags: ["architecture", "database"]
+)
+
+# Later, recall it semantically
+memory_recall(query: "database decision")
+# Returns the PostgreSQL insight even without exact keyword match
+```
+
+### Automatic Consolidation
+
+At session end, the agent automatically extracts key insights from the conversation and stores them — no explicit `memory_remember` calls needed.
+
+See [docs/memory/semantic-memory.md](docs/memory/semantic-memory.md) for details.
+
 ## CLI Commands
 
 | Command | Description |
