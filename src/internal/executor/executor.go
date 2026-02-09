@@ -691,18 +691,19 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	ctx = withAgentIdentity(ctx, role, role)
 
 	// Build system prompt for the sub-agent
-	systemPrompt := fmt.Sprintf("You are a %s. Complete the following task thoroughly and return your findings.\n\nTask: %s", role, task)
+	systemPrompt := fmt.Sprintf("You are a %s. Complete the following task thoroughly and return your findings.", role)
 
 	// Inject security research framing if enabled
 	if prefix := e.securityResearchPrefix(); prefix != "" {
 		systemPrompt = prefix + systemPrompt
 	}
 
-	// Add structured output instruction if outputs specified
-	userPrompt := task
+	// Build XML task prompt for sub-agent
+	taskDescription := task
 	if len(outputs) > 0 {
-		userPrompt += "\n\n" + buildStructuredOutputInstruction(outputs)
+		taskDescription += "\n\n" + buildStructuredOutputInstruction(outputs)
 	}
+	userPrompt := BuildTaskContext(role, e.currentGoal, taskDescription)
 
 	// Log the spawn
 	if e.OnSubAgentStart != nil {
@@ -808,12 +809,12 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 			// Handle verdict
 			switch supervision.Verdict(superviseResult.Verdict) {
 			case supervision.VerdictReorient:
-				// Re-execute with correction
+				// Re-execute with correction in XML format
 				e.logger.Info("reorienting sub-agent execution", map[string]interface{}{
 					"role":       role,
 					"correction": superviseResult.Correction,
 				})
-				correctedTask := userPrompt + "\n\n## Supervisor Correction\n" + superviseResult.Correction
+				correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, superviseResult.Correction)
 				output, _, err = e.subAgentExecutePhase(ctx, role, systemPrompt, correctedTask)
 				if err != nil {
 					return "", err
@@ -1292,23 +1293,26 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		return &GoalResult{Output: output, ToolCallsMade: false}, err
 	}
 
-	// Build prompt with context from previous goals
-	prompt := e.interpolate(goal.Outcome)
+	// Build XML-structured prompt with context from previous goals
+	xmlBuilder := NewXMLContextBuilder(e.workflow.Name)
 
-	// Add context from prior goal outputs
-	if len(e.outputs) > 0 {
-		var priorContext strings.Builder
-		priorContext.WriteString("## Context from Previous Goals\n\n")
-		for goalName, output := range e.outputs {
-			priorContext.WriteString(fmt.Sprintf("### %s\n%s\n\n", goalName, output))
-		}
-		prompt = priorContext.String() + "## Current Goal\n" + prompt
+	// Add prior goal outputs to context
+	for goalName, output := range e.outputs {
+		xmlBuilder.AddPriorGoal(goalName, output)
 	}
+
+	// Set current goal with interpolated description
+	goalDescription := e.interpolate(goal.Outcome)
 
 	// Add structured output instruction if outputs are declared
 	if len(goal.Outputs) > 0 {
-		prompt += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
+		goalDescription += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
 	}
+
+	xmlBuilder.SetCurrentGoal(goal.Name, goalDescription)
+
+	// Build the XML prompt
+	prompt := xmlBuilder.Build()
 
 	// Set current goal for logging
 	e.currentGoal = goal.Name
@@ -1429,8 +1433,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 					"goal":       goal.Name,
 					"correction": superviseResult.Correction,
 				})
-				// Append correction to prompt and re-execute
-				correctedPrompt := prompt + "\n\n## Supervisor Correction\n" + superviseResult.Correction
+				// Build corrected prompt with XML correction tag
+				xmlBuilder.SetCorrection(superviseResult.Correction)
+				correctedPrompt := xmlBuilder.Build()
 				output, _, toolCallsMade, err = e.executePhase(ctx, goal, correctedPrompt)
 				if err != nil {
 					return nil, err
@@ -1958,7 +1963,13 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 				return
 			}
 
-			prompt := e.interpolate(goal.Outcome)
+			// Build XML-structured prompt with context
+			xmlBuilder := NewXMLContextBuilder(e.workflow.Name)
+			for goalName, output := range e.outputs {
+				xmlBuilder.AddPriorGoal(goalName, output)
+			}
+			xmlBuilder.SetCurrentGoal(goal.Name, e.interpolate(goal.Outcome))
+			prompt := xmlBuilder.Build()
 
 			// Use agent's prompt as system message, or generic if none
 			systemPrompt := "You are a helpful assistant."

@@ -1,0 +1,204 @@
+package executor
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestXMLContextBuilder_SimpleGoal(t *testing.T) {
+	b := NewXMLContextBuilder("recipe-creator")
+	b.SetCurrentGoal("brainstorm", "Brainstorm 3 possible dishes using coconut, curry leaves.")
+
+	result := b.Build()
+
+	// Check structure
+	if !strings.Contains(result, `<workflow name="recipe-creator">`) {
+		t.Error("expected workflow tag with name")
+	}
+	if !strings.Contains(result, `<current-goal id="brainstorm">`) {
+		t.Error("expected current-goal tag")
+	}
+	if !strings.Contains(result, "Brainstorm 3 possible dishes") {
+		t.Error("expected goal description in output")
+	}
+	// No context section for first goal
+	if strings.Contains(result, "<context>") {
+		t.Error("should not have context section for first goal")
+	}
+}
+
+func TestXMLContextBuilder_WithPriorGoals(t *testing.T) {
+	b := NewXMLContextBuilder("recipe-creator")
+	b.AddPriorGoal("brainstorm", "Here are 3 dishes:\n\n## 1. Chutney\nA fresh accompaniment...")
+	b.SetCurrentGoal("select", "Choose the best recipe based on flavor balance.")
+
+	result := b.Build()
+
+	// Check context section
+	if !strings.Contains(result, "<context>") {
+		t.Error("expected context section")
+	}
+	if !strings.Contains(result, `<goal id="brainstorm">`) {
+		t.Error("expected prior goal in context")
+	}
+	if !strings.Contains(result, "## 1. Chutney") {
+		t.Error("expected markdown content preserved in goal")
+	}
+	if !strings.Contains(result, `<current-goal id="select">`) {
+		t.Error("expected current goal")
+	}
+}
+
+func TestXMLContextBuilder_MultiplePriorGoals(t *testing.T) {
+	b := NewXMLContextBuilder("essay-writer")
+	b.AddPriorGoal("outline", "# Essay Outline\n1. Introduction...")
+	b.AddPriorGoal("draft", "# The Essay\n\nIntroduction paragraph...")
+	b.SetCurrentGoal("polish", "Review and improve the essay.")
+
+	result := b.Build()
+
+	// Both goals should be in context
+	if !strings.Contains(result, `<goal id="outline">`) {
+		t.Error("expected outline goal in context")
+	}
+	if !strings.Contains(result, `<goal id="draft">`) {
+		t.Error("expected draft goal in context")
+	}
+	// Order matters - outline should come before draft
+	outlinePos := strings.Index(result, `id="outline"`)
+	draftPos := strings.Index(result, `id="draft"`)
+	if outlinePos > draftPos {
+		t.Error("expected outline before draft (insertion order)")
+	}
+}
+
+func TestXMLContextBuilder_WithCorrection(t *testing.T) {
+	b := NewXMLContextBuilder("code-review")
+	b.AddPriorGoal("scan", "Found 15 Go files in /src/...")
+	b.SetCurrentGoal("review", "Review code for bugs and security issues.")
+	b.SetCorrection("Focus specifically on SQL injection in /src/db/.")
+
+	result := b.Build()
+
+	// Correction should appear after current-goal
+	if !strings.Contains(result, `<correction source="supervisor">`) {
+		t.Error("expected correction tag")
+	}
+	if !strings.Contains(result, "Focus specifically on SQL injection") {
+		t.Error("expected correction content")
+	}
+
+	// Order: context -> current-goal -> correction
+	contextPos := strings.Index(result, "<context>")
+	currentGoalPos := strings.Index(result, "<current-goal")
+	correctionPos := strings.Index(result, "<correction")
+	if !(contextPos < currentGoalPos && currentGoalPos < correctionPos) {
+		t.Error("expected order: context -> current-goal -> correction")
+	}
+}
+
+func TestXMLContextBuilder_LoopIteration(t *testing.T) {
+	b := NewXMLContextBuilder("iterative-improvement")
+	b.AddPriorGoal("draft", "Initial draft content...")
+
+	// Add first iteration
+	b.AddIteration(1, []GoalOutput{
+		{ID: "critique", Output: "Issues found: weak opening"},
+		{ID: "improve", Output: "Improved version..."},
+	})
+
+	b.SetCurrentGoalInLoop("critique", "Review and identify remaining issues.", "refine", 2)
+
+	result := b.Build()
+
+	// Check iteration structure
+	if !strings.Contains(result, `<iteration n="1">`) {
+		t.Error("expected iteration tag")
+	}
+	if !strings.Contains(result, `loop="refine" iteration="2"`) {
+		t.Error("expected loop attributes on current goal")
+	}
+}
+
+func TestXMLContextBuilder_ParallelAgents(t *testing.T) {
+	b := NewXMLContextBuilder("decision-analyzer")
+	b.AddPriorGoal("frame", "Decision: Migrate to Kubernetes...")
+	b.AddPriorGoalWithAgent("evaluate", "optimist", "## Opportunities\nK8s will allow scaling...")
+	b.AddPriorGoalWithAgent("evaluate", "critic", "## Concerns\nComplexity overhead...")
+	b.SetCurrentGoal("synthesize", "Synthesize into a recommendation.")
+
+	result := b.Build()
+
+	// Check labeled goal IDs
+	if !strings.Contains(result, `<goal id="evaluate[optimist]">`) {
+		t.Error("expected optimist-labeled goal")
+	}
+	if !strings.Contains(result, `<goal id="evaluate[critic]">`) {
+		t.Error("expected critic-labeled goal")
+	}
+}
+
+func TestBuildTaskContext(t *testing.T) {
+	result := BuildTaskContext(
+		"quantum-historian",
+		"research",
+		"Research the history of quantum computing from 1980 to present.",
+	)
+
+	if !strings.Contains(result, `<task role="quantum-historian" parent-goal="research">`) {
+		t.Error("expected task tag with role and parent-goal")
+	}
+	if !strings.Contains(result, "Research the history of quantum computing") {
+		t.Error("expected task description")
+	}
+	if !strings.Contains(result, "</task>") {
+		t.Error("expected closing task tag")
+	}
+}
+
+func TestBuildTaskContextWithCorrection(t *testing.T) {
+	result := BuildTaskContextWithCorrection(
+		"researcher",
+		"analyze",
+		"Analyze the data thoroughly.",
+		"Focus on outliers and anomalies.",
+	)
+
+	if !strings.Contains(result, `<task role="researcher"`) {
+		t.Error("expected task tag")
+	}
+	if !strings.Contains(result, `<correction source="supervisor">`) {
+		t.Error("expected correction tag")
+	}
+	if !strings.Contains(result, "Focus on outliers") {
+		t.Error("expected correction content")
+	}
+}
+
+func TestXMLContextBuilder_NoTrailingNewlines(t *testing.T) {
+	b := NewXMLContextBuilder("test")
+	b.AddPriorGoal("goal1", "Output without newline")
+	b.SetCurrentGoal("goal2", "Description without newline")
+
+	result := b.Build()
+
+	// Should not have double newlines from missing trailing newlines
+	if strings.Contains(result, "\n\n\n") {
+		t.Error("should not have triple newlines")
+	}
+}
+
+func TestXMLContextBuilder_ClosingTags(t *testing.T) {
+	b := NewXMLContextBuilder("test")
+	b.SetCurrentGoal("goal1", "Do something.")
+
+	result := b.Build()
+
+	// All tags should be properly closed
+	if !strings.Contains(result, "</current-goal>") {
+		t.Error("expected closing current-goal tag")
+	}
+	if !strings.Contains(result, "</workflow>") {
+		t.Error("expected closing workflow tag")
+	}
+}

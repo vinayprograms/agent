@@ -11,6 +11,7 @@ This documentation describes the agent execution architecture, supervision syste
 | 3 | [Supervision Modes](03-supervision-modes.md) | UNSUPERVISED, SUPERVISED, SUPERVISED HUMAN |
 | 4 | [Workflow Processing](04-workflow-processing.md) | Agentfile parsing and execution |
 | 5 | [Supervisor Verdicts](05-supervisor-verdicts.md) | CONTINUE, REORIENT, PAUSE |
+| 6 | [XML Context Format](06-xml-context-format.md) | Structured prompts for goal communication |
 
 ## Overview
 

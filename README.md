@@ -1261,3 +1261,34 @@ This workflow:
 
 See `examples/39-supervision/` for more examples.
 
+### XML Context Format
+
+The agent uses XML-structured prompts to communicate context between goals. This provides clear boundaries that don't collide with LLM-generated markdown:
+
+```xml
+<workflow name="recipe-creator">
+
+<context>
+  <goal id="brainstorm">
+Here are 3 distinct dishes:
+
+## 1. Classic South Indian Coconut Chutney
+A fresh, vibrant accompaniment...
+  </goal>
+</context>
+
+<current-goal id="select">
+Choose the best recipe based on: ingredient usage, flavor balance.
+</current-goal>
+
+</workflow>
+```
+
+Benefits:
+- **Clear boundaries** — XML tags separate system context from LLM output
+- **No header collisions** — LLM's `##` headers don't conflict with context headers
+- **Machine-parseable** — Tools can extract specific goals from logs
+- **Session logs** — The XML structure appears in session logs for debugging
+
+See [docs/execution/06-xml-context-format.md](docs/execution/06-xml-context-format.md) for full documentation.
+

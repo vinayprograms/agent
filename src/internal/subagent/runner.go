@@ -264,10 +264,18 @@ func (env *IsolatedEnv) Execute(ctx context.Context, input map[string]string) (s
 	}
 
 	// Interpolate input into goal outcome
-	task := env.workflow.Goals[0].Outcome
+	taskDescription := env.workflow.Goals[0].Outcome
 	for k, v := range input {
-		task = replaceVar(task, k, v)
+		taskDescription = replaceVar(taskDescription, k, v)
 	}
+
+	// Build XML-structured task prompt
+	agentRole := env.workflow.Name
+	parentGoal := input["_task"] // Parent task passed from orchestrator
+	if parentGoal == "" {
+		parentGoal = "main"
+	}
+	task := fmt.Sprintf("<task role=%q parent-goal=%q>\n%s\n</task>", agentRole, parentGoal, taskDescription)
 
 	// Build messages
 	messages := []llm.Message{
