@@ -7,6 +7,6 @@ INPUT period DEFAULT "30 days"
 
 GOAL gather "Use bash to run git log, git shortlog, git diff --stat for the last $period in $repo_path."
 GOAL analyze "Analyze: commit frequency, active contributors, hotspots (most changed files), and commit patterns."
-GOAL insights "Generate insights: development velocity, code churn areas, collaboration patterns, and recommendations."
+GOAL insights "Generate insights: development velocity, code churn areas, collaboration patterns, and recommendations. Save the analysis to git-analysis-output.md."
 
 RUN analyze USING gather, analyze, insights

@@ -10,6 +10,6 @@ INPUT days_per_week DEFAULT 4
 GOAL assess "Understand the goal: $fitness_goal from $current_fitness level with $equipment, training $days_per_week days/week."
 GOAL design "Design a progressive program: exercises, sets, reps, rest periods, and weekly progression."
 GOAL schedule "Create a $days_per_week-day weekly schedule with muscle group splits and recovery days."
-GOAL guide "Add form cues for key exercises, warm-up/cool-down routines, and nutrition tips."
+GOAL guide "Add form cues for key exercises, warm-up/cool-down routines, and nutrition tips. Save the complete program to fitness-program-output.md."
 
 RUN create USING assess, design, schedule, guide

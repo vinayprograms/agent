@@ -10,6 +10,6 @@ INPUT goal_timeline DEFAULT "3 months"
 GOAL assess "Understand the learning scope: $subject at $current_level level, with $time_available available over $goal_timeline."
 GOAL research "Research the best resources: books, courses, tutorials, and practice projects for $subject."
 GOAL structure "Create a week-by-week learning plan with milestones, resources, and practice exercises."
-GOAL output "Format as a clear, actionable plan with checkboxes for tracking progress."
+GOAL output "Format as a clear, actionable plan with checkboxes for tracking progress. Save the plan to learning-plan-output.md."
 
 RUN plan USING assess, research, structure, output

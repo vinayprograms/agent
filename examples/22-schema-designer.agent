@@ -9,6 +9,6 @@ INPUT style DEFAULT "normalized"
 GOAL parse "Read $requirements_file. Extract entities, relationships, attributes, and constraints."
 GOAL design "Design a $style $database schema: tables, columns, types, keys, and indexes."
 GOAL validate "Check for: normalization issues, missing constraints, performance concerns, and edge cases."
-GOAL output "Generate the DDL script with comments explaining design decisions. Write using write tool."
+GOAL output "Generate the DDL script with comments explaining design decisions. Save to schema-output.sql."
 
 RUN design USING parse, design, validate, output

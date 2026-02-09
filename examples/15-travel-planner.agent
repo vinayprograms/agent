@@ -10,6 +10,6 @@ INPUT budget DEFAULT "moderate"
 GOAL research "Research $destination: attractions, neighborhoods, local customs, best times to visit, and hidden gems matching $interests."
 GOAL logistics "Plan logistics: suggested areas to stay, transportation options, and $budget budget breakdown."
 GOAL itinerary "Create a day-by-day $duration itinerary balancing $interests with practical considerations like travel time."
-GOAL tips "Add practical tips: packing list, local phrases, safety notes, and booking recommendations."
+GOAL tips "Add practical tips: packing list, local phrases, safety notes, and booking recommendations. Save the complete travel plan to travel-plan-output.md."
 
 RUN plan USING research, logistics, itinerary, tips

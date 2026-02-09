@@ -12,6 +12,6 @@ AGENT editor FROM agents/editor.md REQUIRES "reasoning-heavy"
 GOAL concept "Develop a compelling concept for a $length in the $genre genre exploring the theme of $theme."
 GOAL draft "Write the complete $length based on the concept." USING writer
 GOAL critique "Review the draft for improvements." USING editor
-GOAL revise "Incorporate the editor's feedback and produce the final version." USING writer
+GOAL revise "Incorporate the editor's feedback and produce the final version. Save the final story to story-output.md." USING writer
 
 RUN create USING concept, draft, critique, revise

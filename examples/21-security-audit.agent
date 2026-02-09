@@ -10,6 +10,6 @@ AGENT auditor FROM agents/security-auditor.md REQUIRES "reasoning-heavy"
 GOAL recon "Use glob, ls, and read to understand the codebase structure at $target_path. Identify entry points and sensitive areas."
 GOAL analyze "Analyze for $scope vulnerabilities: auth, injection, data exposure, misconfigurations." USING auditor
 GOAL classify "Classify findings by severity (Critical/High/Medium/Low) with CVSS-like scoring."
-GOAL report "Generate a security report with: executive summary, detailed findings, and remediation steps."
+GOAL report "Generate a security report with: executive summary, detailed findings, and remediation steps. Save to security-audit-output.md."
 
 RUN audit USING recon, analyze, classify, report

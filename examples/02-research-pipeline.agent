@@ -7,6 +7,6 @@ INPUT depth DEFAULT "comprehensive"
 
 GOAL research "Research $topic at a $depth level. Find key facts, history, and current developments."
 GOAL analyze "Analyze the research findings. Identify patterns, controversies, and gaps in knowledge."
-GOAL synthesize "Synthesize everything into a clear, structured report with sections and bullet points."
+GOAL synthesize "Synthesize everything into a clear, structured report with sections and bullet points. Save the final report to research-output.md."
 
 RUN pipeline USING research, analyze, synthesize

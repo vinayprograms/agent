@@ -7,6 +7,6 @@ INPUT language DEFAULT "auto-detect"
 
 GOAL scan "Use glob and read tools to find and read source files in $path. Identify the $language if auto-detect."
 GOAL review "Review the code for: bugs, security issues, performance problems, and style inconsistencies."
-GOAL suggest "Provide specific, actionable improvements with code examples where helpful."
+GOAL suggest "Provide specific, actionable improvements with code examples where helpful. Save the review to code-review-output.md."
 
 RUN review_flow USING scan, review, suggest
