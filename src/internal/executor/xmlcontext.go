@@ -179,3 +179,35 @@ func (b *XMLContextBuilder) AddPriorGoalWithAgent(id, agentLabel, output string)
 	labeledID := fmt.Sprintf("%s[%s]", id, agentLabel)
 	b.priorGoals = append(b.priorGoals, GoalOutput{ID: labeledID, Output: output})
 }
+
+// BuildTaskContextWithPriorGoals builds XML context for a sub-agent task including prior goal outputs.
+// This ensures sub-agents have access to the workflow context, not just the raw task.
+func BuildTaskContextWithPriorGoals(role, parentGoal, task string, priorGoals []GoalOutput) string {
+	var buf strings.Builder
+
+	buf.WriteString(fmt.Sprintf("<task role=%q parent-goal=%q>\n", role, parentGoal))
+
+	// Include prior goal outputs as context
+	if len(priorGoals) > 0 {
+		buf.WriteString("<context>\n")
+		for _, goal := range priorGoals {
+			buf.WriteString(fmt.Sprintf("<goal id=%q>\n", goal.ID))
+			buf.WriteString(goal.Output)
+			if !strings.HasSuffix(goal.Output, "\n") {
+				buf.WriteString("\n")
+			}
+			buf.WriteString("</goal>\n")
+		}
+		buf.WriteString("</context>\n\n")
+	}
+
+	buf.WriteString("<objective>\n")
+	buf.WriteString(task)
+	if !strings.HasSuffix(task, "\n") {
+		buf.WriteString("\n")
+	}
+	buf.WriteString("</objective>\n")
+	buf.WriteString("</task>")
+
+	return buf.String()
+}

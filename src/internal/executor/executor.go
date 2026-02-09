@@ -785,6 +785,19 @@ func (e *Executor) logSubAgentEnd(name, role, model, output string, durationMs i
 	e.sessionManager.Update(e.session)
 }
 
+// buildPriorGoalsContext builds a list of GoalOutput from completed goals.
+// This provides context for sub-agents about what has already been accomplished.
+func (e *Executor) buildPriorGoalsContext() []GoalOutput {
+	var priorGoals []GoalOutput
+	for goalName, output := range e.outputs {
+		priorGoals = append(priorGoals, GoalOutput{
+			ID:     goalName,
+			Output: output,
+		})
+	}
+	return priorGoals
+}
+
 // spawnDynamicAgent spawns a sub-agent with the given role and task.
 // Sub-agents go through the same four-phase execution as main goals when supervision is enabled.
 func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, outputs []string) (string, error) {
@@ -937,7 +950,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 // spawnAgentWithPrompt spawns a sub-agent with a custom system prompt and optional profile.
 // This is the unified entry point used by both AGENT entries and dynamic sub-agents.
 // The profile parameter allows using a different LLM provider (e.g., "fast", "reasoning-heavy").
-func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt, task string, outputs []string, profile string) (string, error) {
+func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt, task string, outputs []string, profile string, priorGoals []GoalOutput) (string, error) {
 	// Set sub-agent context
 	ctx = withAgentIdentity(ctx, role, role)
 
@@ -956,12 +969,17 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 		systemPrompt = prefix + systemPrompt
 	}
 
-	// Build XML task prompt
+	// Build XML task prompt with or without prior goal context
 	taskDescription := task
 	if len(outputs) > 0 {
 		taskDescription += "\n\n" + buildStructuredOutputInstruction(outputs)
 	}
-	userPrompt := BuildTaskContext(role, e.currentGoal, taskDescription)
+	var userPrompt string
+	if len(priorGoals) > 0 {
+		userPrompt = BuildTaskContextWithPriorGoals(role, e.currentGoal, taskDescription, priorGoals)
+	} else {
+		userPrompt = BuildTaskContext(role, e.currentGoal, taskDescription)
+	}
 
 	// Log the spawn
 	inputs := make(map[string]string)
@@ -2162,6 +2180,9 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 
 	task := e.interpolate(goal.Outcome)
 
+	// Build prior goals context from completed goals
+	priorGoals := e.buildPriorGoalsContext()
+
 	resultChan := make(chan agentResult, len(agents))
 	var wg sync.WaitGroup
 
@@ -2179,7 +2200,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 			}
 
 			// Use spawnAgentWithPrompt which shares code with dynamic agents
-			output, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires)
+			output, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires, priorGoals)
 
 			resultChan <- agentResult{
 				name:       agent.Name,

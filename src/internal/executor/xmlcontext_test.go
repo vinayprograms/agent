@@ -202,3 +202,51 @@ func TestXMLContextBuilder_ClosingTags(t *testing.T) {
 		t.Error("expected closing workflow tag")
 	}
 }
+
+func TestBuildTaskContextWithPriorGoals(t *testing.T) {
+	priorGoals := []GoalOutput{
+		{ID: "frame", Output: "The decision is about pursuing CS education."},
+		{ID: "context", Output: "Business context with AI disruption concerns."},
+	}
+
+	result := BuildTaskContextWithPriorGoals("critic", "evaluate", "Evaluate this decision.", priorGoals)
+
+	// Check structure
+	if !strings.Contains(result, `<task role="critic" parent-goal="evaluate">`) {
+		t.Error("expected task tag with role and parent-goal")
+	}
+	if !strings.Contains(result, "<context>") {
+		t.Error("expected context section for prior goals")
+	}
+	if !strings.Contains(result, `<goal id="frame">`) {
+		t.Error("expected frame goal in context")
+	}
+	if !strings.Contains(result, "The decision is about pursuing CS education.") {
+		t.Error("expected frame output in context")
+	}
+	if !strings.Contains(result, "<objective>") {
+		t.Error("expected objective section for task")
+	}
+	if !strings.Contains(result, "Evaluate this decision.") {
+		t.Error("expected task description in objective")
+	}
+	if !strings.Contains(result, "</task>") {
+		t.Error("expected closing task tag")
+	}
+}
+
+func TestBuildTaskContextWithPriorGoals_NoPriorGoals(t *testing.T) {
+	result := BuildTaskContextWithPriorGoals("researcher", "research", "Research the topic.", nil)
+
+	// Should NOT have context section when no prior goals
+	if strings.Contains(result, "<context>") {
+		t.Error("should not have context section with no prior goals")
+	}
+	// Should still have objective
+	if !strings.Contains(result, "<objective>") {
+		t.Error("expected objective section")
+	}
+	if !strings.Contains(result, "Research the topic.") {
+		t.Error("expected task in objective")
+	}
+}
