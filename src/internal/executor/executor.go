@@ -955,6 +955,230 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	return output, nil
 }
 
+// spawnAgentWithPrompt spawns a sub-agent with a custom system prompt and optional profile.
+// This is the unified entry point used by both AGENT entries and dynamic sub-agents.
+// The profile parameter allows using a different LLM provider (e.g., "fast", "reasoning-heavy").
+func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt, task string, outputs []string, profile string) (string, error) {
+	// Set sub-agent context
+	ctx = withAgentIdentity(ctx, role, role)
+
+	// Get the provider (use profile if specified, otherwise default)
+	provider := e.provider
+	if profile != "" {
+		var err error
+		provider, err = e.providerFactory.GetProvider(profile)
+		if err != nil {
+			return "", fmt.Errorf("failed to get provider for profile %q: %w", profile, err)
+		}
+	}
+
+	// Inject security research framing if enabled
+	if prefix := e.securityResearchPrefix(); prefix != "" {
+		systemPrompt = prefix + systemPrompt
+	}
+
+	// Build XML task prompt
+	taskDescription := task
+	if len(outputs) > 0 {
+		taskDescription += "\n\n" + buildStructuredOutputInstruction(outputs)
+	}
+	userPrompt := BuildTaskContext(role, e.currentGoal, taskDescription)
+
+	// Log the spawn
+	inputs := make(map[string]string)
+	for k, v := range e.inputs {
+		inputs[k] = v
+	}
+	for k, v := range e.outputs {
+		inputs[k] = v
+	}
+	e.logSubAgentStart(role, role, profile, task, inputs)
+
+	if e.OnSubAgentStart != nil {
+		e.OnSubAgentStart(role, map[string]string{"task": task})
+	}
+
+	// Sub-agents inherit supervision from their parent goal
+	supervised := e.currentGoalSupervised && e.supervisor != nil && e.checkpointStore != nil
+
+	// PHASE 1: COMMIT
+	var preCheckpoint *checkpoint.PreCheckpoint
+	if supervised {
+		preCheckpoint = e.subAgentCommitPhase(ctx, role, task)
+		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
+			e.logger.Warn("failed to save sub-agent pre-checkpoint", map[string]interface{}{
+				"role":  role,
+				"error": err.Error(),
+			})
+		} else {
+			e.logCheckpoint("pre", role, "", preCheckpoint.StepID)
+		}
+		if e.OnSupervisionEvent != nil {
+			e.OnSupervisionEvent(role, "commit", preCheckpoint)
+		}
+	}
+
+	// PHASE 2: EXECUTE (using the specified provider)
+	output, toolsUsed, err := e.subAgentExecutePhaseWithProvider(ctx, provider, role, systemPrompt, userPrompt)
+	if err != nil {
+		return "", err
+	}
+
+	// PHASE 3 & 4: RECONCILE & SUPERVISE (same as spawnDynamicAgent)
+	if supervised && preCheckpoint != nil {
+		postCheckpoint := e.subAgentPostCheckpoint(ctx, role, preCheckpoint, output, toolsUsed)
+		if err := e.checkpointStore.SavePost(postCheckpoint); err != nil {
+			e.logger.Warn("failed to save sub-agent post-checkpoint", map[string]interface{}{
+				"role":  role,
+				"error": err.Error(),
+			})
+		} else {
+			e.logCheckpoint("post", role, "", postCheckpoint.StepID)
+		}
+		if e.OnSupervisionEvent != nil {
+			e.OnSupervisionEvent(role, "execute", postCheckpoint)
+		}
+
+		reconcileStart := time.Now()
+		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
+		reconcileDuration := time.Since(reconcileStart).Milliseconds()
+
+		if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
+			e.logger.Warn("failed to save sub-agent reconcile result", map[string]interface{}{
+				"role":  role,
+				"error": err.Error(),
+			})
+		}
+		e.logPhaseReconcile(role, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
+
+		if e.OnSupervisionEvent != nil {
+			e.OnSupervisionEvent(role, "reconcile", reconcileResult)
+		}
+
+		if reconcileResult.Supervise {
+			superviseStart := time.Now()
+			decisionTrail := e.checkpointStore.GetDecisionTrail()
+			superviseResult, err := e.supervisor.Supervise(
+				ctx,
+				preCheckpoint,
+				postCheckpoint,
+				reconcileResult.Triggers,
+				decisionTrail,
+				false,
+			)
+			superviseDuration := time.Since(superviseStart).Milliseconds()
+
+			if err != nil {
+				return "", fmt.Errorf("sub-agent supervision failed: %w", err)
+			}
+
+			if err := e.checkpointStore.SaveSupervise(superviseResult); err != nil {
+				e.logger.Warn("failed to save sub-agent supervise result", map[string]interface{}{
+					"role":  role,
+					"error": err.Error(),
+				})
+			}
+			e.logPhaseSupervise(role, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, false, superviseDuration)
+
+			if e.OnSupervisionEvent != nil {
+				e.OnSupervisionEvent(role, "supervise", superviseResult)
+			}
+
+			switch supervision.Verdict(superviseResult.Verdict) {
+			case supervision.VerdictReorient:
+				correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, superviseResult.Correction)
+				output, _, err = e.subAgentExecutePhaseWithProvider(ctx, provider, role, systemPrompt, correctedTask)
+				if err != nil {
+					return "", err
+				}
+			case supervision.VerdictPause:
+				return "", fmt.Errorf("sub-agent %s paused by supervisor: %s", role, superviseResult.Question)
+			}
+		}
+	}
+
+	if e.OnSubAgentComplete != nil {
+		e.OnSubAgentComplete(role, output)
+	}
+	return output, nil
+}
+
+// subAgentExecutePhaseWithProvider runs the sub-agent execution loop with a specific provider.
+func (e *Executor) subAgentExecutePhaseWithProvider(ctx context.Context, provider llm.Provider, role, systemPrompt, userPrompt string) (output string, toolsUsed []string, err error) {
+	start := time.Now()
+	stepID := fmt.Sprintf("subagent:%s", role)
+	e.logger.PhaseStart("EXECUTE", role, stepID)
+
+	messages := []llm.Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	// Build tool definitions (excluding spawn_agent and spawn_agents to enforce depth=1)
+	var toolDefs []llm.ToolDef
+	if e.registry != nil {
+		for _, def := range e.registry.Definitions() {
+			if def.Name != "spawn_agent" && def.Name != "spawn_agents" {
+				toolDefs = append(toolDefs, llm.ToolDef{
+					Name:        def.Name,
+					Description: def.Description,
+					Parameters:  def.Parameters,
+				})
+			}
+		}
+	}
+
+	// Add MCP tools
+	if e.mcpManager != nil {
+		for _, t := range e.mcpManager.AllTools() {
+			toolDefs = append(toolDefs, llm.ToolDef{
+				Name:        fmt.Sprintf("mcp_%s_%s", t.Server, t.Tool.Name),
+				Description: fmt.Sprintf("[MCP:%s] %s", t.Server, t.Tool.Description),
+				Parameters:  t.Tool.InputSchema,
+			})
+		}
+	}
+
+	toolsUsedMap := make(map[string]bool)
+
+	// Execute sub-agent loop
+	for {
+		resp, err := provider.Chat(ctx, llm.ChatRequest{
+			Messages: messages,
+			Tools:    toolDefs,
+		})
+		if err != nil {
+			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "error")
+			return "", nil, fmt.Errorf("sub-agent LLM error: %w", err)
+		}
+
+		// No tool calls = sub-agent complete
+		if len(resp.ToolCalls) == 0 {
+			for tool := range toolsUsedMap {
+				toolsUsed = append(toolsUsed, tool)
+			}
+			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "complete")
+			return resp.Content, toolsUsed, nil
+		}
+
+		// Track tools used
+		for _, tc := range resp.ToolCalls {
+			toolsUsedMap[tc.Name] = true
+		}
+
+		// Add assistant message with tool calls
+		messages = append(messages, llm.Message{
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		// Execute tool calls in parallel
+		toolMessages := e.executeToolsParallel(ctx, resp.ToolCalls)
+		messages = append(messages, toolMessages...)
+	}
+}
+
 // subAgentCommitPhase asks the sub-agent to declare its intent before execution.
 func (e *Executor) subAgentCommitPhase(ctx context.Context, role, task string) *checkpoint.PreCheckpoint {
 	start := time.Now()
@@ -2085,36 +2309,17 @@ func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfil
 	return resp.Content, nil
 }
 
-// executeSimpleParallel executes AGENT entries in parallel with full tool access.
-// Agents get all tools except spawn_agent/spawn_agents (no further nesting).
+// executeSimpleParallel executes AGENT entries in parallel using the same
+// execution path as dynamic sub-agents (spawnDynamicAgent).
 func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Goal, agents []*agentfile.Agent) (string, error) {
 	type agentResult struct {
 		name       string
 		output     string
-		toolsUsed  []string
 		err        error
 		durationMs int64
 	}
 
 	task := e.interpolate(goal.Outcome)
-
-	// Build inputs map for context
-	inputs := make(map[string]string)
-	for k, v := range e.inputs {
-		inputs[k] = v
-	}
-	for k, v := range e.outputs {
-		inputs[k] = v
-	}
-
-	// Log sub-agent starts
-	for _, agent := range agents {
-		model := ""
-		if agent.Requires != "" {
-			model = agent.Requires
-		}
-		e.logSubAgentStart(agent.Name, agent.Name, model, task, inputs)
-	}
 
 	resultChan := make(chan agentResult, len(agents))
 	var wg sync.WaitGroup
@@ -2125,104 +2330,21 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 			defer wg.Done()
 			startTime := time.Now()
 
-			// Get provider for this agent's profile
-			provider, err := e.providerFactory.GetProvider(agent.Requires)
-			if err != nil {
-				resultChan <- agentResult{name: agent.Name, err: err, durationMs: time.Since(startTime).Milliseconds()}
-				return
+			// Use agent's prompt as the role/persona, falling back to name
+			role := agent.Name
+			systemPrompt := agent.Prompt
+			if systemPrompt == "" {
+				systemPrompt = fmt.Sprintf("You are a %s. Complete the following task thoroughly and return your findings.", role)
 			}
 
-			// Build XML-structured prompt with context
-			xmlBuilder := NewXMLContextBuilder(e.workflow.Name)
-			for goalName, output := range e.outputs {
-				xmlBuilder.AddPriorGoal(goalName, output)
-			}
-			xmlBuilder.SetCurrentGoal(goal.Name, task)
-			prompt := xmlBuilder.Build()
+			// Use spawnAgentWithPrompt which shares code with dynamic agents
+			output, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires)
 
-			// Use agent's prompt as system message, or generic if none
-			systemPrompt := "You are a helpful assistant executing a sub-agent task. Complete the task using available tools as needed."
-			if agent.Prompt != "" {
-				systemPrompt = agent.Prompt
-			}
-
-			messages := []llm.Message{
-				{Role: "system", Content: systemPrompt},
-				{Role: "user", Content: prompt},
-			}
-
-			// Build tool definitions (excluding spawn_agent and spawn_agents to enforce depth=1)
-			var toolDefs []llm.ToolDef
-			if e.registry != nil {
-				for _, def := range e.registry.Definitions() {
-					if def.Name != "spawn_agent" && def.Name != "spawn_agents" {
-						toolDefs = append(toolDefs, llm.ToolDef{
-							Name:        def.Name,
-							Description: def.Description,
-							Parameters:  def.Parameters,
-						})
-					}
-				}
-			}
-
-			// Add MCP tools if available
-			if e.mcpManager != nil {
-				for _, t := range e.mcpManager.AllTools() {
-					toolDefs = append(toolDefs, llm.ToolDef{
-						Name:        fmt.Sprintf("mcp_%s_%s", t.Server, t.Tool.Name),
-						Description: fmt.Sprintf("[MCP:%s] %s", t.Server, t.Tool.Description),
-						Parameters:  t.Tool.InputSchema,
-					})
-				}
-			}
-
-			toolsUsedMap := make(map[string]bool)
-
-			// Execute sub-agent agentic loop (with tool calls)
-			for {
-				resp, err := provider.Chat(ctx, llm.ChatRequest{
-					Messages: messages,
-					Tools:    toolDefs,
-				})
-				if err != nil {
-					resultChan <- agentResult{
-						name:       agent.Name,
-						err:        err,
-						durationMs: time.Since(startTime).Milliseconds(),
-					}
-					return
-				}
-
-				// No tool calls = sub-agent complete
-				if len(resp.ToolCalls) == 0 {
-					var toolsUsed []string
-					for tool := range toolsUsedMap {
-						toolsUsed = append(toolsUsed, tool)
-					}
-					resultChan <- agentResult{
-						name:       agent.Name,
-						output:     resp.Content,
-						toolsUsed:  toolsUsed,
-						durationMs: time.Since(startTime).Milliseconds(),
-					}
-					return
-				}
-
-				// Track tools used
-				for _, tc := range resp.ToolCalls {
-					toolsUsedMap[tc.Name] = true
-				}
-
-				// Add assistant message with tool calls
-				messages = append(messages, llm.Message{
-					Role:      "assistant",
-					Content:   resp.Content,
-					ToolCalls: resp.ToolCalls,
-				})
-
-				// Execute tool calls in parallel
-				toolMessages := e.executeToolsParallel(ctx, resp.ToolCalls)
-				messages = append(messages, toolMessages...)
+			resultChan <- agentResult{
+				name:       agent.Name,
+				output:     output,
+				err:        err,
+				durationMs: time.Since(startTime).Milliseconds(),
 			}
 		}(agent)
 	}
@@ -2251,7 +2373,23 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
 	}
 
-	// Synthesize responses
+	// Single agent: return directly
+	if len(agentOutputs) == 1 {
+		if e.OnGoalComplete != nil {
+			// Extract just the output (without the "[name]: " prefix)
+			parts := strings.SplitN(agentOutputs[0], "]: ", 2)
+			if len(parts) == 2 {
+				e.OnGoalComplete(goal.Name, parts[1])
+			}
+		}
+		parts := strings.SplitN(agentOutputs[0], "]: ", 2)
+		if len(parts) == 2 {
+			return parts[1], nil
+		}
+		return agentOutputs[0], nil
+	}
+
+	// Multiple agents: synthesize responses
 	synthesisPrompt := fmt.Sprintf(
 		"Synthesize these agent responses into a coherent answer:\n\n%s",
 		strings.Join(agentOutputs, "\n\n"),
