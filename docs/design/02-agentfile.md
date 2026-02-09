@@ -10,7 +10,7 @@ Flat, declarative workflow definition. One instruction per line, no indentation,
 |---------|---------|
 | NAME | Workflow identifier |
 | INPUT | Declare input parameter (with optional DEFAULT) |
-| AGENT | Define agent from prompt, file, skill, or package |
+| AGENT | Define agent from prompt, file, or skill |
 | GOAL | Define goal with description |
 | RUN | Execute goals sequentially |
 | LOOP | Execute goals repeatedly within a limit |
@@ -36,7 +36,7 @@ INPUT optional_param DEFAULT "value"
 
 AGENT name FROM path/to/prompt.md
 AGENT name FROM skill-name
-AGENT name FROM package.agent REQUIRES "profile"
+AGENT name FROM path/to/skill REQUIRES "profile"
 AGENT name "Inline prompt"
 
 GOAL name "Description with $variables"
@@ -88,7 +88,6 @@ An implicit synthesizer transforms their outputs into the goal's fields.
 | `agents/critic.md` | File path → loads as prompt |
 | `skills/code-review` | Directory with SKILL.md → loads as skill |
 | `testing` | Name → searches skills.paths |
-| `scanner.agent` | Package file → loads as sub-agent |
 
 Resolution order:
 1. Check if path exists relative to Agentfile

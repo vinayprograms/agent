@@ -1,4 +1,12 @@
 // Package subagent provides isolated sub-agent execution.
+//
+// Deprecated: This package is no longer used. Sub-agents declared via AGENT
+// in Agentfiles now use the same execution path as dynamic sub-agents
+// (spawnDynamicAgent), sharing the parent's tool registry. The isolated
+// package-based execution model has been removed in favor of unified execution.
+//
+// This package remains for backwards compatibility but may be removed in a
+// future version. For top-level agent distribution, use the packaging package.
 package subagent
 
 import (

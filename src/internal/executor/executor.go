@@ -16,10 +16,9 @@ import (
 	"github.com/vinayprograms/agent/internal/logging"
 	"github.com/vinayprograms/agent/internal/mcp"
 	"github.com/vinayprograms/agent/internal/policy"
+	"github.com/vinayprograms/agent/internal/security"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/skills"
-	"github.com/vinayprograms/agent/internal/subagent"
-	"github.com/vinayprograms/agent/internal/security"
 	"github.com/vinayprograms/agent/internal/supervision"
 	"github.com/vinayprograms/agent/internal/tools"
 )
@@ -89,10 +88,6 @@ type Executor struct {
 	// Skills support
 	skillRefs    []skills.SkillRef
 	loadedSkills map[string]*skills.Skill
-
-	// Sub-agent support
-	subAgentRunner *subagent.Runner
-	packagePaths   []string
 
 	// Session logging
 	session        *session.Session
@@ -321,12 +316,6 @@ func (e *Executor) SetMCPManager(m *mcp.Manager) {
 // SetSkills sets available skills for the executor.
 func (e *Executor) SetSkills(refs []skills.SkillRef) {
 	e.skillRefs = refs
-}
-
-// SetPackagePaths sets the paths to search for sub-agent packages.
-func (e *Executor) SetPackagePaths(paths []string) {
-	e.packagePaths = paths
-	e.initSubAgentRunner()
 }
 
 // SetSession sets the session for logging events.
@@ -794,16 +783,6 @@ func (e *Executor) logSubAgentEnd(name, role, model, output string, durationMs i
 		},
 	})
 	e.sessionManager.Update(e.session)
-}
-
-// initSubAgentRunner initializes the sub-agent runner.
-func (e *Executor) initSubAgentRunner() {
-	if e.providerFactory == nil || len(e.packagePaths) == 0 {
-		return
-	}
-	e.subAgentRunner = subagent.NewRunner(e.providerFactory, e.packagePaths)
-	e.subAgentRunner.OnSubAgentStart = e.OnSubAgentStart
-	e.subAgentRunner.OnSubAgentComplete = e.OnSubAgentComplete
 }
 
 // spawnDynamicAgent spawns a sub-agent with the given role and task.
@@ -2167,146 +2146,8 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 		agents = append(agents, agent)
 	}
 
-	// Check if we have a sub-agent runner
-	if e.subAgentRunner != nil {
-		return e.executeWithSubAgentRunner(ctx, goal, agents)
-	}
-
-	// Fallback: simple parallel execution without true isolation
-	// (for backwards compatibility when no package paths configured)
+	// Execute agents in parallel with full tool access
 	return e.executeSimpleParallel(ctx, goal, agents)
-}
-
-// executeWithSubAgentRunner uses the sub-agent runner for true isolated execution.
-func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfile.Goal, agents []*agentfile.Agent) (string, error) {
-	// Build input from current state
-	input := make(map[string]string)
-	for k, v := range e.inputs {
-		input[k] = v
-	}
-	for k, v := range e.outputs {
-		input[k] = v
-	}
-	// Add the goal outcome as task
-	task := e.interpolate(goal.Outcome)
-	input["_task"] = task
-
-	// Log sub-agent starts
-	startTime := time.Now()
-	for _, agent := range agents {
-		model := ""
-		if agent.Requires != "" {
-			model = agent.Requires
-		}
-		e.logSubAgentStart(agent.Name, agent.Name, model, task, input)
-	}
-
-	// Spawn all agents in parallel
-	results, err := e.subAgentRunner.SpawnParallel(ctx, agents, input)
-	if err != nil {
-		// Log failures
-		for _, agent := range agents {
-			e.logSubAgentEnd(agent.Name, agent.Name, "", "", time.Since(startTime).Milliseconds(), err)
-		}
-		return "", fmt.Errorf("sub-agent execution failed: %w", err)
-	}
-
-	// Log sub-agent completions and collect outputs
-	agentOutputs := make(map[string]map[string]string)
-	var agentOutputStrings []string
-	for _, result := range results {
-		// Find the agent for model info
-		agent := e.findAgent(result.Name)
-		model := ""
-		if agent != nil && agent.Requires != "" {
-			model = agent.Requires
-		}
-
-		// Log the completion
-		e.logSubAgentEnd(result.Name, result.Name, model, result.Output, result.DurationMs, result.Error)
-
-		if result.Error != nil {
-			return "", fmt.Errorf("sub-agent %s failed: %w", result.Name, result.Error)
-		}
-
-		// Parse structured outputs if declared
-		if agent != nil && len(agent.Outputs) > 0 {
-			// Parse structured output from agent
-			parsed, err := parseStructuredOutput(result.Output, agent.Outputs)
-			if err == nil {
-				agentOutputs[result.Name] = parsed
-				// Build formatted output for synthesis
-				var formatted strings.Builder
-				formatted.WriteString(fmt.Sprintf("[%s]:\n", result.Name))
-				for field, value := range parsed {
-					formatted.WriteString(fmt.Sprintf("- %s: %s\n", field, value))
-				}
-				agentOutputStrings = append(agentOutputStrings, formatted.String())
-			} else {
-				// Fallback to raw output
-				agentOutputStrings = append(agentOutputStrings, fmt.Sprintf("[%s]: %s", result.Name, result.Output))
-			}
-		} else {
-			agentOutputStrings = append(agentOutputStrings, fmt.Sprintf("[%s]: %s", result.Name, result.Output))
-		}
-	}
-
-	// If single agent, return directly
-	if len(results) == 1 {
-		output := results[0].Output
-		// Store structured outputs if parsed
-		if parsed, ok := agentOutputs[results[0].Name]; ok {
-			for field, value := range parsed {
-				e.outputs[field] = value
-			}
-		}
-		if e.OnGoalComplete != nil {
-			e.OnGoalComplete(goal.Name, output)
-		}
-		return output, nil
-	}
-
-	// Multiple agents: synthesize responses
-	synthesisPrompt := fmt.Sprintf(
-		"Synthesize these agent responses into a coherent answer:\n\n%s",
-		strings.Join(agentOutputStrings, "\n\n"),
-	)
-
-	// Add structured output instruction for synthesis if goal has outputs
-	if len(goal.Outputs) > 0 {
-		synthesisPrompt += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
-	}
-
-	messages := []llm.Message{
-		{Role: "system", Content: "You are synthesizing multiple agent responses."},
-		{Role: "user", Content: synthesisPrompt},
-	}
-
-	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
-		Messages: messages,
-	})
-	if err != nil {
-		if e.OnLLMError != nil {
-			e.OnLLMError(err)
-		}
-		return "", err
-	}
-
-	// Parse structured output from synthesis if goal has outputs
-	if len(goal.Outputs) > 0 {
-		parsed, err := parseStructuredOutput(resp.Content, goal.Outputs)
-		if err == nil {
-			for field, value := range parsed {
-				e.outputs[field] = value
-			}
-		}
-	}
-
-	if e.OnGoalComplete != nil {
-		e.OnGoalComplete(goal.Name, resp.Content)
-	}
-
-	return resp.Content, nil
 }
 
 // executeSimpleParallel executes AGENT entries in parallel using the same

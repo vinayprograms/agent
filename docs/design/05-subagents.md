@@ -29,7 +29,7 @@ When the goal runs:
 
 The `FROM` path can be:
 - A markdown file with a persona/prompt
-- An `.agent` package for more complex sub-agents
+- A skill directory (with SKILL.md) for enhanced capabilities
 
 The `REQUIRES` profile selects which LLM provider to use (defined in config).
 

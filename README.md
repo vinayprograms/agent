@@ -704,7 +704,6 @@ The `FROM` clause in `AGENT` declarations supports smart resolution:
 | `agents/critic.md` | File path → loads as prompt text |
 | `skills/code-review` | Directory with `SKILL.md` → loads as skill |
 | `testing` | Name → searches `skills.paths` for matching skill directory |
-| `scanner.agent` | Package file → loads as sub-agent (must be packaged, not raw Agentfile) |
 
 **Resolution order:**
 1. Check if path exists relative to Agentfile
