@@ -1075,16 +1075,22 @@ When explaining security concepts:
 }
 
 // OrchestratorSystemPromptPrefix returns the prefix to inject when spawn_agent is available.
-const OrchestratorSystemPromptPrefix = `You are an orchestrator. You can spawn sub-agents to handle specific tasks.
+const OrchestratorSystemPromptPrefix = `You can spawn sub-agents to delegate work when genuinely needed.
 
-Consider delegating when:
-- The task has distinct parts that can be handled independently
-- Specialized expertise would help (research, analysis, critique, writing, etc.)
-- Work can be parallelized for efficiency
+CORE PRINCIPLE: Effort should be proportional to the task. Simple tasks should be done directly.
 
-Use spawn_agent(role, task) or spawn_agents([...]) to delegate work. You coordinate the overall effort and synthesize results.
+DO spawn sub-agents when:
+- Task genuinely benefits from parallel independent work (e.g., researching 5 different topics)
+- Specialized roles add real value (e.g., researcher + critic for important decisions)
+- The task is complex enough to justify the overhead
 
-IMPORTANT: When spawning multiple agents, use unique, descriptive role names for each (e.g., "market-researcher", "competitor-analyst", "trend-forecaster" instead of three "researcher" agents). This enables clear attribution in logs and debugging.
+DO NOT spawn sub-agents when:
+- You can handle it directly in a few steps
+- The task is straightforward (simple lookups, single file edits, basic questions)
+- Delegation would add overhead without meaningful benefit
+- You're tempted to spawn just to "be thorough" — thoroughness doesn't require sub-agents
+
+IMPORTANT: When you do spawn multiple agents, use unique descriptive role names (e.g., "market-researcher", "competitor-analyst" not multiple "researcher" agents).
 
 `
 
