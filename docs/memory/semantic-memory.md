@@ -33,10 +33,26 @@ The agent includes a memory system with two components:
 ## Configuration
 
 ```toml
+# Embedding providers for semantic memory.
+#
+# Supported:
+#   - openai:  text-embedding-3-small, text-embedding-3-large
+#   - google:  text-embedding-004, embedding-001
+#   - mistral: mistral-embed
+#   - cohere:  embed-english-v3.0, embed-multilingual-v3.0
+#   - voyage:  voyage-2, voyage-large-2, voyage-code-2
+#   - ollama:  nomic-embed-text, mxbai-embed-large (local)
+#   - none:    Disables semantic memory (KV still works)
+#
+# NOT supported (no embedding endpoints):
+#   - anthropic (Claude) - use voyage instead
+#   - openrouter - chat completions only
+#   - groq - chat completions only
+#
 [embedding]
-provider = "ollama"                 # "openai" or "ollama"
-model = "nomic-embed-text"
-base_url = "http://localhost:11434" # For ollama or custom endpoints
+provider = "openai"
+model = "text-embedding-3-small"
+# base_url = "https://custom-endpoint.com"  # optional
 
 [storage]
 path = "~/.local/grid"              # Base directory for all persistent data
@@ -203,10 +219,21 @@ CREATE VIRTUAL TABLE memory_vectors USING vec0(
 | Provider | Models | Dimension | Notes |
 |----------|--------|-----------|-------|
 | `none` | — | — | Disables semantic memory (KV only) |
-| OpenAI | text-embedding-3-small | 1536 | Fast, good quality |
-| OpenAI | text-embedding-3-large | 3072 | Higher quality |
-| Ollama | nomic-embed-text | 768 | Local, no API calls |
-| Ollama | mxbai-embed-large | 1024 | Local, higher quality |
+| `openai` | text-embedding-3-small | 1536 | Fast, good quality |
+| `openai` | text-embedding-3-large | 3072 | Higher quality |
+| `google` | text-embedding-004 | 768 | Gemini embeddings |
+| `mistral` | mistral-embed | 1024 | Mistral's embedding model |
+| `cohere` | embed-english-v3.0 | 1024 | Good for English text |
+| `cohere` | embed-multilingual-v3.0 | 1024 | Multi-language support |
+| `voyage` | voyage-2, voyage-large-2 | 1024 | Anthropic's recommended partner |
+| `voyage` | voyage-code-2 | 1536 | Optimized for code |
+| `ollama` | nomic-embed-text | 768 | Local, no API calls |
+| `ollama` | mxbai-embed-large | 1024 | Local, higher quality |
+
+**Providers without embedding endpoints:**
+- Anthropic (Claude) — Use `voyage` instead (Anthropic's official recommendation)
+- OpenRouter — Chat completions only
+- Groq — Chat completions only
 
 ### Disabling Semantic Memory
 

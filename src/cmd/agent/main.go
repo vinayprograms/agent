@@ -1150,6 +1150,62 @@ func createEmbeddingProvider(cfg config.EmbeddingConfig, creds *credentials.Cred
 			BaseURL: cfg.BaseURL,
 		}), nil
 
+	case "google":
+		apiKey := creds.GetAPIKey("google")
+		if apiKey == "" {
+			apiKey = os.Getenv("GOOGLE_API_KEY")
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("Google API key not found for embeddings")
+		}
+		return memory.NewGoogleEmbedder(memory.GoogleConfig{
+			APIKey:  apiKey,
+			Model:   cfg.Model,
+			BaseURL: cfg.BaseURL,
+		}), nil
+
+	case "mistral":
+		apiKey := creds.GetAPIKey("mistral")
+		if apiKey == "" {
+			apiKey = os.Getenv("MISTRAL_API_KEY")
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("Mistral API key not found for embeddings")
+		}
+		return memory.NewMistralEmbedder(memory.MistralConfig{
+			APIKey:  apiKey,
+			Model:   cfg.Model,
+			BaseURL: cfg.BaseURL,
+		}), nil
+
+	case "cohere":
+		apiKey := creds.GetAPIKey("cohere")
+		if apiKey == "" {
+			apiKey = os.Getenv("COHERE_API_KEY")
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("Cohere API key not found for embeddings")
+		}
+		return memory.NewCohereEmbedder(memory.CohereConfig{
+			APIKey:  apiKey,
+			Model:   cfg.Model,
+			BaseURL: cfg.BaseURL,
+		}), nil
+
+	case "voyage":
+		apiKey := creds.GetAPIKey("voyage")
+		if apiKey == "" {
+			apiKey = os.Getenv("VOYAGE_API_KEY")
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("Voyage AI API key not found for embeddings")
+		}
+		return memory.NewVoyageEmbedder(memory.VoyageConfig{
+			APIKey:  apiKey,
+			Model:   cfg.Model,
+			BaseURL: cfg.BaseURL,
+		}), nil
+
 	case "ollama":
 		baseURL := cfg.BaseURL
 		if baseURL == "" {
@@ -1179,7 +1235,7 @@ func createEmbeddingProvider(cfg config.EmbeddingConfig, creds *credentials.Cred
 		})
 
 	default:
-		return nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Provider)
+		return nil, fmt.Errorf("unsupported embedding provider: %s (supported: openai, google, mistral, cohere, voyage, ollama, none)", cfg.Provider)
 	}
 }
 

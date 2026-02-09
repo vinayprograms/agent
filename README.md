@@ -57,8 +57,24 @@ model = "gpt-4o-mini"
 [profiles.code-generation]
 model = "gemini-1.5-pro"
 
+# Embedding providers for semantic memory.
+#
+# Supported:
+#   - openai:  text-embedding-3-small, text-embedding-3-large
+#   - google:  text-embedding-004
+#   - mistral: mistral-embed
+#   - cohere:  embed-english-v3.0, embed-multilingual-v3.0
+#   - voyage:  voyage-2, voyage-large-2, voyage-code-2
+#   - ollama:  nomic-embed-text, mxbai-embed-large (local)
+#   - none:    Disables semantic memory (KV still works)
+#
+# NOT supported (no embedding endpoints):
+#   - anthropic (Claude) - use voyage instead
+#   - openrouter - chat completions only
+#   - groq - chat completions only
+#
 [embedding]
-provider = "openai"              # openai, ollama, or none
+provider = "openai"              # see supported list above
 model = "text-embedding-3-small"
 
 [storage]
@@ -311,8 +327,24 @@ The agent supports persistent memory across sessions with two components:
 ### Configuration
 
 ```toml
+# Embedding providers for semantic memory.
+#
+# Supported:
+#   - openai:  text-embedding-3-small, text-embedding-3-large
+#   - google:  text-embedding-004
+#   - mistral: mistral-embed
+#   - cohere:  embed-english-v3.0, embed-multilingual-v3.0
+#   - voyage:  voyage-2, voyage-large-2, voyage-code-2
+#   - ollama:  nomic-embed-text, mxbai-embed-large (local)
+#   - none:    Disables semantic memory (KV still works)
+#
+# NOT supported (no embedding endpoints):
+#   - anthropic (Claude) - use voyage instead
+#   - openrouter - chat completions only
+#   - groq - chat completions only
+#
 [embedding]
-provider = "openai"              # openai, ollama, or none
+provider = "openai"
 model = "text-embedding-3-small"
 
 [storage]
