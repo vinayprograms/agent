@@ -100,11 +100,22 @@ func NewVerifier(cfg Config, sessionID string) (*Verifier, error) {
 
 // AddBlock adds a content block to the context.
 func (v *Verifier) AddBlock(trust TrustLevel, typ BlockType, mutable bool, content, source string) *Block {
-	return v.AddBlockWithContext(trust, typ, mutable, content, source, "")
+	return v.addBlockInternal(trust, typ, mutable, content, source, "", 0, nil)
 }
 
 // AddBlockWithContext adds a content block with an agent context identifier.
 func (v *Verifier) AddBlockWithContext(trust TrustLevel, typ BlockType, mutable bool, content, source, agentContext string) *Block {
+	return v.addBlockInternal(trust, typ, mutable, content, source, agentContext, 0, nil)
+}
+
+// AddBlockWithTaint adds a content block with explicit taint lineage.
+// eventSeq is the session event sequence when this block was created.
+// taintedBy lists IDs of blocks that influenced this block.
+func (v *Verifier) AddBlockWithTaint(trust TrustLevel, typ BlockType, mutable bool, content, source, agentContext string, eventSeq uint64, taintedBy []string) *Block {
+	return v.addBlockInternal(trust, typ, mutable, content, source, agentContext, eventSeq, taintedBy)
+}
+
+func (v *Verifier) addBlockInternal(trust TrustLevel, typ BlockType, mutable bool, content, source, agentContext string, eventSeq uint64, taintedBy []string) *Block {
 	v.blocksMu.Lock()
 	defer v.blocksMu.Unlock()
 
@@ -113,9 +124,26 @@ func (v *Verifier) AddBlockWithContext(trust TrustLevel, typ BlockType, mutable 
 
 	block := NewBlock(id, trust, typ, mutable, content, source)
 	block.AgentContext = agentContext
+	block.CreatedAtSeq = eventSeq
+	block.TaintedBy = taintedBy
 	v.blocks = append(v.blocks, block)
 
 	return block
+}
+
+// GetCurrentUntrustedBlockIDs returns IDs of all untrusted blocks in context.
+// Used to mark LLM responses as tainted by these blocks.
+func (v *Verifier) GetCurrentUntrustedBlockIDs() []string {
+	v.blocksMu.RLock()
+	defer v.blocksMu.RUnlock()
+
+	var ids []string
+	for _, b := range v.blocks {
+		if b.Trust == TrustUntrusted {
+			ids = append(ids, b.ID)
+		}
+	}
+	return ids
 }
 
 // HighRiskTools is the set of tools that require extra scrutiny.
@@ -137,6 +165,11 @@ func (v *Verifier) VerifyToolCall(ctx context.Context, toolName string, args map
 	// Tier 1: Deterministic checks
 	tier1Result := v.tier1Check(toolName, args, agentContext)
 	result.Tier1 = tier1Result
+
+	// Build taint lineage for all related blocks
+	if len(tier1Result.RelatedBlocks) > 0 {
+		result.TaintLineage = v.GetTaintLineageForBlocks(tier1Result.RelatedBlocks)
+	}
 
 	if tier1Result.Pass {
 		// No untrusted content or low-risk tool - allow
@@ -420,6 +453,7 @@ type VerificationResult struct {
 	Tier1        *Tier1Result
 	Tier2        *TriageResult
 	Tier3        *SupervisionResult
+	TaintLineage []*TaintLineageNode // Taint dependency tree for related blocks
 }
 
 // AuditTrail returns the audit trail for export.
@@ -439,4 +473,91 @@ func (v *Verifier) ClearContext() {
 	v.blocksMu.Lock()
 	defer v.blocksMu.Unlock()
 	v.blocks = make([]*Block, 0)
+}
+
+// TaintLineageNode represents a node in the taint dependency tree.
+// Exported for use by session package.
+type TaintLineageNode struct {
+	BlockID   string              `json:"block_id"`
+	Trust     TrustLevel          `json:"trust"`
+	Source    string              `json:"source"`
+	EventSeq  uint64              `json:"event_seq,omitempty"`
+	Depth     int                 `json:"depth,omitempty"`
+	TaintedBy []*TaintLineageNode `json:"tainted_by,omitempty"`
+}
+
+// GetTaintLineage builds the full taint dependency tree for a block.
+// Returns nil if the block is not found.
+func (v *Verifier) GetTaintLineage(blockID string) *TaintLineageNode {
+	v.blocksMu.RLock()
+	defer v.blocksMu.RUnlock()
+
+	block := v.findBlockByID(blockID)
+	if block == nil {
+		return nil
+	}
+
+	return v.buildLineageTree(block, 0, make(map[string]bool))
+}
+
+// GetTaintLineageForBlocks builds lineage trees for multiple blocks.
+func (v *Verifier) GetTaintLineageForBlocks(blocks []*Block) []*TaintLineageNode {
+	v.blocksMu.RLock()
+	defer v.blocksMu.RUnlock()
+
+	var lineages []*TaintLineageNode
+	for _, block := range blocks {
+		lineage := v.buildLineageTree(block, 0, make(map[string]bool))
+		if lineage != nil {
+			lineages = append(lineages, lineage)
+		}
+	}
+	return lineages
+}
+
+// buildLineageTree recursively builds the taint tree for a block.
+// visited prevents infinite loops from circular taint references.
+func (v *Verifier) buildLineageTree(block *Block, depth int, visited map[string]bool) *TaintLineageNode {
+	if block == nil || visited[block.ID] {
+		return nil
+	}
+	visited[block.ID] = true
+
+	node := &TaintLineageNode{
+		BlockID:  block.ID,
+		Trust:    block.Trust,
+		Source:   block.Source,
+		EventSeq: block.CreatedAtSeq,
+		Depth:    depth,
+	}
+
+	// Recursively build parent lineage
+	for _, parentID := range block.TaintedBy {
+		parent := v.findBlockByID(parentID)
+		if parent != nil {
+			parentNode := v.buildLineageTree(parent, depth+1, visited)
+			if parentNode != nil {
+				node.TaintedBy = append(node.TaintedBy, parentNode)
+			}
+		}
+	}
+
+	return node
+}
+
+// findBlockByID returns a block by ID (caller must hold lock).
+func (v *Verifier) findBlockByID(id string) *Block {
+	for _, b := range v.blocks {
+		if b.ID == id {
+			return b
+		}
+	}
+	return nil
+}
+
+// GetBlock returns a block by ID (thread-safe).
+func (v *Verifier) GetBlock(id string) *Block {
+	v.blocksMu.RLock()
+	defer v.blocksMu.RUnlock()
+	return v.findBlockByID(id)
 }

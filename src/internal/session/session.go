@@ -114,6 +114,17 @@ type Event struct {
 	Meta *EventMeta `json:"meta,omitempty"`
 }
 
+// TaintNode represents a node in the taint dependency tree.
+// Each node describes a content block and its relationship to the security event.
+type TaintNode struct {
+	BlockID   string      `json:"block_id"`             // Block identifier (b0001, etc.)
+	Trust     string      `json:"trust"`                // trusted, vetted, untrusted
+	Source    string      `json:"source"`               // Where content came from
+	EventSeq  uint64      `json:"event_seq,omitempty"`  // Event sequence when block was created
+	Depth     int         `json:"depth,omitempty"`      // Depth in the taint tree (0 = root)
+	TaintedBy []TaintNode `json:"tainted_by,omitempty"` // Parent blocks that influenced this block
+}
+
 // EventMeta contains detailed forensic information.
 // Structured for easy querying by forensic tools.
 type EventMeta struct {
@@ -136,6 +147,7 @@ type EventMeta struct {
 	// Security
 	BlockID       string   `json:"block_id,omitempty"`       // Content block ID (b0001, b0002, ...)
 	RelatedBlocks []string `json:"related_blocks,omitempty"` // All blocks whose content contributed to this action
+	TaintLineage  []TaintNode `json:"taint_lineage,omitempty"` // Taint dependency tree for security events
 	Trust         string   `json:"trust,omitempty"`          // trusted, vetted, untrusted
 	BlockType     string   `json:"block_type,omitempty"`     // instruction, data
 	Source        string   `json:"source,omitempty"`         // Where content came from
@@ -174,6 +186,12 @@ type EventMeta struct {
 // nextSeqID returns the next sequence ID for this session.
 func (s *Session) nextSeqID() uint64 {
 	return atomic.AddUint64(&s.seqCounter, 1)
+}
+
+// CurrentSeqID returns the current (last used) sequence ID without incrementing.
+// Returns 0 if no events have been added yet.
+func (s *Session) CurrentSeqID() uint64 {
+	return atomic.LoadUint64(&s.seqCounter)
 }
 
 // AddEvent adds a new event to the session with automatic sequencing.

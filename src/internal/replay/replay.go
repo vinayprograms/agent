@@ -447,6 +447,10 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			fmt.Fprintf(r.output, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("related: %v", event.Meta.RelatedBlocks)))
 		}
+		// Show taint lineage if available
+		if event.Meta != nil && len(event.Meta.TaintLineage) > 0 {
+			r.printTaintLineage(event.Meta.TaintLineage)
+		}
 		// Show skip reason (why escalation didn't happen)
 		if event.Meta != nil && event.Meta.SkipReason != "" {
 			fmt.Fprintf(r.output, "      │          │   %s\n",
@@ -723,6 +727,50 @@ func (r *Replayer) printLLMDetails(meta *session.EventMeta) {
 		fmt.Fprintf(r.output, "      │          │\n")
 		fmt.Fprintf(r.output, "      │          │   %s\n", blockHeaderStyle.Render("── RESPONSE ──"))
 		r.printContent(meta.Response)
+	}
+}
+
+// printTaintLineage prints the taint dependency tree.
+func (r *Replayer) printTaintLineage(lineage []session.TaintNode) {
+	if len(lineage) == 0 {
+		return
+	}
+	fmt.Fprintf(r.output, "      │          │   %s\n", securityStyle.Render("taint lineage:"))
+	for _, node := range lineage {
+		r.printTaintNode(node, 0)
+	}
+}
+
+// printTaintNode recursively prints a taint tree node with indentation.
+func (r *Replayer) printTaintNode(node session.TaintNode, depth int) {
+	indent := strings.Repeat("  ", depth)
+	prefix := "└─"
+	if depth == 0 {
+		prefix = "●"
+	}
+
+	// Format: ● b0001 [untrusted] source (seq:42)
+	trustColor := dimStyle
+	if node.Trust == "untrusted" {
+		trustColor = warnStyle
+	}
+
+	seqInfo := ""
+	if node.EventSeq > 0 {
+		seqInfo = dimStyle.Render(fmt.Sprintf(" (seq:%d)", node.EventSeq))
+	}
+
+	fmt.Fprintf(r.output, "      │          │     %s%s %s %s %s%s\n",
+		indent,
+		securityStyle.Render(prefix),
+		securityStyle.Render(node.BlockID),
+		trustColor.Render(fmt.Sprintf("[%s]", node.Trust)),
+		dimStyle.Render(node.Source),
+		seqInfo)
+
+	// Print parent blocks (TaintedBy)
+	for _, parent := range node.TaintedBy {
+		r.printTaintNode(parent, depth+1)
 	}
 }
 

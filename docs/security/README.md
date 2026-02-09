@@ -13,7 +13,8 @@ This documentation describes the security architecture of the headless agent sys
 | 5 | [Tiered Verification](05-tiered-verification.md) | Efficient security checks |
 | 6 | [Cryptographic Audit Trail](06-audit-trail.md) | Non-repudiable supervision records |
 | 7 | [Security Modes](07-security-modes.md) | Default vs Paranoid configuration |
-| 8 | [Testing Your Model](08-model-testing.md) | Evaluating LLM security compliance |
+| 8 | [Taint Lineage](08-taint-lineage.md) | Tracking the origin of untrusted content |
+| 9 | [Testing Your Model](09-model-testing.md) | Evaluating LLM security compliance |
 
 ## Core Principle
 

@@ -198,7 +198,7 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		for _, b := range result.Tier1.RelatedBlocks {
 			relatedBlockIDs = append(relatedBlockIDs, b.ID)
 		}
-		e.logSecurityStatic(toolName, blockID, relatedBlockIDs, result.Tier1.Pass, result.Tier1.Reasons, result.Tier1.SkipReason)
+		e.logSecurityStatic(toolName, blockID, relatedBlockIDs, result.Tier1.Pass, result.Tier1.Reasons, result.Tier1.SkipReason, result.TaintLineage)
 	}
 
 	if result.Tier2 != nil {
@@ -248,7 +248,23 @@ func (e *Executor) AddUntrustedContent(ctx context.Context, content, source stri
 	// Use agent role from context for block association in multi-agent scenarios
 	agentID := getAgentIdentity(ctx)
 	agentContext := agentID.Role
-	block := e.securityVerifier.AddBlockWithContext(security.TrustUntrusted, security.TypeData, true, content, source, agentContext)
+
+	// Get current event sequence for correlation
+	var eventSeq uint64
+	if e.session != nil {
+		eventSeq = e.session.CurrentSeqID()
+	}
+
+	block := e.securityVerifier.AddBlockWithTaint(
+		security.TrustUntrusted,
+		security.TypeData,
+		true,
+		content,
+		source,
+		agentContext,
+		eventSeq,
+		nil, // Tool results have no parent taint - they are root sources
+	)
 
 	// Log to session with XML representation
 	xmlBlock := fmt.Sprintf(`<block id="%s" trust="untrusted" type="data" source="%s" mutable="true" agent="%s">%s</block>`,
@@ -574,7 +590,7 @@ func (e *Executor) logSecurityBlock(blockID, trust, blockType, source, xmlBlock 
 }
 
 // logSecurityStatic logs static/deterministic check to session.
-func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []string, pass bool, flags []string, skipReason string) {
+func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []string, pass bool, flags []string, skipReason string, taintLineage []*security.TaintLineageNode) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -589,9 +605,39 @@ func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []str
 			Pass:          pass,
 			Flags:         flags,
 			SkipReason:    skipReason,
+			TaintLineage:  convertTaintLineage(taintLineage),
 		},
 	})
 	e.sessionManager.Update(e.session)
+}
+
+// convertTaintLineage converts security package lineage to session package format.
+func convertTaintLineage(nodes []*security.TaintLineageNode) []session.TaintNode {
+	if len(nodes) == 0 {
+		return nil
+	}
+	result := make([]session.TaintNode, 0, len(nodes))
+	for _, n := range nodes {
+		result = append(result, convertTaintNode(n))
+	}
+	return result
+}
+
+func convertTaintNode(n *security.TaintLineageNode) session.TaintNode {
+	if n == nil {
+		return session.TaintNode{}
+	}
+	node := session.TaintNode{
+		BlockID:  n.BlockID,
+		Trust:    string(n.Trust),
+		Source:   n.Source,
+		EventSeq: n.EventSeq,
+		Depth:    n.Depth,
+	}
+	for _, child := range n.TaintedBy {
+		node.TaintedBy = append(node.TaintedBy, convertTaintNode(child))
+	}
+	return node
 }
 
 // logSecurityTriage logs LLM triage check to session.

@@ -51,6 +51,10 @@ type Block struct {
 
 	// TaintedBy lists IDs of blocks that influenced this block.
 	TaintedBy []string `json:"tainted_by,omitempty"`
+
+	// CreatedAtSeq is the session event sequence when this block was created.
+	// Used to correlate blocks with session events in forensic analysis.
+	CreatedAtSeq uint64 `json:"created_at_seq,omitempty"`
 }
 
 // NewBlock creates a new block with the given properties.
