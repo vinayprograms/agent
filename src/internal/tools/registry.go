@@ -1192,7 +1192,12 @@ type memoryReadTool struct {
 func (t *memoryReadTool) Name() string { return "memory_read" }
 
 func (t *memoryReadTool) Description() string {
-	return "Read a value from persistent memory by key. Make maximum use of this tool to learn insights from previous interactions with the user."
+	return `Read a structured value by exact key.
+
+Use for: preferences, config, counters, state - data with KNOWN keys.
+Examples: "user.theme", "project.database", "session.last_topic"
+
+NOT for: searching past knowledge. Use memory_recall for semantic search.`
 }
 
 func (t *memoryReadTool) Parameters() map[string]interface{} {
@@ -1229,7 +1234,12 @@ type memoryWriteTool struct {
 func (t *memoryWriteTool) Name() string { return "memory_write" }
 
 func (t *memoryWriteTool) Description() string {
-	return "Write a value to persistent memory. Make maximum use of this tool to record insights from your interaction with thr user. You MUST generate useful high value insights to hold in memory."
+	return `Store a structured key-value pair.
+
+Use for: preferences, config, counters, state - data you'll retrieve by EXACT key.
+Examples: memory_write("user.theme", "dark"), memory_write("project.db", "postgres")
+
+NOT for: insights, decisions, knowledge. Use memory_remember for semantic storage.`
 }
 
 func (t *memoryWriteTool) Parameters() map[string]interface{} {
@@ -1273,7 +1283,12 @@ type memoryListTool struct {
 func (t *memoryListTool) Name() string { return "memory_list" }
 
 func (t *memoryListTool) Description() string {
-	return "List all keys in memory, optionally filtered by prefix. Use this first to discover what information is stored before reading specific keys."
+	return `List keys in structured storage, optionally filtered by prefix.
+
+Use for: discovering stored preferences/config keys.
+Example: memory_list("user.") → ["user.theme", "user.timezone"]
+
+NOT for: exploring knowledge. Use memory_recall to search by meaning.`
 }
 
 func (t *memoryListTool) Parameters() map[string]interface{} {
@@ -1313,7 +1328,12 @@ type memorySearchTool struct {
 func (t *memorySearchTool) Name() string { return "memory_search" }
 
 func (t *memorySearchTool) Description() string {
-	return "Search memory values for a query string. Returns keys whose values contain the search term. Use this to find relevant memories when you don't know the exact key."
+	return `Substring search in structured key-value storage.
+
+Use for: finding a preference when you know part of the key or value.
+Example: memory_search("postgres") → finds "project.db": "postgres"
+
+NOT for: semantic search. Use memory_recall for meaning-based retrieval.`
 }
 
 func (t *memorySearchTool) Parameters() map[string]interface{} {
@@ -1664,21 +1684,19 @@ type memoryRememberTool struct {
 func (t *memoryRememberTool) Name() string { return "memory_remember" }
 
 func (t *memoryRememberTool) Description() string {
-	return `Permanently store an important insight, decision, or fact for future sessions.
+	return `Store knowledge for semantic retrieval in future sessions.
 
-Use this when you learn something valuable:
-- User preferences and context
-- Project decisions and rationale
-- Domain knowledge and insights
-- Important facts worth remembering
+Use for: insights, decisions, context, knowledge - things you'd search by MEANING.
+Examples:
+  - "User prefers PostgreSQL for projects needing JSON support"
+  - "The auth system uses JWT with 24h expiry, decided on 2024-01-15"
 
-The memory will be semantically searchable - you don't need to pick the perfect key.
-Content is embedded and stored for intelligent recall later.
+NOT for: structured data with known keys. Use memory_write for preferences/config.
 
 Parameters:
-  - content (required): The information to remember
-  - importance (optional): 0.0-1.0 score (default 0.5, higher = more important)
-  - tags (optional): List of tags for categorization`
+  - content (required): The insight to remember (make it self-contained)
+  - importance (optional): 0.0-1.0 (default 0.5, higher = more important)
+  - tags (optional): Categories for filtering`
 }
 
 func (t *memoryRememberTool) Parameters() map[string]interface{} {
@@ -1741,18 +1759,17 @@ type memoryRecallTool struct {
 func (t *memoryRecallTool) Name() string { return "memory_recall" }
 
 func (t *memoryRecallTool) Description() string {
-	return `Search your long-term memory for relevant context.
+	return `Semantic search for relevant knowledge from past sessions.
 
-Use this at the start of complex tasks or when the user references past work.
-Returns memories ranked by relevance to your query.
+Use for: finding context, decisions, insights - when you need to search by MEANING.
+Examples: "database choice", "user's coding preferences", "auth architecture"
 
-IMPORTANT: Always check memory before saying "I don't know about previous sessions."
+Returns memories ranked by relevance (0-1 score).
 
-The search is semantic - it finds memories by meaning, not just keywords.
-For example, "authentication decision" might find "We chose JWT over sessions because..."
+NOT for: getting a known preference. Use memory_read("user.theme") for exact keys.
 
 Parameters:
-  - query (required): What you're looking for
+  - query (required): What you're looking for (natural language)
   - limit (optional): Maximum results (default 5)`
 }
 
