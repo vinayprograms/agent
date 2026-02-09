@@ -2089,9 +2089,21 @@ func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfil
 // Used as fallback when sub-agent runner is not configured.
 func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Goal, agents []*agentfile.Agent) (string, error) {
 	type agentResult struct {
-		name   string
-		output string
-		err    error
+		name       string
+		output     string
+		err        error
+		durationMs int64
+	}
+
+	task := e.interpolate(goal.Outcome)
+
+	// Log sub-agent starts
+	for _, agent := range agents {
+		model := ""
+		if agent.Requires != "" {
+			model = agent.Requires
+		}
+		e.logSubAgentStart(agent.Name, agent.Name, model, task, nil)
 	}
 
 	resultChan := make(chan agentResult, len(agents))
@@ -2101,11 +2113,12 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		wg.Add(1)
 		go func(agent *agentfile.Agent) {
 			defer wg.Done()
+			startTime := time.Now()
 
 			// Get provider for this agent's profile
 			provider, err := e.providerFactory.GetProvider(agent.Requires)
 			if err != nil {
-				resultChan <- agentResult{name: agent.Name, err: err}
+				resultChan <- agentResult{name: agent.Name, err: err, durationMs: time.Since(startTime).Milliseconds()}
 				return
 			}
 
@@ -2132,20 +2145,33 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 				Messages: messages,
 			})
 
+			durationMs := time.Since(startTime).Milliseconds()
 			if err != nil {
-				resultChan <- agentResult{name: agent.Name, err: err}
+				resultChan <- agentResult{name: agent.Name, err: err, durationMs: durationMs}
 				return
 			}
-			resultChan <- agentResult{name: agent.Name, output: resp.Content}
+			resultChan <- agentResult{name: agent.Name, output: resp.Content, durationMs: durationMs}
 		}(agent)
 	}
 
 	wg.Wait()
 	close(resultChan)
 
-	// Collect results
+	// Collect results and log sub-agent completions
 	var agentOutputs []string
 	for result := range resultChan {
+		// Find agent for model info
+		model := ""
+		for _, a := range agents {
+			if a.Name == result.name && a.Requires != "" {
+				model = a.Requires
+				break
+			}
+		}
+
+		// Log sub-agent completion
+		e.logSubAgentEnd(result.name, result.name, model, result.output, result.durationMs, result.err)
+
 		if result.err != nil {
 			return "", result.err
 		}
