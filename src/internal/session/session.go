@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -316,6 +316,11 @@ func NewFileStore(dir string) (*FileStore, error) {
 
 // Save persists a session to disk.
 func (s *FileStore) Save(sess *Session) error {
+	// Ensure directory exists
+	if err := os.MkdirAll(s.dir, 0755); err != nil {
+		return fmt.Errorf("failed to create session directory: %w", err)
+	}
+
 	data, err := json.MarshalIndent(sess, "", "  ")
 	if err != nil {
 		return err
