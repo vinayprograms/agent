@@ -2085,17 +2085,27 @@ func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfil
 	return resp.Content, nil
 }
 
-// executeSimpleParallel executes agents in parallel without true isolation.
-// Used as fallback when sub-agent runner is not configured.
+// executeSimpleParallel executes AGENT entries in parallel with full tool access.
+// Agents get all tools except spawn_agent/spawn_agents (no further nesting).
 func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Goal, agents []*agentfile.Agent) (string, error) {
 	type agentResult struct {
 		name       string
 		output     string
+		toolsUsed  []string
 		err        error
 		durationMs int64
 	}
 
 	task := e.interpolate(goal.Outcome)
+
+	// Build inputs map for context
+	inputs := make(map[string]string)
+	for k, v := range e.inputs {
+		inputs[k] = v
+	}
+	for k, v := range e.outputs {
+		inputs[k] = v
+	}
 
 	// Log sub-agent starts
 	for _, agent := range agents {
@@ -2103,7 +2113,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		if agent.Requires != "" {
 			model = agent.Requires
 		}
-		e.logSubAgentStart(agent.Name, agent.Name, model, task, nil)
+		e.logSubAgentStart(agent.Name, agent.Name, model, task, inputs)
 	}
 
 	resultChan := make(chan agentResult, len(agents))
@@ -2127,11 +2137,11 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 			for goalName, output := range e.outputs {
 				xmlBuilder.AddPriorGoal(goalName, output)
 			}
-			xmlBuilder.SetCurrentGoal(goal.Name, e.interpolate(goal.Outcome))
+			xmlBuilder.SetCurrentGoal(goal.Name, task)
 			prompt := xmlBuilder.Build()
 
 			// Use agent's prompt as system message, or generic if none
-			systemPrompt := "You are a helpful assistant."
+			systemPrompt := "You are a helpful assistant executing a sub-agent task. Complete the task using available tools as needed."
 			if agent.Prompt != "" {
 				systemPrompt = agent.Prompt
 			}
@@ -2141,16 +2151,79 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 				{Role: "user", Content: prompt},
 			}
 
-			resp, err := provider.Chat(ctx, llm.ChatRequest{
-				Messages: messages,
-			})
-
-			durationMs := time.Since(startTime).Milliseconds()
-			if err != nil {
-				resultChan <- agentResult{name: agent.Name, err: err, durationMs: durationMs}
-				return
+			// Build tool definitions (excluding spawn_agent and spawn_agents to enforce depth=1)
+			var toolDefs []llm.ToolDef
+			if e.registry != nil {
+				for _, def := range e.registry.Definitions() {
+					if def.Name != "spawn_agent" && def.Name != "spawn_agents" {
+						toolDefs = append(toolDefs, llm.ToolDef{
+							Name:        def.Name,
+							Description: def.Description,
+							Parameters:  def.Parameters,
+						})
+					}
+				}
 			}
-			resultChan <- agentResult{name: agent.Name, output: resp.Content, durationMs: durationMs}
+
+			// Add MCP tools if available
+			if e.mcpManager != nil {
+				for _, t := range e.mcpManager.AllTools() {
+					toolDefs = append(toolDefs, llm.ToolDef{
+						Name:        fmt.Sprintf("mcp_%s_%s", t.Server, t.Tool.Name),
+						Description: fmt.Sprintf("[MCP:%s] %s", t.Server, t.Tool.Description),
+						Parameters:  t.Tool.InputSchema,
+					})
+				}
+			}
+
+			toolsUsedMap := make(map[string]bool)
+
+			// Execute sub-agent agentic loop (with tool calls)
+			for {
+				resp, err := provider.Chat(ctx, llm.ChatRequest{
+					Messages: messages,
+					Tools:    toolDefs,
+				})
+				if err != nil {
+					resultChan <- agentResult{
+						name:       agent.Name,
+						err:        err,
+						durationMs: time.Since(startTime).Milliseconds(),
+					}
+					return
+				}
+
+				// No tool calls = sub-agent complete
+				if len(resp.ToolCalls) == 0 {
+					var toolsUsed []string
+					for tool := range toolsUsedMap {
+						toolsUsed = append(toolsUsed, tool)
+					}
+					resultChan <- agentResult{
+						name:       agent.Name,
+						output:     resp.Content,
+						toolsUsed:  toolsUsed,
+						durationMs: time.Since(startTime).Milliseconds(),
+					}
+					return
+				}
+
+				// Track tools used
+				for _, tc := range resp.ToolCalls {
+					toolsUsedMap[tc.Name] = true
+				}
+
+				// Add assistant message with tool calls
+				messages = append(messages, llm.Message{
+					Role:      "assistant",
+					Content:   resp.Content,
+					ToolCalls: resp.ToolCalls,
+				})
+
+				// Execute tool calls in parallel
+				toolMessages := e.executeToolsParallel(ctx, resp.ToolCalls)
+				messages = append(messages, toolMessages...)
+			}
 		}(agent)
 	}
 
