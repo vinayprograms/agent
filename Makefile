@@ -16,10 +16,14 @@ INSTALL_DIR := $(HOME)/.local/bin
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)"
 CGO_ENABLED := 1
 
+# SQLite headers for sqlite-vec CGO bindings
+# Linux: /usr/include, macOS: typically handled by Homebrew or Xcode
+CGO_CFLAGS ?= $(shell pkg-config --cflags sqlite3 2>/dev/null || echo "-I/usr/include")
+
 # Go commands
 GO := go
 GOTEST := $(GO) test
-GOBUILD := CGO_ENABLED=$(CGO_ENABLED) $(GO) build $(LDFLAGS)
+GOBUILD := CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" $(GO) build $(LDFLAGS)
 
 # Default target
 .DEFAULT_GOAL := build

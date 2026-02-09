@@ -22,6 +22,17 @@ The setup wizard guides you through configuration for any deployment scenario â€
 
 #### 1. Build
 
+**Prerequisites** (for semantic memory with sqlite-vec):
+```bash
+# Debian/Ubuntu
+sudo apt-get install libsqlite3-dev
+
+# macOS
+brew install sqlite3
+
+# Or build without semantic memory (CGO_ENABLED=0)
+```
+
 ```bash
 # Using Make (recommended)
 make build          # Build to ./bin/agent
@@ -29,7 +40,7 @@ make install        # Install to ~/.local/bin/agent
 
 # Or manually
 cd src
-go build -o agent ./cmd/agent
+CGO_CFLAGS="-I/usr/include" go build -o agent ./cmd/agent
 ```
 
 #### 2. Create a Config File
