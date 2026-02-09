@@ -125,6 +125,9 @@ type Executor struct {
 	// Security verifier
 	securityVerifier *security.Verifier
 
+	// Last security check result - used to taint tool results with influencing blocks
+	lastSecurityRelatedBlocks []string
+
 	// Security research context (for defensive framing in prompts)
 	securityResearchScope string
 }
@@ -176,6 +179,9 @@ func (e *Executor) SetSecurityResearchScope(scope string) {
 
 // verifyToolCall checks a tool call against the security verifier if configured.
 func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map[string]interface{}) error {
+	// Clear previous related blocks
+	e.lastSecurityRelatedBlocks = nil
+
 	if e.securityVerifier == nil {
 		return nil // No security verifier configured
 	}
@@ -186,6 +192,13 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 	result, err := e.securityVerifier.VerifyToolCall(ctx, toolName, args, e.currentGoal, agentContext)
 	if err != nil {
 		return fmt.Errorf("security verification error: %w", err)
+	}
+
+	// Store related blocks for taint propagation when registering tool results
+	if result.Tier1 != nil {
+		for _, b := range result.Tier1.RelatedBlocks {
+			e.lastSecurityRelatedBlocks = append(e.lastSecurityRelatedBlocks, b.ID)
+		}
 	}
 
 	// Log security decision to session
@@ -242,6 +255,11 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 
 // AddUntrustedContent registers untrusted content with the security verifier.
 func (e *Executor) AddUntrustedContent(ctx context.Context, content, source string) {
+	e.AddUntrustedContentWithTaint(ctx, content, source, nil)
+}
+
+// AddUntrustedContentWithTaint registers untrusted content with explicit taint lineage.
+func (e *Executor) AddUntrustedContentWithTaint(ctx context.Context, content, source string, taintedBy []string) {
 	if e.securityVerifier == nil {
 		return
 	}
@@ -263,14 +281,18 @@ func (e *Executor) AddUntrustedContent(ctx context.Context, content, source stri
 		source,
 		agentContext,
 		eventSeq,
-		nil, // Tool results have no parent taint - they are root sources
+		taintedBy, // Parent blocks that influenced this content
 	)
 
-	// Log to session with XML representation
-	xmlBlock := fmt.Sprintf(`<block id="%s" trust="untrusted" type="data" source="%s" mutable="true" agent="%s">%s</block>`,
-		block.ID, source, agentContext, truncateForLog(content, 200))
+	// Log to session with XML representation including taint info
+	taintAttr := ""
+	if len(taintedBy) > 0 {
+		taintAttr = fmt.Sprintf(` tainted-by="%s"`, strings.Join(taintedBy, ","))
+	}
+	xmlBlock := fmt.Sprintf(`<block id="%s" trust="untrusted" type="data" source="%s" mutable="true" agent="%s"%s>%s</block>`,
+		block.ID, source, agentContext, taintAttr, truncateForLog(content, 200))
 	entropy := security.ShannonEntropy([]byte(content))
-	e.logSecurityBlock(block.ID, "untrusted", "data", source, xmlBlock, entropy)
+	e.logSecurityBlockWithTaint(block.ID, "untrusted", "data", source, xmlBlock, entropy, taintedBy)
 }
 
 // truncateForLog truncates a string for logging purposes.
@@ -571,6 +593,11 @@ func (e *Executor) logCheckpoint(checkpointType, goal, step, checkpointID string
 
 // logSecurityBlock logs untrusted content registration to session.
 func (e *Executor) logSecurityBlock(blockID, trust, blockType, source, xmlBlock string, entropy float64) {
+	e.logSecurityBlockWithTaint(blockID, trust, blockType, source, xmlBlock, entropy, nil)
+}
+
+// logSecurityBlockWithTaint logs untrusted content registration with taint lineage.
+func (e *Executor) logSecurityBlockWithTaint(blockID, trust, blockType, source, xmlBlock string, entropy float64, taintedBy []string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -578,12 +605,13 @@ func (e *Executor) logSecurityBlock(blockID, trust, blockType, source, xmlBlock 
 		Type:      session.EventSecurityBlock,
 		Timestamp: time.Now(),
 		Meta: &session.EventMeta{
-			BlockID:   blockID,
-			Trust:     trust,
-			BlockType: blockType,
-			Source:    source,
-			Entropy:   entropy,
-			XMLBlock:  xmlBlock,
+			BlockID:       blockID,
+			Trust:         trust,
+			BlockType:     blockType,
+			Source:        source,
+			Entropy:       entropy,
+			XMLBlock:      xmlBlock,
+			RelatedBlocks: taintedBy, // Blocks that influenced this block's creation
 		},
 	})
 	e.sessionManager.Update(e.session)
@@ -2180,9 +2208,9 @@ func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string,
 		return
 	}
 
-	// Register as untrusted content block
+	// Register as untrusted content block with taint from influencing blocks
 	source := fmt.Sprintf("tool:%s", toolName)
-	e.AddUntrustedContent(ctx, content, source)
+	e.AddUntrustedContentWithTaint(ctx, content, source, e.lastSecurityRelatedBlocks)
 }
 
 // toolResult holds the result of a parallel tool execution.

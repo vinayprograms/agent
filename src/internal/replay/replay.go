@@ -427,6 +427,12 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 				valueStyle.Render(event.Meta.BlockID),
 				dimStyle.Render(fmt.Sprintf("(entropy=%.2f)", event.Meta.Entropy)),
 				sourceInfo)
+			// Show which blocks influenced this content (taint source)
+			if len(event.Meta.RelatedBlocks) > 0 {
+				fmt.Fprintf(r.output, "      │          │   %s %s\n",
+					securityStyle.Render("tainted by:"),
+					warnStyle.Render(strings.Join(event.Meta.RelatedBlocks, ", ")))
+			}
 		}
 
 	case session.EventSecurityStatic:
