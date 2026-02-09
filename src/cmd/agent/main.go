@@ -354,6 +354,12 @@ func runWorkflow(args []string) {
 		storagePath = filepath.Join(home, storagePath[1:])
 	}
 
+	// Ensure storage directory exists
+	if err := os.MkdirAll(storagePath, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "error creating storage directory: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Session path is a subdirectory
 	sessionPath := filepath.Join(storagePath, "sessions", wf.Name)
 
@@ -384,11 +390,6 @@ func runWorkflow(args []string) {
 		fmt.Println("🧠 Memory: KV only (semantic disabled)")
 	} else if cfg.Storage.PersistMemory {
 		semanticDBPath := filepath.Join(storagePath, "semantic.db")
-		// Ensure directory exists
-		if err := os.MkdirAll(storagePath, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "error creating storage directory: %v\n", err)
-			os.Exit(1)
-		}
 
 		memStore, err := memory.NewSQLiteStore(memory.SQLiteConfig{
 			Path:     semanticDBPath,
