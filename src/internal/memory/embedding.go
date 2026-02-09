@@ -248,6 +248,120 @@ func (e *OllamaEmbedder) Dimension() int {
 	return e.dimension
 }
 
+// OllamaCloudEmbedder generates embeddings using Ollama Cloud's API.
+type OllamaCloudEmbedder struct {
+	apiKey    string
+	baseURL   string
+	model     string
+	dimension int
+	client    *http.Client
+}
+
+// OllamaCloudConfig configures the Ollama Cloud embedder.
+type OllamaCloudEmbedConfig struct {
+	APIKey    string // Required
+	BaseURL   string // default: https://ollama.com
+	Model     string // e.g., nomic-embed-text, mxbai-embed-large
+	Dimension int    // embedding dimension (model-specific)
+}
+
+// NewOllamaCloudEmbedder creates a new Ollama Cloud embedding provider.
+func NewOllamaCloudEmbedder(cfg OllamaCloudEmbedConfig) (*OllamaCloudEmbedder, error) {
+	if cfg.APIKey == "" {
+		return nil, fmt.Errorf("api_key is required for ollama-cloud embeddings")
+	}
+	baseURL := cfg.BaseURL
+	if baseURL == "" {
+		baseURL = "https://ollama.com"
+	}
+	model := cfg.Model
+	if model == "" {
+		model = "nomic-embed-text"
+	}
+	dimension := cfg.Dimension
+	if dimension == 0 {
+		switch model {
+		case "nomic-embed-text":
+			dimension = 768
+		case "mxbai-embed-large":
+			dimension = 1024
+		case "all-minilm":
+			dimension = 384
+		default:
+			dimension = 768
+		}
+	}
+	return &OllamaCloudEmbedder{
+		apiKey:    cfg.APIKey,
+		baseURL:   baseURL,
+		model:     model,
+		dimension: dimension,
+		client: &http.Client{
+			Timeout: 60 * time.Second,
+		},
+	}, nil
+}
+
+// Embed generates embeddings for the given texts.
+func (e *OllamaCloudEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+
+	results := make([][]float32, len(texts))
+
+	for i, text := range texts {
+		reqBody := ollamaEmbedRequest{
+			Model: e.model,
+			Input: text,
+		}
+
+		jsonBody, err := json.Marshal(reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request: %w", err)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "POST", e.baseURL+"/api/embed", bytes.NewReader(jsonBody))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+e.apiKey)
+
+		resp, err := e.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("embedding request failed: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("ollama-cloud embedding error (status %d): %s", resp.StatusCode, string(body))
+		}
+
+		var embedResp ollamaEmbedResponse
+		if err := json.Unmarshal(body, &embedResp); err != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+
+		if len(embedResp.Embeddings) > 0 {
+			results[i] = embedResp.Embeddings[0]
+		}
+	}
+
+	return results, nil
+}
+
+// Dimension returns the embedding dimension.
+func (e *OllamaCloudEmbedder) Dimension() int {
+	return e.dimension
+}
+
 // MockEmbedder is a mock embedding provider for testing.
 type MockEmbedder struct {
 	dimension int

@@ -14,14 +14,14 @@ type Config struct {
 	Agent     AgentConfig           `toml:"agent"`
 	LLM       LLMConfig             `toml:"llm"`        // Default LLM settings
 	SmallLLM  LLMConfig             `toml:"small_llm"`  // Fast/cheap model for summarization
+	Embedding EmbeddingConfig       `toml:"embedding"`  // Embedding model for semantic memory
 	Profiles  map[string]Profile    `toml:"profiles"`   // Capability profiles
 	Web       WebConfig             `toml:"web"`
 	Telemetry TelemetryConfig       `toml:"telemetry"`
-	Session   SessionConfig         `toml:"session"`
+	Storage   StorageConfig         `toml:"storage"`    // Persistent storage settings
 	MCP       MCPConfig             `toml:"mcp"`        // MCP tool servers
 	Skills    SkillsConfig          `toml:"skills"`     // Agent Skills
 	Security  SecurityConfig        `toml:"security"`   // Security framework
-	Memory    MemoryConfig          `toml:"memory"`     // Semantic memory
 }
 
 // AgentConfig contains agent identification settings.
@@ -65,10 +65,17 @@ type TelemetryConfig struct {
 	Protocol string `toml:"protocol"` // http, otlp, file, noop
 }
 
-// SessionConfig contains session storage settings.
-type SessionConfig struct {
-	Store string `toml:"store"` // sqlite or file
-	Path  string `toml:"path"`
+// StorageConfig contains persistent storage settings.
+type StorageConfig struct {
+	Path          string `toml:"path"`           // Base directory for all persistent data
+	PersistMemory bool   `toml:"persist_memory"` // true = memory survives across runs, false = in-memory only
+}
+
+// EmbeddingConfig contains embedding provider settings.
+type EmbeddingConfig struct {
+	Provider string `toml:"provider"` // openai, ollama
+	Model    string `toml:"model"`    // Model name (e.g., nomic-embed-text, text-embedding-3-small)
+	BaseURL  string `toml:"base_url"` // Base URL (for ollama or custom endpoint)
 }
 
 // MCPConfig contains MCP tool server configuration.
@@ -95,29 +102,15 @@ type SecurityConfig struct {
 	TriageLLM  string `toml:"triage_llm"`  // Profile name for Tier 2 triage (cheap/fast model)
 }
 
-// MemoryConfig contains semantic memory settings.
-type MemoryConfig struct {
-	Enabled   bool            `toml:"enabled"`   // Enable semantic memory (default false)
-	Path      string          `toml:"path"`      // Database path (default ~/.agent/memory.db)
-	Embedding EmbeddingConfig `toml:"embedding"` // Embedding provider config
-}
-
-// EmbeddingConfig contains embedding provider settings.
-type EmbeddingConfig struct {
-	Provider  string `toml:"provider"`   // openai, ollama
-	Model     string `toml:"model"`      // Model name (e.g., text-embedding-3-small)
-	APIKeyEnv string `toml:"api_key_env"` // Environment variable for API key
-	BaseURL   string `toml:"base_url"`   // Base URL (for ollama or custom endpoint)
-}
-
 // New creates a new config with defaults.
 func New() *Config {
 	return &Config{
 		LLM: LLMConfig{
 			MaxTokens: 4096,
 		},
-		Session: SessionConfig{
-			Store: "file",
+		Storage: StorageConfig{
+			Path:          "~/.local/grid",
+			PersistMemory: true,
 		},
 		Telemetry: TelemetryConfig{
 			Protocol: "noop",

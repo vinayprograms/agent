@@ -342,62 +342,73 @@ func runWorkflow(args []string) {
 	// Set up credentials for web_search tool
 	registry.SetCredentials(globalCreds)
 
-	// Resolve session path: default to ~/.local/grid/sessions/<workflow-name>/
-	sessionPath := cfg.Session.Path
-	if sessionPath == "" {
+	// Resolve storage path: default to ~/.local/grid/
+	storagePath := cfg.Storage.Path
+	if storagePath == "" {
 		home, _ := os.UserHomeDir()
-		sessionPath = filepath.Join(home, ".local", "grid", "sessions", wf.Name)
+		storagePath = filepath.Join(home, ".local", "grid")
+	}
+	// Expand ~ if present
+	if len(storagePath) > 0 && storagePath[0] == '~' {
+		home, _ := os.UserHomeDir()
+		storagePath = filepath.Join(home, storagePath[1:])
 	}
 
-	// Create session manager
-	var sessionMgr session.SessionManager
-	if cfg.Session.Store == "sqlite" {
-		sessionMgr, err = session.NewSQLiteManager(sessionPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error creating session manager: %v\n", err)
-			os.Exit(1)
-		}
+	// Session path is a subdirectory
+	sessionPath := filepath.Join(storagePath, "sessions", wf.Name)
+
+	// Create session manager (always file-based now)
+	sessionMgr := session.NewFileManager(sessionPath)
+
+	// Set up memory stores
+	// KV memory (photographic): always available, persisted based on config
+	kvPath := filepath.Join(storagePath, "kv.json")
+	var kvStore tools.MemoryStore
+	if cfg.Storage.PersistMemory {
+		kvStore = tools.NewFileMemoryStore(kvPath)
 	} else {
-		sessionMgr = session.NewFileManager(sessionPath)
+		kvStore = tools.NewInMemoryStore()
+	}
+	registry.SetMemoryStore(kvStore)
+
+	// Semantic memory: available if embedding provider is configured
+	var semanticMemory *memory.ToolsAdapter
+	embedder, err := createEmbeddingProvider(cfg.Embedding, globalCreds)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error creating embedding provider: %v\n", err)
+		os.Exit(1)
 	}
 
-	// Set up memory store for memory_read/memory_write tools
-	memoryPath := filepath.Join(sessionPath, "memory.json")
-	registry.SetMemoryStore(tools.NewFileMemoryStore(memoryPath))
-
-	// Set up semantic memory if enabled
-	var semanticMemory *memory.ToolsAdapter
-	if cfg.Memory.Enabled {
-		embedder, err := createEmbeddingProvider(cfg.Memory.Embedding, globalCreds)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error creating embedding provider: %v\n", err)
-			os.Exit(1)
-		}
-
-		memDBPath := cfg.Memory.Path
-		if memDBPath == "" {
-			home, _ := os.UserHomeDir()
-			memDBPath = filepath.Join(home, ".agent", "memory.db")
-		}
+	if embedder == nil {
+		// Semantic memory disabled (provider = "none")
+		fmt.Println("🧠 Memory: KV only (semantic disabled)")
+	} else if cfg.Storage.PersistMemory {
+		semanticDBPath := filepath.Join(storagePath, "semantic.db")
 		// Ensure directory exists
-		if err := os.MkdirAll(filepath.Dir(memDBPath), 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "error creating memory directory: %v\n", err)
+		if err := os.MkdirAll(storagePath, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "error creating storage directory: %v\n", err)
 			os.Exit(1)
 		}
 
 		memStore, err := memory.NewSQLiteStore(memory.SQLiteConfig{
-			Path:     memDBPath,
+			Path:     semanticDBPath,
 			Embedder: embedder,
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error creating memory store: %v\n", err)
+			fmt.Fprintf(os.Stderr, "error creating semantic memory store: %v\n", err)
 			os.Exit(1)
 		}
 		defer memStore.Close()
 
 		semanticMemory = memory.NewToolsAdapter(memStore)
 		registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
-		fmt.Println("🧠 Semantic memory: enabled")
+		fmt.Println("🧠 Memory: persistent (cross-session)")
+	} else {
+		// In-memory semantic store for scratchpad mode
+		memStore := memory.NewInMemoryStore(embedder)
+		semanticMemory = memory.NewToolsAdapter(memStore)
+		registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
+		fmt.Println("🧠 Memory: session-scoped (scratchpad)")
 	}
 
 	// Create telemetry exporter
@@ -1122,13 +1133,13 @@ func parseRetryConfig(maxRetries int, backoffStr string) llm.RetryConfig {
 // createEmbeddingProvider creates an embedding provider based on config.
 func createEmbeddingProvider(cfg config.EmbeddingConfig, creds *credentials.Credentials) (memory.EmbeddingProvider, error) {
 	switch cfg.Provider {
+	case "none", "disabled", "off":
+		return nil, nil // Semantic memory disabled
+
 	case "openai", "":
-		apiKey := ""
-		if cfg.APIKeyEnv != "" {
-			apiKey = os.Getenv(cfg.APIKeyEnv)
-		}
+		apiKey := creds.GetAPIKey("openai")
 		if apiKey == "" {
-			apiKey = creds.GetAPIKey("openai")
+			apiKey = os.Getenv("OPENAI_API_KEY")
 		}
 		if apiKey == "" {
 			return nil, fmt.Errorf("OpenAI API key not found for embeddings")
@@ -1148,6 +1159,24 @@ func createEmbeddingProvider(cfg config.EmbeddingConfig, creds *credentials.Cred
 			BaseURL: baseURL,
 			Model:   cfg.Model,
 		}), nil
+
+	case "ollama-cloud":
+		apiKey := creds.GetAPIKey("ollama-cloud")
+		if apiKey == "" {
+			apiKey = os.Getenv("OLLAMA_API_KEY")
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("Ollama Cloud API key not found for embeddings")
+		}
+		baseURL := cfg.BaseURL
+		if baseURL == "" {
+			baseURL = "https://ollama.com"
+		}
+		return memory.NewOllamaCloudEmbedder(memory.OllamaCloudEmbedConfig{
+			APIKey:  apiKey,
+			BaseURL: baseURL,
+			Model:   cfg.Model,
+		})
 
 	default:
 		return nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Provider)

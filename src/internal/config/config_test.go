@@ -94,9 +94,14 @@ enabled = true
 endpoint = "https://telemetry.example.com"
 protocol = "otlp"
 
-[session]
-store = "sqlite"
-path = "/data/sessions.db"
+[storage]
+path = "/data/grid"
+persist_memory = true
+
+[embedding]
+provider = "ollama"
+model = "nomic-embed-text"
+base_url = "http://localhost:11434"
 `), 0644)
 
 	cfg, err := LoadFile(configPath)
@@ -145,12 +150,20 @@ path = "/data/sessions.db"
 		t.Errorf("telemetry.protocol: expected 'otlp', got %s", cfg.Telemetry.Protocol)
 	}
 
-	// Session section
-	if cfg.Session.Store != "sqlite" {
-		t.Errorf("session.store: expected 'sqlite', got %s", cfg.Session.Store)
+	// Storage section
+	if cfg.Storage.Path != "/data/grid" {
+		t.Errorf("storage.path: expected '/data/grid', got %s", cfg.Storage.Path)
 	}
-	if cfg.Session.Path != "/data/sessions.db" {
-		t.Errorf("session.path: expected '/data/sessions.db', got %s", cfg.Session.Path)
+	if !cfg.Storage.PersistMemory {
+		t.Error("storage.persist_memory: expected true")
+	}
+
+	// Embedding section
+	if cfg.Embedding.Provider != "ollama" {
+		t.Errorf("embedding.provider: expected 'ollama', got %s", cfg.Embedding.Provider)
+	}
+	if cfg.Embedding.Model != "nomic-embed-text" {
+		t.Errorf("embedding.model: expected 'nomic-embed-text', got %s", cfg.Embedding.Model)
 	}
 }
 
@@ -161,8 +174,11 @@ func TestConfig_Defaults(t *testing.T) {
 	if cfg.LLM.MaxTokens != 4096 {
 		t.Errorf("default max_tokens should be 4096, got %d", cfg.LLM.MaxTokens)
 	}
-	if cfg.Session.Store != "file" {
-		t.Errorf("default store should be 'file', got %s", cfg.Session.Store)
+	if cfg.Storage.Path != "~/.local/grid" {
+		t.Errorf("default storage.path should be '~/.local/grid', got %s", cfg.Storage.Path)
+	}
+	if !cfg.Storage.PersistMemory {
+		t.Error("default storage.persist_memory should be true")
 	}
 	if cfg.Telemetry.Protocol != "noop" {
 		t.Errorf("default telemetry protocol should be 'noop', got %s", cfg.Telemetry.Protocol)

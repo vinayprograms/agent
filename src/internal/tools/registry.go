@@ -1436,6 +1436,52 @@ func (s *FileMemoryStore) Search(query string) ([]MemorySearchResult, error) {
 	return results, nil
 }
 
+// InMemoryStore stores memory in-memory only (lost after run).
+type InMemoryStore struct {
+	data map[string]string
+}
+
+// NewInMemoryStore creates a new in-memory store (scratchpad mode).
+func NewInMemoryStore() *InMemoryStore {
+	return &InMemoryStore{
+		data: make(map[string]string),
+	}
+}
+
+func (s *InMemoryStore) Get(key string) (string, error) {
+	if val, ok := s.data[key]; ok {
+		return val, nil
+	}
+	return "", fmt.Errorf("key not found: %s", key)
+}
+
+func (s *InMemoryStore) Set(key, value string) error {
+	s.data[key] = value
+	return nil
+}
+
+func (s *InMemoryStore) List(prefix string) ([]string, error) {
+	var keys []string
+	for k := range s.data {
+		if prefix == "" || strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+
+func (s *InMemoryStore) Search(query string) ([]MemorySearchResult, error) {
+	query = strings.ToLower(query)
+	var results []MemorySearchResult
+	for k, v := range s.data {
+		if strings.Contains(strings.ToLower(v), query) ||
+			strings.Contains(strings.ToLower(k), query) {
+			results = append(results, MemorySearchResult{Key: k, Value: v})
+		}
+	}
+	return results, nil
+}
+
 // SpawnFunc is the function signature for spawning sub-agents.
 // It takes role, task and returns the sub-agent's output.
 // SpawnFunc is the function signature for spawning dynamic sub-agents.

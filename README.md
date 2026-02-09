@@ -57,9 +57,13 @@ model = "gpt-4o-mini"
 [profiles.code-generation]
 model = "gemini-1.5-pro"
 
-[session]
-store = "file"
-path = "./sessions"
+[embedding]
+provider = "openai"              # openai, ollama, or none
+model = "text-embedding-3-small"
+
+[storage]
+path = "~/.local/grid"           # Base directory for sessions, memory, logs
+persist_memory = true            # true = memory survives across runs
 
 [telemetry]
 enabled = false
@@ -299,22 +303,45 @@ The classifier analyzes each request before sending:
 
 ## Semantic Memory
 
-The agent supports persistent semantic memory across sessions — storing and recalling information by meaning, not just keywords.
+The agent supports persistent memory across sessions with two components:
+
+- **Photographic memory (KV)** — exact key-value recall, always available
+- **Semantic memory** — insights and decisions with vector embeddings for meaning-based search
 
 ### Configuration
 
 ```toml
-[memory]
-enabled = true
-path = "~/.agent/memory.db"
-
-[memory.embedding]
-provider = "openai"  # or "ollama"
+[embedding]
+provider = "openai"              # openai, ollama, or none
 model = "text-embedding-3-small"
+
+[storage]
+path = "~/.local/grid"           # Base directory for all persistent data
+persist_memory = true            # true = memory survives across runs
+                                 # false = session-scoped (scratchpad)
+```
+
+### Directory Structure
+
+```
+{storage.path}/
+├── sessions/       # Session state (always persisted)
+├── kv.json         # Photographic memory (if persist_memory=true)
+├── semantic.db     # Semantic memory (if persist_memory=true)
+└── logs/           # Audit logs
 ```
 
 ### Memory Tools
 
+**Photographic (KV) — always available:**
+| Tool | Purpose |
+|------|---------|
+| `memory_read` | Get value by exact key |
+| `memory_write` | Store key-value pair |
+| `memory_list` | List keys by prefix |
+| `memory_search` | Substring search across keys/values |
+
+**Semantic — requires embedding provider:**
 | Tool | Purpose |
 |------|---------|
 | `memory_remember` | Store content with embeddings for semantic search |
@@ -335,9 +362,16 @@ memory_recall(query: "database decision")
 # Returns the PostgreSQL insight even without exact keyword match
 ```
 
-### Automatic Consolidation
+### Disabling Semantic Memory
 
-At session end, the agent automatically extracts key insights from the conversation and stores them — no explicit `memory_remember` calls needed.
+For resource-constrained environments, disable semantic memory:
+
+```toml
+[embedding]
+provider = "none"
+```
+
+The agent will still have KV (photographic) memory but `memory_recall` semantic search will be unavailable.
 
 See [docs/memory/semantic-memory.md](docs/memory/semantic-memory.md) for details.
 

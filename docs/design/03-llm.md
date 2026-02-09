@@ -85,6 +85,31 @@ api_key = "openai-key"
 
 **Permissions:** File must be mode 0400 (owner read-only). Agent refuses to load insecure credentials.
 
+## Embedding Models
+
+For semantic memory, configure an embedding provider:
+
+```toml
+# agent.toml
+
+[embedding]
+provider = "ollama"                 # "openai", "ollama", or "none"
+model = "nomic-embed-text"
+base_url = "http://localhost:11434" # For ollama or custom endpoints
+```
+
+| Provider | Models | Dimension | Notes |
+|----------|--------|-----------|-------|
+| `none` | — | — | Disables semantic memory |
+| OpenAI | text-embedding-3-small | 1536 | Fast, good quality |
+| OpenAI | text-embedding-3-large | 3072 | Higher quality |
+| Ollama | nomic-embed-text | 768 | Local, requires ~1GB RAM |
+| Ollama | mxbai-embed-large | 1024 | Local, requires ~2GB RAM |
+
+Credentials for embeddings use the same `credentials.toml` priority.
+
+For resource-constrained environments (small VPS, limited RAM), use `provider = "none"` to disable semantic memory. The agent will still have KV (photographic) memory.
+
 ## Catwalk Benefits
 
 When using Catwalk:
