@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/config"
@@ -42,13 +43,16 @@ func NewRunner(factory llm.ProviderFactory, packagePaths []string) *Runner {
 
 // SubAgentResult contains the result of a sub-agent execution.
 type SubAgentResult struct {
-	Name   string
-	Output string
-	Error  error
+	Name       string
+	Output     string
+	Error      error
+	DurationMs int64
 }
 
 // SpawnOne spawns a single sub-agent and waits for completion.
 func (r *Runner) SpawnOne(ctx context.Context, agent *agentfile.Agent, input map[string]string) (*SubAgentResult, error) {
+	startTime := time.Now()
+
 	if r.OnSubAgentStart != nil {
 		r.OnSubAgentStart(agent.Name, input)
 	}
@@ -59,6 +63,7 @@ func (r *Runner) SpawnOne(ctx context.Context, agent *agentfile.Agent, input map
 	pkg, err := r.loadPackage(agent.FromPath)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to load agent package: %w", err)
+		result.DurationMs = time.Since(startTime).Milliseconds()
 		if r.OnSubAgentError != nil {
 			r.OnSubAgentError(agent.Name, result.Error)
 		}
@@ -69,6 +74,7 @@ func (r *Runner) SpawnOne(ctx context.Context, agent *agentfile.Agent, input map
 	env, err := r.createIsolatedEnv(pkg, agent.Requires)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to create isolated env: %w", err)
+		result.DurationMs = time.Since(startTime).Milliseconds()
 		if r.OnSubAgentError != nil {
 			r.OnSubAgentError(agent.Name, result.Error)
 		}
@@ -78,6 +84,7 @@ func (r *Runner) SpawnOne(ctx context.Context, agent *agentfile.Agent, input map
 
 	// Execute the sub-agent workflow
 	output, err := env.Execute(ctx, input)
+	result.DurationMs = time.Since(startTime).Milliseconds()
 	if err != nil {
 		result.Error = err
 		if r.OnSubAgentError != nil {

@@ -279,6 +279,45 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			r.printContent(event.Content)
 		}
 
+	case session.EventSubAgentStart:
+		if event.Meta != nil {
+			model := ""
+			if event.Meta.SubAgentModel != "" {
+				model = dimStyle.Render(fmt.Sprintf(" [%s]", event.Meta.SubAgentModel))
+			}
+			fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
+				subagentStyle.Render("SUBAGENT START:"),
+				valueStyle.Render(event.Meta.SubAgentName),
+				model)
+			if r.verbose && event.Meta.SubAgentTask != "" {
+				fmt.Fprintf(r.output, "      │          │   %s %s\n",
+					dimStyle.Render("task:"),
+					dimStyle.Render(truncateContent(event.Meta.SubAgentTask, 100)))
+			}
+		}
+
+	case session.EventSubAgentEnd:
+		if event.Meta != nil {
+			status := successStyle.Render("complete")
+			if event.Error != "" {
+				status = errorStyle.Render("failed")
+			}
+			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s %s\n", seqNum, ts,
+				subagentStyle.Render("SUBAGENT END:"),
+				valueStyle.Render(event.Meta.SubAgentName),
+				status,
+				dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
+			if event.Error != "" {
+				fmt.Fprintf(r.output, "      │          │   %s\n",
+					errorStyle.Render(event.Error))
+			} else if event.Meta.SubAgentOutput != "" {
+				// Always show sub-agent output (this is the key visibility you need)
+				fmt.Fprintf(r.output, "      │          │   %s\n",
+					subagentDimStyle.Render("output:"))
+				r.printSubAgentOutput(event.Meta.SubAgentOutput)
+			}
+		}
+
 	case session.EventSystem:
 		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, dimStyle.Render("SYSTEM"))
 		if r.verbose && event.Content != "" {
@@ -698,6 +737,28 @@ func (r *Replayer) printContent(content string) {
 	}
 }
 
+// printSubAgentOutput prints sub-agent output with special formatting.
+// Always shows first few lines, then truncates with line count.
+func (r *Replayer) printSubAgentOutput(content string) {
+	lines := strings.Split(content, "\n")
+	maxLines := 10
+	if r.verbose {
+		maxLines = 50
+	}
+
+	for i, line := range lines {
+		if i >= maxLines {
+			remaining := len(lines) - maxLines
+			if remaining > 0 {
+				fmt.Fprintf(r.output, "      │          │     %s\n",
+					subagentDimStyle.Render(fmt.Sprintf("... (%d more lines)", remaining)))
+			}
+			break
+		}
+		fmt.Fprintf(r.output, "      │          │     %s\n", subagentDimStyle.Render(line))
+	}
+}
+
 // printArgs prints tool arguments.
 func (r *Replayer) printArgs(args map[string]interface{}) {
 	for k, v := range args {
@@ -787,4 +848,14 @@ func formatMap(m map[string]string) string {
 		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// truncateContent truncates a string for display.
+func truncateContent(s string, maxLen int) string {
+	// Remove newlines for single-line display
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

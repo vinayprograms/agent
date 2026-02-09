@@ -748,6 +748,54 @@ func (e *Executor) logSecurityDecision(tool, action, reason, trust, checkPath st
 	e.sessionManager.Update(e.session)
 }
 
+// logSubAgentStart logs when a sub-agent is spawned.
+func (e *Executor) logSubAgentStart(name, role, model, task string, inputs map[string]string) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:      session.EventSubAgentStart,
+		Goal:      e.currentGoal,
+		Timestamp: time.Now(),
+		Meta: &session.EventMeta{
+			SubAgentName:   name,
+			SubAgentRole:   role,
+			SubAgentModel:  model,
+			SubAgentTask:   task,
+			SubAgentInputs: inputs,
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
+// logSubAgentEnd logs when a sub-agent completes with its output.
+func (e *Executor) logSubAgentEnd(name, role, model, output string, durationMs int64, err error) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+	errStr := ""
+	success := true
+	if err != nil {
+		errStr = err.Error()
+		success = false
+	}
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:       session.EventSubAgentEnd,
+		Goal:       e.currentGoal,
+		Timestamp:  time.Now(),
+		DurationMs: durationMs,
+		Success:    &success,
+		Error:      errStr,
+		Meta: &session.EventMeta{
+			SubAgentName:   name,
+			SubAgentRole:   role,
+			SubAgentModel:  model,
+			SubAgentOutput: output,
+		},
+	})
+	e.sessionManager.Update(e.session)
+}
+
 // initSubAgentRunner initializes the sub-agent runner.
 func (e *Executor) initSubAgentRunner() {
 	if e.providerFactory == nil || len(e.packagePaths) == 0 {
@@ -1916,24 +1964,48 @@ func (e *Executor) executeWithSubAgentRunner(ctx context.Context, goal *agentfil
 		input[k] = v
 	}
 	// Add the goal outcome as task
-	input["_task"] = e.interpolate(goal.Outcome)
+	task := e.interpolate(goal.Outcome)
+	input["_task"] = task
+
+	// Log sub-agent starts
+	startTime := time.Now()
+	for _, agent := range agents {
+		model := ""
+		if agent.Requires != "" {
+			model = agent.Requires
+		}
+		e.logSubAgentStart(agent.Name, agent.Name, model, task, input)
+	}
 
 	// Spawn all agents in parallel
 	results, err := e.subAgentRunner.SpawnParallel(ctx, agents, input)
 	if err != nil {
+		// Log failures
+		for _, agent := range agents {
+			e.logSubAgentEnd(agent.Name, agent.Name, "", "", time.Since(startTime).Milliseconds(), err)
+		}
 		return "", fmt.Errorf("sub-agent execution failed: %w", err)
 	}
 
-	// Collect outputs (with structured parsing if agents have outputs declared)
+	// Log sub-agent completions and collect outputs
 	agentOutputs := make(map[string]map[string]string)
 	var agentOutputStrings []string
 	for _, result := range results {
+		// Find the agent for model info
+		agent := e.findAgent(result.Name)
+		model := ""
+		if agent != nil && agent.Requires != "" {
+			model = agent.Requires
+		}
+
+		// Log the completion
+		e.logSubAgentEnd(result.Name, result.Name, model, result.Output, result.DurationMs, result.Error)
+
 		if result.Error != nil {
 			return "", fmt.Errorf("sub-agent %s failed: %w", result.Name, result.Error)
 		}
 
-		// Find the agent to check for structured outputs
-		agent := e.findAgent(result.Name)
+		// Parse structured outputs if declared
 		if agent != nil && len(agent.Outputs) > 0 {
 			// Parse structured output from agent
 			parsed, err := parseStructuredOutput(result.Output, agent.Outputs)

@@ -49,11 +49,15 @@ const (
 	EventCheckpoint     = "checkpoint"      // Checkpoint saved
 
 	// Security events
-	EventSecurityBlock    = "security_block"    // Untrusted content registered
-	EventSecurityStatic   = "security_static"   // Static/deterministic checks (patterns, entropy)
-	EventSecurityTriage   = "security_triage"   // LLM triage for suspicious content
+	EventSecurityBlock      = "security_block"      // Untrusted content registered
+	EventSecurityStatic     = "security_static"     // Static/deterministic checks (patterns, entropy)
+	EventSecurityTriage     = "security_triage"     // LLM triage for suspicious content
 	EventSecuritySupervisor = "security_supervisor" // Full supervisor review
-	EventSecurityDecision = "security_decision" // Final decision
+	EventSecurityDecision   = "security_decision"   // Final decision
+
+	// Sub-agent events
+	EventSubAgentStart = "subagent_start" // Sub-agent spawned
+	EventSubAgentEnd   = "subagent_end"   // Sub-agent completed
 
 	// Deprecated: use the descriptive names above
 	EventSecurityTier1 = EventSecurityStatic
@@ -170,6 +174,14 @@ type EventMeta struct {
 	// Checkpoint
 	CheckpointType string `json:"ckpt_type,omitempty"` // pre, post, reconcile, supervise
 	CheckpointID   string `json:"ckpt_id,omitempty"`   // Checkpoint identifier
+
+	// Sub-agent execution
+	SubAgentName   string            `json:"subagent_name,omitempty"`   // Sub-agent identifier
+	SubAgentRole   string            `json:"subagent_role,omitempty"`   // Sub-agent role (from AGENT definition)
+	SubAgentModel  string            `json:"subagent_model,omitempty"`  // Model used by sub-agent
+	SubAgentTask   string            `json:"subagent_task,omitempty"`   // Task given to sub-agent
+	SubAgentOutput string            `json:"subagent_output,omitempty"` // Full output from sub-agent
+	SubAgentInputs map[string]string `json:"subagent_inputs,omitempty"` // Inputs passed to sub-agent
 
 	// LLM details
 	Model     string `json:"model,omitempty"`      // Model used
