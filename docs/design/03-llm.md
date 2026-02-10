@@ -4,7 +4,6 @@
 
 | Library | Purpose |
 |---------|---------|
-| [Catwalk](https://github.com/charmbracelet/catwalk) | Model discovery and metadata |
 | [Fantasy](https://charm.land/fantasy) | Provider abstraction |
 
 ## Supported Providers
@@ -19,12 +18,13 @@
 
 ## Automatic Provider Inference
 
-The `provider` field is optional. The agent determines the provider:
+The `provider` field is optional for standard models. The agent determines the provider using pattern inference from model name prefixes:
+- `claude-*` → anthropic
+- `gpt-*`, `o1-*`, `o3-*` → openai
+- `gemini-*`, `gemma-*` → google
+- `mistral-*`, `mixtral-*`, `codestral-*` → mistral
 
-1. **Catwalk lookup** (if CATWALK_URL set): Queries for exact model → provider mapping
-2. **Pattern inference** (fallback): Uses model name prefixes
-
-Set `provider` explicitly only for ambiguous model names or OpenAI-compatible endpoints.
+Set `provider` explicitly for ambiguous model names or OpenAI-compatible endpoints.
 
 ## Configuration
 
@@ -33,12 +33,26 @@ Set `provider` explicitly only for ambiguous model names or OpenAI-compatible en
 
 [llm]
 model = "claude-sonnet-4-20250514"
-max_tokens = 4096
+max_tokens = 4096  # Required
 # provider = "anthropic"  # Optional, inferred from model
 
 # Custom endpoint
 # base_url = "http://localhost:8080/v1"
 ```
+
+### Required Fields
+
+| Field | Description |
+|-------|-------------|
+| `model` | Model identifier (e.g., "claude-sonnet-4-20250514") |
+| `max_tokens` | Maximum tokens for response generation |
+
+### Optional Fields
+
+| Field | Description |
+|-------|-------------|
+| `provider` | Provider name (inferred from model if not set) |
+| `base_url` | Custom endpoint URL for OpenAI-compatible services |
 
 ## Custom Endpoints
 

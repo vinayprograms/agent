@@ -417,21 +417,11 @@ func createFantasyProvider(providerName, apiKey, baseURL string) (fantasy.Provid
 }
 
 // NewProvider creates a provider based on the configuration using fantasy.
-// If Provider is empty, it will be looked up from catwalk or inferred from the Model name.
+// If Provider is empty, it will be inferred from the Model name.
 func NewProvider(cfg FantasyConfig) (Provider, error) {
-	// Try catwalk lookup first, then fall back to pattern inference
+	// Infer provider from model name if not specified
 	if cfg.Provider == "" && cfg.Model != "" {
-		providerID, modelInfo, err := FindModelProvider(context.Background(), cfg.Model)
-		if err == nil && providerID != "" {
-			cfg.Provider = providerID
-			// Use model's default max tokens if not specified
-			if cfg.MaxTokens == 0 && modelInfo != nil && modelInfo.DefaultMaxTokens > 0 {
-				cfg.MaxTokens = int(modelInfo.DefaultMaxTokens)
-			}
-		} else {
-			// Fall back to pattern-based inference
-			cfg.Provider = InferProviderFromModel(cfg.Model)
-		}
+		cfg.Provider = InferProviderFromModel(cfg.Model)
 
 		if cfg.Provider == "" {
 			return nil, fmt.Errorf("cannot determine provider for model %q; set provider explicitly", cfg.Model)

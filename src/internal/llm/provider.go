@@ -82,14 +82,15 @@ func (c *FantasyConfig) Validate() error {
 	if c.APIKey == "" {
 		return fmt.Errorf("api key is required")
 	}
+	if c.MaxTokens == 0 {
+		return fmt.Errorf("max_tokens is required")
+	}
 	return nil
 }
 
 // ApplyDefaults applies default values.
 func (c *FantasyConfig) ApplyDefaults() {
-	if c.MaxTokens == 0 {
-		c.MaxTokens = 4096
-	}
+	// No defaults to apply - all required fields must be set explicitly
 }
 
 // ProviderFactory creates providers based on configuration.

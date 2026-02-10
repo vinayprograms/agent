@@ -803,7 +803,7 @@ docker run -it --rm \
 
 ## Supported LLM Providers
 
-The agent uses [Catwalk](https://github.com/charmbracelet/catwalk) for model discovery and [Fantasy](https://charm.land/fantasy) for provider abstraction.
+The agent uses [Fantasy](https://charm.land/fantasy) for provider abstraction.
 
 | Provider | `provider` value | `api_key_env` | Notes |
 |----------|-----------------|---------------|-------|
@@ -887,25 +887,20 @@ base_url = "https://my-company-proxy.com/v1"
 
 ### Model Discovery
 
-The `provider` field is **optional** — the agent automatically determines the provider:
-
-1. **Catwalk lookup** (if `CATWALK_URL` set): Queries the catwalk server for exact model → provider mapping
-2. **Pattern inference** (fallback): Uses model name prefixes:
+The `provider` field is **optional** for standard models — the agent automatically determines the provider using pattern inference from model name prefixes:
    - `claude-*` → anthropic
    - `gpt-*`, `o1-*`, `o3-*` → openai
    - `gemini-*`, `gemma-*` → google
    - `mistral-*`, `mixtral-*`, `codestral-*` → mistral
 
-When using Catwalk, you also get:
-- Model context windows and token limits
-- Cost information
-- Capability flags (reasoning, attachments)
+Set `provider` explicitly for custom or ambiguous model names.
 
-**Running a local Catwalk server:**
-```bash
-# Optional — only needed for live model updates
-export CATWALK_URL=http://localhost:8080
-```
+### Required Configuration
+
+| Field | Description |
+|-------|-------------|
+| `model` | Model identifier (e.g., "claude-sonnet-4-20250514") |
+| `max_tokens` | Maximum tokens for response generation |
 
 ## Built-in Tools
 

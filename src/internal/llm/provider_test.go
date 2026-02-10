@@ -192,6 +192,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 				Provider: "anthropic",
 				Model:    "claude-3-5-sonnet-20241022",
 				APIKey:   "test-key",
+				MaxTokens: 4096,
 			},
 			wantErr: false,
 		},
@@ -201,6 +202,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 				Provider: "openai",
 				Model:    "gpt-4o",
 				APIKey:   "test-key",
+				MaxTokens: 4096,
 			},
 			wantErr: false,
 		},
@@ -210,6 +212,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 				Provider: "google",
 				Model:    "gemini-1.5-pro",
 				APIKey:   "test-key",
+				MaxTokens: 4096,
 			},
 			wantErr: false,
 		},
@@ -219,6 +222,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 				Provider: "groq",
 				Model:    "llama-3.1-70b-versatile",
 				APIKey:   "test-key",
+				MaxTokens: 4096,
 			},
 			wantErr: false,
 		},
@@ -228,6 +232,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 				Provider: "mistral",
 				Model:    "mistral-large-latest",
 				APIKey:   "test-key",
+				MaxTokens: 4096,
 			},
 			wantErr: false,
 		},
@@ -244,6 +249,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 			config: FantasyConfig{
 				Provider: "anthropic",
 				APIKey:   "test-key",
+				MaxTokens: 4096,
 			},
 			wantErr: true,
 		},
@@ -283,9 +289,10 @@ func TestNewProvider_AllProviders(t *testing.T) {
 	for _, p := range providers {
 		t.Run(p.name, func(t *testing.T) {
 			cfg := FantasyConfig{
-				Provider: p.name,
-				Model:    p.model,
-				APIKey:   "test-key-for-" + p.name,
+				Provider:  p.name,
+				Model:     p.model,
+				APIKey:    "test-key-for-" + p.name,
+				MaxTokens: 4096,
 			}
 
 			provider, err := NewProvider(cfg)
@@ -305,6 +312,7 @@ func TestNewProvider_UnsupportedProvider(t *testing.T) {
 		Provider: "unsupported-provider",
 		Model:    "some-model",
 		APIKey:   "test-key",
+				MaxTokens: 4096,
 	}
 
 	_, err := NewProvider(cfg)
@@ -379,8 +387,9 @@ func TestNewProvider_InferredProvider(t *testing.T) {
 		t.Run(tt.model, func(t *testing.T) {
 			cfg := FantasyConfig{
 				// Provider not set - should be inferred
-				Model:  tt.model,
-				APIKey: "test-key",
+				Model:     tt.model,
+				APIKey:    "test-key",
+				MaxTokens: 4096,
 			}
 
 			_, err := NewProvider(cfg)
@@ -391,16 +400,23 @@ func TestNewProvider_InferredProvider(t *testing.T) {
 	}
 }
 
-func TestFantasyConfig_MaxTokensDefault(t *testing.T) {
+func TestFantasyConfig_MaxTokensMandatory(t *testing.T) {
 	cfg := FantasyConfig{
 		Provider: "anthropic",
 		Model:    "claude-3-5-sonnet-20241022",
 		APIKey:   "test-key",
+		// MaxTokens not set - should fail validation
 	}
 
-	cfg.ApplyDefaults()
+	err := cfg.Validate()
+	if err == nil {
+		t.Error("expected validation error for missing max_tokens")
+	}
 
-	if cfg.MaxTokens != 4096 {
-		t.Errorf("expected default max tokens 4096, got %d", cfg.MaxTokens)
+	// Now set it and should pass
+	cfg.MaxTokens = 4096
+	err = cfg.Validate()
+	if err != nil {
+		t.Errorf("unexpected validation error: %v", err)
 	}
 }
