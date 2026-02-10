@@ -6,16 +6,18 @@ RUN apk add --no-cache git gcc musl-dev
 WORKDIR /build
 
 # Copy go mod files first for caching
-COPY src/go.mod src/go.sum ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source
-COPY src/ .
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
 
 # Build with version info
 ARG VERSION=dev
 ARG COMMIT=unknown
 RUN CGO_ENABLED=1 go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /agent ./cmd/agent
+RUN CGO_ENABLED=1 go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /replay ./cmd/replay
 
 # Runtime stage
 FROM alpine:3.21
@@ -27,6 +29,7 @@ RUN adduser -D -h /home/agent agent
 USER agent
 
 COPY --from=builder /agent /usr/local/bin/agent
+COPY --from=builder /replay /usr/local/bin/agent-replay
 
 # Default config directory
 ENV AGENT_CONFIG_DIR=/home/agent/.config/grid

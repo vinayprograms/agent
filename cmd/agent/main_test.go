@@ -123,20 +123,16 @@ RUN main USING analyze
 }
 
 func TestCLI_ValidateDefault(t *testing.T) {
-	// Get src directory (parent of cmd/agent)
-	srcDir, _ := os.Getwd()
-	srcDir = filepath.Dir(filepath.Dir(srcDir))
-	if filepath.Base(srcDir) != "src" {
-		// We're running from src directly
-		srcDir, _ = os.Getwd()
-	}
+	// Get repo root directory (parent of cmd/agent)
+	repoDir, _ := os.Getwd()
+	repoDir = filepath.Dir(filepath.Dir(repoDir))
 	
 	tmpDir := t.TempDir()
 	agentBinary := filepath.Join(tmpDir, "agent")
 	
 	// Build into tmpDir
 	cmd := exec.Command("go", "build", "-o", agentBinary, "./cmd/agent")
-	cmd.Dir = srcDir
+	cmd.Dir = repoDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build: %v\n%s", err, output)
 	}

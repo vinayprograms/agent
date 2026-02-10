@@ -8,22 +8,20 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Directories
-SRC_DIR := src
 BIN_DIR := bin
-INSTALL_DIR := $(HOME)/.local/bin
 
 # Build flags
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)"
 CGO_ENABLED := 1
 
 # SQLite headers for sqlite-vec CGO bindings
-# Linux: /usr/include, macOS: typically handled by Homebrew or Xcode
 CGO_CFLAGS ?= $(shell pkg-config --cflags sqlite3 2>/dev/null || echo "-I/usr/include")
 
 # Go commands
 GO := go
 GOTEST := $(GO) test
 GOBUILD := CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" $(GO) build $(LDFLAGS)
+GOINSTALL := CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" $(GO) install $(LDFLAGS)
 
 # Default target
 .DEFAULT_GOAL := build
@@ -36,46 +34,46 @@ GOBUILD := CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" $(GO) build $(L
 build: ## Build agent and agent-replay binaries
 	@echo "Building $(BINARY_NAME) and $(REPLAY_BINARY) $(VERSION)..."
 	@mkdir -p $(BIN_DIR)
-	@cd $(SRC_DIR) && $(GOBUILD) -o ../$(BIN_DIR)/$(BINARY_NAME) ./cmd/agent
-	@cd $(SRC_DIR) && $(GOBUILD) -o ../$(BIN_DIR)/$(REPLAY_BINARY) ./cmd/replay
+	@$(GOBUILD) -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/agent
+	@$(GOBUILD) -o $(BIN_DIR)/$(REPLAY_BINARY) ./cmd/replay
 	@echo "Built: $(BIN_DIR)/$(BINARY_NAME), $(BIN_DIR)/$(REPLAY_BINARY)"
 
 .PHONY: build-agent
 build-agent: ## Build only the agent binary
 	@echo "Building $(BINARY_NAME) $(VERSION)..."
 	@mkdir -p $(BIN_DIR)
-	@cd $(SRC_DIR) && $(GOBUILD) -o ../$(BIN_DIR)/$(BINARY_NAME) ./cmd/agent
+	@$(GOBUILD) -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/agent
 	@echo "Built: $(BIN_DIR)/$(BINARY_NAME)"
 
 .PHONY: build-replay
 build-replay: ## Build only the replay binary
 	@echo "Building $(REPLAY_BINARY) $(VERSION)..."
 	@mkdir -p $(BIN_DIR)
-	@cd $(SRC_DIR) && $(GOBUILD) -o ../$(BIN_DIR)/$(REPLAY_BINARY) ./cmd/replay
+	@$(GOBUILD) -o $(BIN_DIR)/$(REPLAY_BINARY) ./cmd/replay
 	@echo "Built: $(BIN_DIR)/$(REPLAY_BINARY)"
 
 .PHONY: build-static
 build-static: ## Build fully static binaries (for containers)
 	@echo "Building static binaries $(VERSION)..."
 	@mkdir -p $(BIN_DIR)
-	@cd $(SRC_DIR) && CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-static ./cmd/agent
-	@cd $(SRC_DIR) && CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-static ./cmd/replay
+	@CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-static ./cmd/agent
+	@CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-static ./cmd/replay
 	@echo "Built: $(BIN_DIR)/$(BINARY_NAME)-static, $(BIN_DIR)/$(REPLAY_BINARY)-static"
 
 .PHONY: build-all
 build-all: ## Build for all platforms
 	@echo "Building for all platforms..."
 	@mkdir -p $(BIN_DIR)
-	@cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/agent
-	@cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-linux-amd64 ./cmd/replay
-	@cd $(SRC_DIR) && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/agent
-	@cd $(SRC_DIR) && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-linux-arm64 ./cmd/replay
-	@cd $(SRC_DIR) && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/agent
-	@cd $(SRC_DIR) && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-darwin-amd64 ./cmd/replay
-	@cd $(SRC_DIR) && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/agent
-	@cd $(SRC_DIR) && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-darwin-arm64 ./cmd/replay
-	@cd $(SRC_DIR) && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/agent
-	@cd $(SRC_DIR) && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o ../$(BIN_DIR)/$(REPLAY_BINARY)-windows-amd64.exe ./cmd/replay
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/agent
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-linux-amd64 ./cmd/replay
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/agent
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-linux-arm64 ./cmd/replay
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/agent
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-darwin-amd64 ./cmd/replay
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/agent
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-darwin-arm64 ./cmd/replay
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/agent
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-windows-amd64.exe ./cmd/replay
 	@echo "Built binaries in $(BIN_DIR)/"
 
 # =============================================================================
@@ -83,29 +81,16 @@ build-all: ## Build for all platforms
 # =============================================================================
 
 .PHONY: install
-install: build ## Install both binaries to ~/.local/bin
-	@echo "Installing to $(INSTALL_DIR)..."
-	@mkdir -p $(INSTALL_DIR)
-	@cp $(BIN_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
-	@cp $(BIN_DIR)/$(REPLAY_BINARY) $(INSTALL_DIR)/$(REPLAY_BINARY)
-	@chmod 755 $(INSTALL_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(REPLAY_BINARY)
-	@echo "Installed: $(INSTALL_DIR)/$(BINARY_NAME), $(INSTALL_DIR)/$(REPLAY_BINARY)"
-	@echo ""
-	@echo "Make sure $(INSTALL_DIR) is in your PATH:"
-	@echo "  export PATH=\"\$$HOME/.local/bin:\$$PATH\""
-
-.PHONY: install-system
-install-system: build ## Install to /usr/local/bin (requires sudo)
-	@echo "Installing to /usr/local/bin..."
-	@sudo cp $(BIN_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
-	@sudo cp $(BIN_DIR)/$(REPLAY_BINARY) /usr/local/bin/$(REPLAY_BINARY)
-	@sudo chmod 755 /usr/local/bin/$(BINARY_NAME) /usr/local/bin/$(REPLAY_BINARY)
-	@echo "Installed: /usr/local/bin/$(BINARY_NAME), /usr/local/bin/$(REPLAY_BINARY)"
+install: ## Install both binaries to GOPATH/bin using go install
+	@echo "Installing $(BINARY_NAME) and $(REPLAY_BINARY) $(VERSION)..."
+	@$(GOINSTALL) ./cmd/agent
+	@$(GOINSTALL) ./cmd/replay
+	@echo "Installed to $(shell go env GOPATH)/bin"
 
 .PHONY: uninstall
-uninstall: ## Remove from ~/.local/bin
-	@echo "Removing $(INSTALL_DIR)/$(BINARY_NAME) and $(REPLAY_BINARY)..."
-	@rm -f $(INSTALL_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(REPLAY_BINARY)
+uninstall: ## Remove binaries from GOPATH/bin
+	@echo "Removing binaries from GOPATH/bin..."
+	@rm -f $(shell go env GOPATH)/bin/agent $(shell go env GOPATH)/bin/replay
 	@echo "Uninstalled."
 
 # =============================================================================
@@ -115,21 +100,21 @@ uninstall: ## Remove from ~/.local/bin
 .PHONY: test
 test: ## Run all tests
 	@echo "Running tests..."
-	@cd $(SRC_DIR) && $(GOTEST) ./...
+	@$(GOTEST) ./...
 
 .PHONY: test-verbose
 test-verbose: ## Run tests with verbose output
-	@cd $(SRC_DIR) && $(GOTEST) -v ./...
+	@$(GOTEST) -v ./...
 
 .PHONY: test-cover
 test-cover: ## Run tests with coverage
-	@cd $(SRC_DIR) && $(GOTEST) -coverprofile=coverage.out ./...
-	@cd $(SRC_DIR) && $(GO) tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report: $(SRC_DIR)/coverage.html"
+	@$(GOTEST) -coverprofile=coverage.out ./...
+	@$(GO) tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
 
 .PHONY: test-race
 test-race: ## Run tests with race detector
-	@cd $(SRC_DIR) && $(GOTEST) -race ./...
+	@$(GOTEST) -race ./...
 
 # =============================================================================
 # Development Targets
@@ -137,28 +122,28 @@ test-race: ## Run tests with race detector
 
 .PHONY: fmt
 fmt: ## Format code
-	@cd $(SRC_DIR) && $(GO) fmt ./...
+	@$(GO) fmt ./...
 
 .PHONY: vet
 vet: ## Run go vet
-	@cd $(SRC_DIR) && $(GO) vet ./...
+	@$(GO) vet ./...
 
 .PHONY: lint
 lint: ## Run golangci-lint (install: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
-	@cd $(SRC_DIR) && golangci-lint run
+	@golangci-lint run
 
 .PHONY: deps
 deps: ## Download dependencies
-	@cd $(SRC_DIR) && $(GO) mod download
+	@$(GO) mod download
 
 .PHONY: deps-update
 deps-update: ## Update dependencies
-	@cd $(SRC_DIR) && $(GO) get -u ./...
-	@cd $(SRC_DIR) && $(GO) mod tidy
+	@$(GO) get -u ./...
+	@$(GO) mod tidy
 
 .PHONY: tidy
 tidy: ## Tidy go.mod
-	@cd $(SRC_DIR) && $(GO) mod tidy
+	@$(GO) mod tidy
 
 # =============================================================================
 # Docker Targets
@@ -207,10 +192,10 @@ setup-dev: ## Create development config files
 		echo '' >> agent.toml; \
 		echo '[llm]' >> agent.toml; \
 		echo 'model = "claude-sonnet-4-20250514"' >> agent.toml; \
+		echo 'max_tokens = 4096' >> agent.toml; \
 		echo '' >> agent.toml; \
-		echo '[session]' >> agent.toml; \
-		echo 'store = "file"' >> agent.toml; \
-		echo 'path = "./sessions"' >> agent.toml; \
+		echo '[storage]' >> agent.toml; \
+		echo 'path = "./data"' >> agent.toml; \
 		echo "Created: agent.toml"; \
 	else \
 		echo "agent.toml already exists, skipping."; \
@@ -234,12 +219,12 @@ setup-dev: ## Create development config files
 clean: ## Remove build artifacts
 	@echo "Cleaning..."
 	@rm -rf $(BIN_DIR)
-	@rm -f $(SRC_DIR)/coverage.out $(SRC_DIR)/coverage.html
+	@rm -f coverage.out coverage.html
 	@echo "Clean complete."
 
 .PHONY: clean-all
 clean-all: clean ## Remove all generated files including caches
-	@cd $(SRC_DIR) && $(GO) clean -cache -testcache
+	@$(GO) clean -cache -testcache
 	@echo "Caches cleared."
 
 # =============================================================================
@@ -289,7 +274,10 @@ help: ## Show this help
 	@echo ""
 	@echo "Examples:"
 	@echo "  make build          # Build the agent"
-	@echo "  make install        # Install to ~/.local/bin"
+	@echo "  make install        # Install using go install"
 	@echo "  make test           # Run tests"
-	@echo "  make setup          # Run interactive setup wizard"
 	@echo "  make docker-build   # Build Docker image"
+	@echo ""
+	@echo "Remote install:"
+	@echo "  go install github.com/vinayprograms/agent/cmd/agent@latest"
+	@echo "  go install github.com/vinayprograms/agent/cmd/replay@latest"
