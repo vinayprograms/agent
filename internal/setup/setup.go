@@ -496,7 +496,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case " ":
 			// Toggle selection for multi-select steps
-			if m.step == StepFeatures {
+			if m.step == StepFeatures || m.step == StepMCPDenySelect {
 				m.selected[m.cursor] = !m.selected[m.cursor]
 			}
 			return m, nil
@@ -1668,7 +1668,7 @@ func (m Model) viewProfilesConfig() string {
 func (m Model) viewFeatures() string {
 	var s strings.Builder
 	s.WriteString(titleStyle.Render("Features") + "\n")
-	s.WriteString(subtitleStyle.Render("Select features to enable (Space to toggle)") + "\n\n")
+	s.WriteString(subtitleStyle.Render("Toggle features with Space, then Enter to continue") + "\n\n")
 
 	features := []struct {
 		name string
@@ -1695,7 +1695,15 @@ func (m Model) viewFeatures() string {
 		s.WriteString(cursor + check + " " + normalStyle.Render(f.name) + " - " + dimStyle.Render(f.desc) + "\n")
 	}
 
-	s.WriteString("\n" + dimStyle.Render("Space to toggle, Enter to continue"))
+	// Show selected count
+	count := 0
+	for _, v := range m.selected {
+		if v {
+			count++
+		}
+	}
+	s.WriteString("\n" + infoStyle.Render(fmt.Sprintf("%d selected", count)))
+	s.WriteString("\n" + dimStyle.Render("Space = toggle, Enter = continue"))
 	return s.String()
 }
 
