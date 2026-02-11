@@ -12,15 +12,15 @@ import (
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/checkpoint"
-	"github.com/vinayprograms/agent/internal/llm"
-	"github.com/vinayprograms/agent/internal/logging"
-	"github.com/vinayprograms/agent/internal/mcp"
-	"github.com/vinayprograms/agent/internal/policy"
-	"github.com/vinayprograms/agent/internal/security"
+	"github.com/vinayprograms/agentkit/llm"
+	"github.com/vinayprograms/agentkit/logging"
+	"github.com/vinayprograms/agentkit/mcp"
+	"github.com/vinayprograms/agentkit/policy"
+	"github.com/vinayprograms/agentkit/security"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/skills"
 	"github.com/vinayprograms/agent/internal/supervision"
-	"github.com/vinayprograms/agent/internal/tools"
+	"github.com/vinayprograms/agentkit/tools"
 )
 
 // ObservationExtractor extracts observations from step outputs.

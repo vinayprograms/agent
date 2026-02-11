@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vinayprograms/agent/internal/policy"
-	"github.com/vinayprograms/agent/internal/tools"
+	"github.com/vinayprograms/agentkit/policy"
+	"github.com/vinayprograms/agentkit/tools"
 )
 
 // TestSecurity_PathTraversal tests that path traversal attacks are blocked.

@@ -12,9 +12,9 @@ import (
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/executor"
-	"github.com/vinayprograms/agent/internal/llm"
-	"github.com/vinayprograms/agent/internal/policy"
-	"github.com/vinayprograms/agent/internal/tools"
+	"github.com/vinayprograms/agentkit/llm"
+	"github.com/vinayprograms/agentkit/policy"
+	"github.com/vinayprograms/agentkit/tools"
 )
 
 // TestFailure_LLMError tests handling of LLM API errors.

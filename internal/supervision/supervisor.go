@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/vinayprograms/agent/internal/checkpoint"
-	"github.com/vinayprograms/agent/internal/llm"
-	"github.com/vinayprograms/agent/internal/logging"
+	"github.com/vinayprograms/agentkit/llm"
+	"github.com/vinayprograms/agentkit/logging"
 )
 
 // Verdict represents the supervisor's decision.
