@@ -1325,6 +1325,17 @@ func (e *Executor) subAgentExecutePhase(ctx context.Context, role, systemPrompt,
 		}
 	}
 
+	// Add MCP tools
+	if e.mcpManager != nil {
+		for _, t := range e.mcpManager.AllTools() {
+			toolDefs = append(toolDefs, llm.ToolDef{
+				Name:        fmt.Sprintf("mcp_%s_%s", t.Server, t.Tool.Name),
+				Description: fmt.Sprintf("[MCP:%s] %s", t.Server, t.Tool.Description),
+				Parameters:  t.Tool.InputSchema,
+			})
+		}
+	}
+
 	toolsUsedMap := make(map[string]bool)
 
 	// Execute sub-agent loop
