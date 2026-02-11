@@ -287,7 +287,11 @@ type existingConfig struct {
 		Enabled bool `toml:"enabled"`
 	} `toml:"telemetry"`
 	MCP struct {
-		Servers map[string]interface{} `toml:"servers"`
+		Servers map[string]struct {
+			Command     string   `toml:"command"`
+			Args        []string `toml:"args"`
+			DeniedTools []string `toml:"denied_tools"`
+		} `toml:"servers"`
 	} `toml:"mcp"`
 }
 
@@ -379,8 +383,16 @@ func (m *Model) loadExistingConfig() error {
 	// Telemetry
 	m.config.EnableTelemetry = cfg.Telemetry.Enabled
 
-	// MCP
+	// MCP - load existing servers
 	m.config.EnableMCP = len(cfg.MCP.Servers) > 0
+	for name, srv := range cfg.MCP.Servers {
+		m.config.MCPServers[name] = MCPServerSetup{
+			Command:     srv.Command,
+			Args:        srv.Args,
+			DeniedTools: srv.DeniedTools,
+			// DiscoveredTools will be populated when user edits
+		}
+	}
 
 	// Memory enabled if embedding provider is not none
 	m.config.EnableMemory = cfg.Embedding.Provider != "" && cfg.Embedding.Provider != "none"
