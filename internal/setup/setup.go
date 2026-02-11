@@ -1338,8 +1338,8 @@ func (m Model) viewScenario() string {
 			cursor = "> "
 			style = selectedStyle
 		}
-		s.WriteString(cursor + style.Render(sc.name) + "\n")
-		s.WriteString("    " + dimStyle.Render(sc.desc) + "\n")
+		// Compact: name and desc on same line
+		s.WriteString(cursor + style.Render(sc.name) + " - " + dimStyle.Render(sc.desc) + "\n")
 	}
 
 	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select, q to go back"))
