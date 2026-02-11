@@ -1491,6 +1491,26 @@ IMPORTANT: When you do spawn multiple agents, use unique descriptive role names 
 
 `
 
+// ScratchpadGuidancePrefix is injected when scratchpad tools are available.
+const ScratchpadGuidancePrefix = `SCRATCHPAD: Use scratchpad extensively to accelerate future goals.
+
+WRITE proactively when you discover:
+- Facts, values, or config that may be reused (e.g., "api_endpoint", "user_timezone", "repo_branch")
+- Computed results that were expensive to obtain
+- Decisions or preferences expressed by the user
+
+READ before recomputing:
+- Check scratchpad first for information that might already exist
+
+SEARCH when uncertain about exact key names:
+- Use scratchpad_search("partial_term") to find keys/values by substring
+- Keys may have been stored with slight variations (e.g., "available_hours" vs "available_time_hours")
+- Search is cheap — prefer it over failing a read
+
+KEY NAMING: Use descriptive, consistent keys with underscores (e.g., "project_deadline", "api_base_url").
+
+`
+
 // Run executes the workflow.
 func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, error) {
 	startTime := time.Now()
@@ -1961,6 +1981,11 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 	// If spawn_agent tool is available, inject orchestrator guidance
 	if e.registry != nil && e.registry.Has("spawn_agent") {
 		systemMsg = OrchestratorSystemPromptPrefix + systemMsg
+	}
+
+	// If scratchpad tools are available, inject guidance
+	if e.registry != nil && e.registry.Has("scratchpad_write") {
+		systemMsg = ScratchpadGuidancePrefix + systemMsg
 	}
 
 	if len(e.skillRefs) > 0 {
