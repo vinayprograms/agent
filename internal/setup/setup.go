@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -171,6 +172,10 @@ type Model struct {
 	// For multi-select
 	selected map[int]bool
 
+	// Edit mode - true if loading from existing config
+	editMode     bool
+	existingFile string
+
 	// Results
 	filesWritten []string
 }
@@ -182,7 +187,7 @@ func New() Model {
 	ti.CharLimit = 256
 	ti.Width = 50
 
-	return Model{
+	m := Model{
 		step:      StepWelcome,
 		textInput: ti,
 		config: Config{
@@ -200,6 +205,169 @@ func New() Model {
 		},
 		selected: make(map[int]bool),
 	}
+
+	// Try to load existing configuration
+	if err := m.loadExistingConfig(); err == nil {
+		m.editMode = true
+	}
+
+	return m
+}
+
+// existingConfig mirrors the structure in internal/config for loading
+type existingConfig struct {
+	Agent struct {
+		ID        string `toml:"id"`
+		Workspace string `toml:"workspace"`
+	} `toml:"agent"`
+	LLM struct {
+		Provider  string `toml:"provider"`
+		Model     string `toml:"model"`
+		MaxTokens int    `toml:"max_tokens"`
+		BaseURL   string `toml:"base_url"`
+		Thinking  string `toml:"thinking"`
+		APIKeyEnv string `toml:"api_key_env"`
+	} `toml:"llm"`
+	SmallLLM struct {
+		Provider  string `toml:"provider"`
+		Model     string `toml:"model"`
+		MaxTokens int    `toml:"max_tokens"`
+		BaseURL   string `toml:"base_url"`
+	} `toml:"small_llm"`
+	Embedding struct {
+		Provider string `toml:"provider"`
+		Model    string `toml:"model"`
+		BaseURL  string `toml:"base_url"`
+	} `toml:"embedding"`
+	Profiles map[string]struct {
+		Provider string `toml:"provider"`
+		Model    string `toml:"model"`
+		BaseURL  string `toml:"base_url"`
+		Thinking string `toml:"thinking"`
+	} `toml:"profiles"`
+	Storage struct {
+		Path          string `toml:"path"`
+		PersistMemory bool   `toml:"persist_memory"`
+	} `toml:"storage"`
+	Security struct {
+		Mode string `toml:"mode"`
+	} `toml:"security"`
+	Telemetry struct {
+		Enabled bool `toml:"enabled"`
+	} `toml:"telemetry"`
+	MCP struct {
+		Servers map[string]interface{} `toml:"servers"`
+	} `toml:"mcp"`
+}
+
+type existingPolicy struct {
+	DefaultDeny bool   `toml:"default_deny"`
+	Workspace   string `toml:"workspace"`
+	Tools       struct {
+		Bash struct {
+			Enabled bool `toml:"enabled"`
+		} `toml:"bash"`
+		WebSearch struct {
+			Enabled bool `toml:"enabled"`
+		} `toml:"web_search"`
+	} `toml:"tools"`
+}
+
+func (m *Model) loadExistingConfig() error {
+	// Check for agent.toml
+	if _, err := os.Stat("agent.toml"); os.IsNotExist(err) {
+		return err
+	}
+
+	m.existingFile = "agent.toml"
+
+	var cfg existingConfig
+	if _, err := toml.DecodeFile("agent.toml", &cfg); err != nil {
+		return err
+	}
+
+	// Populate config from loaded file
+	if cfg.Agent.Workspace != "" {
+		m.config.Workspace = cfg.Agent.Workspace
+	}
+
+	// Main LLM
+	if cfg.LLM.Provider != "" {
+		m.config.Provider = cfg.LLM.Provider
+	}
+	if cfg.LLM.Model != "" {
+		m.config.Model = cfg.LLM.Model
+	}
+	if cfg.LLM.BaseURL != "" {
+		m.config.BaseURL = cfg.LLM.BaseURL
+	}
+	if cfg.LLM.Thinking != "" {
+		m.config.Thinking = cfg.LLM.Thinking
+	}
+	if cfg.LLM.APIKeyEnv != "" {
+		m.config.CredentialMethod = "env"
+	}
+
+	// Small LLM
+	if cfg.SmallLLM.Provider != "" {
+		m.config.SmallLLMEnabled = true
+		m.config.SmallLLMProvider = cfg.SmallLLM.Provider
+		m.config.SmallLLMModel = cfg.SmallLLM.Model
+		m.config.SmallLLMBaseURL = cfg.SmallLLM.BaseURL
+	}
+
+	// Embedding
+	if cfg.Embedding.Provider != "" {
+		m.config.EmbeddingProvider = cfg.Embedding.Provider
+		m.config.EmbeddingModel = cfg.Embedding.Model
+		m.config.EmbeddingBaseURL = cfg.Embedding.BaseURL
+	}
+
+	// Profiles
+	if len(cfg.Profiles) > 0 {
+		m.config.UseProfiles = true
+		m.config.Profiles = make(map[string]ProfileConfig)
+		for name, p := range cfg.Profiles {
+			m.config.Profiles[name] = ProfileConfig{
+				Provider: p.Provider,
+				Model:    p.Model,
+				BaseURL:  p.BaseURL,
+				Thinking: p.Thinking,
+			}
+		}
+	}
+
+	// Storage
+	m.config.PersistMemory = cfg.Storage.PersistMemory
+
+	// Security
+	if cfg.Security.Mode != "" {
+		m.config.SecurityMode = cfg.Security.Mode
+	}
+
+	// Telemetry
+	m.config.EnableTelemetry = cfg.Telemetry.Enabled
+
+	// MCP
+	m.config.EnableMCP = len(cfg.MCP.Servers) > 0
+
+	// Memory enabled if embedding provider is not none
+	m.config.EnableMemory = cfg.Embedding.Provider != "" && cfg.Embedding.Provider != "none"
+
+	// Try to load policy.toml too
+	if _, err := os.Stat("policy.toml"); err == nil {
+		var policy existingPolicy
+		if _, err := toml.DecodeFile("policy.toml", &policy); err == nil {
+			m.config.DefaultDeny = policy.DefaultDeny
+			m.config.AllowBash = policy.Tools.Bash.Enabled
+			m.config.AllowWeb = policy.Tools.WebSearch.Enabled
+			if policy.Workspace != "" {
+				m.config.Workspace = policy.Workspace
+			}
+		}
+	}
+
+	return nil
 }
 
 func getDefaultConfigDir() string {
@@ -324,25 +492,30 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	switch m.step {
 	case StepWelcome:
 		m.step = StepScenario
-		m.cursor = 0
+		m.cursor = m.findScenarioIndex()
 
 	case StepScenario:
 		scenarios := m.getScenarios()
 		if m.cursor >= 0 && m.cursor < len(scenarios) {
 			m.config.Scenario = scenarios[m.cursor].id
-			m.applyScenarioDefaults()
+			// Only apply defaults if not in edit mode
+			if !m.editMode {
+				m.applyScenarioDefaults()
+			}
 		}
 		m.step = StepProvider
-		m.cursor = 0
+		m.cursor = m.findProviderIndex(m.config.Provider)
 
 	case StepProvider:
 		providers := m.getProviders()
 		if m.cursor >= 0 && m.cursor < len(providers) {
 			m.config.Provider = providers[m.cursor].id
-			m.setDefaultModel()
+			if !m.editMode {
+				m.setDefaultModel()
+			}
 		}
 		m.step = StepModel
-		m.cursor = 0
+		m.cursor = m.findModelIndex()
 
 	case StepModel:
 		models := m.getModels()
@@ -351,25 +524,31 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		m.step = StepAPIKey
 		m.textInput.SetValue("")
-		m.textInput.Placeholder = "sk-..."
+		m.textInput.Placeholder = "sk-... (leave empty to keep existing)"
 		m.textInput.EchoMode = textinput.EchoPassword
 
 	case StepAPIKey:
-		m.config.APIKey = m.textInput.Value()
+		if m.textInput.Value() != "" {
+			m.config.APIKey = m.textInput.Value()
+		}
 		m.textInput.EchoMode = textinput.EchoNormal
 		if m.needsBaseURL() {
 			m.step = StepBaseURL
-			m.textInput.SetValue(m.getDefaultBaseURL())
+			if m.editMode && m.config.BaseURL != "" {
+				m.textInput.SetValue(m.config.BaseURL)
+			} else {
+				m.textInput.SetValue(m.getDefaultBaseURL())
+			}
 			m.textInput.Placeholder = "https://..."
 		} else {
 			m.step = StepThinking
-			m.cursor = 0
+			m.cursor = m.findThinkingIndex()
 		}
 
 	case StepBaseURL:
 		m.config.BaseURL = m.textInput.Value()
 		m.step = StepThinking
-		m.cursor = 0
+		m.cursor = m.findThinkingIndex()
 
 	case StepThinking:
 		thinkingOptions := []string{"auto", "off", "low", "medium", "high"}
@@ -377,23 +556,29 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.config.Thinking = thinkingOptions[m.cursor]
 		}
 		m.step = StepSmallLLM
-		m.cursor = 0
+		if m.config.SmallLLMEnabled {
+			m.cursor = 0 // Yes
+		} else {
+			m.cursor = 1 // No
+		}
 
 	case StepSmallLLM:
 		m.config.SmallLLMEnabled = m.cursor == 0 // Yes
 		if m.config.SmallLLMEnabled {
 			m.step = StepSmallLLMProvider
-			m.cursor = 0
+			m.cursor = m.findProviderIndex(m.config.SmallLLMProvider)
 		} else {
 			m.step = StepEmbedding
-			m.cursor = 0
+			m.cursor = m.findEmbeddingIndex()
 		}
 
 	case StepSmallLLMProvider:
 		providers := m.getProviders()
 		if m.cursor >= 0 && m.cursor < len(providers) {
 			m.config.SmallLLMProvider = providers[m.cursor].id
-			m.setDefaultSmallModel()
+			if !m.editMode || m.config.SmallLLMModel == "" {
+				m.setDefaultSmallModel()
+			}
 		}
 		m.step = StepSmallLLMModel
 		m.textInput.SetValue(m.config.SmallLLMModel)
@@ -402,13 +587,15 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	case StepSmallLLMModel:
 		m.config.SmallLLMModel = m.textInput.Value()
 		m.step = StepEmbedding
-		m.cursor = 0
+		m.cursor = m.findEmbeddingIndex()
 
 	case StepEmbedding:
 		embeddingProviders := m.getEmbeddingProviders()
 		if m.cursor >= 0 && m.cursor < len(embeddingProviders) {
 			m.config.EmbeddingProvider = embeddingProviders[m.cursor].id
-			m.setDefaultEmbeddingModel()
+			if !m.editMode || m.config.EmbeddingModel == "" {
+				m.setDefaultEmbeddingModel()
+			}
 		}
 		if m.config.EmbeddingProvider != "none" {
 			m.step = StepEmbeddingModel
@@ -432,17 +619,25 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.config.Workspace = "."
 		}
 		m.step = StepSecurity
-		m.cursor = 0
+		if m.config.DefaultDeny {
+			m.cursor = 1 // Restrictive
+		} else {
+			m.cursor = 0 // Permissive
+		}
 
 	case StepSecurity:
 		// Security stance: permissive (0) or restrictive (1)
 		m.config.DefaultDeny = m.cursor == 1
-		if m.cursor == 1 {
+		if m.cursor == 1 && !m.editMode {
 			m.config.AllowBash = false
 			m.config.AllowWeb = false
 		}
 		m.step = StepSecurityMode
-		m.cursor = 0
+		if m.config.SecurityMode == "paranoid" {
+			m.cursor = 1
+		} else {
+			m.cursor = 0
+		}
 
 	case StepSecurityMode:
 		modes := []string{"default", "paranoid"}
@@ -450,7 +645,11 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.config.SecurityMode = modes[m.cursor]
 		}
 		m.step = StepProfiles
-		m.cursor = 0
+		if m.config.UseProfiles {
+			m.cursor = 0 // Yes
+		} else {
+			m.cursor = 1 // No
+		}
 
 	case StepProfiles:
 		m.config.UseProfiles = m.cursor == 0 // Yes
@@ -726,6 +925,70 @@ func (m Model) getScenarios() []scenarioOption {
 	}
 }
 
+// Helper functions to find current selection index for edit mode
+
+func (m Model) findScenarioIndex() int {
+	if m.config.Scenario == "" {
+		return 0
+	}
+	scenarios := m.getScenarios()
+	for i, s := range scenarios {
+		if s.id == m.config.Scenario {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) findProviderIndex(provider string) int {
+	if provider == "" {
+		return 0
+	}
+	providers := m.getProviders()
+	for i, p := range providers {
+		if p.id == provider {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) findModelIndex() int {
+	if m.config.Model == "" {
+		return 0
+	}
+	models := m.getModels()
+	for i, model := range models {
+		if model.id == m.config.Model {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) findThinkingIndex() int {
+	options := []string{"auto", "off", "low", "medium", "high"}
+	for i, opt := range options {
+		if opt == m.config.Thinking {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) findEmbeddingIndex() int {
+	if m.config.EmbeddingProvider == "" {
+		return 0 // none
+	}
+	providers := m.getEmbeddingProviders()
+	for i, p := range providers {
+		if p.id == m.config.EmbeddingProvider {
+			return i
+		}
+	}
+	return 0
+}
+
 type providerOption struct {
 	id   string
 	name string
@@ -873,6 +1136,14 @@ func (m Model) View() string {
 }
 
 func (m Model) viewWelcome() string {
+	if m.editMode {
+		return (
+			titleStyle.Render("🤖 Headless Agent Setup") + "\n\n" +
+				infoStyle.Render("Found existing configuration: "+m.existingFile) + "\n\n" +
+				normalStyle.Render("This wizard will help you edit your configuration.\n") +
+				normalStyle.Render("Current values will be pre-filled.\n\n") +
+				dimStyle.Render("Press Enter to continue, q to quit"))
+	}
 	return (
 		titleStyle.Render("🤖 Headless Agent Setup") + "\n\n" +
 			normalStyle.Render("This wizard will help you configure your agent.\n\n") +
