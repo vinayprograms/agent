@@ -2231,8 +2231,27 @@ func (m Model) generatePolicyTOML() string {
 	}
 	sb.WriteString("\n")
 
-	// MCP policy
-	if m.config.EnableMCP && m.config.DefaultDeny {
+	// MCP policy - auto-generate allowed_tools from configured servers
+	if m.config.EnableMCP && len(m.config.MCPServers) > 0 {
+		sb.WriteString("[mcp]\n")
+		if m.config.DefaultDeny {
+			sb.WriteString("default_deny = true\n")
+			// Auto-allow all tools from configured servers (denied_tools in agent.toml handles filtering)
+			sb.WriteString("allowed_tools = [")
+			serverNames := m.getSortedMCPServerNames()
+			for i, name := range serverNames {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(fmt.Sprintf("\"%s:*\"", name))
+			}
+			sb.WriteString("]\n")
+		} else {
+			sb.WriteString("default_deny = false\n")
+		}
+		sb.WriteString("# Note: per-server denied_tools in agent.toml filter tools from LLM\n")
+		sb.WriteString("# This policy.toml [mcp] section is runtime defense-in-depth\n\n")
+	} else if m.config.EnableMCP && m.config.DefaultDeny {
 		sb.WriteString("[mcp]\n")
 		sb.WriteString("default_deny = true\n")
 		sb.WriteString("# allowed_tools = [\"memory:*\", \"filesystem:read_file\"]\n\n")
