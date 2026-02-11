@@ -4,7 +4,10 @@
 
 | Library | Purpose |
 |---------|---------|
-| [Fantasy](https://charm.land/fantasy) | Provider abstraction |
+| [anthropic-sdk-go](https://github.com/anthropics/anthropic-sdk-go) | Official Anthropic SDK |
+| [openai-go](https://github.com/openai/openai-go) | Official OpenAI SDK |
+| [generative-ai-go](https://github.com/google/generative-ai-go) | Official Google Gemini SDK |
+| Native HTTP | OpenAI-compatible APIs (Mistral, Groq, etc.) |
 
 ## Supported Providers
 
@@ -15,6 +18,7 @@
 | Google | gemini-*, gemma-* | GOOGLE_API_KEY |
 | Mistral | mistral-*, mixtral-*, codestral-* | MISTRAL_API_KEY |
 | Groq | (set provider explicitly) | GROQ_API_KEY |
+| Ollama Cloud | (set provider explicitly) | OLLAMA_API_KEY |
 
 ## Automatic Provider Inference
 

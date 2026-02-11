@@ -301,7 +301,7 @@ func runWorkflow(args []string) {
 	}
 	
 	if llmProvider != "" || cfg.LLM.Model != "" {
-		provider, err = llm.NewFantasyProvider(llm.FantasyConfig{
+		provider, err = llm.NewProvider(llm.FantasyConfig{
 			Provider:    llmProvider,
 			Model:       cfg.LLM.Model,
 			APIKey:      globalCreds.GetAPIKey(llmProvider),
@@ -328,7 +328,7 @@ func runWorkflow(args []string) {
 		if smallProvider == "" {
 			smallProvider = llm.InferProviderFromModel(cfg.SmallLLM.Model)
 		}
-		smallLLM, err := llm.NewFantasyProvider(llm.FantasyConfig{
+		smallLLM, err := llm.NewProvider(llm.FantasyConfig{
 			Provider:  smallProvider,
 			Model:     cfg.SmallLLM.Model,
 			APIKey:    globalCreds.GetAPIKey(smallProvider),
@@ -455,7 +455,7 @@ func runWorkflow(args []string) {
 		if triageProviderName == "" {
 			triageProviderName = llm.InferProviderFromModel(triageCfg.Model)
 		}
-		triageProvider, _ = llm.NewFantasyProvider(llm.FantasyConfig{
+		triageProvider, _ = llm.NewProvider(llm.FantasyConfig{
 			Provider:  triageProviderName,
 			Model:     triageCfg.Model,
 			APIKey:    globalCreds.GetAPIKey(triageProviderName),
@@ -467,7 +467,7 @@ func runWorkflow(args []string) {
 		if smallProviderName == "" {
 			smallProviderName = llm.InferProviderFromModel(cfg.SmallLLM.Model)
 		}
-		triageProvider, _ = llm.NewFantasyProvider(llm.FantasyConfig{
+		triageProvider, _ = llm.NewProvider(llm.FantasyConfig{
 			Provider:  smallProviderName,
 			Model:     cfg.SmallLLM.Model,
 			APIKey:    globalCreds.GetAPIKey(smallProviderName),

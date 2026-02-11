@@ -803,7 +803,16 @@ docker run -it --rm \
 
 ## Supported LLM Providers
 
-The agent uses [Fantasy](https://charm.land/fantasy) for provider abstraction.
+The agent uses official SDKs where available:
+
+| Provider | SDK | Notes |
+|----------|-----|-------|
+| Anthropic | [anthropic-sdk-go](https://github.com/anthropics/anthropic-sdk-go) | Official SDK |
+| OpenAI | [openai-go](https://github.com/openai/openai-go) | Official SDK |
+| Google | [generative-ai-go](https://github.com/google/generative-ai-go) | Official Gemini SDK |
+| Mistral | Native HTTP | OpenAI-compatible API |
+| Groq | Native HTTP | OpenAI-compatible API |
+| Ollama Cloud | Native HTTP | Native Ollama API |
 
 | Provider | `provider` value | `api_key_env` | Notes |
 |----------|-----------------|---------------|-------|
