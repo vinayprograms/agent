@@ -44,6 +44,7 @@ const (
 	EmbeddingCohere  = "cohere"
 	EmbeddingVoyage  = "voyage"
 	EmbeddingOllama  = "ollama"
+	EmbeddingLiteLLM = "litellm"
 	EmbeddingNone    = "none"
 )
 
@@ -853,6 +854,8 @@ func (m *Model) setDefaultEmbeddingModel() {
 		m.config.EmbeddingModel = "voyage-3-lite"
 	case EmbeddingOllama:
 		m.config.EmbeddingModel = "nomic-embed-text"
+	case EmbeddingLiteLLM:
+		m.config.EmbeddingModel = "text-embedding-3-small"
 	default:
 		m.config.EmbeddingModel = ""
 	}
@@ -1078,6 +1081,7 @@ func (m Model) getEmbeddingProviders() []embeddingOption {
 		{EmbeddingMistral, "Mistral", "mistral-embed"},
 		{EmbeddingCohere, "Cohere", "embed-english-v3.0"},
 		{EmbeddingOllama, "Ollama", "nomic-embed-text (local, free)"},
+		{EmbeddingLiteLLM, "LiteLLM", "Proxy to any embedding provider"},
 	}
 }
 
@@ -1136,18 +1140,22 @@ func (m Model) View() string {
 }
 
 func (m Model) viewWelcome() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("🤖 Headless Agent Setup"))
+	s.WriteString("\n\n")
 	if m.editMode {
-		return (
-			titleStyle.Render("🤖 Headless Agent Setup") + "\n\n" +
-				infoStyle.Render("Found existing configuration: "+m.existingFile) + "\n\n" +
-				normalStyle.Render("This wizard will help you edit your configuration.\n") +
-				normalStyle.Render("Current values will be pre-filled.\n\n") +
-				dimStyle.Render("Press Enter to continue, q to quit"))
+		s.WriteString(infoStyle.Render("Found existing configuration: " + m.existingFile))
+		s.WriteString("\n\n")
+		s.WriteString(normalStyle.Render("This wizard will help you edit your configuration."))
+		s.WriteString("\n")
+		s.WriteString(normalStyle.Render("Current values will be pre-filled."))
+		s.WriteString("\n\n")
+	} else {
+		s.WriteString(normalStyle.Render("This wizard will help you configure your agent."))
+		s.WriteString("\n\n")
 	}
-	return (
-		titleStyle.Render("🤖 Headless Agent Setup") + "\n\n" +
-			normalStyle.Render("This wizard will help you configure your agent.\n\n") +
-			dimStyle.Render("Press Enter to continue, q to quit"))
+	s.WriteString(dimStyle.Render("Press Enter to continue, q to quit"))
+	return s.String()
 }
 
 func (m Model) viewScenario() string {
