@@ -234,3 +234,17 @@ func cosineSimilarity(a, b []float32) float32 {
 
 	return float32(dotProduct / (math.Sqrt(normA) * math.Sqrt(normB)))
 }
+
+// hasAnyTag checks if the memory has any of the filter tags.
+func hasAnyTag(memTags, filterTags []string) bool {
+	tagSet := make(map[string]bool)
+	for _, t := range memTags {
+		tagSet[t] = true
+	}
+	for _, t := range filterTags {
+		if tagSet[t] {
+			return true
+		}
+	}
+	return false
+}

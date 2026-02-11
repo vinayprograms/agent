@@ -378,6 +378,8 @@ func runWorkflow(args []string) {
 	registry.SetMemoryStore(kvStore)
 
 	// Semantic memory: available if embedding provider is configured
+	// NOTE: Semantic memory using BM25 + semantic graph will be implemented in Phase 2.
+	// For now, we use in-memory store with embeddings for basic functionality.
 	var semanticMemory *memory.ToolsAdapter
 	embedder, err := createEmbeddingProvider(cfg.Embedding, globalCreds)
 	if err != nil {
@@ -388,28 +390,16 @@ func runWorkflow(args []string) {
 	if embedder == nil {
 		// Semantic memory disabled (provider = "none")
 		fmt.Println("🧠 Memory: KV only (semantic disabled)")
-	} else if cfg.Storage.PersistMemory {
-		semanticDBPath := filepath.Join(storagePath, "semantic.db")
-
-		memStore, err := memory.NewSQLiteStore(memory.SQLiteConfig{
-			Path:     semanticDBPath,
-			Embedder: embedder,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error creating semantic memory store: %v\n", err)
-			os.Exit(1)
-		}
-		defer memStore.Close()
-
-		semanticMemory = memory.NewToolsAdapter(memStore)
-		registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
-		fmt.Println("🧠 Memory: persistent (cross-session)")
 	} else {
-		// In-memory semantic store for scratchpad mode
+		// In-memory semantic store (persistence via BM25 coming in Phase 2)
 		memStore := memory.NewInMemoryStore(embedder)
 		semanticMemory = memory.NewToolsAdapter(memStore)
 		registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
-		fmt.Println("🧠 Memory: session-scoped (scratchpad)")
+		if cfg.Storage.PersistMemory {
+			fmt.Println("🧠 Memory: in-memory (BM25 persistence coming soon)")
+		} else {
+			fmt.Println("🧠 Memory: session-scoped (scratchpad)")
+		}
 	}
 
 	// Create telemetry exporter

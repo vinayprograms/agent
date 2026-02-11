@@ -2,8 +2,6 @@ package memory
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -33,29 +31,14 @@ func TestMockEmbedder(t *testing.T) {
 	}
 }
 
-func TestSQLiteStore_RememberRecall(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "memory-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dbPath := filepath.Join(tmpDir, "memory.db")
+func TestInMemoryStore_RememberRecall(t *testing.T) {
 	embedder := NewMockEmbedder(128)
-
-	store, err := NewSQLiteStore(SQLiteConfig{
-		Path:     dbPath,
-		Embedder: embedder,
-	})
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := NewInMemoryStore(embedder)
 
 	ctx := context.Background()
 
 	// Remember something
-	err = store.Remember(ctx, "The user prefers dark mode and vim keybindings", MemoryMetadata{
+	err := store.Remember(ctx, "The user prefers dark mode and vim keybindings", MemoryMetadata{
 		Source:     "explicit",
 		Importance: 0.8,
 		Tags:       []string{"preferences"},
@@ -97,27 +80,12 @@ func TestSQLiteStore_RememberRecall(t *testing.T) {
 	}
 }
 
-func TestSQLiteStore_KeyValue(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "memory-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dbPath := filepath.Join(tmpDir, "memory.db")
+func TestInMemoryStore_KeyValue(t *testing.T) {
 	embedder := NewMockEmbedder(128)
-
-	store, err := NewSQLiteStore(SQLiteConfig{
-		Path:     dbPath,
-		Embedder: embedder,
-	})
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := NewInMemoryStore(embedder)
 
 	// Set and get
-	err = store.Set("user.name", "Alice")
+	err := store.Set("user.name", "Alice")
 	if err != nil {
 		t.Fatalf("set failed: %v", err)
 	}
@@ -152,29 +120,14 @@ func TestSQLiteStore_KeyValue(t *testing.T) {
 	}
 }
 
-func TestSQLiteStore_Forget(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "memory-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dbPath := filepath.Join(tmpDir, "memory.db")
+func TestInMemoryStore_Forget(t *testing.T) {
 	embedder := NewMockEmbedder(128)
-
-	store, err := NewSQLiteStore(SQLiteConfig{
-		Path:     dbPath,
-		Embedder: embedder,
-	})
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := NewInMemoryStore(embedder)
 
 	ctx := context.Background()
 
 	// Remember something
-	err = store.Remember(ctx, "Test memory to forget", MemoryMetadata{
+	err := store.Remember(ctx, "Test memory to forget", MemoryMetadata{
 		Source: "test",
 	})
 	if err != nil {
@@ -210,49 +163,75 @@ func TestSQLiteStore_Forget(t *testing.T) {
 	}
 }
 
-func TestSQLiteStore_Consolidation(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "memory-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dbPath := filepath.Join(tmpDir, "memory.db")
+func TestInMemoryStore_TagFilter(t *testing.T) {
 	embedder := NewMockEmbedder(128)
-
-	store, err := NewSQLiteStore(SQLiteConfig{
-		Path:     dbPath,
-		Embedder: embedder,
-	})
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := NewInMemoryStore(embedder)
 
 	ctx := context.Background()
 
-	// Create a transcript with important content
-	transcript := []Message{
-		{Role: "user", Content: "What database should we use?"},
-		{Role: "assistant", Content: "I recommend PostgreSQL for this use case because it has excellent JSON support and is widely used."},
-		{Role: "user", Content: "OK, let's go with that. Remember that we decided on PostgreSQL."},
-		{Role: "assistant", Content: "Noted. We have decided to use PostgreSQL as our database. This is an important architectural decision that affects our data layer design."},
-	}
-
-	// Consolidate
-	err = store.ConsolidateSession(ctx, "test-session-123", transcript)
+	// Remember with tags
+	err := store.Remember(ctx, "User prefers dark mode", MemoryMetadata{
+		Source: "explicit",
+		Tags:   []string{"preferences", "ui"},
+	})
 	if err != nil {
-		t.Fatalf("consolidation failed: %v", err)
+		t.Fatalf("remember failed: %v", err)
 	}
 
-	// Should be able to recall the decision
-	results, err := store.Recall(ctx, "database decision", RecallOpts{Limit: 5})
+	err = store.Remember(ctx, "Database is PostgreSQL", MemoryMetadata{
+		Source: "decision",
+		Tags:   []string{"architecture", "database"},
+	})
+	if err != nil {
+		t.Fatalf("remember failed: %v", err)
+	}
+
+	// Recall with tag filter
+	results, err := store.Recall(ctx, "user", RecallOpts{
+		Limit: 10,
+		Tags:  []string{"preferences"},
+	})
 	if err != nil {
 		t.Fatalf("recall failed: %v", err)
 	}
 
-	// Should have extracted some insights
-	if len(results) == 0 {
-		t.Error("expected at least 1 consolidated memory")
+	// Should only find the preferences entry
+	for _, r := range results {
+		found := false
+		for _, tag := range r.Tags {
+			if tag == "preferences" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("result should have 'preferences' tag")
+		}
+	}
+}
+
+func TestCosineSimilarity(t *testing.T) {
+	// Test identical vectors
+	a := []float32{1, 0, 0}
+	b := []float32{1, 0, 0}
+	sim := cosineSimilarity(a, b)
+	if sim < 0.999 {
+		t.Errorf("identical vectors should have similarity ~1, got %f", sim)
+	}
+
+	// Test orthogonal vectors
+	a = []float32{1, 0, 0}
+	b = []float32{0, 1, 0}
+	sim = cosineSimilarity(a, b)
+	if sim > 0.001 {
+		t.Errorf("orthogonal vectors should have similarity ~0, got %f", sim)
+	}
+
+	// Test opposite vectors
+	a = []float32{1, 0, 0}
+	b = []float32{-1, 0, 0}
+	sim = cosineSimilarity(a, b)
+	if sim > -0.999 {
+		t.Errorf("opposite vectors should have similarity ~-1, got %f", sim)
 	}
 }
