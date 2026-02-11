@@ -2,15 +2,18 @@
 package setup
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/vinayprograms/agentkit/mcp"
 )
 
 // Deployment scenarios
@@ -89,8 +92,21 @@ type Config struct {
 	EnableMemory    bool
 	PersistMemory   bool
 
+	// MCP Servers
+	MCPServers map[string]MCPServerSetup
+
 	// Credentials
 	CredentialMethod string // "file", "env"
+}
+
+// MCPServerSetup holds MCP server configuration during setup
+type MCPServerSetup struct {
+	Command     string
+	Args        []string
+	Env         map[string]string
+	DeniedTools []string
+	// Discovered tools (not persisted, used during setup)
+	DiscoveredTools []string
 }
 
 // ProfileConfig holds a capability profile configuration
@@ -154,6 +170,12 @@ const (
 	StepProfiles
 	StepProfilesConfig
 	StepFeatures
+	StepMCPAdd
+	StepMCPName
+	StepMCPCommand
+	StepMCPArgs
+	StepMCPProbe
+	StepMCPDenySelect
 	StepCredentialMethod
 	StepConfirm
 	StepWriteFiles
@@ -177,6 +199,13 @@ type Model struct {
 	editMode     bool
 	existingFile string
 
+	// MCP setup state
+	currentMCPName    string   // Name of MCP server being configured
+	currentMCPCommand string   // Command for current MCP
+	currentMCPArgs    string   // Args as space-separated string
+	probedTools       []string // Tools discovered from current MCP
+	probeError        string   // Error from probing, if any
+
 	// Results
 	filesWritten []string
 }
@@ -195,6 +224,7 @@ func New() Model {
 			Workspace:         ".",
 			ConfigDir:         getDefaultConfigDir(),
 			Profiles:          make(map[string]ProfileConfig),
+			MCPServers:        make(map[string]MCPServerSetup),
 			AllowBash:         true,
 			AllowWeb:          true,
 			EnableMemory:      true,
@@ -383,9 +413,28 @@ func (m Model) Init() tea.Cmd {
 	return textinput.Blink
 }
 
+// mcpProbeResult is the message sent after probing an MCP server
+type mcpProbeResult struct {
+	tools []string
+	err   error
+}
+
 // Update handles messages
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case mcpProbeResult:
+		if msg.err != nil {
+			m.probeError = msg.err.Error()
+			m.probedTools = nil
+		} else {
+			m.probedTools = msg.tools
+			m.probeError = ""
+		}
+		m.step = StepMCPDenySelect
+		m.selected = make(map[int]bool)
+		m.cursor = 0
+		return m, nil
+
 	case filesWrittenMsg:
 		m.filesWritten = msg.files
 		m.step = StepComplete
@@ -672,7 +721,85 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 	case StepFeatures:
 		m.applyFeatureSelection()
-		m.step = StepCredentialMethod
+		if m.config.EnableMCP {
+			m.step = StepMCPAdd
+			m.cursor = 0
+		} else {
+			m.step = StepCredentialMethod
+			m.cursor = 0
+		}
+
+	case StepMCPAdd:
+		if m.cursor == 0 { // Add new server
+			m.step = StepMCPName
+			m.textInput.SetValue("")
+			m.textInput.Focus()
+		} else { // Done adding
+			m.step = StepCredentialMethod
+			m.cursor = 0
+		}
+
+	case StepMCPName:
+		m.currentMCPName = strings.TrimSpace(m.textInput.Value())
+		if m.currentMCPName == "" {
+			m.err = fmt.Errorf("server name is required")
+		} else {
+			m.step = StepMCPCommand
+			m.textInput.SetValue("")
+			m.textInput.Focus()
+		}
+
+	case StepMCPCommand:
+		m.currentMCPCommand = strings.TrimSpace(m.textInput.Value())
+		if m.currentMCPCommand == "" {
+			m.err = fmt.Errorf("command is required")
+		} else {
+			m.step = StepMCPArgs
+			m.textInput.SetValue("")
+			m.textInput.Focus()
+		}
+
+	case StepMCPArgs:
+		m.currentMCPArgs = m.textInput.Value()
+		m.step = StepMCPProbe
+		m.probeError = ""
+		m.probedTools = nil
+		return m, m.probeMCPServer()
+
+	case StepMCPProbe:
+		// Handled by tea.Cmd from probeMCPServer
+		// Just wait for result
+
+	case StepMCPDenySelect:
+		// Apply selected denied tools
+		var deniedTools []string
+		for i, tool := range m.probedTools {
+			if m.selected[i] {
+				deniedTools = append(deniedTools, tool)
+			}
+		}
+		
+		// Parse args
+		var args []string
+		if m.currentMCPArgs != "" {
+			args = strings.Fields(m.currentMCPArgs)
+		}
+		
+		// Save server config
+		m.config.MCPServers[m.currentMCPName] = MCPServerSetup{
+			Command:         m.currentMCPCommand,
+			Args:            args,
+			DeniedTools:     deniedTools,
+			DiscoveredTools: m.probedTools,
+		}
+		
+		// Reset state and go back to add more
+		m.currentMCPName = ""
+		m.currentMCPCommand = ""
+		m.currentMCPArgs = ""
+		m.probedTools = nil
+		m.selected = make(map[int]bool)
+		m.step = StepMCPAdd
 		m.cursor = 0
 
 	case StepCredentialMethod:
@@ -1126,6 +1253,18 @@ func (m Model) View() string {
 		s.WriteString(m.viewProfilesConfig())
 	case StepFeatures:
 		s.WriteString(m.viewFeatures())
+	case StepMCPAdd:
+		s.WriteString(m.viewMCPAdd())
+	case StepMCPName:
+		s.WriteString(m.viewMCPName())
+	case StepMCPCommand:
+		s.WriteString(m.viewMCPCommand())
+	case StepMCPArgs:
+		s.WriteString(m.viewMCPArgs())
+	case StepMCPProbe:
+		s.WriteString(m.viewMCPProbe())
+	case StepMCPDenySelect:
+		s.WriteString(m.viewMCPDenySelect())
 	case StepCredentialMethod:
 		s.WriteString(m.viewCredentialMethod())
 	case StepConfirm:
@@ -1488,6 +1627,123 @@ func (m Model) viewFeatures() string {
 	return s.String()
 }
 
+func (m Model) viewMCPAdd() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("MCP Tool Servers") + "\n")
+	s.WriteString(subtitleStyle.Render("Add external tool servers") + "\n\n")
+
+	// Show configured servers
+	if len(m.config.MCPServers) > 0 {
+		s.WriteString(normalStyle.Render("Configured servers:") + "\n")
+		for name, srv := range m.config.MCPServers {
+			toolCount := len(srv.DiscoveredTools)
+			deniedCount := len(srv.DeniedTools)
+			s.WriteString(fmt.Sprintf("  • %s (%s) - %d tools, %d denied\n", 
+				name, srv.Command, toolCount, deniedCount))
+		}
+		s.WriteString("\n")
+	}
+
+	options := []string{"Add new MCP server", "Done - continue to next step"}
+	for i, opt := range options {
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(opt) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
+	return s.String()
+}
+
+func (m Model) viewMCPName() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("MCP Server Name") + "\n")
+	s.WriteString(subtitleStyle.Render("Enter a short name for this server (e.g., 'memory', 'filesystem')") + "\n\n")
+	s.WriteString(m.textInput.View() + "\n")
+	if m.err != nil {
+		s.WriteString("\n" + errorStyle.Render(m.err.Error()) + "\n")
+	}
+	s.WriteString("\n" + dimStyle.Render("Enter to continue, Esc to go back"))
+	return s.String()
+}
+
+func (m Model) viewMCPCommand() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("MCP Server Command") + "\n")
+	s.WriteString(subtitleStyle.Render("Enter the command to start the server") + "\n\n")
+	s.WriteString(infoStyle.Render("Server: "+m.currentMCPName) + "\n\n")
+	s.WriteString("Examples:\n")
+	s.WriteString(dimStyle.Render("  npx, uvx, node, python") + "\n\n")
+	s.WriteString(m.textInput.View() + "\n")
+	if m.err != nil {
+		s.WriteString("\n" + errorStyle.Render(m.err.Error()) + "\n")
+	}
+	s.WriteString("\n" + dimStyle.Render("Enter to continue"))
+	return s.String()
+}
+
+func (m Model) viewMCPArgs() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("MCP Server Arguments") + "\n")
+	s.WriteString(subtitleStyle.Render("Enter command arguments (space-separated)") + "\n\n")
+	s.WriteString(infoStyle.Render(fmt.Sprintf("Server: %s | Command: %s", m.currentMCPName, m.currentMCPCommand)) + "\n\n")
+	s.WriteString("Examples:\n")
+	s.WriteString(dimStyle.Render("  -y @modelcontextprotocol/server-memory") + "\n")
+	s.WriteString(dimStyle.Render("  /path/to/server.js") + "\n\n")
+	s.WriteString(m.textInput.View() + "\n")
+	s.WriteString("\n" + dimStyle.Render("Enter to probe server (leave empty if no args)"))
+	return s.String()
+}
+
+func (m Model) viewMCPProbe() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Probing MCP Server...") + "\n\n")
+	s.WriteString(normalStyle.Render(fmt.Sprintf("Connecting to %s (%s)...", m.currentMCPName, m.currentMCPCommand)) + "\n")
+	s.WriteString(dimStyle.Render("This may take a few seconds."))
+	return s.String()
+}
+
+func (m Model) viewMCPDenySelect() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Select Tools to Deny") + "\n")
+	s.WriteString(subtitleStyle.Render(fmt.Sprintf("Server: %s", m.currentMCPName)) + "\n\n")
+
+	if m.probeError != "" {
+		s.WriteString(errorStyle.Render("Error probing server: "+m.probeError) + "\n\n")
+		s.WriteString(normalStyle.Render("Server will be added without tool filtering.") + "\n")
+		s.WriteString(normalStyle.Render("You can manually edit denied_tools in agent.toml later.") + "\n\n")
+		s.WriteString(dimStyle.Render("Press Enter to continue"))
+		return s.String()
+	}
+
+	if len(m.probedTools) == 0 {
+		s.WriteString(normalStyle.Render("No tools discovered from this server.") + "\n\n")
+		s.WriteString(dimStyle.Render("Press Enter to continue"))
+		return s.String()
+	}
+
+	s.WriteString(fmt.Sprintf("Found %d tools. Select tools to DENY (blocked from LLM):\n\n", len(m.probedTools)))
+
+	for i, tool := range m.probedTools {
+		cursor := "  "
+		if i == m.cursor {
+			cursor = "> "
+		}
+		check := "[ ]"
+		if m.selected[i] {
+			check = "[✗]" // X to indicate deny
+		}
+		s.WriteString(cursor + check + " " + normalStyle.Render(tool) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("Space to toggle deny, Enter to continue (unselected = allowed)"))
+	return s.String()
+}
+
 func (m Model) viewCredentialMethod() string {
 	var s strings.Builder
 	s.WriteString(titleStyle.Render("Credential Storage") + "\n")
@@ -1622,6 +1878,42 @@ type errMsg struct {
 	error error
 }
 
+// probeMCPServer connects to an MCP server and discovers its tools
+func (m Model) probeMCPServer() tea.Cmd {
+	return func() tea.Msg {
+		// Parse args
+		var args []string
+		if m.currentMCPArgs != "" {
+			args = strings.Fields(m.currentMCPArgs)
+		}
+
+		// Create MCP manager and connect
+		manager := mcp.NewManager()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := manager.Connect(ctx, m.currentMCPName, mcp.ServerConfig{
+			Command: m.currentMCPCommand,
+			Args:    args,
+		})
+		if err != nil {
+			return mcpProbeResult{err: fmt.Errorf("failed to connect: %w", err)}
+		}
+		defer manager.Disconnect(m.currentMCPName)
+
+		// Get all tools from this server
+		allTools := manager.AllTools()
+		var toolNames []string
+		for _, t := range allTools {
+			if t.Server == m.currentMCPName {
+				toolNames = append(toolNames, t.Tool.Name)
+			}
+		}
+
+		return mcpProbeResult{tools: toolNames}
+	}
+}
+
 func (m Model) writeFiles() tea.Cmd {
 	return func() tea.Msg {
 		var files []string
@@ -1738,12 +2030,36 @@ func (m Model) generateAgentTOML() string {
 		sb.WriteString("\n")
 	}
 
-	// MCP placeholder
-	if m.config.EnableMCP {
+	// MCP servers
+	if m.config.EnableMCP && len(m.config.MCPServers) > 0 {
+		sb.WriteString("# MCP Tool Servers\n")
+		for name, srv := range m.config.MCPServers {
+			sb.WriteString(fmt.Sprintf("[mcp.servers.%s]\n", name))
+			sb.WriteString(fmt.Sprintf("command = \"%s\"\n", srv.Command))
+			if len(srv.Args) > 0 {
+				// Format args as TOML array
+				quotedArgs := make([]string, len(srv.Args))
+				for i, arg := range srv.Args {
+					quotedArgs[i] = fmt.Sprintf("\"%s\"", arg)
+				}
+				sb.WriteString(fmt.Sprintf("args = [%s]\n", strings.Join(quotedArgs, ", ")))
+			}
+			if len(srv.DeniedTools) > 0 {
+				quotedTools := make([]string, len(srv.DeniedTools))
+				for i, tool := range srv.DeniedTools {
+					quotedTools[i] = fmt.Sprintf("\"%s\"", tool)
+				}
+				sb.WriteString(fmt.Sprintf("denied_tools = [%s]\n", strings.Join(quotedTools, ", ")))
+			}
+			sb.WriteString("\n")
+		}
+	} else if m.config.EnableMCP {
+		// Placeholder if MCP enabled but no servers configured
 		sb.WriteString("# MCP Tool Servers\n")
 		sb.WriteString("# [mcp.servers.memory]\n")
 		sb.WriteString("# command = \"npx\"\n")
-		sb.WriteString("# args = [\"-y\", \"@modelcontextprotocol/server-memory\"]\n\n")
+		sb.WriteString("# args = [\"-y\", \"@modelcontextprotocol/server-memory\"]\n")
+		sb.WriteString("# denied_tools = []  # Tools to block from LLM\n\n")
 	}
 
 	return sb.String()

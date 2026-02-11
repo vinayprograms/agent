@@ -484,6 +484,11 @@ func runWorkflow(args []string) {
 				fmt.Fprintf(os.Stderr, "warning: failed to connect MCP server %q: %v\n", name, err)
 			} else {
 				fmt.Fprintf(os.Stderr, "✓ Connected MCP server: %s\n", name)
+				// Apply denied tools filter
+				if len(serverCfg.DeniedTools) > 0 {
+					mcpManager.SetDeniedTools(name, serverCfg.DeniedTools)
+					fmt.Fprintf(os.Stderr, "  └─ Denied %d tools\n", len(serverCfg.DeniedTools))
+				}
 			}
 		}
 		cancel()

@@ -100,9 +100,10 @@ type MCPConfig struct {
 
 // MCPServerConfig configures an MCP server connection.
 type MCPServerConfig struct {
-	Command string            `toml:"command"`
-	Args    []string          `toml:"args,omitempty"`
-	Env     map[string]string `toml:"env,omitempty"`
+	Command     string            `toml:"command"`
+	Args        []string          `toml:"args,omitempty"`
+	Env         map[string]string `toml:"env,omitempty"`
+	DeniedTools []string          `toml:"denied_tools,omitempty"` // Tools to exclude from LLM
 }
 
 // SkillsConfig contains Agent Skills configuration.
