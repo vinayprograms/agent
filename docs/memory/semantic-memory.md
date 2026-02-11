@@ -3,7 +3,7 @@
 The agent includes a memory system with two components:
 
 - **Photographic memory (KV)** — exact key-value recall, stored as JSON
-- **Semantic memory** — insights and decisions, stored with BM25 full-text search and semantic query expansion
+- **Semantic memory** — findings, insights, and lessons stored with BM25 full-text search and semantic query expansion
 
 ## Architecture
 
@@ -29,7 +29,7 @@ The agent includes a memory system with two components:
 │         │                           │                        │
 │         ▼                           ▼                        │
 │  ┌────────────────────────────────────────────────────┐     │
-│  │   memory_read/write      memory_recall/remember    │     │
+│  │   memory_read/write      memory_recall             │     │
 │  └────────────────────────────────────────────────────┘     │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -108,6 +108,59 @@ When `persist_memory = false`:
 # Memory is held in-memory for the duration of the run
 ```
 
+## Observation Storage (FIL Model)
+
+Observations are stored in three categories:
+
+| Category | Purpose | Example |
+|----------|---------|---------|
+| **Finding** | Factual discoveries | "API rate limit is 100/min" |
+| **Insight** | Conclusions/decisions | "REST is simpler than GraphQL for this case" |
+| **Lesson** | Guidance for future | "Avoid library X - lacks TypeScript support" |
+
+Each observation is stored as a document:
+```go
+type ObservationDocument struct {
+    ID        string    // UUID
+    Content   string    // The observation text (BM25 searches this)
+    Category  string    // "finding" | "insight" | "lesson"
+    Source    string    // "GOAL:step-name" for provenance
+    CreatedAt time.Time
+}
+```
+
+**Category is the importance indicator** — no numeric score needed.
+
+## Memory Query Flow
+
+When querying memory for relevant observations:
+
+```
+"database architecture decision"
+              │
+              ▼
+     Tokenize + Expand
+     (database → [database, postgresql, schema, storage])
+     (architecture → [architecture, design, structure])
+              │
+              ▼
+┌─────────────┴─────────────┬─────────────────┐
+│    Findings               │    Insights      │    Lessons
+│   (category=finding)      │  (category=...)  │  (category=...)
+│        BM25               │      BM25        │     BM25
+│       Top K               │     Top K        │    Top K
+└─────────────┬─────────────┴────────┬────────┴───────┬──────┘
+              │                      │                │
+              ▼                      ▼                ▼
+{
+  "findings": ["API uses REST", "Rate limit 100/min"],
+  "insights": ["REST simpler than GraphQL"],
+  "lessons": ["Always check rate limits"]
+}
+```
+
+The output format matches the input format — FIL in, FIL out.
+
 ## Behavior by Mode
 
 | `persist_memory` | KV Store | Semantic Store | Use Case |
@@ -132,54 +185,23 @@ memory_search("acme")             → finds keys/values containing "acme"
 
 ### Semantic Memory
 
-Meaning-based storage for insights and decisions:
+Meaning-based storage for findings, insights, and lessons:
 
 ```
-memory_remember(
-  content: "We decided to use PostgreSQL for better JSON support",
-  importance: 0.8,  # 0.0-1.0, default 0.5
-  tags: ["architecture", "database"]
-)
-
 memory_recall(
   query: "database decision",
-  limit: 5  # default 5
+  limit: 5  # per category, default 5
 )
 ```
 
-Returns memories ranked by relevance:
+Returns structured FIL:
 ```json
-[
-  {
-    "id": "abc-123",
-    "content": "We decided to use PostgreSQL for better JSON support",
-    "score": 0.87,
-    "tags": ["architecture", "database"]
-  }
-]
+{
+  "findings": ["Database uses PostgreSQL"],
+  "insights": ["Chose PostgreSQL for JSON support"],
+  "lessons": ["Index foreign keys for performance"]
+}
 ```
-
-```
-memory_forget(id: "abc-123")
-```
-
-## How Semantic Search Works
-
-1. Query is tokenized into keywords
-2. Keywords are expanded via semantic graph (fast → speed, quick, performance)
-3. BM25 search runs on expanded query
-4. Results are ranked by BM25 score (normalized to 0-1)
-
-The semantic graph builds relationships by:
-1. Extracting keywords from stored content
-2. Generating embeddings for new terms
-3. Finding similar terms via cosine similarity
-4. Storing relationships as graph edges
-
-This means:
-- "database decision" finds "We chose PostgreSQL" via keyword expansion
-- No embedding API call at query time
-- Graph improves as more content is stored
 
 ## Observation Extraction
 
@@ -194,12 +216,9 @@ max_tokens = 1024
 
 After each GOAL/AGENT step:
 1. Output is sent to small_llm for extraction
-2. LLM extracts findings, insights, lessons, keywords
-3. Stored with importance weighting:
-   - **Findings** (0.7): Facts discovered
-   - **Insights** (0.8): Conclusions drawn
-   - **Lessons** (0.9): Guidance for future work
-4. Keywords enrich the semantic graph
+2. LLM extracts findings, insights, lessons
+3. Each is stored as a separate document with its category
+4. Keywords from content enrich the semantic graph
 
 This enables the agent to learn from its own work automatically.
 
@@ -210,11 +229,10 @@ This enables the agent to learn from its own work automatically.
 | Exact value lookup | `memory_read` | API keys, endpoints, IDs |
 | "What did we decide about X?" | `memory_recall` | Architecture decisions |
 | Store a preference | `memory_write` | `theme = "dark"` |
-| Store an insight | `memory_remember` | "User prefers terse responses" |
 
 **Photographic (KV):** When you need the exact value back, no fuzziness.
 
-**Semantic:** When you want to find relevant context by meaning.
+**Semantic:** When you want to find relevant findings, insights, and lessons by meaning.
 
 ## Enterprise Deployment
 
@@ -300,8 +318,10 @@ The agent will still have:
 
 1. **Check memory early** — Use `memory_recall` at the start of complex tasks
 2. **Store conclusions, not raw data** — Distill insights before storing
-3. **Use meaningful importance scores** — 0.8-1.0 for critical decisions
-4. **Tag for organization** — Makes filtering easier later
-5. **Make content self-contained** — Should make sense without context
-6. **KV for structured, semantic for unstructured** — Don't mix them up
-7. **Configure small_llm** — Enables automatic observation extraction
+3. **Use categories appropriately**:
+   - Finding: facts discovered
+   - Insight: conclusions drawn
+   - Lesson: guidance for future
+4. **Make content self-contained** — Should make sense without context
+5. **KV for structured, semantic for unstructured** — Don't mix them up
+6. **Configure small_llm** — Enables automatic observation extraction

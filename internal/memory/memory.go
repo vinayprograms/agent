@@ -8,14 +8,12 @@ import (
 
 // Memory represents a stored memory with metadata.
 type Memory struct {
-	ID          string    `json:"id"`
-	Content     string    `json:"content"`
-	Source      string    `json:"source"`      // "session:xyz", "explicit", "consolidated"
-	Importance  float32   `json:"importance"`  // 0-1
-	CreatedAt   time.Time `json:"created_at"`
-	AccessedAt  time.Time `json:"accessed_at"`
-	AccessCount int       `json:"access_count"`
-	Tags        []string  `json:"tags,omitempty"`
+	ID        string    `json:"id"`
+	Content   string    `json:"content"`
+	Category  string    `json:"category,omitempty"` // "finding" | "insight" | "lesson"
+	Source    string    `json:"source"`             // "GOAL:step-name", "session:xyz", etc.
+	CreatedAt time.Time `json:"created_at"`
+	Tags      []string  `json:"tags,omitempty"` // Deprecated: use Category
 }
 
 // MemoryResult is a memory with relevance score from search.
@@ -25,10 +23,11 @@ type MemoryResult struct {
 }
 
 // MemoryMetadata holds metadata for creating a memory.
+// Deprecated: Use RememberObservation(content, category, source) instead.
 type MemoryMetadata struct {
-	Source     string   // "session:xyz", "explicit", etc.
-	Importance float32  // 0-1, default 0.5
-	Tags       []string // optional categorization
+	Source     string   // "GOAL:step-name", "session:xyz", etc.
+	Importance float32  // Deprecated: category implies importance
+	Tags       []string // Deprecated: first tag used as category for compatibility
 }
 
 // RecallOpts configures memory recall.
@@ -36,7 +35,7 @@ type RecallOpts struct {
 	Limit     int        // max results, default 10
 	MinScore  float32    // minimum similarity score, default 0.0
 	TimeRange *TimeRange // optional time filter
-	Tags      []string   // optional tag filter
+	Tags      []string   // Deprecated: use RecallByCategory or RecallFIL
 }
 
 // TimeRange represents a time window for filtering.

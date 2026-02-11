@@ -1277,10 +1277,10 @@ func (b *semanticMemoryBridge) Recall(ctx context.Context, query string, limit i
 	out := make([]tools.SemanticMemoryResult, len(results))
 	for i, r := range results {
 		out[i] = tools.SemanticMemoryResult{
-			ID:      r.ID,
-			Content: r.Content,
-			Score:   r.Score,
-			Tags:    r.Tags,
+			ID:       r.ID,
+			Content:  r.Content,
+			Category: r.Category,
+			Score:    r.Score,
 		}
 	}
 	return out, nil

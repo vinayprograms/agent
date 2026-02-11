@@ -15,21 +15,23 @@ func NewToolsAdapter(store Store) *ToolsAdapter {
 }
 
 // ToolsMemoryMeta mirrors tools.SemanticMemoryMeta
+// Deprecated: Use category-based storage instead.
 type ToolsMemoryMeta struct {
 	Source     string
-	Importance float32
-	Tags       []string
+	Importance float32  // Deprecated: category implies importance
+	Tags       []string // Deprecated: first tag used as category
 }
 
 // ToolsMemoryResult mirrors tools.SemanticMemoryResult
 type ToolsMemoryResult struct {
-	ID      string   `json:"id"`
-	Content string   `json:"content"`
-	Score   float32  `json:"score"`
-	Tags    []string `json:"tags,omitempty"`
+	ID       string `json:"id"`
+	Content  string `json:"content"`
+	Category string `json:"category,omitempty"` // "finding" | "insight" | "lesson"
+	Score    float32  `json:"score"`
 }
 
 // Remember stores a memory.
+// For compatibility: first tag is used as category if present.
 func (a *ToolsAdapter) Remember(ctx context.Context, content string, meta ToolsMemoryMeta) error {
 	return a.store.Remember(ctx, content, MemoryMetadata{
 		Source:     meta.Source,
@@ -48,10 +50,10 @@ func (a *ToolsAdapter) Recall(ctx context.Context, query string, limit int) ([]T
 	out := make([]ToolsMemoryResult, len(results))
 	for i, r := range results {
 		out[i] = ToolsMemoryResult{
-			ID:      r.ID,
-			Content: r.Content,
-			Score:   r.Score,
-			Tags:    r.Tags,
+			ID:       r.ID,
+			Content:  r.Content,
+			Category: r.Category,
+			Score:    r.Score,
 		}
 	}
 	return out, nil

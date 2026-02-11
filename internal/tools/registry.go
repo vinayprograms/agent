@@ -80,18 +80,19 @@ type SemanticMemory interface {
 }
 
 // SemanticMemoryMeta holds metadata for semantic memory.
+// Deprecated: Use category-based storage via the observation system.
 type SemanticMemoryMeta struct {
 	Source     string
-	Importance float32
-	Tags       []string
+	Importance float32  // Deprecated: category implies importance
+	Tags       []string // Deprecated: first tag used as category
 }
 
 // SemanticMemoryResult is a memory with relevance score.
 type SemanticMemoryResult struct {
-	ID      string   `json:"id"`
-	Content string   `json:"content"`
-	Score   float32  `json:"score"`
-	Tags    []string `json:"tags,omitempty"`
+	ID       string  `json:"id"`
+	Content  string  `json:"content"`
+	Category string  `json:"category,omitempty"` // "finding" | "insight" | "lesson"
+	Score    float32 `json:"score"`
 }
 
 // NewRegistry creates a new registry with built-in tools.

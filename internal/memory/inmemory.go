@@ -15,11 +15,11 @@ import (
 // InMemoryStore is an in-memory implementation of Store for session-scoped memory.
 // All data is lost when the process exits.
 type InMemoryStore struct {
-	mu        sync.RWMutex
-	memories  map[string]*Memory
-	vectors   map[string][]float32
-	kv        map[string]string
-	embedder  EmbeddingProvider
+	mu       sync.RWMutex
+	memories map[string]*Memory
+	vectors  map[string][]float32
+	kv       map[string]string
+	embedder EmbeddingProvider
 }
 
 // NewInMemoryStore creates a new in-memory store.
@@ -33,6 +33,7 @@ func NewInMemoryStore(embedder EmbeddingProvider) *InMemoryStore {
 }
 
 // Remember stores content with its embedding.
+// For compatibility: first tag is used as category if present.
 func (s *InMemoryStore) Remember(ctx context.Context, content string, meta MemoryMetadata) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -46,20 +47,22 @@ func (s *InMemoryStore) Remember(ctx context.Context, content string, meta Memor
 	id := uuid.New().String()
 	now := time.Now()
 
-	importance := meta.Importance
-	if importance == 0 {
-		importance = 0.5
+	// Use first tag as category if present
+	category := "insight" // default
+	if len(meta.Tags) > 0 {
+		switch meta.Tags[0] {
+		case "finding", "insight", "lesson":
+			category = meta.Tags[0]
+		}
 	}
 
 	mem := &Memory{
-		ID:          id,
-		Content:     content,
-		Source:      meta.Source,
-		Importance:  importance,
-		CreatedAt:   now,
-		AccessedAt:  now,
-		AccessCount: 0,
-		Tags:        meta.Tags,
+		ID:        id,
+		Content:   content,
+		Category:  category,
+		Source:    meta.Source,
+		CreatedAt: now,
+		Tags:      meta.Tags, // Keep for backward compatibility
 	}
 
 	s.memories[id] = mem
@@ -97,7 +100,7 @@ func (s *InMemoryStore) Recall(ctx context.Context, query string, opts RecallOpt
 			continue
 		}
 
-		// Apply tag filter
+		// Apply tag filter (for backward compatibility)
 		if len(opts.Tags) > 0 && !hasAnyTag(mem.Tags, opts.Tags) {
 			continue
 		}
@@ -128,18 +131,6 @@ func (s *InMemoryStore) Recall(ctx context.Context, query string, opts RecallOpt
 	if len(results) > limit {
 		results = results[:limit]
 	}
-
-	// Update access times
-	s.mu.RUnlock()
-	s.mu.Lock()
-	for _, r := range results {
-		if mem, ok := s.memories[r.ID]; ok {
-			mem.AccessedAt = time.Now()
-			mem.AccessCount++
-		}
-	}
-	s.mu.Unlock()
-	s.mu.RLock()
 
 	return results, nil
 }
