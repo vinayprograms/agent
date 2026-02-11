@@ -22,25 +22,16 @@ The setup wizard guides you through configuration for any deployment scenario �
 
 #### 1. Build
 
-**Prerequisites** (for semantic memory with sqlite-vec):
-```bash
-# Debian/Ubuntu
-sudo apt-get install libsqlite3-dev
-
-# macOS
-brew install sqlite3
-
-# Or build without semantic memory (CGO_ENABLED=0)
-```
-
 ```bash
 # Using Make (recommended)
 make build          # Build to ./bin/agent
 make install        # Install to ~/.local/bin/agent
 
 # Or manually
-cd src
-CGO_CFLAGS="-I/usr/include" go build -o agent ./cmd/agent
+go build -o agent ./cmd/agent
+
+# CGO-free build (recommended for Docker, cross-compile)
+CGO_ENABLED=0 go build -o agent ./cmd/agent
 ```
 
 #### 2. Create a Config File
@@ -333,12 +324,22 @@ The classifier analyzes each request before sending:
 The agent supports persistent memory across sessions with two components:
 
 - **Photographic memory (KV)** — exact key-value recall, always available
-- **Semantic memory** — insights and decisions with vector embeddings for meaning-based search
+- **Semantic memory** — insights and decisions with BM25 full-text search and semantic query expansion
+
+### Architecture
+
+The memory system uses **pure Go** with no CGO dependencies:
+
+- **BM25 (Bleve)** — O(log n) inverted index for full-text search
+- **Semantic Graph** — Stores term→synonyms relationships with embeddings
+- **Query Expansion** — "fast" → searches for "fast OR speed OR quick"
+
+Embeddings are only generated at index time (for new unique terms), never at query time. This means provider outages don't block search.
 
 ### Configuration
 
 ```toml
-# Embedding providers for semantic memory.
+# Embedding providers for semantic graph (query expansion).
 #
 # Supported:
 #   - openai:  text-embedding-3-small, text-embedding-3-large
@@ -346,8 +347,8 @@ The agent supports persistent memory across sessions with two components:
 #   - mistral: mistral-embed
 #   - cohere:  embed-english-v3.0, embed-multilingual-v3.0
 #   - voyage:  voyage-2, voyage-large-2, voyage-code-2
-#   - ollama:  nomic-embed-text, mxbai-embed-large (local)
-#   - none:    Disables semantic memory (KV still works)
+#   - ollama-cloud: nomic-embed-text, mxbai-embed-large
+#   - none:    Disables semantic graph (BM25 only, no expansion)
 #
 # NOT supported (no embedding endpoints):
 #   - anthropic (Claude) - use voyage instead
@@ -368,10 +369,11 @@ persist_memory = true            # true = memory survives across runs
 
 ```
 {storage.path}/
-├── sessions/       # Session state (always persisted)
-├── kv.json         # Photographic memory (if persist_memory=true)
-├── semantic.db     # Semantic memory (if persist_memory=true)
-└── logs/           # Audit logs
+├── sessions/               # Session state (always persisted)
+├── kv.json                 # Photographic memory (if persist_memory=true)
+├── observations.bleve/     # BM25 index (if persist_memory=true)
+├── semantic_graph.json     # Term relationships (if persist_memory=true)
+└── logs/                   # Audit logs
 ```
 
 ### Memory Tools
@@ -387,7 +389,7 @@ persist_memory = true            # true = memory survives across runs
 **Semantic — requires embedding provider:**
 | Tool | Purpose |
 |------|---------|
-| `memory_remember` | Store content with embeddings for semantic search |
+| `memory_remember` | Store content with keywords for semantic search |
 | `memory_recall` | Find relevant memories by meaning |
 | `memory_forget` | Delete a memory by ID |
 
@@ -402,19 +404,34 @@ memory_remember(
 
 # Later, recall it semantically
 memory_recall(query: "database decision")
-# Returns the PostgreSQL insight even without exact keyword match
+# Returns the PostgreSQL insight via keyword expansion
 ```
 
-### Disabling Semantic Memory
+### Observation Extraction
 
-For resource-constrained environments, disable semantic memory:
+When `small_llm` is configured, the agent automatically extracts observations from step outputs:
+
+```toml
+[small_llm]
+provider = "openai"
+model = "gpt-4o-mini"
+max_tokens = 1024
+```
+
+After each GOAL/AGENT step, the agent extracts findings, insights, and lessons — enabling automatic learning.
+
+### Disabling Semantic Graph
+
+For resource-constrained environments, disable the semantic graph:
 
 ```toml
 [embedding]
 provider = "none"
 ```
 
-The agent will still have KV (photographic) memory but `memory_recall` semantic search will be unavailable.
+The agent will still have:
+- Photographic memory (KV store)
+- BM25 full-text search (no query expansion)
 
 See [docs/memory/semantic-memory.md](docs/memory/semantic-memory.md) for details.
 
