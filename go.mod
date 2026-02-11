@@ -10,7 +10,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/joho/godotenv v1.5.1
 	github.com/muesli/reflow v0.3.0
-	github.com/vinayprograms/agentkit v0.0.0-20260211195249-9a97022c516c
+	github.com/vinayprograms/agentkit v0.0.0-20260211205531-ae1251c4fe3d
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -98,5 +98,3 @@ require (
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-replace github.com/vinayprograms/agentkit => ../agentkit
