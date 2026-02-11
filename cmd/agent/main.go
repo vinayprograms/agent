@@ -17,6 +17,7 @@ import (
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agent/internal/executor"
 	"github.com/vinayprograms/agentkit/llm"
+	"github.com/vinayprograms/agentkit/mcp"
 	"github.com/vinayprograms/agentkit/memory"
 	"github.com/vinayprograms/agent/internal/packaging"
 	"github.com/vinayprograms/agentkit/policy"
@@ -454,6 +455,28 @@ func runWorkflow(args []string) {
 
 	// Create executor
 	exec := executor.NewExecutor(wf, provider, registry, pol)
+
+	// Initialize MCP servers if configured
+	var mcpManager *mcp.Manager
+	if len(cfg.MCP.Servers) > 0 {
+		mcpManager = mcp.NewManager()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		for name, serverCfg := range cfg.MCP.Servers {
+			err := mcpManager.Connect(ctx, name, mcp.ServerConfig{
+				Command: serverCfg.Command,
+				Args:    serverCfg.Args,
+				Env:     serverCfg.Env,
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to connect MCP server %q: %v\n", name, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "✓ Connected MCP server: %s\n", name)
+			}
+		}
+		cancel()
+		exec.SetMCPManager(mcpManager)
+		defer mcpManager.Close()
+	}
 
 	// Set up security verifier if configured or if workflow has security mode
 	securityMode := security.ModeDefault
