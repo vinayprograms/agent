@@ -32,3 +32,4 @@ sessions/
 
 # Signing keys
 *.pem
+agent
