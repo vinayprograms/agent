@@ -28,26 +28,23 @@ func TestBleveStore_RememberRecall(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Remember something
-	err = store.Remember(ctx, "The user prefers dark mode and vim keybindings", MemoryMetadata{
-		Source:     "explicit",
-		Importance: 0.8,
-		Tags:       []string{"preferences"},
-	})
+	// Remember observations with categories
+	err = store.RememberObservation(ctx, "The user prefers dark mode and vim keybindings", "finding", "explicit")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
 
-	// Remember another thing
-	err = store.Remember(ctx, "We decided to use PostgreSQL for the database", MemoryMetadata{
-		Source:     "session:123",
-		Importance: 0.7,
-	})
+	err = store.RememberObservation(ctx, "We decided to use PostgreSQL for the database", "insight", "session:123")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
 
-	// Recall - should find both
+	err = store.RememberObservation(ctx, "Avoid using deprecated APIs", "lesson", "session:123")
+	if err != nil {
+		t.Fatalf("remember failed: %v", err)
+	}
+
+	// Recall - should find results
 	results, err := store.Recall(ctx, "user preferences", RecallOpts{Limit: 10})
 	if err != nil {
 		t.Fatalf("recall failed: %v", err)
@@ -68,6 +65,99 @@ func TestBleveStore_RememberRecall(t *testing.T) {
 		if r.Score < 0 || r.Score > 1 {
 			t.Errorf("score should be 0-1, got %f", r.Score)
 		}
+	}
+}
+
+func TestBleveStore_RecallFIL(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "bleve-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	embedder := NewMockEmbedder(128)
+
+	store, err := NewBleveStore(BleveStoreConfig{
+		BasePath: tmpDir,
+		Embedder: embedder,
+		Provider: "mock",
+		Model:    "mock-model",
+	})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Store observations in each category
+	store.RememberObservation(ctx, "API rate limit is 100 per minute", "finding", "GOAL:research")
+	store.RememberObservation(ctx, "Authentication uses OAuth2", "finding", "GOAL:research")
+	store.RememberObservation(ctx, "REST is better than GraphQL for this case", "insight", "GOAL:design")
+	store.RememberObservation(ctx, "Avoid library X - no TypeScript support", "lesson", "GOAL:coding")
+	store.RememberObservation(ctx, "Always validate API responses", "lesson", "GOAL:coding")
+
+	// Recall as FIL
+	fil, err := store.RecallFIL(ctx, "API", 5)
+	if err != nil {
+		t.Fatalf("recall FIL failed: %v", err)
+	}
+
+	if fil == nil {
+		t.Fatal("expected FIL result")
+	}
+
+	// Should have findings about API
+	if len(fil.Findings) == 0 {
+		t.Error("expected at least 1 finding")
+	}
+
+	// Check structure is correct
+	t.Logf("Findings: %v", fil.Findings)
+	t.Logf("Insights: %v", fil.Insights)
+	t.Logf("Lessons: %v", fil.Lessons)
+}
+
+func TestBleveStore_RecallByCategory(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "bleve-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	store, err := NewBleveStore(BleveStoreConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Store mixed observations
+	store.RememberObservation(ctx, "Database uses PostgreSQL", "finding", "test")
+	store.RememberObservation(ctx, "Database should be indexed", "lesson", "test")
+	store.RememberObservation(ctx, "Database performance is good", "insight", "test")
+
+	// Recall only findings
+	findings, err := store.RecallByCategory(ctx, "database", "finding", 5)
+	if err != nil {
+		t.Fatalf("recall by category failed: %v", err)
+	}
+
+	if len(findings) != 1 {
+		t.Errorf("expected 1 finding, got %d", len(findings))
+	}
+
+	// Recall only lessons
+	lessons, err := store.RecallByCategory(ctx, "database", "lesson", 5)
+	if err != nil {
+		t.Fatalf("recall by category failed: %v", err)
+	}
+
+	if len(lessons) != 1 {
+		t.Errorf("expected 1 lesson, got %d", len(lessons))
 	}
 }
 
@@ -143,9 +233,7 @@ func TestBleveStore_Forget(t *testing.T) {
 	ctx := context.Background()
 
 	// Remember something
-	err = store.Remember(ctx, "Test memory to forget about later", MemoryMetadata{
-		Source: "test",
-	})
+	err = store.RememberObservation(ctx, "Test memory to forget about later", "finding", "test")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
@@ -200,9 +288,7 @@ func TestBleveStore_Persistence(t *testing.T) {
 		t.Fatalf("failed to create store: %v", err)
 	}
 
-	err = store1.Remember(ctx, "This should persist across restarts", MemoryMetadata{
-		Source: "test",
-	})
+	err = store1.RememberObservation(ctx, "This should persist across restarts", "insight", "test")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
@@ -307,4 +393,60 @@ func TestExtractKeywords(t *testing.T) {
 				tc.input, tc.expected, len(keywords), keywords)
 		}
 	}
+}
+
+func TestObservationStore_StoreFIL(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "bleve-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	store, err := NewBleveStore(BleveStoreConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	obsStore := NewBleveObservationStore(store)
+
+	// Store an observation
+	obs := &Observation{
+		Findings: []string{"API uses REST", "Rate limit is 100/min"},
+		Insights: []string{"REST is simpler than GraphQL"},
+		Lessons:  []string{"Always check rate limits"},
+		StepName: "research",
+		StepType: "GOAL",
+	}
+
+	err = obsStore.StoreObservation(ctx, obs)
+	if err != nil {
+		t.Fatalf("store observation failed: %v", err)
+	}
+
+	// Query back as FIL
+	results, err := obsStore.QueryRelevantObservations(ctx, "API", 5)
+	if err != nil {
+		t.Fatalf("query observations failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("expected results")
+	}
+
+	// Should be an Observation
+	resultObs, ok := results[0].(*Observation)
+	if !ok {
+		t.Fatal("expected Observation type")
+	}
+
+	if len(resultObs.Findings) == 0 {
+		t.Error("expected findings")
+	}
+
+	t.Logf("Retrieved FIL: F=%d I=%d L=%d",
+		len(resultObs.Findings), len(resultObs.Insights), len(resultObs.Lessons))
 }

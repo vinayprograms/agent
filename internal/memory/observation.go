@@ -21,9 +21,6 @@ type Observation struct {
 	// Lessons are learnings for future (e.g., "Avoid library X - it lacks TypeScript support")
 	Lessons []string `json:"lessons,omitempty"`
 
-	// Keywords are extracted terms for the semantic graph
-	Keywords []string `json:"keywords,omitempty"`
-
 	// StepName identifies the source step
 	StepName string `json:"step_name,omitempty"`
 
@@ -49,7 +46,6 @@ const extractionPrompt = `You are an observation extractor. Given the output of 
 1. **Findings**: Factual discoveries (facts, data, configurations found)
 2. **Insights**: Conclusions, inferences, or decisions made
 3. **Lessons**: Learnings that should guide future work (what to do/avoid)
-4. **Keywords**: Important technical terms, names, concepts (nouns/verbs only)
 
 Return a JSON object with these arrays. Be concise - each item should be a single sentence.
 Only include meaningful observations. If a category has nothing, return an empty array.
@@ -58,8 +54,7 @@ Example output:
 {
   "findings": ["The API rate limit is 100 requests per minute", "Authentication uses OAuth2"],
   "insights": ["REST is more suitable than GraphQL for this simple use case"],
-  "lessons": ["Avoid using library X - it lacks TypeScript support"],
-  "keywords": ["REST", "GraphQL", "OAuth2", "rate limit", "API"]
+  "lessons": ["Avoid using library X - it lacks TypeScript support"]
 }`
 
 // Extract extracts observations from step output.
@@ -132,16 +127,7 @@ func (e *ObservationExtractor) Extract(ctx context.Context, stepName, stepType, 
 	return &obs, nil
 }
 
-// ObservationStore stores and retrieves observations.
-type ObservationStore interface {
-	// StoreObservation stores an observation in semantic memory.
-	StoreObservation(ctx context.Context, obs *Observation) error
-
-	// QueryRelevantObservations retrieves observations relevant to a query.
-	QueryRelevantObservations(ctx context.Context, query string, limit int) ([]*Observation, error)
-}
-
-// BleveObservationStore implements ObservationStore using BleveStore.
+// BleveObservationStore implements observation storage using BleveStore.
 type BleveObservationStore struct {
 	store *BleveStore
 }
@@ -152,85 +138,50 @@ func NewBleveObservationStore(store *BleveStore) *BleveObservationStore {
 }
 
 // StoreObservation stores an observation in the Bleve store.
-// Accepts interface{} to match executor.ObservationStore interface.
+// Each finding/insight/lesson is stored as a separate document with its category.
 func (s *BleveObservationStore) StoreObservation(ctx context.Context, obsRaw interface{}) error {
 	obs, ok := obsRaw.(*Observation)
 	if obs == nil || !ok {
 		return nil
 	}
 
+	source := fmt.Sprintf("%s:%s", obs.StepType, obs.StepName)
+
 	// Store findings
 	for _, finding := range obs.Findings {
-		if err := s.store.Remember(ctx, finding, MemoryMetadata{
-			Source:     fmt.Sprintf("%s:%s", obs.StepType, obs.StepName),
-			Importance: 0.7,
-			Tags:       append([]string{"finding"}, obs.Keywords...),
-		}); err != nil {
-			// Continue on error
-		}
+		s.store.RememberObservation(ctx, finding, "finding", source)
 	}
 
-	// Store insights (higher importance)
+	// Store insights
 	for _, insight := range obs.Insights {
-		if err := s.store.Remember(ctx, insight, MemoryMetadata{
-			Source:     fmt.Sprintf("%s:%s", obs.StepType, obs.StepName),
-			Importance: 0.8,
-			Tags:       append([]string{"insight"}, obs.Keywords...),
-		}); err != nil {
-			// Continue on error
-		}
+		s.store.RememberObservation(ctx, insight, "insight", source)
 	}
 
-	// Store lessons (highest importance)
+	// Store lessons
 	for _, lesson := range obs.Lessons {
-		if err := s.store.Remember(ctx, lesson, MemoryMetadata{
-			Source:     fmt.Sprintf("%s:%s", obs.StepType, obs.StepName),
-			Importance: 0.9,
-			Tags:       append([]string{"lesson"}, obs.Keywords...),
-		}); err != nil {
-			// Continue on error
-		}
-	}
-
-	// Add keywords to semantic graph
-	if s.store.graph != nil && len(obs.Keywords) > 0 {
-		s.store.graph.AddTerms(ctx, obs.Keywords)
+		s.store.RememberObservation(ctx, lesson, "lesson", source)
 	}
 
 	return nil
 }
 
-// QueryRelevantObservations retrieves observations relevant to a query.
+// QueryRelevantObservations retrieves observations relevant to a query as FIL.
 // Returns []interface{} to match executor.ObservationStore interface.
 func (s *BleveObservationStore) QueryRelevantObservations(ctx context.Context, query string, limit int) ([]interface{}, error) {
-	results, err := s.store.Recall(ctx, query, RecallOpts{Limit: limit})
+	fil, err := s.store.RecallFIL(ctx, query, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	// Group results by source
-	obs := &Observation{
-		Findings: []string{},
-		Insights: []string{},
-		Lessons:  []string{},
-	}
-
-	for _, r := range results {
-		// Categorize by tag
-		for _, tag := range r.Tags {
-			switch tag {
-			case "finding":
-				obs.Findings = append(obs.Findings, r.Content)
-			case "insight":
-				obs.Insights = append(obs.Insights, r.Content)
-			case "lesson":
-				obs.Lessons = append(obs.Lessons, r.Content)
-			}
-		}
-	}
-
-	if len(obs.Findings)+len(obs.Insights)+len(obs.Lessons) == 0 {
+	if fil == nil || (len(fil.Findings)+len(fil.Insights)+len(fil.Lessons) == 0) {
 		return nil, nil
+	}
+
+	// Convert to Observation for interface compatibility
+	obs := &Observation{
+		Findings: fil.Findings,
+		Insights: fil.Insights,
+		Lessons:  fil.Lessons,
 	}
 
 	return []interface{}{obs}, nil

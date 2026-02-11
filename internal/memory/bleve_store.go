@@ -54,15 +54,13 @@ type BleveStoreConfig struct {
 }
 
 // ObservationDocument represents a stored observation in Bleve.
+// Simplified: Category determines the FIL bucket, no Tags or Importance needed.
 type ObservationDocument struct {
-	ID         string    `json:"id"`
-	Content    string    `json:"content"`
-	Source     string    `json:"source"`
-	Importance float32   `json:"importance"`
-	Tags       []string  `json:"tags"`
-	Keywords   []string  `json:"keywords"`
-	CreatedAt  time.Time `json:"created_at"`
-	AccessedAt time.Time `json:"accessed_at"`
+	ID        string    `json:"id"`
+	Content   string    `json:"content"`
+	Category  string    `json:"category"` // "finding" | "insight" | "lesson"
+	Source    string    `json:"source"`   // "GOAL:step-name" for provenance
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // NewBleveStore creates a new Bleve-based memory store.
@@ -131,26 +129,20 @@ func buildIndexMapping() mapping.IndexMapping {
 	// Create a document mapping for observations
 	obsMapping := bleve.NewDocumentMapping()
 
-	// Text field mapping (analyzed)
+	// Text field mapping (analyzed for full-text search)
 	textFieldMapping := bleve.NewTextFieldMapping()
 	textFieldMapping.Analyzer = standard.Name
 
-	// Keyword field mapping (not analyzed)
+	// Keyword field mapping (not analyzed, exact match)
 	keywordFieldMapping := bleve.NewKeywordFieldMapping()
-
-	// Numeric field mapping
-	numericFieldMapping := bleve.NewNumericFieldMapping()
 
 	// Date field mapping
 	dateFieldMapping := bleve.NewDateTimeFieldMapping()
 
 	obsMapping.AddFieldMappingsAt("content", textFieldMapping)
+	obsMapping.AddFieldMappingsAt("category", keywordFieldMapping)
 	obsMapping.AddFieldMappingsAt("source", keywordFieldMapping)
-	obsMapping.AddFieldMappingsAt("importance", numericFieldMapping)
-	obsMapping.AddFieldMappingsAt("tags", keywordFieldMapping)
-	obsMapping.AddFieldMappingsAt("keywords", textFieldMapping)
 	obsMapping.AddFieldMappingsAt("created_at", dateFieldMapping)
-	obsMapping.AddFieldMappingsAt("accessed_at", dateFieldMapping)
 
 	indexMapping := bleve.NewIndexMapping()
 	indexMapping.DefaultMapping = obsMapping
@@ -159,31 +151,20 @@ func buildIndexMapping() mapping.IndexMapping {
 	return indexMapping
 }
 
-// Remember stores a memory with its keywords in the semantic graph.
-func (s *BleveStore) Remember(ctx context.Context, content string, meta MemoryMetadata) error {
+// RememberObservation stores an observation with its category.
+func (s *BleveStore) RememberObservation(ctx context.Context, content, category, source string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	id := uuid.New().String()
 	now := time.Now()
 
-	importance := meta.Importance
-	if importance == 0 {
-		importance = 0.5
-	}
-
-	// Extract keywords from content (simple tokenization for now)
-	keywords := extractKeywords(content)
-
 	doc := ObservationDocument{
-		ID:         id,
-		Content:    content,
-		Source:     meta.Source,
-		Importance: importance,
-		Tags:       meta.Tags,
-		Keywords:   keywords,
-		CreatedAt:  now,
-		AccessedAt: now,
+		ID:        id,
+		Content:   content,
+		Category:  category,
+		Source:    source,
+		CreatedAt: now,
 	}
 
 	// Index in Bleve
@@ -191,7 +172,8 @@ func (s *BleveStore) Remember(ctx context.Context, content string, meta MemoryMe
 		return fmt.Errorf("failed to index document: %w", err)
 	}
 
-	// Add keywords to semantic graph
+	// Extract keywords and add to semantic graph
+	keywords := extractKeywords(content)
 	if s.graph != nil && len(keywords) > 0 {
 		if err := s.graph.AddTerms(ctx, keywords); err != nil {
 			// Log but don't fail - semantic graph is an enhancement
@@ -205,7 +187,129 @@ func (s *BleveStore) Remember(ctx context.Context, content string, meta MemoryMe
 	return nil
 }
 
-// Recall performs semantic search for relevant memories.
+// Remember stores a memory (legacy interface for compatibility).
+func (s *BleveStore) Remember(ctx context.Context, content string, meta MemoryMetadata) error {
+	// Default to "insight" category for legacy calls
+	category := "insight"
+	if len(meta.Tags) > 0 {
+		// Check if first tag is a category
+		switch meta.Tags[0] {
+		case "finding", "insight", "lesson":
+			category = meta.Tags[0]
+		}
+	}
+	return s.RememberObservation(ctx, content, category, meta.Source)
+}
+
+// RecallByCategory performs semantic search for a specific category.
+func (s *BleveStore) RecallByCategory(ctx context.Context, queryText, category string, limit int) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 5
+	}
+
+	// Tokenize query
+	queryTerms := extractKeywords(queryText)
+
+	// Expand query terms using semantic graph
+	var contentQuery query.Query
+	if s.graph != nil && len(queryTerms) > 0 {
+		expandedTerms := s.graph.ExpandQuery(queryTerms)
+		contentQuery = buildExpandedQuery(queryText, expandedTerms)
+	} else {
+		// Simple match query without expansion
+		contentQuery = bleve.NewMatchQuery(queryText)
+	}
+
+	// Build category filter
+	categoryQuery := bleve.NewTermQuery(category)
+	categoryQuery.SetField("category")
+
+	// Combine: content matches AND category matches
+	boolQuery := bleve.NewBooleanQuery()
+	boolQuery.AddMust(contentQuery)
+	boolQuery.AddMust(categoryQuery)
+
+	// Create search request
+	searchReq := bleve.NewSearchRequest(boolQuery)
+	searchReq.Size = limit
+	searchReq.Fields = []string{"content"}
+
+	// Execute search
+	searchResult, err := s.index.Search(searchReq)
+	if err != nil {
+		return nil, fmt.Errorf("search failed: %w", err)
+	}
+
+	// Extract content from results
+	var results []string
+	for _, hit := range searchResult.Hits {
+		if content, ok := hit.Fields["content"].(string); ok {
+			results = append(results, content)
+		}
+	}
+
+	return results, nil
+}
+
+// RecallFIL performs semantic search and returns results grouped as Findings, Insights, Lessons.
+func (s *BleveStore) RecallFIL(ctx context.Context, queryText string, limitPerCategory int) (*FILResult, error) {
+	if limitPerCategory <= 0 {
+		limitPerCategory = 5
+	}
+
+	// Query each category in parallel
+	var wg sync.WaitGroup
+	var findings, insights, lessons []string
+	var findingsErr, insightsErr, lessonsErr error
+
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		findings, findingsErr = s.RecallByCategory(ctx, queryText, "finding", limitPerCategory)
+	}()
+
+	go func() {
+		defer wg.Done()
+		insights, insightsErr = s.RecallByCategory(ctx, queryText, "insight", limitPerCategory)
+	}()
+
+	go func() {
+		defer wg.Done()
+		lessons, lessonsErr = s.RecallByCategory(ctx, queryText, "lesson", limitPerCategory)
+	}()
+
+	wg.Wait()
+
+	// Return first error if any
+	if findingsErr != nil {
+		return nil, findingsErr
+	}
+	if insightsErr != nil {
+		return nil, insightsErr
+	}
+	if lessonsErr != nil {
+		return nil, lessonsErr
+	}
+
+	return &FILResult{
+		Findings: findings,
+		Insights: insights,
+		Lessons:  lessons,
+	}, nil
+}
+
+// FILResult holds categorized observation results.
+type FILResult struct {
+	Findings []string `json:"findings"`
+	Insights []string `json:"insights"`
+	Lessons  []string `json:"lessons"`
+}
+
+// Recall performs semantic search for relevant memories (legacy interface).
 func (s *BleveStore) Recall(ctx context.Context, queryText string, opts RecallOpts) ([]MemoryResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -230,7 +334,7 @@ func (s *BleveStore) Recall(ctx context.Context, queryText string, opts RecallOp
 
 	// Create search request
 	searchReq := bleve.NewSearchRequest(searchQuery)
-	searchReq.Size = limit * 2 // Fetch extra for filtering
+	searchReq.Size = limit
 	searchReq.Fields = []string{"*"}
 
 	// Execute search
@@ -255,49 +359,24 @@ func (s *BleveStore) Recall(ctx context.Context, queryText string, opts RecallOp
 		// Extract fields from hit
 		content, _ := hit.Fields["content"].(string)
 		source, _ := hit.Fields["source"].(string)
-		importance, _ := hit.Fields["importance"].(float64)
-
-		// Handle tags (may be string or []interface{})
-		var tags []string
-		if tagsRaw, ok := hit.Fields["tags"]; ok {
-			switch t := tagsRaw.(type) {
-			case string:
-				tags = []string{t}
-			case []interface{}:
-				for _, v := range t {
-					if str, ok := v.(string); ok {
-						tags = append(tags, str)
-					}
-				}
-			}
-		}
-
-		// Apply tag filter
-		if len(opts.Tags) > 0 && !hasAnyTag(tags, opts.Tags) {
-			continue
-		}
+		category, _ := hit.Fields["category"].(string)
 
 		result := MemoryResult{
 			Memory: Memory{
-				ID:         hit.ID,
-				Content:    content,
-				Source:     source,
-				Importance: float32(importance),
-				Tags:       tags,
+				ID:      hit.ID,
+				Content: content,
+				Source:  source,
+				Tags:    []string{category}, // Category as single tag for compatibility
 			},
 			Score: score,
 		}
 		results = append(results, result)
-
-		if len(results) >= limit {
-			break
-		}
 	}
 
 	return results, nil
 }
 
-// buildExpandedQuery creates a boolean query with expanded terms.
+// buildExpandedQuery creates a disjunction query with expanded terms.
 func buildExpandedQuery(originalQuery string, expandedTerms map[string][]string) query.Query {
 	// If no expansion happened, use simple match
 	if len(expandedTerms) == 0 {
@@ -415,6 +494,7 @@ func (s *BleveStore) ConsolidateSession(ctx context.Context, sessionID string, t
 	}
 
 	// Store each insight
+	source := "session:" + sessionID
 	for _, insight := range insights {
 		if len(insight) < 50 {
 			continue
@@ -423,10 +503,7 @@ func (s *BleveStore) ConsolidateSession(ctx context.Context, sessionID string, t
 			insight = insight[:2000] + "..."
 		}
 
-		s.Remember(ctx, insight, MemoryMetadata{
-			Source:     "session:" + sessionID,
-			Importance: 0.6,
-		})
+		s.RememberObservation(ctx, insight, "insight", source)
 	}
 
 	return nil
@@ -479,26 +556,19 @@ func (s *BleveStore) RebuildSemanticGraph(ctx context.Context) error {
 	// Get all documents from index
 	searchReq := bleve.NewSearchRequest(bleve.NewMatchAllQuery())
 	searchReq.Size = 100000 // Get all
-	searchReq.Fields = []string{"keywords"}
+	searchReq.Fields = []string{"content"}
 
 	result, err := s.index.Search(searchReq)
 	if err != nil {
 		return fmt.Errorf("failed to fetch documents: %w", err)
 	}
 
-	// Collect all unique keywords
+	// Collect all unique keywords from content
 	keywordSet := make(map[string]bool)
 	for _, hit := range result.Hits {
-		if kwRaw, ok := hit.Fields["keywords"]; ok {
-			switch kw := kwRaw.(type) {
-			case string:
+		if content, ok := hit.Fields["content"].(string); ok {
+			for _, kw := range extractKeywords(content) {
 				keywordSet[kw] = true
-			case []interface{}:
-				for _, v := range kw {
-					if str, ok := v.(string); ok {
-						keywordSet[str] = true
-					}
-				}
 			}
 		}
 	}
