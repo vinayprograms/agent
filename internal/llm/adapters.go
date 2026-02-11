@@ -84,7 +84,51 @@ func NewProvider(cfg FantasyConfig) (Provider, error) {
 			Retry:     cfg.RetryConfig,
 		})
 
-	case "openai-compat", "openrouter", "litellm", "ollama", "lmstudio":
+	case "xai":
+		return NewXAIProvider(OpenAICompatConfig{
+			APIKey:       cfg.APIKey,
+			BaseURL:      cfg.BaseURL,
+			Model:        cfg.Model,
+			MaxTokens:    cfg.MaxTokens,
+			ProviderName: "xai",
+			Thinking:     cfg.Thinking,
+			Retry:        cfg.RetryConfig,
+		})
+
+	case "openrouter":
+		return NewOpenRouterProvider(OpenAICompatConfig{
+			APIKey:       cfg.APIKey,
+			BaseURL:      cfg.BaseURL,
+			Model:        cfg.Model,
+			MaxTokens:    cfg.MaxTokens,
+			ProviderName: "openrouter",
+			Thinking:     cfg.Thinking,
+			Retry:        cfg.RetryConfig,
+		})
+
+	case "ollama-local", "ollama":
+		return NewOllamaLocalProvider(OpenAICompatConfig{
+			APIKey:       cfg.APIKey,
+			BaseURL:      cfg.BaseURL,
+			Model:        cfg.Model,
+			MaxTokens:    cfg.MaxTokens,
+			ProviderName: "ollama-local",
+			Thinking:     cfg.Thinking,
+			Retry:        cfg.RetryConfig,
+		})
+
+	case "lmstudio":
+		return NewLMStudioProvider(OpenAICompatConfig{
+			APIKey:       cfg.APIKey,
+			BaseURL:      cfg.BaseURL,
+			Model:        cfg.Model,
+			MaxTokens:    cfg.MaxTokens,
+			ProviderName: "lmstudio",
+			Thinking:     cfg.Thinking,
+			Retry:        cfg.RetryConfig,
+		})
+
+	case "openai-compat", "litellm":
 		// Generic OpenAI-compatible endpoint
 		if cfg.BaseURL == "" {
 			return nil, fmt.Errorf("base_url is required for provider %s", cfg.Provider)
@@ -140,6 +184,11 @@ func InferProviderFromModel(model string) string {
 		strings.HasPrefix(model, "codestral") ||
 		strings.HasPrefix(model, "pixtral") {
 		return "mistral"
+	}
+
+	// xAI (Grok) models
+	if strings.HasPrefix(model, "grok") {
+		return "xai"
 	}
 
 	return ""

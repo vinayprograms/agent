@@ -311,8 +311,12 @@ func (p *OpenAICompatProvider) doRequest(ctx context.Context, req oaiRequest) (*
 
 // Provider-specific base URLs
 const (
-	GroqBaseURL    = "https://api.groq.com/openai/v1"
-	MistralBaseURL = "https://api.mistral.ai/v1"
+	GroqBaseURL       = "https://api.groq.com/openai/v1"
+	MistralBaseURL    = "https://api.mistral.ai/v1"
+	XAIBaseURL        = "https://api.x.ai/v1"
+	OpenRouterBaseURL = "https://openrouter.ai/api/v1"
+	OllamaLocalURL    = "http://localhost:11434/v1"
+	LMStudioLocalURL  = "http://localhost:1234/v1"
 )
 
 // NewGroqProvider creates a Groq provider (uses OpenAI-compatible API).
@@ -334,5 +338,51 @@ func NewMistralProvider(cfg OpenAICompatConfig) (*OpenAICompatProvider, error) {
 	if cfg.ProviderName == "" {
 		cfg.ProviderName = "mistral"
 	}
+	return NewOpenAICompatProvider(cfg)
+}
+
+// NewXAIProvider creates an xAI (Grok) provider (uses OpenAI-compatible API).
+func NewXAIProvider(cfg OpenAICompatConfig) (*OpenAICompatProvider, error) {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = XAIBaseURL
+	}
+	if cfg.ProviderName == "" {
+		cfg.ProviderName = "xai"
+	}
+	return NewOpenAICompatProvider(cfg)
+}
+
+// NewOpenRouterProvider creates an OpenRouter provider (uses OpenAI-compatible API).
+func NewOpenRouterProvider(cfg OpenAICompatConfig) (*OpenAICompatProvider, error) {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = OpenRouterBaseURL
+	}
+	if cfg.ProviderName == "" {
+		cfg.ProviderName = "openrouter"
+	}
+	return NewOpenAICompatProvider(cfg)
+}
+
+// NewOllamaLocalProvider creates an Ollama local provider (uses OpenAI-compatible API).
+func NewOllamaLocalProvider(cfg OpenAICompatConfig) (*OpenAICompatProvider, error) {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = OllamaLocalURL
+	}
+	if cfg.ProviderName == "" {
+		cfg.ProviderName = "ollama-local"
+	}
+	// API key not required for local
+	return NewOpenAICompatProvider(cfg)
+}
+
+// NewLMStudioProvider creates an LMStudio local provider (uses OpenAI-compatible API).
+func NewLMStudioProvider(cfg OpenAICompatConfig) (*OpenAICompatProvider, error) {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = LMStudioLocalURL
+	}
+	if cfg.ProviderName == "" {
+		cfg.ProviderName = "lmstudio"
+	}
+	// API key not required for local
 	return NewOpenAICompatProvider(cfg)
 }

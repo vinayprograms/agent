@@ -18,7 +18,11 @@
 | Google | gemini-*, gemma-* | GOOGLE_API_KEY |
 | Mistral | mistral-*, mixtral-*, codestral-* | MISTRAL_API_KEY |
 | Groq | (set provider explicitly) | GROQ_API_KEY |
+| xAI | grok-* | XAI_API_KEY |
+| OpenRouter | (set provider explicitly) | OPENROUTER_API_KEY |
 | Ollama Cloud | (set provider explicitly) | OLLAMA_API_KEY |
+| Ollama Local | (set provider explicitly) | (none required) |
+| LMStudio | (set provider explicitly) | (none required) |
 
 ## Automatic Provider Inference
 
@@ -27,6 +31,7 @@ The `provider` field is optional for standard models. The agent determines the p
 - `gpt-*`, `o1-*`, `o3-*` → openai
 - `gemini-*`, `gemma-*` → google
 - `mistral-*`, `mixtral-*`, `codestral-*` → mistral
+- `grok-*` → xai
 
 Set `provider` explicitly for ambiguous model names or OpenAI-compatible endpoints.
 

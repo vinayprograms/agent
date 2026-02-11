@@ -575,6 +575,82 @@ func TestMistralProvider_Creation(t *testing.T) {
 	}
 }
 
+func TestXAIProvider_Creation(t *testing.T) {
+	cfg := OpenAICompatConfig{
+		APIKey:    "test-key",
+		Model:     "grok-2",
+		MaxTokens: 4096,
+	}
+
+	provider, err := NewXAIProvider(cfg)
+	if err != nil {
+		t.Fatalf("NewXAIProvider() error: %v", err)
+	}
+	if provider == nil {
+		t.Error("expected non-nil provider")
+	}
+	if provider.baseURL != XAIBaseURL {
+		t.Errorf("expected base URL %s, got %s", XAIBaseURL, provider.baseURL)
+	}
+}
+
+func TestOpenRouterProvider_Creation(t *testing.T) {
+	cfg := OpenAICompatConfig{
+		APIKey:    "test-key",
+		Model:     "anthropic/claude-3-opus",
+		MaxTokens: 4096,
+	}
+
+	provider, err := NewOpenRouterProvider(cfg)
+	if err != nil {
+		t.Fatalf("NewOpenRouterProvider() error: %v", err)
+	}
+	if provider == nil {
+		t.Error("expected non-nil provider")
+	}
+	if provider.baseURL != OpenRouterBaseURL {
+		t.Errorf("expected base URL %s, got %s", OpenRouterBaseURL, provider.baseURL)
+	}
+}
+
+func TestOllamaLocalProvider_Creation(t *testing.T) {
+	cfg := OpenAICompatConfig{
+		Model:     "llama3",
+		MaxTokens: 4096,
+		// No API key required
+	}
+
+	provider, err := NewOllamaLocalProvider(cfg)
+	if err != nil {
+		t.Fatalf("NewOllamaLocalProvider() error: %v", err)
+	}
+	if provider == nil {
+		t.Error("expected non-nil provider")
+	}
+	if provider.baseURL != OllamaLocalURL {
+		t.Errorf("expected base URL %s, got %s", OllamaLocalURL, provider.baseURL)
+	}
+}
+
+func TestLMStudioProvider_Creation(t *testing.T) {
+	cfg := OpenAICompatConfig{
+		Model:     "local-model",
+		MaxTokens: 4096,
+		// No API key required
+	}
+
+	provider, err := NewLMStudioProvider(cfg)
+	if err != nil {
+		t.Fatalf("NewLMStudioProvider() error: %v", err)
+	}
+	if provider == nil {
+		t.Error("expected non-nil provider")
+	}
+	if provider.baseURL != LMStudioLocalURL {
+		t.Errorf("expected base URL %s, got %s", LMStudioLocalURL, provider.baseURL)
+	}
+}
+
 // =============================================================================
 // Error Classification Tests
 // =============================================================================

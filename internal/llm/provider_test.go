@@ -284,6 +284,10 @@ func TestNewProvider_AllProviders(t *testing.T) {
 		{"google", "gemini-1.5-pro"},
 		{"groq", "llama-3.1-70b-versatile"},
 		{"mistral", "mistral-large-latest"},
+		{"xai", "grok-2"},
+		{"openrouter", "anthropic/claude-3-opus"},
+		{"ollama-local", "llama3"},
+		{"lmstudio", "local-model"},
 	}
 
 	for _, p := range providers {
@@ -354,6 +358,10 @@ func TestInferProviderFromModel(t *testing.T) {
 		{"mixtral-8x7b-instruct", "mistral"},
 		{"codestral-latest", "mistral"},
 		{"pixtral-12b", "mistral"},
+
+		// xAI
+		{"grok-2", "xai"},
+		{"grok-beta", "xai"},
 
 		// Unknown
 		{"unknown-model", ""},
