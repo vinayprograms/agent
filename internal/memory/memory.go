@@ -49,13 +49,14 @@ type SearchResult struct {
 // Store is the interface for memory storage.
 type Store interface {
 	// Observation storage (primary API)
-	RememberObservation(ctx context.Context, content, category, source string) error
+	RememberObservation(ctx context.Context, content, category, source string) (string, error) // returns ID
+	RememberFIL(ctx context.Context, findings, insights, lessons []string, source string) ([]string, error)
+	RetrieveByID(ctx context.Context, id string) (*ObservationItem, error)
 	RecallByCategory(ctx context.Context, query, category string, limit int) ([]string, error)
 	RecallFIL(ctx context.Context, query string, limitPerCategory int) (*FILResult, error)
 
 	// Generic recall (returns all categories mixed)
 	Recall(ctx context.Context, query string, opts RecallOpts) ([]MemoryResult, error)
-	Forget(ctx context.Context, id string) error
 
 	// Key-value operations
 	Get(key string) (string, error)
@@ -68,6 +69,13 @@ type Store interface {
 
 	// Lifecycle
 	Close() error
+}
+
+// ObservationItem represents a stored observation with its metadata.
+type ObservationItem struct {
+	ID       string `json:"id"`
+	Content  string `json:"content"`
+	Category string `json:"category"` // "finding" | "insight" | "lesson"
 }
 
 // FILResult holds categorized observation results.

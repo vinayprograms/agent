@@ -28,18 +28,18 @@ func TestBleveStore_RememberRecall(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Remember observations with categories
-	err = store.RememberObservation(ctx, "The user prefers dark mode and vim keybindings", "finding", "explicit")
+	// Remember observations with categories - now returns ID
+	_, err = store.RememberObservation(ctx, "The user prefers dark mode and vim keybindings", "finding", "explicit")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
 
-	err = store.RememberObservation(ctx, "We decided to use PostgreSQL for the database", "insight", "session:123")
+	_, err = store.RememberObservation(ctx, "We decided to use PostgreSQL for the database", "insight", "session:123")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
 
-	err = store.RememberObservation(ctx, "Avoid using deprecated APIs", "lesson", "session:123")
+	_, err = store.RememberObservation(ctx, "Avoid using deprecated APIs", "lesson", "session:123")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestBleveStore_KeyValue(t *testing.T) {
 	}
 }
 
-func TestBleveStore_Forget(t *testing.T) {
+func TestBleveStore_RetrieveByID(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "bleve-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -232,37 +232,87 @@ func TestBleveStore_Forget(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Remember something
-	err = store.RememberObservation(ctx, "Test memory to forget about later", "finding", "test")
+	// Remember something - now returns ID
+	id, err := store.RememberObservation(ctx, "Test memory to retrieve later", "finding", "test")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
+	if id == "" {
+		t.Fatal("expected non-empty ID")
+	}
 
-	// Recall to get the ID
-	results, err := store.Recall(ctx, "forget", RecallOpts{Limit: 1})
+	// Retrieve by ID
+	item, err := store.RetrieveByID(ctx, id)
 	if err != nil {
-		t.Fatalf("recall failed: %v", err)
+		t.Fatalf("retrieve failed: %v", err)
 	}
-	if len(results) == 0 {
-		t.Fatal("expected at least 1 result")
+	if item == nil {
+		t.Fatal("expected item")
 	}
 
-	id := results[0].ID
+	if item.ID != id {
+		t.Errorf("ID mismatch: got %s, want %s", item.ID, id)
+	}
+	if item.Content != "Test memory to retrieve later" {
+		t.Errorf("content mismatch: got %s", item.Content)
+	}
+	if item.Category != "finding" {
+		t.Errorf("category mismatch: got %s", item.Category)
+	}
 
-	// Forget
-	err = store.Forget(ctx, id)
+	// Retrieve non-existent
+	item, err = store.RetrieveByID(ctx, "non-existent-id")
 	if err != nil {
-		t.Fatalf("forget failed: %v", err)
+		t.Fatalf("retrieve should not error for missing: %v", err)
+	}
+	if item != nil {
+		t.Error("expected nil for non-existent ID")
+	}
+}
+
+func TestBleveStore_RememberFIL(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "bleve-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	embedder := NewMockEmbedder(128)
+
+	store, err := NewBleveStore(BleveStoreConfig{
+		BasePath: tmpDir,
+		Embedder: embedder,
+	})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Remember using RememberFIL
+	ids, err := store.RememberFIL(ctx,
+		[]string{"API rate limit is 100 per minute", "Uses OAuth2"},
+		[]string{"REST is better for this case"},
+		[]string{"Always validate responses"},
+		"test",
+	)
+	if err != nil {
+		t.Fatalf("remember FIL failed: %v", err)
 	}
 
-	// Should not find it anymore
-	results, err = store.Recall(ctx, "forget", RecallOpts{Limit: 10})
-	if err != nil {
-		t.Fatalf("recall failed: %v", err)
+	if len(ids) != 4 {
+		t.Errorf("expected 4 IDs, got %d", len(ids))
 	}
-	for _, r := range results {
-		if r.ID == id {
-			t.Error("memory should have been forgotten")
+
+	// Verify each ID can be retrieved
+	for _, id := range ids {
+		item, err := store.RetrieveByID(ctx, id)
+		if err != nil {
+			t.Fatalf("retrieve failed for %s: %v", id, err)
+		}
+		if item == nil {
+			t.Errorf("expected item for ID %s", id)
 		}
 	}
 }
@@ -288,7 +338,7 @@ func TestBleveStore_Persistence(t *testing.T) {
 		t.Fatalf("failed to create store: %v", err)
 	}
 
-	err = store1.RememberObservation(ctx, "This should persist across restarts", "insight", "test")
+	_, err = store1.RememberObservation(ctx, "This should persist across restarts", "insight", "test")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}

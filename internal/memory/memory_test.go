@@ -37,18 +37,21 @@ func TestInMemoryStore_RememberObservation(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Remember observations
-	err := store.RememberObservation(ctx, "The user prefers dark mode", "finding", "explicit")
+	// Remember observations - now returns ID
+	id, err := store.RememberObservation(ctx, "The user prefers dark mode", "finding", "explicit")
+	if err != nil {
+		t.Fatalf("remember failed: %v", err)
+	}
+	if id == "" {
+		t.Error("expected non-empty ID")
+	}
+
+	_, err = store.RememberObservation(ctx, "PostgreSQL is best for JSON", "insight", "session:123")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
 
-	err = store.RememberObservation(ctx, "PostgreSQL is best for JSON", "insight", "session:123")
-	if err != nil {
-		t.Fatalf("remember failed: %v", err)
-	}
-
-	err = store.RememberObservation(ctx, "Always validate input", "lesson", "session:123")
+	_, err = store.RememberObservation(ctx, "Always validate input", "lesson", "session:123")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
@@ -80,16 +83,26 @@ func TestInMemoryStore_RememberObservation(t *testing.T) {
 	}
 }
 
-func TestInMemoryStore_RecallFIL(t *testing.T) {
+func TestInMemoryStore_RememberFIL(t *testing.T) {
 	embedder := NewMockEmbedder(128)
 	store := NewInMemoryStore(embedder)
 
 	ctx := context.Background()
 
-	// Store observations in each category
-	store.RememberObservation(ctx, "API rate limit is 100 per minute", "finding", "test")
-	store.RememberObservation(ctx, "REST is simpler than GraphQL", "insight", "test")
-	store.RememberObservation(ctx, "Always check rate limits", "lesson", "test")
+	// Store using RememberFIL
+	ids, err := store.RememberFIL(ctx,
+		[]string{"API rate limit is 100 per minute", "Database is PostgreSQL"},
+		[]string{"REST is simpler than GraphQL"},
+		[]string{"Always check rate limits"},
+		"test",
+	)
+	if err != nil {
+		t.Fatalf("remember FIL failed: %v", err)
+	}
+
+	if len(ids) != 4 {
+		t.Errorf("expected 4 IDs, got %d", len(ids))
+	}
 
 	// Recall as FIL
 	fil, err := store.RecallFIL(ctx, "API rate", 5)
@@ -109,6 +122,47 @@ func TestInMemoryStore_RecallFIL(t *testing.T) {
 	t.Logf("Findings: %v", fil.Findings)
 	t.Logf("Insights: %v", fil.Insights)
 	t.Logf("Lessons: %v", fil.Lessons)
+}
+
+func TestInMemoryStore_RetrieveByID(t *testing.T) {
+	embedder := NewMockEmbedder(128)
+	store := NewInMemoryStore(embedder)
+
+	ctx := context.Background()
+
+	// Remember something
+	id, err := store.RememberObservation(ctx, "Database uses PostgreSQL", "finding", "test")
+	if err != nil {
+		t.Fatalf("remember failed: %v", err)
+	}
+
+	// Retrieve by ID
+	item, err := store.RetrieveByID(ctx, id)
+	if err != nil {
+		t.Fatalf("retrieve failed: %v", err)
+	}
+	if item == nil {
+		t.Fatal("expected item")
+	}
+
+	if item.ID != id {
+		t.Errorf("ID mismatch: got %s, want %s", item.ID, id)
+	}
+	if item.Content != "Database uses PostgreSQL" {
+		t.Errorf("content mismatch: got %s", item.Content)
+	}
+	if item.Category != "finding" {
+		t.Errorf("category mismatch: got %s", item.Category)
+	}
+
+	// Retrieve non-existent
+	item, err = store.RetrieveByID(ctx, "non-existent")
+	if err != nil {
+		t.Fatalf("retrieve should not error for missing: %v", err)
+	}
+	if item != nil {
+		t.Error("expected nil for non-existent ID")
+	}
 }
 
 func TestInMemoryStore_RecallByCategory(t *testing.T) {
@@ -180,47 +234,6 @@ func TestInMemoryStore_KeyValue(t *testing.T) {
 	}
 	if len(results) != 1 {
 		t.Errorf("expected 1 result, got %d", len(results))
-	}
-}
-
-func TestInMemoryStore_Forget(t *testing.T) {
-	embedder := NewMockEmbedder(128)
-	store := NewInMemoryStore(embedder)
-
-	ctx := context.Background()
-
-	// Remember something
-	err := store.RememberObservation(ctx, "Test memory to forget", "finding", "test")
-	if err != nil {
-		t.Fatalf("remember failed: %v", err)
-	}
-
-	// Recall to get the ID
-	results, err := store.Recall(ctx, "forget", RecallOpts{Limit: 1})
-	if err != nil {
-		t.Fatalf("recall failed: %v", err)
-	}
-	if len(results) == 0 {
-		t.Fatal("expected at least 1 result")
-	}
-
-	id := results[0].ID
-
-	// Forget
-	err = store.Forget(ctx, id)
-	if err != nil {
-		t.Fatalf("forget failed: %v", err)
-	}
-
-	// Should not find it anymore
-	results, err = store.Recall(ctx, "forget", RecallOpts{Limit: 1})
-	if err != nil {
-		t.Fatalf("recall failed: %v", err)
-	}
-	for _, r := range results {
-		if r.ID == id {
-			t.Error("memory should have been forgotten")
-		}
 	}
 }
 

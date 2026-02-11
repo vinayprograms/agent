@@ -151,8 +151,8 @@ func buildIndexMapping() mapping.IndexMapping {
 	return indexMapping
 }
 
-// RememberObservation stores an observation with its category.
-func (s *BleveStore) RememberObservation(ctx context.Context, content, category, source string) error {
+// RememberObservation stores an observation with its category and returns the ID.
+func (s *BleveStore) RememberObservation(ctx context.Context, content, category, source string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -169,7 +169,7 @@ func (s *BleveStore) RememberObservation(ctx context.Context, content, category,
 
 	// Index in Bleve
 	if err := s.index.Index(id, doc); err != nil {
-		return fmt.Errorf("failed to index document: %w", err)
+		return "", fmt.Errorf("failed to index document: %w", err)
 	}
 
 	// Extract keywords and add to semantic graph
@@ -184,7 +184,73 @@ func (s *BleveStore) RememberObservation(ctx context.Context, content, category,
 		}
 	}
 
-	return nil
+	return id, nil
+}
+
+// RememberFIL stores multiple observations and returns their IDs.
+func (s *BleveStore) RememberFIL(ctx context.Context, findings, insights, lessons []string, source string) ([]string, error) {
+	var ids []string
+
+	for _, f := range findings {
+		id, err := s.RememberObservation(ctx, f, "finding", source)
+		if err != nil {
+			return ids, err
+		}
+		ids = append(ids, id)
+	}
+
+	for _, i := range insights {
+		id, err := s.RememberObservation(ctx, i, "insight", source)
+		if err != nil {
+			return ids, err
+		}
+		ids = append(ids, id)
+	}
+
+	for _, l := range lessons {
+		id, err := s.RememberObservation(ctx, l, "lesson", source)
+		if err != nil {
+			return ids, err
+		}
+		ids = append(ids, id)
+	}
+
+	return ids, nil
+}
+
+// RetrieveByID gets a single observation by ID.
+func (s *BleveStore) RetrieveByID(ctx context.Context, id string) (*ObservationItem, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Search for the exact ID using a doc ID query
+	docIDQuery := bleve.NewDocIDQuery([]string{id})
+	searchReq := bleve.NewSearchRequest(docIDQuery)
+	searchReq.Fields = []string{"content", "category"}
+	searchReq.Size = 1
+
+	results, err := s.index.Search(searchReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if results.Total == 0 {
+		return nil, nil
+	}
+
+	hit := results.Hits[0]
+	item := &ObservationItem{
+		ID: id,
+	}
+
+	if v, ok := hit.Fields["content"].(string); ok {
+		item.Content = v
+	}
+	if v, ok := hit.Fields["category"].(string); ok {
+		item.Category = v
+	}
+
+	return item, nil
 }
 
 // RecallByCategory performs semantic search for a specific category.
@@ -385,13 +451,6 @@ func buildExpandedQuery(originalQuery string, expandedTerms map[string][]string)
 }
 
 // Forget deletes a memory by ID.
-func (s *BleveStore) Forget(ctx context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.index.Delete(id)
-}
-
 // Get retrieves a value by key (KV store).
 func (s *BleveStore) Get(key string) (string, error) {
 	s.mu.RLock()

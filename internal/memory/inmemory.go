@@ -32,15 +32,15 @@ func NewInMemoryStore(embedder EmbeddingProvider) *InMemoryStore {
 	}
 }
 
-// RememberObservation stores an observation with its category.
-func (s *InMemoryStore) RememberObservation(ctx context.Context, content, category, source string) error {
+// RememberObservation stores an observation with its category and returns the ID.
+func (s *InMemoryStore) RememberObservation(ctx context.Context, content, category, source string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Generate embedding
 	embeddings, err := s.embedder.Embed(ctx, []string{content})
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	id := uuid.New().String()
@@ -57,7 +57,55 @@ func (s *InMemoryStore) RememberObservation(ctx context.Context, content, catego
 	s.memories[id] = mem
 	s.vectors[id] = embeddings[0]
 
-	return nil
+	return id, nil
+}
+
+// RememberFIL stores multiple observations and returns their IDs.
+func (s *InMemoryStore) RememberFIL(ctx context.Context, findings, insights, lessons []string, source string) ([]string, error) {
+	var ids []string
+
+	for _, f := range findings {
+		id, err := s.RememberObservation(ctx, f, "finding", source)
+		if err != nil {
+			return ids, err
+		}
+		ids = append(ids, id)
+	}
+
+	for _, i := range insights {
+		id, err := s.RememberObservation(ctx, i, "insight", source)
+		if err != nil {
+			return ids, err
+		}
+		ids = append(ids, id)
+	}
+
+	for _, l := range lessons {
+		id, err := s.RememberObservation(ctx, l, "lesson", source)
+		if err != nil {
+			return ids, err
+		}
+		ids = append(ids, id)
+	}
+
+	return ids, nil
+}
+
+// RetrieveByID gets a single observation by ID.
+func (s *InMemoryStore) RetrieveByID(ctx context.Context, id string) (*ObservationItem, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	mem, ok := s.memories[id]
+	if !ok {
+		return nil, nil
+	}
+
+	return &ObservationItem{
+		ID:       mem.ID,
+		Content:  mem.Content,
+		Category: mem.Category,
+	}, nil
 }
 
 // RecallByCategory searches for memories in a specific category.
@@ -205,16 +253,6 @@ func (s *InMemoryStore) Recall(ctx context.Context, query string, opts RecallOpt
 	}
 
 	return results, nil
-}
-
-// Forget removes a memory by ID.
-func (s *InMemoryStore) Forget(ctx context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	delete(s.memories, id)
-	delete(s.vectors, id)
-	return nil
 }
 
 // Get retrieves a value by key (KV store).

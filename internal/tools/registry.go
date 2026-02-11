@@ -74,10 +74,21 @@ type Summarizer interface {
 
 // SemanticMemory provides semantic memory operations.
 type SemanticMemory interface {
-	RememberObservation(ctx context.Context, content, category, source string) error
+	// RememberFIL stores multiple observations at once and returns their IDs
+	RememberFIL(ctx context.Context, findings, insights, lessons []string, source string) ([]string, error)
+	// RetrieveByID gets a single observation by ID
+	RetrieveByID(ctx context.Context, id string) (*ObservationItem, error)
+	// RecallFIL searches and returns categorized results
 	RecallFIL(ctx context.Context, query string, limitPerCategory int) (*FILResult, error)
+	// Recall searches and returns flat results with scores
 	Recall(ctx context.Context, query string, limit int) ([]SemanticMemoryResult, error)
-	Forget(ctx context.Context, id string) error
+}
+
+// ObservationItem represents a stored observation with its ID.
+type ObservationItem struct {
+	ID       string `json:"id"`
+	Content  string `json:"content"`
+	Category string `json:"category"`
 }
 
 // FILResult holds categorized observation results.
@@ -166,8 +177,8 @@ func (r *Registry) SetMemoryStore(store MemoryStore) {
 func (r *Registry) SetSemanticMemory(mem SemanticMemory) {
 	r.semanticMemory = mem
 	r.Register(&memoryRememberTool{memory: mem})
+	r.Register(&memoryRetrieveTool{memory: mem})
 	r.Register(&memoryRecallTool{memory: mem})
-	r.Register(&memoryForgetTool{memory: mem})
 }
 
 // Register adds a tool to the registry.
@@ -1773,63 +1784,133 @@ type memoryRememberTool struct {
 func (t *memoryRememberTool) Name() string { return "memory_remember" }
 
 func (t *memoryRememberTool) Description() string {
-	return `Store an observation for semantic retrieval in future sessions.
+	return `Store observations for semantic retrieval in future sessions.
 
-Use for: findings, insights, lessons - things you'd search by MEANING.
-Examples:
-  - finding: "API rate limit is 100 requests per minute"
-  - insight: "User prefers PostgreSQL for projects needing JSON support"
-  - lesson: "Always validate API responses before parsing"
+Accepts findings, insights, and lessons in a single call:
+- findings: Raw facts discovered (e.g., "API rate limit is 100/min")
+- insights: Conclusions drawn from findings (e.g., "Should batch requests")
+- lessons: Actionable rules for future (e.g., "Always check rate limits first")
 
-NOT for: structured data with known keys. Use memory_write for preferences/config.
+Returns array of IDs for all stored observations.
 
-Parameters:
-  - content (required): The observation to remember (make it self-contained)
-  - category (required): "finding" | "insight" | "lesson"`
+Example:
+  memory_remember({
+    "findings": ["Database uses PostgreSQL", "API has 100 req/min limit"],
+    "insights": ["PostgreSQL chosen for JSON support"],
+    "lessons": ["Always check rate limits before integration"]
+  })
+  → ["obs_abc123", "obs_def456", "obs_ghi789", "obs_jkl012"]`
 }
 
 func (t *memoryRememberTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"content": map[string]interface{}{
-				"type":        "string",
-				"description": "The information to remember",
+			"findings": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Facts discovered (raw observations)",
 			},
-			"category": map[string]interface{}{
-				"type":        "string",
-				"enum":        []string{"finding", "insight", "lesson"},
-				"description": "Category: finding (fact), insight (conclusion), lesson (guidance)",
+			"insights": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Conclusions drawn from findings",
+			},
+			"lessons": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Actionable rules for future",
 			},
 		},
-		"required": []string{"content", "category"},
+		"required": []string{},
 	}
 }
 
 func (t *memoryRememberTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	content, ok := args["content"].(string)
-	if !ok || content == "" {
-		return nil, fmt.Errorf("content is required")
+	var findings, insights, lessons []string
+
+	if f, ok := args["findings"].([]interface{}); ok {
+		for _, item := range f {
+			if s, ok := item.(string); ok && s != "" {
+				findings = append(findings, s)
+			}
+		}
+	}
+	if i, ok := args["insights"].([]interface{}); ok {
+		for _, item := range i {
+			if s, ok := item.(string); ok && s != "" {
+				insights = append(insights, s)
+			}
+		}
+	}
+	if l, ok := args["lessons"].([]interface{}); ok {
+		for _, item := range l {
+			if s, ok := item.(string); ok && s != "" {
+				lessons = append(lessons, s)
+			}
+		}
 	}
 
-	category, ok := args["category"].(string)
-	if !ok || category == "" {
-		return nil, fmt.Errorf("category is required (finding, insight, or lesson)")
+	if len(findings) == 0 && len(insights) == 0 && len(lessons) == 0 {
+		return nil, fmt.Errorf("at least one finding, insight, or lesson is required")
 	}
 
-	// Validate category
-	switch category {
-	case "finding", "insight", "lesson":
-		// valid
-	default:
-		return nil, fmt.Errorf("category must be 'finding', 'insight', or 'lesson'")
+	ids, err := t.memory.RememberFIL(ctx, findings, insights, lessons, "explicit")
+	if err != nil {
+		return nil, fmt.Errorf("failed to store memories: %w", err)
 	}
 
-	if err := t.memory.RememberObservation(ctx, content, category, "explicit"); err != nil {
-		return nil, fmt.Errorf("failed to store memory: %w", err)
+	return map[string]interface{}{
+		"stored": len(ids),
+		"ids":    ids,
+	}, nil
+}
+
+// memoryRetrieveTool implements the memory_retrieve tool.
+type memoryRetrieveTool struct {
+	memory SemanticMemory
+}
+
+func (t *memoryRetrieveTool) Name() string { return "memory_retrieve" }
+
+func (t *memoryRetrieveTool) Description() string {
+	return `Retrieve a specific observation by ID.
+
+Use when you have an ID from memory_remember and need the full content.
+
+Parameters:
+  - id (required): The observation ID (e.g., "obs_abc123")`
+}
+
+func (t *memoryRetrieveTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id": map[string]interface{}{
+				"type":        "string",
+				"description": "Observation ID to retrieve",
+			},
+		},
+		"required": []string{"id"},
+	}
+}
+
+func (t *memoryRetrieveTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	id, ok := args["id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("id is required")
 	}
 
-	return fmt.Sprintf("Stored %s: %s", category, content), nil
+	item, err := t.memory.RetrieveByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve: %w", err)
+	}
+
+	if item == nil {
+		return nil, fmt.Errorf("observation not found: %s", id)
+	}
+
+	return item, nil
 }
 
 // memoryRecallTool implements the memory_recall tool.
@@ -1842,16 +1923,19 @@ func (t *memoryRecallTool) Name() string { return "memory_recall" }
 func (t *memoryRecallTool) Description() string {
 	return `Semantic search for relevant knowledge from past sessions.
 
-Use for: finding context, decisions, insights - when you need to search by MEANING.
-Examples: "database choice", "user's coding preferences", "auth architecture"
+Use for: finding context, decisions, insights - search by MEANING.
+Examples: "database choice", "user's preferences", "auth architecture"
 
-Returns memories ranked by relevance (0-1 score).
-
-NOT for: getting a known preference. Use memory_read("user.theme") for exact keys.
+Returns categorized results:
+{
+  "findings": ["Database uses PostgreSQL"],
+  "insights": ["Chose PostgreSQL for JSON support"],
+  "lessons": ["Always index foreign keys"]
+}
 
 Parameters:
   - query (required): What you're looking for (natural language)
-  - limit (optional): Maximum results (default 5)`
+  - limit (optional): Results per category (default 5)`
 }
 
 func (t *memoryRecallTool) Parameters() map[string]interface{} {
@@ -1864,7 +1948,7 @@ func (t *memoryRecallTool) Parameters() map[string]interface{} {
 			},
 			"limit": map[string]interface{}{
 				"type":        "integer",
-				"description": "Maximum results (default 5)",
+				"description": "Results per category (default 5)",
 			},
 		},
 		"required": []string{"query"},
@@ -1882,54 +1966,14 @@ func (t *memoryRecallTool) Execute(ctx context.Context, args map[string]interfac
 		limit = int(l)
 	}
 
-	results, err := t.memory.Recall(ctx, query, limit)
+	results, err := t.memory.RecallFIL(ctx, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("recall failed: %w", err)
 	}
 
-	if len(results) == 0 {
+	if results == nil || (len(results.Findings) == 0 && len(results.Insights) == 0 && len(results.Lessons) == 0) {
 		return "No relevant memories found", nil
 	}
 
 	return results, nil
-}
-
-// memoryForgetTool implements the memory_forget tool.
-type memoryForgetTool struct {
-	memory SemanticMemory
-}
-
-func (t *memoryForgetTool) Name() string { return "memory_forget" }
-
-func (t *memoryForgetTool) Description() string {
-	return `Delete a memory by ID. Use this to correct mistakes or remove outdated information.
-
-Parameters:
-  - id (required): The memory ID to delete (from recall results)`
-}
-
-func (t *memoryForgetTool) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"id": map[string]interface{}{
-				"type":        "string",
-				"description": "Memory ID to delete",
-			},
-		},
-		"required": []string{"id"},
-	}
-}
-
-func (t *memoryForgetTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	id, ok := args["id"].(string)
-	if !ok || id == "" {
-		return nil, fmt.Errorf("id is required")
-	}
-
-	if err := t.memory.Forget(ctx, id); err != nil {
-		return nil, fmt.Errorf("failed to forget memory: %w", err)
-	}
-
-	return "Memory deleted", nil
 }

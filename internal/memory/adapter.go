@@ -22,9 +22,32 @@ type ToolsMemoryResult struct {
 	Score    float32 `json:"score"`
 }
 
-// RememberObservation stores an observation with its category.
-func (a *ToolsAdapter) RememberObservation(ctx context.Context, content, category, source string) error {
-	return a.store.RememberObservation(ctx, content, category, source)
+// ToolsObservationItem mirrors tools.ObservationItem
+type ToolsObservationItem struct {
+	ID       string `json:"id"`
+	Content  string `json:"content"`
+	Category string `json:"category"`
+}
+
+// RememberFIL stores multiple observations and returns their IDs.
+func (a *ToolsAdapter) RememberFIL(ctx context.Context, findings, insights, lessons []string, source string) ([]string, error) {
+	return a.store.RememberFIL(ctx, findings, insights, lessons, source)
+}
+
+// RetrieveByID gets a single observation by ID.
+func (a *ToolsAdapter) RetrieveByID(ctx context.Context, id string) (*ToolsObservationItem, error) {
+	item, err := a.store.RetrieveByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, nil
+	}
+	return &ToolsObservationItem{
+		ID:       item.ID,
+		Content:  item.Content,
+		Category: item.Category,
+	}, nil
 }
 
 // RecallFIL searches and returns results grouped as FIL.
@@ -49,11 +72,6 @@ func (a *ToolsAdapter) Recall(ctx context.Context, query string, limit int) ([]T
 		}
 	}
 	return out, nil
-}
-
-// Forget deletes a memory by ID.
-func (a *ToolsAdapter) Forget(ctx context.Context, id string) error {
-	return a.store.Forget(ctx, id)
 }
 
 // ConsolidateSession wraps the store's consolidation.

@@ -1280,8 +1280,23 @@ type semanticMemoryBridge struct {
 	adapter *memory.ToolsAdapter
 }
 
-func (b *semanticMemoryBridge) RememberObservation(ctx context.Context, content, category, source string) error {
-	return b.adapter.RememberObservation(ctx, content, category, source)
+func (b *semanticMemoryBridge) RememberFIL(ctx context.Context, findings, insights, lessons []string, source string) ([]string, error) {
+	return b.adapter.RememberFIL(ctx, findings, insights, lessons, source)
+}
+
+func (b *semanticMemoryBridge) RetrieveByID(ctx context.Context, id string) (*tools.ObservationItem, error) {
+	item, err := b.adapter.RetrieveByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, nil
+	}
+	return &tools.ObservationItem{
+		ID:       item.ID,
+		Content:  item.Content,
+		Category: item.Category,
+	}, nil
 }
 
 func (b *semanticMemoryBridge) RecallFIL(ctx context.Context, query string, limitPerCategory int) (*tools.FILResult, error) {
@@ -1314,8 +1329,4 @@ func (b *semanticMemoryBridge) Recall(ctx context.Context, query string, limit i
 		}
 	}
 	return out, nil
-}
-
-func (b *semanticMemoryBridge) Forget(ctx context.Context, id string) error {
-	return b.adapter.Forget(ctx, id)
 }
