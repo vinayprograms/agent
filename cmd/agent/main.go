@@ -337,6 +337,17 @@ func runWorkflow(args []string) {
 	// Create tool registry
 	registry := tools.NewRegistry(pol)
 
+	// Set up bash security checker with denylist + LLM policy check
+	{
+		allowedDirs := cfg.Bash.AllowedDirs
+		if len(allowedDirs) == 0 && pol.Workspace != "" {
+			// Default: workspace + /tmp
+			allowedDirs = []string{pol.Workspace, "/tmp"}
+		}
+		bashChecker := policy.NewBashChecker(pol.Workspace, allowedDirs, cfg.Bash.DeniedCommands)
+		registry.SetBashChecker(bashChecker)
+	}
+
 	// Set up summarizer for web_fetch if small_llm is configured
 	var smallLLM llm.Provider // Keep reference for observation extraction
 	if cfg.SmallLLM.Model != "" {
@@ -353,6 +364,8 @@ func runWorkflow(args []string) {
 		})
 		if err == nil {
 			registry.SetSummarizer(llm.NewSummarizer(smallLLM))
+			// Also set up LLM-based bash policy checker (Step 2)
+			registry.SetBashLLMChecker(policy.NewSmallLLMChecker(&llmGenerateAdapter{smallLLM}))
 		} else {
 			smallLLM = nil // Clear on error
 		}
@@ -1373,4 +1386,21 @@ func (b *semanticMemoryBridge) Recall(ctx context.Context, query string, limit i
 		}
 	}
 	return out, nil
+}
+
+// llmGenerateAdapter adapts llm.Provider to policy.LLMProvider for bash policy checking.
+type llmGenerateAdapter struct {
+	provider llm.Provider
+}
+
+func (a *llmGenerateAdapter) Generate(ctx context.Context, prompt string) (string, error) {
+	resp, err := a.provider.Chat(ctx, llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
 }
