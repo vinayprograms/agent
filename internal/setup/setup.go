@@ -128,11 +128,6 @@ var (
 
 	infoStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("39"))
-
-	boxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("99")).
-			Padding(1, 2)
 )
 
 // Step represents a setup wizard step
@@ -878,7 +873,7 @@ func (m Model) View() string {
 }
 
 func (m Model) viewWelcome() string {
-	return boxStyle.Render(
+	return (
 		titleStyle.Render("🤖 Headless Agent Setup") + "\n\n" +
 			normalStyle.Render("This wizard will help you configure your agent.\n\n") +
 			dimStyle.Render("Press Enter to continue, q to quit"))
@@ -1288,14 +1283,14 @@ func (m Model) viewConfirm() string {
 }
 
 func (m Model) viewWriting() string {
-	return boxStyle.Render(
+	return (
 		titleStyle.Render("Writing Files...") + "\n\n" +
 			normalStyle.Render("Creating configuration files..."))
 }
 
 func (m Model) viewComplete() string {
 	if m.err != nil {
-		return boxStyle.Render(
+		return (
 			errorStyle.Render("Error") + "\n\n" +
 				normalStyle.Render(m.err.Error()) + "\n\n" +
 				dimStyle.Render("Press q to exit"))
@@ -1319,7 +1314,7 @@ func (m Model) viewComplete() string {
 	}
 
 	s.WriteString("\n" + dimStyle.Render("Press q to exit"))
-	return boxStyle.Render(s.String())
+	return (s.String())
 }
 
 func getDefaultEnvVar(provider string) string {
