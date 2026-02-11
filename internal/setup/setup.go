@@ -1773,13 +1773,19 @@ func (m Model) generatePolicyTOML() string {
 	sb.WriteString("[tools.bash]\n")
 	sb.WriteString(fmt.Sprintf("enabled = %t\n", m.config.AllowBash))
 	if m.config.AllowBash {
-		sb.WriteString("# Commands run from workspace directory; absolute paths outside workspace are blocked\n")
+		// Recommend sandbox for production/team scenarios
+		if m.config.Scenario == ScenarioProduction || m.config.Scenario == ScenarioTeam {
+			sb.WriteString("# Sandbox: restrict bash to workspace only (requires bwrap or docker)\n")
+			sb.WriteString("# sandbox = \"bwrap\"  # bubblewrap - lightweight, no root needed\n")
+			sb.WriteString("# sandbox = \"docker\" # run in container - more isolation\n")
+		}
 		if m.config.DefaultDeny {
-			sb.WriteString("allowlist = [\"ls *\", \"cat *\", \"grep *\", \"find *\", \"head *\", \"tail *\", \"wc *\", \"git *\", \"go *\", \"make *\"]\n")
-			sb.WriteString("denylist = [\"rm -rf *\", \"sudo *\", \"curl * | bash\", \"chmod 777 *\", \"../*\"]\n")
+			sb.WriteString("allowlist = [\"ls *\", \"cat *\", \"grep *\", \"find . *\", \"head *\", \"tail *\", \"wc *\", \"git *\", \"go *\", \"make *\"]\n")
+			sb.WriteString("denylist = [\"rm -rf *\", \"sudo *\", \"curl * | bash\", \"chmod 777 *\", \"../*\", \"/*\"]\n")
 		} else {
-			sb.WriteString("# Recommended: add denylist for dangerous commands\n")
-			sb.WriteString("# denylist = [\"rm -rf *\", \"sudo *\", \"curl * | bash\", \"../*\"]\n")
+			sb.WriteString("# Recommended for security:\n")
+			sb.WriteString("# sandbox = \"bwrap\"  # Restricts filesystem access to workspace only\n")
+			sb.WriteString("# denylist = [\"rm -rf *\", \"sudo *\", \"curl * | bash\", \"../*\", \"/*\"]\n")
 		}
 	}
 	sb.WriteString("\n")
