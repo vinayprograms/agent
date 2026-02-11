@@ -63,28 +63,141 @@ max_tokens = 4096  # Required
 | `provider` | Provider name (inferred from model if not set) |
 | `base_url` | Custom endpoint URL for OpenAI-compatible services |
 
-## Custom Endpoints
+## Custom Endpoints (OpenAI-Compatible)
 
-Use `base_url` for OpenAI-compatible endpoints:
+Any service implementing the OpenAI chat completions API can be used with `provider = "openai-compat"`:
 
 ```toml
-# OpenRouter
+[llm]
+provider = "openai-compat"
+model = "your-model-name"
+max_tokens = 4096
+base_url = "https://your-service.com/v1"
+```
+
+### Built-in OpenAI-Compatible Providers
+
+These have default base URLs and can be used without specifying `base_url`:
+
+| Provider | Default Base URL | API Key Env |
+|----------|-----------------|-------------|
+| `groq` | api.groq.com/openai/v1 | GROQ_API_KEY |
+| `mistral` | api.mistral.ai/v1 | MISTRAL_API_KEY |
+| `xai` | api.x.ai/v1 | XAI_API_KEY |
+| `openrouter` | openrouter.ai/api/v1 | OPENROUTER_API_KEY |
+| `ollama-local` | localhost:11434/v1 | (none) |
+| `lmstudio` | localhost:1234/v1 | (none) |
+
+### Examples
+
+```toml
+# OpenRouter - route to any model
 [llm]
 provider = "openrouter"
 model = "anthropic/claude-3.5-sonnet"
-base_url = "https://openrouter.ai/api/v1"
+max_tokens = 4096
 
-# Ollama
+# xAI (Grok)
 [llm]
-provider = "ollama"
+provider = "xai"
+model = "grok-2"
+max_tokens = 4096
+
+# Local Ollama
+[llm]
+provider = "ollama-local"
 model = "llama3:70b"
-base_url = "http://localhost:11434/v1"
+max_tokens = 4096
+
+# LMStudio local server
+[llm]
+provider = "lmstudio"
+model = "loaded-model"
+max_tokens = 4096
 
 # LiteLLM proxy
 [llm]
-provider = "litellm"
+provider = "openai-compat"
 model = "gpt-4"
+max_tokens = 4096
 base_url = "http://localhost:4000"
+
+# vLLM server
+[llm]
+provider = "openai-compat"
+model = "meta-llama/Llama-3-70b"
+max_tokens = 4096
+base_url = "http://localhost:8000/v1"
+
+# Together AI
+[llm]
+provider = "openai-compat"
+model = "meta-llama/Llama-3-70b-chat-hf"
+max_tokens = 4096
+base_url = "https://api.together.xyz/v1"
+
+# Anyscale
+[llm]
+provider = "openai-compat"
+model = "meta-llama/Llama-3-70b-chat-hf"
+max_tokens = 4096
+base_url = "https://api.endpoints.anyscale.com/v1"
+
+# Fireworks AI
+[llm]
+provider = "openai-compat"
+model = "accounts/fireworks/models/llama-v3-70b-instruct"
+max_tokens = 4096
+base_url = "https://api.fireworks.ai/inference/v1"
+
+# Perplexity
+[llm]
+provider = "openai-compat"
+model = "llama-3.1-sonar-large-128k-online"
+max_tokens = 4096
+base_url = "https://api.perplexity.ai"
+
+# DeepSeek
+[llm]
+provider = "openai-compat"
+model = "deepseek-chat"
+max_tokens = 4096
+base_url = "https://api.deepseek.com/v1"
+```
+
+### Adding New Providers
+
+Any OpenAI-compatible service works. The agent sends:
+
+```http
+POST {base_url}/chat/completions
+Authorization: Bearer {api_key}
+Content-Type: application/json
+
+{
+  "model": "...",
+  "messages": [...],
+  "max_tokens": ...,
+  "tools": [...]  // if tools defined
+}
+```
+
+Expected response format:
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": "...",
+      "tool_calls": [...]
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": ...,
+    "completion_tokens": ...
+  }
+}
 ```
 
 ## Credentials
@@ -132,18 +245,6 @@ base_url = "http://localhost:11434" # For ollama or custom endpoints
 Credentials for embeddings use the same `credentials.toml` priority.
 
 For resource-constrained environments (small VPS, limited RAM), use `provider = "none"` to disable semantic memory. The agent will still have KV (photographic) memory.
-
-## Catwalk Benefits
-
-When using Catwalk:
-- Model context windows and token limits
-- Cost information
-- Capability flags (reasoning, attachments)
-
-Run a local Catwalk server:
-```bash
-export CATWALK_URL=http://localhost:8080
-```
 
 ---
 

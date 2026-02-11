@@ -812,54 +812,118 @@ The agent uses official SDKs where available:
 | Google | [generative-ai-go](https://github.com/google/generative-ai-go) | Official Gemini SDK |
 | Mistral | Native HTTP | OpenAI-compatible API |
 | Groq | Native HTTP | OpenAI-compatible API |
+| xAI | Native HTTP | OpenAI-compatible API |
+| OpenRouter | Native HTTP | OpenAI-compatible API |
 | Ollama Cloud | Native HTTP | Native Ollama API |
+| Ollama Local | Native HTTP | OpenAI-compatible API |
+| LMStudio | Native HTTP | OpenAI-compatible API |
 
 | Provider | `provider` value | `api_key_env` | Notes |
 |----------|-----------------|---------------|-------|
 | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | Claude models |
-| OpenAI | `openai` | `OPENAI_API_KEY` | GPT models |
+| OpenAI | `openai` | `OPENAI_API_KEY` | GPT, o1, o3 models |
 | Google | `google` | `GOOGLE_API_KEY` | Gemini models |
 | Groq | `groq` | `GROQ_API_KEY` | Fast inference |
 | Mistral | `mistral` | `MISTRAL_API_KEY` | Mistral models |
-| Ollama (local) | `ollama` | — | Requires `base_url` |
+| xAI | `xai` | `XAI_API_KEY` | Grok models |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | Multi-provider routing |
+| Ollama Local | `ollama-local` | — | Local, no API key |
+| LMStudio | `lmstudio` | — | Local, no API key |
 | Ollama Cloud | `ollama-cloud` | `OLLAMA_API_KEY` | Hosted models |
+| Generic | `openai-compat` | — | Any OpenAI-compatible |
 
-### Custom Endpoints (OpenRouter, LiteLLM, Ollama, etc.)
+### OpenAI-Compatible Endpoints
 
-Use `base_url` to connect to any OpenAI-compatible endpoint:
+Any service implementing the OpenAI chat completions API can be used. Built-in providers have default base URLs:
+
+| Provider | Default Base URL |
+|----------|-----------------|
+| `groq` | api.groq.com/openai/v1 |
+| `mistral` | api.mistral.ai/v1 |
+| `xai` | api.x.ai/v1 |
+| `openrouter` | openrouter.ai/api/v1 |
+| `ollama-local` | localhost:11434/v1 |
+| `lmstudio` | localhost:1234/v1 |
+
+For services without built-in support, use `openai-compat` with a custom `base_url`:
 
 ```toml
-# agent.toml
-
-# OpenRouter
+# Together AI
 [llm]
-provider = "openrouter"
-model = "anthropic/claude-3.5-sonnet"
-base_url = "https://openrouter.ai/api/v1"
+provider = "openai-compat"
+model = "meta-llama/Llama-3-70b-chat-hf"
+max_tokens = 4096
+base_url = "https://api.together.xyz/v1"
+
+# Fireworks AI
+[llm]
+provider = "openai-compat"
+model = "accounts/fireworks/models/llama-v3-70b-instruct"
+max_tokens = 4096
+base_url = "https://api.fireworks.ai/inference/v1"
+
+# Anyscale
+[llm]
+provider = "openai-compat"
+model = "meta-llama/Llama-3-70b-chat-hf"
+max_tokens = 4096
+base_url = "https://api.endpoints.anyscale.com/v1"
+
+# Perplexity
+[llm]
+provider = "openai-compat"
+model = "llama-3.1-sonar-large-128k-online"
+max_tokens = 4096
+base_url = "https://api.perplexity.ai"
+
+# DeepSeek
+[llm]
+provider = "openai-compat"
+model = "deepseek-chat"
+max_tokens = 4096
+base_url = "https://api.deepseek.com/v1"
+
+# vLLM self-hosted
+[llm]
+provider = "openai-compat"
+model = "meta-llama/Llama-3-70b"
+max_tokens = 4096
+base_url = "http://localhost:8000/v1"
 
 # LiteLLM proxy
 [llm]
-provider = "litellm"
+provider = "openai-compat"
 model = "gpt-4"
+max_tokens = 4096
 base_url = "http://localhost:4000"
+```
 
-# Local Ollama (uses OpenAI-compatible endpoint)
+### Provider Examples
+
+```toml
+# xAI (Grok)
 [llm]
-provider = "ollama"
-model = "llama3:70b"
-base_url = "http://localhost:11434/v1"
+provider = "xai"
+model = "grok-2"
+max_tokens = 4096
 
-# LMStudio
+# OpenRouter - route to any model
+[llm]
+provider = "openrouter"
+model = "anthropic/claude-3.5-sonnet"
+max_tokens = 4096
+
+# Local Ollama
+[llm]
+provider = "ollama-local"
+model = "llama3:70b"
+max_tokens = 4096
+
+# LMStudio local server
 [llm]
 provider = "lmstudio"
-model = "local-model"
-base_url = "http://localhost:1234/v1"
-
-# Generic OpenAI-compatible
-[llm]
-provider = "openai-compat"
-model = "any-model"
-base_url = "https://my-api.example.com/v1"
+model = "loaded-model"
+max_tokens = 4096
 ```
 
 ### Ollama Cloud
@@ -901,6 +965,7 @@ The `provider` field is **optional** for standard models — the agent automatic
    - `gpt-*`, `o1-*`, `o3-*` → openai
    - `gemini-*`, `gemma-*` → google
    - `mistral-*`, `mixtral-*`, `codestral-*` → mistral
+   - `grok-*` → xai
 
 Set `provider` explicitly for custom or ambiguous model names.
 
