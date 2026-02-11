@@ -23,6 +23,17 @@ import (
 	"github.com/vinayprograms/agent/internal/tools"
 )
 
+// ObservationExtractor extracts observations from step outputs.
+type ObservationExtractor interface {
+	Extract(ctx context.Context, stepName, stepType, output string) (interface{}, error)
+}
+
+// ObservationStore stores and retrieves observations.
+type ObservationStore interface {
+	StoreObservation(ctx context.Context, obs interface{}) error
+	QueryRelevantObservations(ctx context.Context, query string, limit int) ([]interface{}, error)
+}
+
 // Context keys for agent identity (thread-safe via context propagation)
 type ctxKey int
 
@@ -125,6 +136,10 @@ type Executor struct {
 
 	// Security research context (for defensive framing in prompts)
 	securityResearchScope string
+
+	// Observation extraction for semantic memory
+	observationExtractor ObservationExtractor
+	observationStore     ObservationStore
 }
 
 // NewExecutor creates a new executor.
@@ -170,6 +185,31 @@ func (e *Executor) SetSecurityVerifier(v *security.Verifier) {
 // When set, system prompts will include context indicating authorized security research.
 func (e *Executor) SetSecurityResearchScope(scope string) {
 	e.securityResearchScope = scope
+}
+
+// SetObservationExtraction enables observation extraction and storage for semantic memory.
+func (e *Executor) SetObservationExtraction(extractor ObservationExtractor, store ObservationStore) {
+	e.observationExtractor = extractor
+	e.observationStore = store
+	if extractor != nil && store != nil {
+		e.logger.Info("observation extraction enabled", nil)
+	}
+}
+
+// extractAndStoreObservations extracts observations from step output and stores them.
+func (e *Executor) extractAndStoreObservations(ctx context.Context, stepName, stepType, output string) {
+	if e.observationExtractor == nil || e.observationStore == nil {
+		return
+	}
+
+	// Run extraction asynchronously to not block execution
+	go func() {
+		obs, err := e.observationExtractor.Extract(context.Background(), stepName, stepType, output)
+		if err != nil || obs == nil {
+			return
+		}
+		e.observationStore.StoreObservation(context.Background(), obs)
+	}()
 }
 
 // verifyToolCall checks a tool call against the security verifier if configured.
@@ -944,6 +984,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	if e.OnSubAgentComplete != nil {
 		e.OnSubAgentComplete(role, output)
 	}
+	e.extractAndStoreObservations(ctx, role, "AGENT", output)
 	return output, nil
 }
 
@@ -1097,6 +1138,7 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	if e.OnSubAgentComplete != nil {
 		e.OnSubAgentComplete(role, output)
 	}
+	e.extractAndStoreObservations(ctx, role, "AGENT", output)
 	return output, nil
 }
 
@@ -1806,6 +1848,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	if e.OnGoalComplete != nil {
 		e.OnGoalComplete(goal.Name, output)
 	}
+	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
 	e.logGoalEnd(goal.Name, output)
 	return &GoalResult{Output: output, ToolCallsMade: toolCallsMade}, nil
 }
@@ -2237,18 +2280,16 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 
 	// Single agent: return directly
 	if len(agentOutputs) == 1 {
-		if e.OnGoalComplete != nil {
-			// Extract just the output (without the "[name]: " prefix)
-			parts := strings.SplitN(agentOutputs[0], "]: ", 2)
-			if len(parts) == 2 {
-				e.OnGoalComplete(goal.Name, parts[1])
-			}
-		}
-		parts := strings.SplitN(agentOutputs[0], "]: ", 2)
+		output := agentOutputs[0]
+		parts := strings.SplitN(output, "]: ", 2)
 		if len(parts) == 2 {
-			return parts[1], nil
+			output = parts[1]
 		}
-		return agentOutputs[0], nil
+		if e.OnGoalComplete != nil {
+			e.OnGoalComplete(goal.Name, output)
+		}
+		e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
+		return output, nil
 	}
 
 	// Multiple agents: synthesize responses
@@ -2275,6 +2316,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	if e.OnGoalComplete != nil {
 		e.OnGoalComplete(goal.Name, resp.Content)
 	}
+	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", resp.Content)
 
 	return resp.Content, nil
 }

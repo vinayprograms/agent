@@ -323,12 +323,14 @@ func runWorkflow(args []string) {
 	registry := tools.NewRegistry(pol)
 
 	// Set up summarizer for web_fetch if small_llm is configured
+	var smallLLM llm.Provider // Keep reference for observation extraction
 	if cfg.SmallLLM.Model != "" {
 		smallProvider := cfg.SmallLLM.Provider
 		if smallProvider == "" {
 			smallProvider = llm.InferProviderFromModel(cfg.SmallLLM.Model)
 		}
-		smallLLM, err := llm.NewProvider(llm.FantasyConfig{
+		var err error
+		smallLLM, err = llm.NewProvider(llm.FantasyConfig{
 			Provider:  smallProvider,
 			Model:     cfg.SmallLLM.Model,
 			APIKey:    globalCreds.GetAPIKey(smallProvider),
@@ -336,6 +338,8 @@ func runWorkflow(args []string) {
 		})
 		if err == nil {
 			registry.SetSummarizer(llm.NewSummarizer(smallLLM))
+		} else {
+			smallLLM = nil // Clear on error
 		}
 	}
 
@@ -379,6 +383,7 @@ func runWorkflow(args []string) {
 
 	// Semantic memory: available if embedding provider is configured
 	var semanticMemory *memory.ToolsAdapter
+	var bleveStore *memory.BleveStore // Keep reference for observation extraction
 	embedder, err := createEmbeddingProvider(cfg.Embedding, globalCreds)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating embedding provider: %v\n", err)
@@ -390,20 +395,21 @@ func runWorkflow(args []string) {
 		fmt.Println("🧠 Memory: KV only (semantic disabled)")
 	} else if cfg.Storage.PersistMemory {
 		// Persistent semantic memory using BM25 + semantic graph
-		memStore, err := memory.NewBleveStore(memory.BleveStoreConfig{
+		var storeErr error
+		bleveStore, storeErr = memory.NewBleveStore(memory.BleveStoreConfig{
 			BasePath: storagePath,
 			Embedder: embedder,
 			Provider: cfg.Embedding.Provider,
 			Model:    cfg.Embedding.Model,
 			BaseURL:  cfg.Embedding.BaseURL,
 		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error creating semantic memory store: %v\n", err)
+		if storeErr != nil {
+			fmt.Fprintf(os.Stderr, "error creating semantic memory store: %v\n", storeErr)
 			os.Exit(1)
 		}
-		defer memStore.Close()
+		defer bleveStore.Close()
 
-		semanticMemory = memory.NewToolsAdapter(memStore)
+		semanticMemory = memory.NewToolsAdapter(bleveStore)
 		registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
 		fmt.Println("🧠 Memory: persistent (BM25 + semantic graph)")
 	} else {
@@ -564,6 +570,14 @@ func runWorkflow(args []string) {
 
 	// Connect session to executor for detailed logging
 	exec.SetSession(sess, sessionMgr)
+
+	// Set up observation extraction for semantic memory (requires small_llm and persistent bleve store)
+	if smallLLM != nil && bleveStore != nil {
+		obsExtractor := memory.NewObservationExtractor(smallLLM)
+		obsStore := memory.NewBleveObservationStore(bleveStore)
+		exec.SetObservationExtraction(obsExtractor, obsStore)
+		fmt.Fprintf(os.Stderr, "🔍 Observations: enabled (extracting insights after each step)\n")
+	}
 
 	fmt.Fprintf(os.Stderr, "Running workflow: %s (session: %s)\n\n", wf.Name, sess.ID)
 
