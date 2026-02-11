@@ -7,7 +7,7 @@ import (
 
 // NewProvider creates a provider based on the configuration.
 // If Provider is empty, it will be inferred from the Model name.
-func NewProvider(cfg FantasyConfig) (Provider, error) {
+func NewProvider(cfg ProviderConfig) (Provider, error) {
 	// Infer provider from model name if not specified
 	if cfg.Provider == "" && cfg.Model != "" {
 		cfg.Provider = InferProviderFromModel(cfg.Model)

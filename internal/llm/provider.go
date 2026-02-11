@@ -53,8 +53,8 @@ type Provider interface {
 	Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error)
 }
 
-// FantasyConfig holds configuration for the Fantasy adapter.
-type FantasyConfig struct {
+// ProviderConfig holds configuration for the Provider adapter.
+type ProviderConfig struct {
 	Provider   string         `json:"provider"`    // anthropic, openai, google, groq, mistral, openai-compat
 	Model      string         `json:"model"`
 	APIKey     string         `json:"api_key"`
@@ -72,7 +72,7 @@ type RetryConfig struct {
 }
 
 // Validate validates the configuration.
-func (c *FantasyConfig) Validate() error {
+func (c *ProviderConfig) Validate() error {
 	if c.Provider == "" {
 		return fmt.Errorf("provider is required")
 	}
@@ -89,7 +89,7 @@ func (c *FantasyConfig) Validate() error {
 }
 
 // ApplyDefaults applies default values.
-func (c *FantasyConfig) ApplyDefaults() {
+func (c *ProviderConfig) ApplyDefaults() {
 	// No defaults to apply - all required fields must be set explicitly
 }
 

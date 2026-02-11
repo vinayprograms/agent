@@ -177,18 +177,18 @@ func TestProvider_MaxTokens(t *testing.T) {
 	}
 }
 
-// R4.2.1-R4.2.6: Fantasy adapter tests
-// Note: These test the adapter interface, actual Fantasy integration is tested via integration tests
+// R4.2.1-R4.2.6: Provider adapter tests
+// Note: These test the adapter interface, actual Provider integration is tested via integration tests
 
-func TestFantasyAdapter_ConfigValidation(t *testing.T) {
+func TestProviderAdapter_ConfigValidation(t *testing.T) {
 	tests := []struct {
 		name    string
-		config  FantasyConfig
+		config  ProviderConfig
 		wantErr bool
 	}{
 		{
 			name: "valid anthropic config",
-			config: FantasyConfig{
+			config: ProviderConfig{
 				Provider: "anthropic",
 				Model:    "claude-3-5-sonnet-20241022",
 				APIKey:   "test-key",
@@ -198,7 +198,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 		},
 		{
 			name: "valid openai config",
-			config: FantasyConfig{
+			config: ProviderConfig{
 				Provider: "openai",
 				Model:    "gpt-4o",
 				APIKey:   "test-key",
@@ -208,7 +208,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 		},
 		{
 			name: "valid google config",
-			config: FantasyConfig{
+			config: ProviderConfig{
 				Provider: "google",
 				Model:    "gemini-1.5-pro",
 				APIKey:   "test-key",
@@ -218,7 +218,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 		},
 		{
 			name: "valid groq config",
-			config: FantasyConfig{
+			config: ProviderConfig{
 				Provider: "groq",
 				Model:    "llama-3.1-70b-versatile",
 				APIKey:   "test-key",
@@ -228,7 +228,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 		},
 		{
 			name: "valid mistral config",
-			config: FantasyConfig{
+			config: ProviderConfig{
 				Provider: "mistral",
 				Model:    "mistral-large-latest",
 				APIKey:   "test-key",
@@ -238,7 +238,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 		},
 		{
 			name: "missing provider",
-			config: FantasyConfig{
+			config: ProviderConfig{
 				Model:  "claude-3-5-sonnet-20241022",
 				APIKey: "test-key",
 			},
@@ -246,7 +246,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 		},
 		{
 			name: "missing model",
-			config: FantasyConfig{
+			config: ProviderConfig{
 				Provider: "anthropic",
 				APIKey:   "test-key",
 				MaxTokens: 4096,
@@ -255,7 +255,7 @@ func TestFantasyAdapter_ConfigValidation(t *testing.T) {
 		},
 		{
 			name: "missing api key",
-			config: FantasyConfig{
+			config: ProviderConfig{
 				Provider: "anthropic",
 				Model:    "claude-3-5-sonnet-20241022",
 			},
@@ -292,7 +292,7 @@ func TestNewProvider_AllProviders(t *testing.T) {
 
 	for _, p := range providers {
 		t.Run(p.name, func(t *testing.T) {
-			cfg := FantasyConfig{
+			cfg := ProviderConfig{
 				Provider:  p.name,
 				Model:     p.model,
 				APIKey:    "test-key-for-" + p.name,
@@ -312,7 +312,7 @@ func TestNewProvider_AllProviders(t *testing.T) {
 
 // TestNewProvider_UnsupportedProvider tests that unsupported providers return an error
 func TestNewProvider_UnsupportedProvider(t *testing.T) {
-	cfg := FantasyConfig{
+	cfg := ProviderConfig{
 		Provider: "unsupported-provider",
 		Model:    "some-model",
 		APIKey:   "test-key",
@@ -393,7 +393,7 @@ func TestNewProvider_InferredProvider(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			cfg := FantasyConfig{
+			cfg := ProviderConfig{
 				// Provider not set - should be inferred
 				Model:     tt.model,
 				APIKey:    "test-key",
@@ -408,8 +408,8 @@ func TestNewProvider_InferredProvider(t *testing.T) {
 	}
 }
 
-func TestFantasyConfig_MaxTokensMandatory(t *testing.T) {
-	cfg := FantasyConfig{
+func TestProviderConfig_MaxTokensMandatory(t *testing.T) {
+	cfg := ProviderConfig{
 		Provider: "anthropic",
 		Model:    "claude-3-5-sonnet-20241022",
 		APIKey:   "test-key",
