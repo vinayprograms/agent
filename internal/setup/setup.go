@@ -1772,9 +1772,15 @@ func (m Model) generatePolicyTOML() string {
 	// Bash
 	sb.WriteString("[tools.bash]\n")
 	sb.WriteString(fmt.Sprintf("enabled = %t\n", m.config.AllowBash))
-	if m.config.AllowBash && m.config.DefaultDeny {
-		sb.WriteString("allowlist = [\"ls *\", \"cat *\", \"grep *\", \"find *\", \"head *\", \"tail *\", \"git *\"]\n")
-		sb.WriteString("denylist = [\"rm -rf *\", \"sudo *\", \"curl * | bash\", \"chmod 777 *\"]\n")
+	if m.config.AllowBash {
+		sb.WriteString("# Commands run from workspace directory; absolute paths outside workspace are blocked\n")
+		if m.config.DefaultDeny {
+			sb.WriteString("allowlist = [\"ls *\", \"cat *\", \"grep *\", \"find *\", \"head *\", \"tail *\", \"wc *\", \"git *\", \"go *\", \"make *\"]\n")
+			sb.WriteString("denylist = [\"rm -rf *\", \"sudo *\", \"curl * | bash\", \"chmod 777 *\", \"../*\"]\n")
+		} else {
+			sb.WriteString("# Recommended: add denylist for dangerous commands\n")
+			sb.WriteString("# denylist = [\"rm -rf *\", \"sudo *\", \"curl * | bash\", \"../*\"]\n")
+		}
 	}
 	sb.WriteString("\n")
 
