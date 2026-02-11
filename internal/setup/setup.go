@@ -15,57 +15,80 @@ import (
 // Deployment scenarios
 const (
 	ScenarioLocal      = "local"       // Personal machine, experimenting
-	ScenarioDev        = "dev"         // Development/testing
-	ScenarioTeam       = "team"        // Small team, shared configs
-	ScenarioProduction = "production"  // Production deployment
-	ScenarioEnterprise = "enterprise"  // Large-scale enterprise
+	ScenarioDev        = "dev"         // Development/testing with cloud LLMs
+	ScenarioTeam       = "team"        // Small team, shared proxy (LiteLLM)
+	ScenarioProduction = "production"  // Production with full features
 	ScenarioDocker     = "docker"      // Container deployment
-	ScenarioK8s        = "kubernetes"  // Kubernetes deployment
 )
 
 // Provider options
 const (
-	ProviderAnthropic   = "anthropic"
-	ProviderOpenAI      = "openai"
-	ProviderGoogle      = "google"
-	ProviderGroq        = "groq"
-	ProviderMistral     = "mistral"
-	ProviderOpenRouter  = "openrouter"
-	ProviderOllama      = "ollama"
-	ProviderLiteLLM     = "litellm"
-	ProviderLMStudio    = "lmstudio"
-	ProviderCustom      = "custom"
+	ProviderAnthropic  = "anthropic"
+	ProviderOpenAI     = "openai"
+	ProviderGoogle     = "google"
+	ProviderGroq       = "groq"
+	ProviderMistral    = "mistral"
+	ProviderOpenRouter = "openrouter"
+	ProviderOllama     = "ollama"
+	ProviderLiteLLM    = "litellm"
+	ProviderLMStudio   = "lmstudio"
+	ProviderCustom     = "custom"
+)
+
+// Embedding provider options
+const (
+	EmbeddingOpenAI  = "openai"
+	EmbeddingGoogle  = "google"
+	EmbeddingMistral = "mistral"
+	EmbeddingCohere  = "cohere"
+	EmbeddingVoyage  = "voyage"
+	EmbeddingOllama  = "ollama"
+	EmbeddingNone    = "none"
 )
 
 // Config holds the setup configuration
 type Config struct {
 	// Deployment
-	Scenario    string
-	Workspace   string
-	ConfigDir   string
-	
-	// LLM
-	Provider    string
-	Model       string
-	APIKey      string
-	BaseURL     string
-	
+	Scenario  string
+	Workspace string
+	ConfigDir string
+
+	// Main LLM
+	Provider string
+	Model    string
+	APIKey   string
+	BaseURL  string
+	Thinking string
+
+	// Small LLM (for summarization, triage)
+	SmallLLMEnabled  bool
+	SmallLLMProvider string
+	SmallLLMModel    string
+	SmallLLMBaseURL  string
+
+	// Embedding (for semantic memory)
+	EmbeddingProvider string
+	EmbeddingModel    string
+	EmbeddingBaseURL  string
+
 	// Profiles
 	UseProfiles bool
 	Profiles    map[string]ProfileConfig
-	
+
 	// Security
-	DefaultDeny  bool
-	AllowBash    bool
-	AllowWeb     bool
-	
+	DefaultDeny   bool
+	AllowBash     bool
+	AllowWeb      bool
+	SecurityMode  string // "default" or "paranoid"
+
 	// Features
 	EnableMCP       bool
 	EnableTelemetry bool
 	EnableMemory    bool
-	
+	PersistMemory   bool
+
 	// Credentials
-	CredentialMethod string // "file", "env", "vault", "k8s-secret"
+	CredentialMethod string // "file", "env"
 }
 
 // ProfileConfig holds a capability profile configuration
@@ -73,42 +96,43 @@ type ProfileConfig struct {
 	Provider string
 	Model    string
 	BaseURL  string
+	Thinking string
 }
 
 // Styles
 var (
 	titleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("99")).
-		MarginBottom(1)
+			Bold(true).
+			Foreground(lipgloss.Color("99")).
+			MarginBottom(1)
 
 	subtitleStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		MarginBottom(1)
+			Foreground(lipgloss.Color("241")).
+			MarginBottom(1)
 
 	selectedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("170")).
-		Bold(true)
+			Foreground(lipgloss.Color("170")).
+			Bold(true)
 
 	normalStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+			Foreground(lipgloss.Color("252"))
 
 	dimStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
+			Foreground(lipgloss.Color("240"))
 
 	successStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("82"))
+			Foreground(lipgloss.Color("82"))
 
 	errorStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("196"))
+			Foreground(lipgloss.Color("196"))
 
 	infoStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("39"))
+			Foreground(lipgloss.Color("39"))
 
 	boxStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("99")).
-		Padding(1, 2)
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("99")).
+			Padding(1, 2)
 )
 
 // Step represents a setup wizard step
@@ -121,11 +145,19 @@ const (
 	StepModel
 	StepAPIKey
 	StepBaseURL
+	StepThinking
+	StepSmallLLM
+	StepSmallLLMProvider
+	StepSmallLLMModel
+	StepEmbedding
+	StepEmbeddingModel
 	StepWorkspace
 	StepSecurity
+	StepSecurityMode
 	StepProfiles
-	StepCredentialMethod
+	StepProfilesConfig
 	StepFeatures
+	StepCredentialMethod
 	StepConfirm
 	StepWriteFiles
 	StepComplete
@@ -133,17 +165,17 @@ const (
 
 // Model is the bubbletea model for the setup wizard
 type Model struct {
-	step       Step
-	config     Config
-	cursor     int
-	textInput  textinput.Model
-	err        error
-	width      int
-	height     int
-	
+	step      Step
+	config    Config
+	cursor    int
+	textInput textinput.Model
+	err       error
+	width     int
+	height    int
+
 	// For multi-select
-	selected   map[int]bool
-	
+	selected map[int]bool
+
 	// Results
 	filesWritten []string
 }
@@ -159,12 +191,17 @@ func New() Model {
 		step:      StepWelcome,
 		textInput: ti,
 		config: Config{
-			Workspace:  ".",
-			ConfigDir:  getDefaultConfigDir(),
-			Profiles:   make(map[string]ProfileConfig),
-			AllowBash:  true,
-			AllowWeb:   true,
-			EnableMemory: true,
+			Workspace:         ".",
+			ConfigDir:         getDefaultConfigDir(),
+			Profiles:          make(map[string]ProfileConfig),
+			AllowBash:         true,
+			AllowWeb:          true,
+			EnableMemory:      true,
+			PersistMemory:     true,
+			SecurityMode:      "default",
+			Thinking:          "auto",
+			CredentialMethod:  "file",
+			EmbeddingProvider: "none",
 		},
 		selected: make(map[int]bool),
 	}
@@ -172,7 +209,7 @@ func New() Model {
 
 func getDefaultConfigDir() string {
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".config", "grid")
+		return filepath.Join(home, ".config", "agent")
 	}
 	return "."
 }
@@ -205,13 +242,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.step == StepComplete {
 				return m, tea.Quit
 			}
-			// Allow quitting at welcome
 			if m.step == StepWelcome {
 				return m, tea.Quit
 			}
 			// Go back
 			if m.step > StepWelcome {
-				m.step--
+				m.step = m.previousStep()
 				m.cursor = 0
 			}
 			return m, nil
@@ -237,7 +273,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "tab":
-			// Move to next input field if applicable
 			return m, nil
 		}
 	}
@@ -252,9 +287,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) previousStep() Step {
+	// Handle conditional step skipping when going back
+	prev := m.step - 1
+
+	// Skip small LLM steps if not enabled
+	if prev == StepSmallLLMModel && !m.config.SmallLLMEnabled {
+		prev = StepSmallLLM
+	}
+	if prev == StepSmallLLMProvider && !m.config.SmallLLMEnabled {
+		prev = StepSmallLLM
+	}
+
+	// Skip embedding model if provider is none
+	if prev == StepEmbeddingModel && m.config.EmbeddingProvider == "none" {
+		prev = StepEmbedding
+	}
+
+	// Skip base URL for direct providers
+	if prev == StepBaseURL && !m.needsBaseURL() {
+		prev = StepAPIKey
+	}
+
+	// Skip profiles config if not using profiles
+	if prev == StepProfilesConfig && !m.config.UseProfiles {
+		prev = StepProfiles
+	}
+
+	return prev
+}
+
 func (m Model) isTextInputStep() bool {
 	switch m.step {
-	case StepModel, StepAPIKey, StepBaseURL, StepWorkspace:
+	case StepAPIKey, StepBaseURL, StepWorkspace, StepSmallLLMModel, StepEmbeddingModel:
 		return true
 	}
 	return false
@@ -267,33 +332,32 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		m.cursor = 0
 
 	case StepScenario:
-		scenarios := m.getScenarioOptions()
-		if m.cursor < len(scenarios) {
-			m.config.Scenario = scenarios[m.cursor].value
+		scenarios := m.getScenarios()
+		if m.cursor >= 0 && m.cursor < len(scenarios) {
+			m.config.Scenario = scenarios[m.cursor].id
 			m.applyScenarioDefaults()
-			m.step = StepProvider
-			m.cursor = 0
 		}
+		m.step = StepProvider
+		m.cursor = 0
 
 	case StepProvider:
-		providers := m.getProviderOptions()
-		if m.cursor < len(providers) {
-			m.config.Provider = providers[m.cursor].value
-			m.step = StepModel
-			m.textInput.SetValue(m.getDefaultModel())
-			m.textInput.Focus()
+		providers := m.getProviders()
+		if m.cursor >= 0 && m.cursor < len(providers) {
+			m.config.Provider = providers[m.cursor].id
+			m.setDefaultModel()
 		}
+		m.step = StepModel
+		m.cursor = 0
 
 	case StepModel:
-		m.config.Model = m.textInput.Value()
-		if m.config.Model == "" {
-			m.config.Model = m.getDefaultModel()
+		models := m.getModels()
+		if m.cursor >= 0 && m.cursor < len(models) {
+			m.config.Model = models[m.cursor].id
 		}
 		m.step = StepAPIKey
 		m.textInput.SetValue("")
-		m.textInput.EchoMode = textinput.EchoPassword
 		m.textInput.Placeholder = "sk-..."
-		m.textInput.Focus()
+		m.textInput.EchoMode = textinput.EchoPassword
 
 	case StepAPIKey:
 		m.config.APIKey = m.textInput.Value()
@@ -303,18 +367,69 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.textInput.SetValue(m.getDefaultBaseURL())
 			m.textInput.Placeholder = "https://..."
 		} else {
+			m.step = StepThinking
+			m.cursor = 0
+		}
+
+	case StepBaseURL:
+		m.config.BaseURL = m.textInput.Value()
+		m.step = StepThinking
+		m.cursor = 0
+
+	case StepThinking:
+		thinkingOptions := []string{"auto", "off", "low", "medium", "high"}
+		if m.cursor >= 0 && m.cursor < len(thinkingOptions) {
+			m.config.Thinking = thinkingOptions[m.cursor]
+		}
+		m.step = StepSmallLLM
+		m.cursor = 0
+
+	case StepSmallLLM:
+		m.config.SmallLLMEnabled = m.cursor == 0 // Yes
+		if m.config.SmallLLMEnabled {
+			m.step = StepSmallLLMProvider
+			m.cursor = 0
+		} else {
+			m.step = StepEmbedding
+			m.cursor = 0
+		}
+
+	case StepSmallLLMProvider:
+		providers := m.getProviders()
+		if m.cursor >= 0 && m.cursor < len(providers) {
+			m.config.SmallLLMProvider = providers[m.cursor].id
+			m.setDefaultSmallModel()
+		}
+		m.step = StepSmallLLMModel
+		m.textInput.SetValue(m.config.SmallLLMModel)
+		m.textInput.Placeholder = "model name"
+
+	case StepSmallLLMModel:
+		m.config.SmallLLMModel = m.textInput.Value()
+		m.step = StepEmbedding
+		m.cursor = 0
+
+	case StepEmbedding:
+		embeddingProviders := m.getEmbeddingProviders()
+		if m.cursor >= 0 && m.cursor < len(embeddingProviders) {
+			m.config.EmbeddingProvider = embeddingProviders[m.cursor].id
+			m.setDefaultEmbeddingModel()
+		}
+		if m.config.EmbeddingProvider != "none" {
+			m.step = StepEmbeddingModel
+			m.textInput.SetValue(m.config.EmbeddingModel)
+			m.textInput.Placeholder = "model name"
+		} else {
 			m.step = StepWorkspace
 			m.textInput.SetValue(m.config.Workspace)
 			m.textInput.Placeholder = "/path/to/workspace"
 		}
-		m.textInput.Focus()
 
-	case StepBaseURL:
-		m.config.BaseURL = m.textInput.Value()
+	case StepEmbeddingModel:
+		m.config.EmbeddingModel = m.textInput.Value()
 		m.step = StepWorkspace
 		m.textInput.SetValue(m.config.Workspace)
 		m.textInput.Placeholder = "/path/to/workspace"
-		m.textInput.Focus()
 
 	case StepWorkspace:
 		m.config.Workspace = m.textInput.Value()
@@ -325,40 +440,62 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		m.cursor = 0
 
 	case StepSecurity:
-		securityLevels := m.getSecurityOptions()
-		if m.cursor < len(securityLevels) {
-			m.applySecurityLevel(securityLevels[m.cursor].value)
-			m.step = StepCredentialMethod
-			m.cursor = 0
+		// Security stance: permissive (0) or restrictive (1)
+		m.config.DefaultDeny = m.cursor == 1
+		if m.cursor == 1 {
+			m.config.AllowBash = false
+			m.config.AllowWeb = false
 		}
+		m.step = StepSecurityMode
+		m.cursor = 0
 
-	case StepCredentialMethod:
-		methods := m.getCredentialMethods()
-		if m.cursor < len(methods) {
-			m.config.CredentialMethod = methods[m.cursor].value
+	case StepSecurityMode:
+		modes := []string{"default", "paranoid"}
+		if m.cursor >= 0 && m.cursor < len(modes) {
+			m.config.SecurityMode = modes[m.cursor]
+		}
+		m.step = StepProfiles
+		m.cursor = 0
+
+	case StepProfiles:
+		m.config.UseProfiles = m.cursor == 0 // Yes
+		if m.config.UseProfiles {
+			m.step = StepProfilesConfig
+			m.cursor = 0
+		} else {
 			m.step = StepFeatures
 			m.cursor = 0
-			// Pre-select based on scenario
-			m.selected[0] = m.config.EnableMemory
-			m.selected[1] = m.config.EnableMCP
-			m.selected[2] = m.config.EnableTelemetry
+			m.initFeatureSelection()
 		}
 
+	case StepProfilesConfig:
+		// Auto-configure profiles based on provider
+		m.configureDefaultProfiles()
+		m.step = StepFeatures
+		m.cursor = 0
+		m.initFeatureSelection()
+
 	case StepFeatures:
-		m.config.EnableMemory = m.selected[0]
-		m.config.EnableMCP = m.selected[1]
-		m.config.EnableTelemetry = m.selected[2]
+		m.applyFeatureSelection()
+		m.step = StepCredentialMethod
+		m.cursor = 0
+
+	case StepCredentialMethod:
+		methods := []string{"file", "env"}
+		if m.cursor >= 0 && m.cursor < len(methods) {
+			m.config.CredentialMethod = methods[m.cursor]
+		}
 		m.step = StepConfirm
 		m.cursor = 0
 
 	case StepConfirm:
-		if m.cursor == 0 { // Yes, create files
+		if m.cursor == 0 { // Confirm
 			m.step = StepWriteFiles
-			return m, m.writeConfigFiles
-		} else { // No, go back
-			m.step = StepScenario
-			m.cursor = 0
+			return m, m.writeFiles()
 		}
+		// Cancel - go back to scenario
+		m.step = StepScenario
+		m.cursor = 0
 
 	case StepComplete:
 		return m, tea.Quit
@@ -367,585 +504,880 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-type option struct {
-	label       string
-	value       string
-	description string
-}
-
-func (m Model) getScenarioOptions() []option {
-	return []option{
-		{"🧪 Local Experimenter", ScenarioLocal, "Personal machine, trying things out"},
-		{"💻 Development", ScenarioDev, "Development and testing environment"},
-		{"👥 Team", ScenarioTeam, "Small team with shared configurations"},
-		{"🚀 Production", ScenarioProduction, "Production deployment with security"},
-		{"🏢 Enterprise", ScenarioEnterprise, "Large-scale with compliance needs"},
-		{"🐳 Docker", ScenarioDocker, "Container-based deployment"},
-		{"☸️  Kubernetes", ScenarioK8s, "Kubernetes cluster deployment"},
+func (m *Model) initFeatureSelection() {
+	m.selected = map[int]bool{
+		0: m.config.EnableMCP,
+		1: m.config.EnableMemory,
+		2: m.config.PersistMemory,
+		3: m.config.EnableTelemetry,
 	}
 }
 
-func (m Model) getProviderOptions() []option {
-	return []option{
-		{"Anthropic (Claude)", ProviderAnthropic, "claude-sonnet-4, claude-opus-4"},
-		{"OpenAI (GPT)", ProviderOpenAI, "gpt-4o, gpt-4-turbo, o1"},
-		{"Google (Gemini)", ProviderGoogle, "gemini-1.5-pro, gemini-2.0"},
-		{"Groq (Fast)", ProviderGroq, "llama-3, mixtral (fast inference)"},
-		{"Mistral", ProviderMistral, "mistral-large, codestral"},
-		{"OpenRouter", ProviderOpenRouter, "Multi-provider gateway"},
-		{"Ollama (Local)", ProviderOllama, "Self-hosted, local models"},
-		{"LiteLLM (Proxy)", ProviderLiteLLM, "LLM proxy/gateway"},
-		{"LM Studio (Local)", ProviderLMStudio, "Local GUI + server"},
-		{"Custom Endpoint", ProviderCustom, "Any OpenAI-compatible API"},
-	}
-}
-
-func (m Model) getSecurityOptions() []option {
-	return []option{
-		{"🟢 Permissive", "permissive", "All tools enabled, no restrictions"},
-		{"🟡 Balanced", "balanced", "Most tools enabled, some restrictions"},
-		{"🔴 Strict", "strict", "Default deny, explicit allowlist"},
-		{"🔒 Paranoid", "paranoid", "Minimal tools, maximum restrictions"},
-	}
-}
-
-func (m Model) getCredentialMethods() []option {
-	methods := []option{
-		{"📄 Config File", "file", "Store in ~/.config/grid/credentials.toml"},
-		{"🌍 Environment Variables", "env", "Use PROVIDER_API_KEY env vars"},
-	}
-	
-	// Add advanced options for enterprise scenarios
-	if m.config.Scenario == ScenarioEnterprise || m.config.Scenario == ScenarioK8s {
-		methods = append(methods,
-			option{"🔐 HashiCorp Vault", "vault", "Fetch from Vault at runtime"},
-			option{"☸️  Kubernetes Secrets", "k8s-secret", "Mount as K8s secret"},
-		)
-	}
-	
-	return methods
-}
-
-func (m *Model) applyScenarioDefaults() {
-	switch m.config.Scenario {
-	case ScenarioLocal:
-		m.config.DefaultDeny = false
-		m.config.AllowBash = true
-		m.config.AllowWeb = true
-		m.config.EnableMCP = false
-		m.config.EnableTelemetry = false
-		m.config.EnableMemory = true
-		m.config.CredentialMethod = "file"
-
-	case ScenarioDev:
-		m.config.DefaultDeny = false
-		m.config.AllowBash = true
-		m.config.AllowWeb = true
-		m.config.EnableMCP = true
-		m.config.EnableTelemetry = false
-		m.config.EnableMemory = true
-		m.config.CredentialMethod = "env"
-
-	case ScenarioTeam:
-		m.config.DefaultDeny = false
-		m.config.AllowBash = true
-		m.config.AllowWeb = true
-		m.config.EnableMCP = true
-		m.config.EnableTelemetry = true
-		m.config.EnableMemory = true
-		m.config.CredentialMethod = "env"
-
-	case ScenarioProduction:
-		m.config.DefaultDeny = true
-		m.config.AllowBash = false
-		m.config.AllowWeb = true
-		m.config.EnableMCP = true
-		m.config.EnableTelemetry = true
-		m.config.EnableMemory = true
-		m.config.CredentialMethod = "env"
-
-	case ScenarioEnterprise:
-		m.config.DefaultDeny = true
-		m.config.AllowBash = false
-		m.config.AllowWeb = true
-		m.config.EnableMCP = true
-		m.config.EnableTelemetry = true
-		m.config.EnableMemory = true
-		m.config.CredentialMethod = "vault"
-
-	case ScenarioDocker:
-		m.config.DefaultDeny = true
-		m.config.AllowBash = false
-		m.config.AllowWeb = true
-		m.config.EnableMCP = false
-		m.config.EnableTelemetry = true
-		m.config.EnableMemory = true
-		m.config.CredentialMethod = "env"
-
-	case ScenarioK8s:
-		m.config.DefaultDeny = true
-		m.config.AllowBash = false
-		m.config.AllowWeb = true
-		m.config.EnableMCP = true
-		m.config.EnableTelemetry = true
-		m.config.EnableMemory = true
-		m.config.CredentialMethod = "k8s-secret"
-	}
-}
-
-func (m *Model) applySecurityLevel(level string) {
-	switch level {
-	case "permissive":
-		m.config.DefaultDeny = false
-		m.config.AllowBash = true
-		m.config.AllowWeb = true
-	case "balanced":
-		m.config.DefaultDeny = false
-		m.config.AllowBash = true
-		m.config.AllowWeb = true
-	case "strict":
-		m.config.DefaultDeny = true
-		m.config.AllowBash = false
-		m.config.AllowWeb = true
-	case "paranoid":
-		m.config.DefaultDeny = true
-		m.config.AllowBash = false
-		m.config.AllowWeb = false
-	}
+func (m *Model) applyFeatureSelection() {
+	m.config.EnableMCP = m.selected[0]
+	m.config.EnableMemory = m.selected[1]
+	m.config.PersistMemory = m.selected[2]
+	m.config.EnableTelemetry = m.selected[3]
 }
 
 func (m Model) needsBaseURL() bool {
 	switch m.config.Provider {
-	case ProviderOpenRouter, ProviderOllama, ProviderLiteLLM, ProviderLMStudio, ProviderCustom:
+	case ProviderOllama, ProviderLiteLLM, ProviderLMStudio, ProviderOpenRouter, ProviderCustom:
 		return true
 	}
 	return false
 }
 
-func (m Model) getDefaultModel() string {
-	switch m.config.Provider {
-	case ProviderAnthropic:
-		return "claude-sonnet-4-20250514"
-	case ProviderOpenAI:
-		return "gpt-4o"
-	case ProviderGoogle:
-		return "gemini-1.5-pro"
-	case ProviderGroq:
-		return "llama-3.3-70b-versatile"
-	case ProviderMistral:
-		return "mistral-large-latest"
-	case ProviderOpenRouter:
-		return "anthropic/claude-3.5-sonnet"
-	case ProviderOllama:
-		return "llama3:70b"
-	case ProviderLiteLLM:
-		return "gpt-4"
-	case ProviderLMStudio:
-		return "local-model"
-	default:
-		return "gpt-4"
-	}
-}
-
 func (m Model) getDefaultBaseURL() string {
 	switch m.config.Provider {
-	case ProviderOpenRouter:
-		return "https://openrouter.ai/api/v1"
 	case ProviderOllama:
 		return "http://localhost:11434/v1"
-	case ProviderLiteLLM:
-		return "http://localhost:4000"
 	case ProviderLMStudio:
 		return "http://localhost:1234/v1"
+	case ProviderOpenRouter:
+		return "https://openrouter.ai/api/v1"
+	case ProviderLiteLLM:
+		return "http://localhost:4000/v1"
 	default:
-		return "https://api.example.com/v1"
+		return ""
 	}
 }
 
-// View renders the UI
+func (m *Model) applyScenarioDefaults() {
+	switch m.config.Scenario {
+	case ScenarioLocal:
+		m.config.Provider = ProviderOllama
+		m.config.DefaultDeny = false
+		m.config.AllowBash = true
+		m.config.AllowWeb = true
+		m.config.SecurityMode = "default"
+		m.config.EmbeddingProvider = "ollama"
+		m.config.SmallLLMEnabled = false
+		m.config.PersistMemory = false
+
+	case ScenarioDev:
+		m.config.Provider = ProviderAnthropic
+		m.config.DefaultDeny = false
+		m.config.AllowBash = true
+		m.config.AllowWeb = true
+		m.config.SecurityMode = "default"
+		m.config.SmallLLMEnabled = true
+		m.config.EmbeddingProvider = "voyage"
+
+	case ScenarioTeam:
+		m.config.Provider = ProviderLiteLLM
+		m.config.DefaultDeny = true
+		m.config.AllowBash = true
+		m.config.AllowWeb = true
+		m.config.SecurityMode = "default"
+		m.config.SmallLLMEnabled = true
+		m.config.UseProfiles = true
+
+	case ScenarioProduction:
+		m.config.Provider = ProviderLiteLLM
+		m.config.DefaultDeny = true
+		m.config.AllowBash = false
+		m.config.AllowWeb = true
+		m.config.SecurityMode = "paranoid"
+		m.config.SmallLLMEnabled = true
+		m.config.UseProfiles = true
+		m.config.EnableTelemetry = true
+		m.config.EmbeddingProvider = "voyage"
+
+	case ScenarioDocker:
+		m.config.Provider = ProviderLiteLLM
+		m.config.DefaultDeny = true
+		m.config.AllowBash = true
+		m.config.AllowWeb = true
+		m.config.SecurityMode = "default"
+		m.config.SmallLLMEnabled = true
+		m.config.CredentialMethod = "env"
+	}
+}
+
+func (m *Model) setDefaultModel() {
+	switch m.config.Provider {
+	case ProviderAnthropic:
+		m.config.Model = "claude-sonnet-4-20250514"
+	case ProviderOpenAI:
+		m.config.Model = "gpt-4o"
+	case ProviderGoogle:
+		m.config.Model = "gemini-2.0-flash"
+	case ProviderGroq:
+		m.config.Model = "llama-3.3-70b-versatile"
+	case ProviderMistral:
+		m.config.Model = "mistral-large-latest"
+	case ProviderOpenRouter:
+		m.config.Model = "anthropic/claude-sonnet-4"
+	case ProviderOllama:
+		m.config.Model = "llama3.2"
+	case ProviderLiteLLM:
+		m.config.Model = "claude-sonnet-4-20250514"
+	case ProviderLMStudio:
+		m.config.Model = "local-model"
+	default:
+		m.config.Model = ""
+	}
+}
+
+func (m *Model) setDefaultSmallModel() {
+	switch m.config.SmallLLMProvider {
+	case ProviderAnthropic:
+		m.config.SmallLLMModel = "claude-3-5-haiku-20241022"
+	case ProviderOpenAI:
+		m.config.SmallLLMModel = "gpt-4o-mini"
+	case ProviderGoogle:
+		m.config.SmallLLMModel = "gemini-2.0-flash"
+	case ProviderGroq:
+		m.config.SmallLLMModel = "llama-3.1-8b-instant"
+	case ProviderMistral:
+		m.config.SmallLLMModel = "mistral-small-latest"
+	case ProviderOllama:
+		m.config.SmallLLMModel = "llama3.2:1b"
+	case ProviderLiteLLM:
+		m.config.SmallLLMModel = "claude-3-5-haiku-20241022"
+	default:
+		m.config.SmallLLMModel = m.config.Model
+	}
+	// Inherit base URL from main LLM if same provider type
+	if m.config.SmallLLMProvider == m.config.Provider {
+		m.config.SmallLLMBaseURL = m.config.BaseURL
+	}
+}
+
+func (m *Model) setDefaultEmbeddingModel() {
+	switch m.config.EmbeddingProvider {
+	case EmbeddingOpenAI:
+		m.config.EmbeddingModel = "text-embedding-3-small"
+	case EmbeddingGoogle:
+		m.config.EmbeddingModel = "text-embedding-004"
+	case EmbeddingMistral:
+		m.config.EmbeddingModel = "mistral-embed"
+	case EmbeddingCohere:
+		m.config.EmbeddingModel = "embed-english-v3.0"
+	case EmbeddingVoyage:
+		m.config.EmbeddingModel = "voyage-3-lite"
+	case EmbeddingOllama:
+		m.config.EmbeddingModel = "nomic-embed-text"
+	default:
+		m.config.EmbeddingModel = ""
+	}
+}
+
+func (m *Model) configureDefaultProfiles() {
+	// Create reasonable default profiles based on main provider
+	switch m.config.Provider {
+	case ProviderAnthropic:
+		m.config.Profiles["reasoning"] = ProfileConfig{
+			Model:    "claude-opus-4-20250514",
+			Thinking: "high",
+		}
+		m.config.Profiles["fast"] = ProfileConfig{
+			Model:    "claude-3-5-haiku-20241022",
+			Thinking: "off",
+		}
+		m.config.Profiles["balanced"] = ProfileConfig{
+			Model:    "claude-sonnet-4-20250514",
+			Thinking: "auto",
+		}
+
+	case ProviderOpenAI:
+		m.config.Profiles["reasoning"] = ProfileConfig{
+			Model:    "o3",
+			Thinking: "high",
+		}
+		m.config.Profiles["fast"] = ProfileConfig{
+			Model:    "gpt-4o-mini",
+			Thinking: "off",
+		}
+		m.config.Profiles["balanced"] = ProfileConfig{
+			Model:    "gpt-4o",
+			Thinking: "auto",
+		}
+
+	case ProviderLiteLLM:
+		// Generic profiles for proxy
+		m.config.Profiles["reasoning"] = ProfileConfig{
+			Model:    "claude-opus-4-20250514",
+			Thinking: "high",
+		}
+		m.config.Profiles["fast"] = ProfileConfig{
+			Model:    "claude-3-5-haiku-20241022",
+			Thinking: "off",
+		}
+
+	default:
+		// Simple fast/slow profiles
+		m.config.Profiles["fast"] = ProfileConfig{
+			Model:    m.config.Model,
+			Thinking: "off",
+		}
+	}
+}
+
+type scenarioOption struct {
+	id   string
+	name string
+	desc string
+}
+
+func (m Model) getScenarios() []scenarioOption {
+	return []scenarioOption{
+		{ScenarioLocal, "Local Development", "Personal machine with Ollama, no API keys needed"},
+		{ScenarioDev, "Cloud Development", "Development with cloud LLMs (Anthropic, OpenAI, etc.)"},
+		{ScenarioTeam, "Team/Proxy", "Shared LLM proxy (LiteLLM, OpenRouter) with profiles"},
+		{ScenarioProduction, "Production", "Full security, telemetry, and monitoring"},
+		{ScenarioDocker, "Docker/Container", "Container deployment with env-based credentials"},
+	}
+}
+
+type providerOption struct {
+	id   string
+	name string
+	desc string
+}
+
+func (m Model) getProviders() []providerOption {
+	return []providerOption{
+		{ProviderAnthropic, "Anthropic", "Claude models (recommended)"},
+		{ProviderOpenAI, "OpenAI", "GPT-4o, o3 models"},
+		{ProviderGoogle, "Google", "Gemini models"},
+		{ProviderGroq, "Groq", "Fast inference (Llama, Mixtral)"},
+		{ProviderMistral, "Mistral", "Mistral models"},
+		{ProviderOpenRouter, "OpenRouter", "Multi-provider router"},
+		{ProviderOllama, "Ollama", "Local models (free)"},
+		{ProviderLiteLLM, "LiteLLM", "Self-hosted proxy (OpenAI-compatible)"},
+		{ProviderLMStudio, "LM Studio", "Local models with UI"},
+		{ProviderCustom, "Custom", "Custom OpenAI-compatible endpoint"},
+	}
+}
+
+type modelOption struct {
+	id   string
+	name string
+}
+
+func (m Model) getModels() []modelOption {
+	switch m.config.Provider {
+	case ProviderAnthropic:
+		return []modelOption{
+			{"claude-sonnet-4-20250514", "Claude Sonnet 4 (recommended)"},
+			{"claude-opus-4-20250514", "Claude Opus 4 (most capable)"},
+			{"claude-3-5-haiku-20241022", "Claude 3.5 Haiku (fast)"},
+		}
+	case ProviderOpenAI:
+		return []modelOption{
+			{"gpt-4o", "GPT-4o (recommended)"},
+			{"gpt-4o-mini", "GPT-4o Mini (fast)"},
+			{"o3", "o3 (reasoning)"},
+			{"o3-mini", "o3 Mini (fast reasoning)"},
+		}
+	case ProviderGoogle:
+		return []modelOption{
+			{"gemini-2.0-flash", "Gemini 2.0 Flash (recommended)"},
+			{"gemini-2.0-pro", "Gemini 2.0 Pro"},
+			{"gemini-1.5-pro", "Gemini 1.5 Pro"},
+		}
+	case ProviderGroq:
+		return []modelOption{
+			{"llama-3.3-70b-versatile", "Llama 3.3 70B (recommended)"},
+			{"llama-3.1-8b-instant", "Llama 3.1 8B (fast)"},
+			{"mixtral-8x7b-32768", "Mixtral 8x7B"},
+		}
+	case ProviderMistral:
+		return []modelOption{
+			{"mistral-large-latest", "Mistral Large (recommended)"},
+			{"mistral-medium-latest", "Mistral Medium"},
+			{"mistral-small-latest", "Mistral Small (fast)"},
+		}
+	case ProviderOllama:
+		return []modelOption{
+			{"llama3.2", "Llama 3.2 (recommended)"},
+			{"llama3.2:1b", "Llama 3.2 1B (fast)"},
+			{"codellama", "Code Llama"},
+			{"mistral", "Mistral 7B"},
+			{"phi3", "Phi-3"},
+		}
+	default:
+		return []modelOption{
+			{m.config.Model, "Default model"},
+		}
+	}
+}
+
+type embeddingOption struct {
+	id   string
+	name string
+	desc string
+}
+
+func (m Model) getEmbeddingProviders() []embeddingOption {
+	return []embeddingOption{
+		{EmbeddingNone, "None", "Disable semantic memory (use scratchpad only)"},
+		{EmbeddingOpenAI, "OpenAI", "text-embedding-3-small (recommended)"},
+		{EmbeddingVoyage, "Voyage", "Anthropic's recommended partner"},
+		{EmbeddingGoogle, "Google", "text-embedding-004"},
+		{EmbeddingMistral, "Mistral", "mistral-embed"},
+		{EmbeddingCohere, "Cohere", "embed-english-v3.0"},
+		{EmbeddingOllama, "Ollama", "nomic-embed-text (local, free)"},
+	}
+}
+
+// View renders the current step
 func (m Model) View() string {
+	var s strings.Builder
+
 	switch m.step {
 	case StepWelcome:
-		return m.viewWelcome()
+		s.WriteString(m.viewWelcome())
 	case StepScenario:
-		return m.viewScenario()
+		s.WriteString(m.viewScenario())
 	case StepProvider:
-		return m.viewProvider()
+		s.WriteString(m.viewProvider())
 	case StepModel:
-		return m.viewModel()
+		s.WriteString(m.viewModel())
 	case StepAPIKey:
-		return m.viewAPIKey()
+		s.WriteString(m.viewAPIKey())
 	case StepBaseURL:
-		return m.viewBaseURL()
+		s.WriteString(m.viewBaseURL())
+	case StepThinking:
+		s.WriteString(m.viewThinking())
+	case StepSmallLLM:
+		s.WriteString(m.viewSmallLLM())
+	case StepSmallLLMProvider:
+		s.WriteString(m.viewSmallLLMProvider())
+	case StepSmallLLMModel:
+		s.WriteString(m.viewSmallLLMModel())
+	case StepEmbedding:
+		s.WriteString(m.viewEmbedding())
+	case StepEmbeddingModel:
+		s.WriteString(m.viewEmbeddingModel())
 	case StepWorkspace:
-		return m.viewWorkspace()
+		s.WriteString(m.viewWorkspace())
 	case StepSecurity:
-		return m.viewSecurity()
-	case StepCredentialMethod:
-		return m.viewCredentialMethod()
+		s.WriteString(m.viewSecurity())
+	case StepSecurityMode:
+		s.WriteString(m.viewSecurityMode())
+	case StepProfiles:
+		s.WriteString(m.viewProfiles())
+	case StepProfilesConfig:
+		s.WriteString(m.viewProfilesConfig())
 	case StepFeatures:
-		return m.viewFeatures()
+		s.WriteString(m.viewFeatures())
+	case StepCredentialMethod:
+		s.WriteString(m.viewCredentialMethod())
 	case StepConfirm:
-		return m.viewConfirm()
+		s.WriteString(m.viewConfirm())
 	case StepWriteFiles:
-		return m.viewWriting()
+		s.WriteString(m.viewWriting())
 	case StepComplete:
-		return m.viewComplete()
+		s.WriteString(m.viewComplete())
 	}
-	return ""
+
+	return s.String()
 }
 
 func (m Model) viewWelcome() string {
-	s := titleStyle.Render("🤖 Headless Agent Setup Wizard")
-	s += "\n\n"
-	s += normalStyle.Render("This wizard will help you configure the headless agent for your environment.")
-	s += "\n\n"
-	s += dimStyle.Render("We'll set up:")
-	s += "\n"
-	s += dimStyle.Render("  • agent.toml      - Agent configuration")
-	s += "\n"
-	s += dimStyle.Render("  • credentials.toml - API keys (secure)")
-	s += "\n"
-	s += dimStyle.Render("  • policy.toml     - Security policy")
-	s += "\n\n"
-	s += infoStyle.Render("Press Enter to start, or q to quit")
-	return boxStyle.Render(s)
+	return boxStyle.Render(
+		titleStyle.Render("🤖 Headless Agent Setup") + "\n\n" +
+			normalStyle.Render("This wizard will help you configure your agent.\n\n") +
+			dimStyle.Render("Press Enter to continue, q to quit"))
 }
 
 func (m Model) viewScenario() string {
-	s := titleStyle.Render("📦 Deployment Scenario")
-	s += "\n"
-	s += subtitleStyle.Render("How will you be using the agent?")
-	s += "\n\n"
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Deployment Scenario") + "\n")
+	s.WriteString(subtitleStyle.Render("How will you use the agent?") + "\n\n")
 
-	options := m.getScenarioOptions()
+	scenarios := m.getScenarios()
+	for i, sc := range scenarios {
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(sc.name) + "\n")
+		s.WriteString("    " + dimStyle.Render(sc.desc) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select, q to go back"))
+	return s.String()
+}
+
+func (m Model) viewProvider() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("LLM Provider") + "\n")
+	s.WriteString(subtitleStyle.Render("Select your main LLM provider") + "\n\n")
+
+	providers := m.getProviders()
+	for i, p := range providers {
+		if m.cursor >= len(providers) {
+			m.cursor = len(providers) - 1
+		}
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(p.name) + " " + dimStyle.Render(p.desc) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
+	return s.String()
+}
+
+func (m Model) viewModel() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Model Selection") + "\n")
+	s.WriteString(subtitleStyle.Render("Select the model to use") + "\n\n")
+
+	models := m.getModels()
+	for i, model := range models {
+		if m.cursor >= len(models) {
+			m.cursor = len(models) - 1
+		}
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(model.name) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
+	return s.String()
+}
+
+func (m Model) viewAPIKey() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("API Key") + "\n")
+	s.WriteString(subtitleStyle.Render("Enter your API key for "+m.config.Provider) + "\n\n")
+	s.WriteString(m.textInput.View() + "\n\n")
+	s.WriteString(dimStyle.Render("This will be stored in credentials.toml (mode 0400)"))
+	return s.String()
+}
+
+func (m Model) viewBaseURL() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Base URL") + "\n")
+	s.WriteString(subtitleStyle.Render("Enter the API endpoint URL") + "\n\n")
+	s.WriteString(m.textInput.View() + "\n\n")
+	s.WriteString(dimStyle.Render("For custom or self-hosted endpoints"))
+	return s.String()
+}
+
+func (m Model) viewThinking() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Thinking Level") + "\n")
+	s.WriteString(subtitleStyle.Render("Configure extended thinking for complex reasoning") + "\n\n")
+
+	options := []struct {
+		id   string
+		desc string
+	}{
+		{"auto", "Auto-detect based on task complexity (recommended)"},
+		{"off", "Disabled - fastest responses"},
+		{"low", "Light reasoning (4K budget)"},
+		{"medium", "Moderate reasoning (8K budget)"},
+		{"high", "Deep reasoning (16K budget)"},
+	}
+
 	for i, opt := range options {
 		cursor := "  "
 		style := normalStyle
 		if i == m.cursor {
-			cursor = "▸ "
+			cursor = "> "
 			style = selectedStyle
 		}
-		s += cursor + style.Render(opt.label)
-		if i == m.cursor {
-			s += dimStyle.Render("  " + opt.description)
-		}
-		s += "\n"
+		s.WriteString(cursor + style.Render(opt.id) + " - " + dimStyle.Render(opt.desc) + "\n")
 	}
 
-	s += "\n" + dimStyle.Render("↑/↓ to navigate, Enter to select, q to go back")
-	return boxStyle.Render(s)
+	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
+	return s.String()
 }
 
-func (m Model) viewProvider() string {
-	s := titleStyle.Render("🧠 LLM Provider")
-	s += "\n"
-	s += subtitleStyle.Render("Which LLM provider will you use?")
-	s += "\n\n"
+func (m Model) viewSmallLLM() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Small LLM") + "\n")
+	s.WriteString(subtitleStyle.Render("Configure a fast/cheap model for summarization and triage?") + "\n\n")
 
-	options := m.getProviderOptions()
-	maxVisible := 8
-	start := 0
-	if m.cursor >= maxVisible {
-		start = m.cursor - maxVisible + 1
-	}
-	end := start + maxVisible
-	if end > len(options) {
-		end = len(options)
-	}
-
-	if start > 0 {
-		s += dimStyle.Render("  ↑ more above") + "\n"
-	}
-
-	for i := start; i < end; i++ {
-		opt := options[i]
+	options := []string{"Yes (recommended)", "No"}
+	for i, opt := range options {
 		cursor := "  "
 		style := normalStyle
 		if i == m.cursor {
-			cursor = "▸ "
+			cursor = "> "
 			style = selectedStyle
 		}
-		s += cursor + style.Render(opt.label)
-		if i == m.cursor {
-			s += dimStyle.Render("  " + opt.description)
+		s.WriteString(cursor + style.Render(opt) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("Used for context summarization, security triage, memory extraction"))
+	return s.String()
+}
+
+func (m Model) viewSmallLLMProvider() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Small LLM Provider") + "\n")
+	s.WriteString(subtitleStyle.Render("Select provider for fast/cheap model") + "\n\n")
+
+	providers := m.getProviders()
+	for i, p := range providers {
+		if m.cursor >= len(providers) {
+			m.cursor = len(providers) - 1
 		}
-		s += "\n"
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(p.name) + "\n")
 	}
 
-	if end < len(options) {
-		s += dimStyle.Render("  ↓ more below") + "\n"
+	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
+	return s.String()
+}
+
+func (m Model) viewSmallLLMModel() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Small LLM Model") + "\n")
+	s.WriteString(subtitleStyle.Render("Enter the model name for fast/cheap operations") + "\n\n")
+	s.WriteString(m.textInput.View() + "\n\n")
+	s.WriteString(dimStyle.Render("e.g., claude-3-5-haiku-20241022, gpt-4o-mini"))
+	return s.String()
+}
+
+func (m Model) viewEmbedding() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Embedding Provider") + "\n")
+	s.WriteString(subtitleStyle.Render("Select provider for semantic memory") + "\n\n")
+
+	providers := m.getEmbeddingProviders()
+	for i, p := range providers {
+		if m.cursor >= len(providers) {
+			m.cursor = len(providers) - 1
+		}
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(p.name) + " - " + dimStyle.Render(p.desc) + "\n")
 	}
 
-	s += "\n" + dimStyle.Render("↑/↓ to navigate, Enter to select")
-	return boxStyle.Render(s)
+	s.WriteString("\n" + infoStyle.Render("Note: Anthropic/Groq don't offer embeddings. Use Voyage (Anthropic partner) or OpenAI."))
+	return s.String()
 }
 
-func (m Model) viewModel() string {
-	s := titleStyle.Render("📝 Model Name")
-	s += "\n"
-	s += subtitleStyle.Render("Enter the model to use (or press Enter for default)")
-	s += "\n\n"
-	s += m.textInput.View()
-	s += "\n\n"
-	s += dimStyle.Render("Default: " + m.getDefaultModel())
-	s += "\n\n" + dimStyle.Render("Enter to confirm")
-	return boxStyle.Render(s)
+func (m Model) viewEmbeddingModel() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Embedding Model") + "\n")
+	s.WriteString(subtitleStyle.Render("Enter the embedding model name") + "\n\n")
+	s.WriteString(m.textInput.View() + "\n\n")
+	s.WriteString(dimStyle.Render("e.g., text-embedding-3-small, nomic-embed-text"))
+	return s.String()
 }
 
-func (m Model) viewAPIKey() string {
-	s := titleStyle.Render("🔑 API Key")
-	s += "\n"
-	
-	if m.config.Provider == ProviderOllama || m.config.Provider == ProviderLMStudio {
-		s += subtitleStyle.Render("API key (optional for local models, press Enter to skip)")
+func (m Model) viewWorkspace() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Workspace Directory") + "\n")
+	s.WriteString(subtitleStyle.Render("Where will the agent work?") + "\n\n")
+	s.WriteString(m.textInput.View() + "\n\n")
+	s.WriteString(dimStyle.Render("The agent will have access to files in this directory"))
+	return s.String()
+}
+
+func (m Model) viewSecurity() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Security Stance") + "\n")
+	s.WriteString(subtitleStyle.Render("Choose security posture") + "\n\n")
+
+	options := []struct {
+		name string
+		desc string
+	}{
+		{"Permissive", "Allow most operations (good for development)"},
+		{"Restrictive", "Deny by default, explicit allowlists (good for production)"},
+	}
+
+	for i, opt := range options {
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(opt.name) + "\n")
+		s.WriteString("    " + dimStyle.Render(opt.desc) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
+	return s.String()
+}
+
+func (m Model) viewSecurityMode() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Security Framework Mode") + "\n")
+	s.WriteString(subtitleStyle.Render("How should untrusted content be verified?") + "\n\n")
+
+	options := []struct {
+		name string
+		desc string
+	}{
+		{"default", "Smart escalation - verify suspicious content only"},
+		{"paranoid", "Verify all untrusted content (higher latency, more secure)"},
+	}
+
+	for i, opt := range options {
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(opt.name) + " - " + dimStyle.Render(opt.desc) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
+	return s.String()
+}
+
+func (m Model) viewProfiles() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Capability Profiles") + "\n")
+	s.WriteString(subtitleStyle.Render("Create profiles for different task types?") + "\n\n")
+
+	options := []string{"Yes (recommended for teams)", "No"}
+	for i, opt := range options {
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(opt) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("Profiles allow using different models for reasoning, fast tasks, etc."))
+	return s.String()
+}
+
+func (m Model) viewProfilesConfig() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Configuring Profiles") + "\n\n")
+	s.WriteString(normalStyle.Render("Creating default profiles based on your provider:\n\n"))
+
+	for name, profile := range m.config.Profiles {
+		s.WriteString(selectedStyle.Render("  "+name) + ": " + dimStyle.Render(profile.Model) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("Press Enter to continue (you can edit agent.toml later)"))
+	return s.String()
+}
+
+func (m Model) viewFeatures() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Features") + "\n")
+	s.WriteString(subtitleStyle.Render("Select features to enable (Space to toggle)") + "\n\n")
+
+	features := []struct {
+		name string
+		desc string
+	}{
+		{"MCP Tools", "External tool servers via Model Context Protocol"},
+		{"Semantic Memory", "Remember insights across conversations (FIL model)"},
+		{"Persist Memory", "Save memory to disk between runs"},
+		{"Telemetry", "OpenTelemetry observability"},
+	}
+
+	for i, f := range features {
+		if m.cursor >= len(features) {
+			m.cursor = len(features) - 1
+		}
+		cursor := "  "
+		if i == m.cursor {
+			cursor = "> "
+		}
+		check := "[ ]"
+		if m.selected[i] {
+			check = "[✓]"
+		}
+		s.WriteString(cursor + check + " " + normalStyle.Render(f.name) + " - " + dimStyle.Render(f.desc) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("Space to toggle, Enter to continue"))
+	return s.String()
+}
+
+func (m Model) viewCredentialMethod() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Credential Storage") + "\n")
+	s.WriteString(subtitleStyle.Render("How should credentials be stored?") + "\n\n")
+
+	options := []struct {
+		name string
+		desc string
+	}{
+		{"file", "credentials.toml file (mode 0400)"},
+		{"env", "Environment variables only"},
+	}
+
+	for i, opt := range options {
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(opt.name) + " - " + dimStyle.Render(opt.desc) + "\n")
+	}
+
+	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
+	return s.String()
+}
+
+func (m Model) viewConfirm() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Configuration Summary") + "\n\n")
+
+	s.WriteString(normalStyle.Render("Scenario: ") + selectedStyle.Render(m.config.Scenario) + "\n")
+	s.WriteString(normalStyle.Render("Provider: ") + selectedStyle.Render(m.config.Provider) + "\n")
+	s.WriteString(normalStyle.Render("Model: ") + selectedStyle.Render(m.config.Model) + "\n")
+	s.WriteString(normalStyle.Render("Thinking: ") + selectedStyle.Render(m.config.Thinking) + "\n")
+	if m.config.BaseURL != "" {
+		s.WriteString(normalStyle.Render("Base URL: ") + selectedStyle.Render(m.config.BaseURL) + "\n")
+	}
+
+	if m.config.SmallLLMEnabled {
+		s.WriteString(normalStyle.Render("Small LLM: ") + selectedStyle.Render(m.config.SmallLLMModel) + "\n")
+	}
+
+	if m.config.EmbeddingProvider != "none" {
+		s.WriteString(normalStyle.Render("Embedding: ") + selectedStyle.Render(m.config.EmbeddingProvider+"/"+m.config.EmbeddingModel) + "\n")
+	}
+
+	s.WriteString(normalStyle.Render("Workspace: ") + selectedStyle.Render(m.config.Workspace) + "\n")
+	s.WriteString(normalStyle.Render("Security: ") + selectedStyle.Render(m.config.SecurityMode) + "\n")
+	s.WriteString(normalStyle.Render("Credentials: ") + selectedStyle.Render(m.config.CredentialMethod) + "\n")
+
+	s.WriteString("\n" + normalStyle.Render("Files to create:") + "\n")
+	s.WriteString(dimStyle.Render("  - agent.toml\n"))
+	s.WriteString(dimStyle.Render("  - policy.toml\n"))
+	if m.config.CredentialMethod == "file" {
+		s.WriteString(dimStyle.Render("  - credentials.toml\n"))
+	}
+
+	s.WriteString("\n")
+	options := []string{"Create files", "Go back"}
+	for i, opt := range options {
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		s.WriteString(cursor + style.Render(opt) + "\n")
+	}
+
+	return s.String()
+}
+
+func (m Model) viewWriting() string {
+	return boxStyle.Render(
+		titleStyle.Render("Writing Files...") + "\n\n" +
+			normalStyle.Render("Creating configuration files..."))
+}
+
+func (m Model) viewComplete() string {
+	if m.err != nil {
+		return boxStyle.Render(
+			errorStyle.Render("Error") + "\n\n" +
+				normalStyle.Render(m.err.Error()) + "\n\n" +
+				dimStyle.Render("Press q to exit"))
+	}
+
+	var s strings.Builder
+	s.WriteString(successStyle.Render("✓ Setup Complete!") + "\n\n")
+	s.WriteString(normalStyle.Render("Created files:") + "\n")
+	for _, f := range m.filesWritten {
+		s.WriteString(dimStyle.Render("  - "+f) + "\n")
+	}
+
+	s.WriteString("\n" + normalStyle.Render("Next steps:") + "\n")
+	s.WriteString(dimStyle.Render("  1. Review agent.toml and policy.toml") + "\n")
+	if m.config.CredentialMethod == "env" {
+		envVar := getDefaultEnvVar(m.config.Provider)
+		s.WriteString(dimStyle.Render("  2. Set "+envVar+" environment variable") + "\n")
+		s.WriteString(dimStyle.Render("  3. Run: agent run your-workflow.agent") + "\n")
 	} else {
-		s += subtitleStyle.Render("Enter your API key")
+		s.WriteString(dimStyle.Render("  2. Run: agent run your-workflow.agent") + "\n")
 	}
-	s += "\n\n"
-	s += m.textInput.View()
-	s += "\n\n"
 
-	envVar := m.getEnvVarName()
-	s += dimStyle.Render("You can also set via: " + envVar)
-	s += "\n\n" + dimStyle.Render("Enter to confirm")
-	return boxStyle.Render(s)
+	s.WriteString("\n" + dimStyle.Render("Press q to exit"))
+	return boxStyle.Render(s.String())
 }
 
-func (m Model) getEnvVarName() string {
-	switch m.config.Provider {
+func getDefaultEnvVar(provider string) string {
+	switch provider {
 	case ProviderAnthropic:
 		return "ANTHROPIC_API_KEY"
 	case ProviderOpenAI:
 		return "OPENAI_API_KEY"
 	case ProviderGoogle:
 		return "GOOGLE_API_KEY"
-	case ProviderGroq:
-		return "GROQ_API_KEY"
 	case ProviderMistral:
 		return "MISTRAL_API_KEY"
-	case ProviderOpenRouter:
-		return "OPENROUTER_API_KEY"
+	case ProviderGroq:
+		return "GROQ_API_KEY"
 	default:
-		return strings.ToUpper(m.config.Provider) + "_API_KEY"
+		return "API_KEY"
 	}
 }
 
-func (m Model) viewBaseURL() string {
-	s := titleStyle.Render("🌐 API Base URL")
-	s += "\n"
-	s += subtitleStyle.Render("Enter the API endpoint URL")
-	s += "\n\n"
-	s += m.textInput.View()
-	s += "\n\n" + dimStyle.Render("Enter to confirm")
-	return boxStyle.Render(s)
+// Messages
+type filesWrittenMsg struct {
+	files []string
 }
 
-func (m Model) viewWorkspace() string {
-	s := titleStyle.Render("📁 Workspace Directory")
-	s += "\n"
-	s += subtitleStyle.Render("Where will the agent work? (relative or absolute path)")
-	s += "\n\n"
-	s += m.textInput.View()
-	s += "\n\n" + dimStyle.Render("Enter to confirm")
-	return boxStyle.Render(s)
+type errMsg struct {
+	error error
 }
 
-func (m Model) viewSecurity() string {
-	s := titleStyle.Render("🔒 Security Level")
-	s += "\n"
-	s += subtitleStyle.Render("How strict should security be?")
-	s += "\n\n"
+func (m Model) writeFiles() tea.Cmd {
+	return func() tea.Msg {
+		var files []string
 
-	options := m.getSecurityOptions()
-	for i, opt := range options {
-		cursor := "  "
-		style := normalStyle
-		if i == m.cursor {
-			cursor = "▸ "
-			style = selectedStyle
-		}
-		s += cursor + style.Render(opt.label)
-		if i == m.cursor {
-			s += dimStyle.Render("  " + opt.description)
-		}
-		s += "\n"
-	}
-
-	s += "\n" + dimStyle.Render("↑/↓ to navigate, Enter to select")
-	return boxStyle.Render(s)
-}
-
-func (m Model) viewCredentialMethod() string {
-	s := titleStyle.Render("🗝️ Credential Storage")
-	s += "\n"
-	s += subtitleStyle.Render("How should API keys be stored/accessed?")
-	s += "\n\n"
-
-	options := m.getCredentialMethods()
-	for i, opt := range options {
-		cursor := "  "
-		style := normalStyle
-		if i == m.cursor {
-			cursor = "▸ "
-			style = selectedStyle
-		}
-		s += cursor + style.Render(opt.label)
-		if i == m.cursor {
-			s += dimStyle.Render("  " + opt.description)
-		}
-		s += "\n"
-	}
-
-	s += "\n" + dimStyle.Render("↑/↓ to navigate, Enter to select")
-	return boxStyle.Render(s)
-}
-
-func (m Model) viewFeatures() string {
-	s := titleStyle.Render("⚙️ Features")
-	s += "\n"
-	s += subtitleStyle.Render("Enable/disable optional features")
-	s += "\n\n"
-
-	features := []struct {
-		name string
-		desc string
-	}{
-		{"Memory (persistence)", "Remember context across sessions"},
-		{"MCP Servers", "Connect to external tool servers"},
-		{"Telemetry", "Usage metrics and tracing"},
-	}
-
-	for i, f := range features {
-		cursor := "  "
-		style := normalStyle
-		check := "[ ]"
-		if m.selected[i] {
-			check = "[✓]"
-		}
-		if i == m.cursor {
-			cursor = "▸ "
-			style = selectedStyle
-		}
-		s += cursor + style.Render(check + " " + f.name)
-		if i == m.cursor {
-			s += dimStyle.Render("  " + f.desc)
-		}
-		s += "\n"
-	}
-
-	s += "\n" + dimStyle.Render("Space to toggle, Enter to confirm")
-	return boxStyle.Render(s)
-}
-
-func (m Model) viewConfirm() string {
-	s := titleStyle.Render("✅ Configuration Summary")
-	s += "\n\n"
-
-	s += normalStyle.Render("Scenario:    ") + selectedStyle.Render(m.config.Scenario) + "\n"
-	s += normalStyle.Render("Provider:    ") + selectedStyle.Render(m.config.Provider) + "\n"
-	s += normalStyle.Render("Model:       ") + selectedStyle.Render(m.config.Model) + "\n"
-	if m.config.BaseURL != "" {
-		s += normalStyle.Render("Base URL:    ") + selectedStyle.Render(m.config.BaseURL) + "\n"
-	}
-	s += normalStyle.Render("Workspace:   ") + selectedStyle.Render(m.config.Workspace) + "\n"
-	s += normalStyle.Render("Credentials: ") + selectedStyle.Render(m.config.CredentialMethod) + "\n"
-	
-	security := "Permissive"
-	if m.config.DefaultDeny {
-		security = "Strict"
-	}
-	s += normalStyle.Render("Security:    ") + selectedStyle.Render(security) + "\n"
-
-	s += "\n" + normalStyle.Render("Files to create:") + "\n"
-	s += dimStyle.Render("  • agent.toml") + "\n"
-	if m.config.CredentialMethod == "file" && m.config.APIKey != "" {
-		s += dimStyle.Render("  • ~/.config/grid/credentials.toml") + "\n"
-	}
-	s += dimStyle.Render("  • policy.toml") + "\n"
-
-	s += "\n"
-	options := []string{"Yes, create files", "No, go back"}
-	for i, opt := range options {
-		cursor := "  "
-		style := normalStyle
-		if i == m.cursor {
-			cursor = "▸ "
-			style = selectedStyle
-		}
-		s += cursor + style.Render(opt) + "\n"
-	}
-
-	return boxStyle.Render(s)
-}
-
-func (m Model) viewWriting() string {
-	s := titleStyle.Render("📝 Writing Configuration...")
-	s += "\n\n"
-	s += dimStyle.Render("Creating files...")
-	return boxStyle.Render(s)
-}
-
-func (m Model) viewComplete() string {
-	s := successStyle.Render("✅ Setup Complete!")
-	s += "\n\n"
-	s += normalStyle.Render("Created files:") + "\n"
-	for _, f := range m.filesWritten {
-		s += successStyle.Render("  ✓ ") + normalStyle.Render(f) + "\n"
-	}
-
-	s += "\n" + normalStyle.Render("Next steps:") + "\n"
-	
-	if m.config.CredentialMethod == "env" {
-		s += dimStyle.Render(fmt.Sprintf("  1. Set %s environment variable", m.getEnvVarName())) + "\n"
-		s += dimStyle.Render("  2. Create an Agentfile") + "\n"
-		s += dimStyle.Render("  3. Run: agent run Agentfile") + "\n"
-	} else {
-		s += dimStyle.Render("  1. Create an Agentfile") + "\n"
-		s += dimStyle.Render("  2. Run: agent run Agentfile") + "\n"
-	}
-
-	s += "\n" + dimStyle.Render("Press q to exit")
-	return boxStyle.Render(s)
-}
-
-// writeConfigFiles creates the configuration files
-func (m Model) writeConfigFiles() tea.Msg {
-	var files []string
-
-	// Create agent.toml
-	agentContent := m.generateAgentTOML()
-	if err := os.WriteFile("agent.toml", []byte(agentContent), 0644); err != nil {
-		return errMsg{err}
-	}
-	files = append(files, "agent.toml")
-
-	// Create policy.toml
-	policyContent := m.generatePolicyTOML()
-	if err := os.WriteFile("policy.toml", []byte(policyContent), 0644); err != nil {
-		return errMsg{err}
-	}
-	files = append(files, "policy.toml")
-
-	// Create credentials.toml if using file method and key provided
-	if m.config.CredentialMethod == "file" && m.config.APIKey != "" {
-		configDir := m.config.ConfigDir
-		if err := os.MkdirAll(configDir, 0700); err != nil {
+		// Write agent.toml
+		agentTOML := m.generateAgentTOML()
+		if err := os.WriteFile("agent.toml", []byte(agentTOML), 0644); err != nil {
 			return errMsg{err}
 		}
-		credPath := filepath.Join(configDir, "credentials.toml")
-		credContent := m.generateCredentialsTOML()
-		if err := os.WriteFile(credPath, []byte(credContent), 0400); err != nil {
+		files = append(files, "agent.toml")
+
+		// Write policy.toml
+		policyTOML := m.generatePolicyTOML()
+		if err := os.WriteFile("policy.toml", []byte(policyTOML), 0644); err != nil {
 			return errMsg{err}
 		}
-		files = append(files, credPath)
+		files = append(files, "policy.toml")
+
+		// Write credentials.toml if using file method
+		if m.config.CredentialMethod == "file" && m.config.APIKey != "" {
+			credsTOML := m.generateCredentialsTOML()
+			if err := os.WriteFile("credentials.toml", []byte(credsTOML), 0400); err != nil {
+				return errMsg{err}
+			}
+			files = append(files, "credentials.toml")
+		}
+
+		return filesWrittenMsg{files}
 	}
-
-	return filesWrittenMsg{files}
 }
-
-type errMsg struct{ error }
-type filesWrittenMsg struct{ files []string }
 
 func (m Model) generateAgentTOML() string {
 	var sb strings.Builder
@@ -953,51 +1385,91 @@ func (m Model) generateAgentTOML() string {
 	sb.WriteString("# Agent Configuration\n")
 	sb.WriteString("# Generated by: agent setup\n\n")
 
+	// Agent section
 	sb.WriteString("[agent]\n")
-	sb.WriteString(fmt.Sprintf("id = \"%s-agent\"\n", m.config.Scenario))
 	sb.WriteString(fmt.Sprintf("workspace = \"%s\"\n\n", m.config.Workspace))
 
+	// Main LLM
+	sb.WriteString("# Main LLM\n")
 	sb.WriteString("[llm]\n")
-	if m.config.Provider != "" {
-		sb.WriteString(fmt.Sprintf("provider = \"%s\"\n", m.config.Provider))
-	}
+	sb.WriteString(fmt.Sprintf("provider = \"%s\"\n", m.config.Provider))
 	sb.WriteString(fmt.Sprintf("model = \"%s\"\n", m.config.Model))
+	sb.WriteString("max_tokens = 4096\n")
 	if m.config.BaseURL != "" {
 		sb.WriteString(fmt.Sprintf("base_url = \"%s\"\n", m.config.BaseURL))
 	}
-	sb.WriteString("max_tokens = 4096\n\n")
+	sb.WriteString(fmt.Sprintf("thinking = \"%s\"\n", m.config.Thinking))
+	if m.config.CredentialMethod == "env" {
+		sb.WriteString(fmt.Sprintf("api_key_env = \"%s\"\n", getDefaultEnvVar(m.config.Provider)))
+	}
+	sb.WriteString("\n")
 
-	sb.WriteString("[session]\n")
-	sb.WriteString("store = \"file\"\n")
-	sb.WriteString("path = \"./sessions\"\n\n")
-
-	if m.config.EnableMemory {
-		sb.WriteString("[memory]\n")
-		sb.WriteString("enabled = true\n")
-		sb.WriteString("path = \"./memory\"\n\n")
+	// Small LLM
+	if m.config.SmallLLMEnabled {
+		sb.WriteString("# Fast/cheap model for summarization, triage, memory extraction\n")
+		sb.WriteString("[small_llm]\n")
+		sb.WriteString(fmt.Sprintf("provider = \"%s\"\n", m.config.SmallLLMProvider))
+		sb.WriteString(fmt.Sprintf("model = \"%s\"\n", m.config.SmallLLMModel))
+		sb.WriteString("max_tokens = 1024\n")
+		if m.config.SmallLLMBaseURL != "" {
+			sb.WriteString(fmt.Sprintf("base_url = \"%s\"\n", m.config.SmallLLMBaseURL))
+		}
+		sb.WriteString("\n")
 	}
 
+	// Embedding
+	if m.config.EmbeddingProvider != "none" {
+		sb.WriteString("# Embedding model for semantic memory\n")
+		sb.WriteString("[embedding]\n")
+		sb.WriteString(fmt.Sprintf("provider = \"%s\"\n", m.config.EmbeddingProvider))
+		sb.WriteString(fmt.Sprintf("model = \"%s\"\n", m.config.EmbeddingModel))
+		if m.config.EmbeddingBaseURL != "" {
+			sb.WriteString(fmt.Sprintf("base_url = \"%s\"\n", m.config.EmbeddingBaseURL))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Profiles
+	if m.config.UseProfiles && len(m.config.Profiles) > 0 {
+		sb.WriteString("# Capability Profiles\n")
+		for name, profile := range m.config.Profiles {
+			sb.WriteString(fmt.Sprintf("[profiles.%s]\n", name))
+			sb.WriteString(fmt.Sprintf("model = \"%s\"\n", profile.Model))
+			if profile.Thinking != "" {
+				sb.WriteString(fmt.Sprintf("thinking = \"%s\"\n", profile.Thinking))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	// Storage
+	sb.WriteString("# Storage\n")
+	sb.WriteString("[storage]\n")
+	sb.WriteString(fmt.Sprintf("persist_memory = %t\n", m.config.PersistMemory))
+	sb.WriteString("\n")
+
+	// Security
+	sb.WriteString("# Security Framework\n")
+	sb.WriteString("[security]\n")
+	sb.WriteString(fmt.Sprintf("mode = \"%s\"\n", m.config.SecurityMode))
+	sb.WriteString("\n")
+
+	// Telemetry
 	if m.config.EnableTelemetry {
+		sb.WriteString("# Telemetry\n")
 		sb.WriteString("[telemetry]\n")
 		sb.WriteString("enabled = true\n")
 		sb.WriteString("protocol = \"otlp\"\n")
-		sb.WriteString("# endpoint = \"http://localhost:4317\"\n\n")
+		sb.WriteString("# endpoint = \"http://localhost:4317\"\n")
+		sb.WriteString("\n")
 	}
 
+	// MCP placeholder
 	if m.config.EnableMCP {
-		sb.WriteString("# MCP Server Configuration\n")
+		sb.WriteString("# MCP Tool Servers\n")
 		sb.WriteString("# [mcp.servers.memory]\n")
 		sb.WriteString("# command = \"npx\"\n")
 		sb.WriteString("# args = [\"-y\", \"@modelcontextprotocol/server-memory\"]\n\n")
-	}
-
-	// Add profiles for non-local scenarios
-	if m.config.Scenario != ScenarioLocal {
-		sb.WriteString("# Capability Profiles\n")
-		sb.WriteString("[profiles.reasoning-heavy]\n")
-		sb.WriteString("model = \"claude-opus-4-20250514\"\n\n")
-		sb.WriteString("[profiles.fast]\n")
-		sb.WriteString("model = \"claude-haiku-20240307\"\n\n")
 	}
 
 	return sb.String()
@@ -1027,7 +1499,7 @@ func (m Model) generatePolicyTOML() string {
 	sb.WriteString("[tools.bash]\n")
 	sb.WriteString(fmt.Sprintf("enabled = %t\n", m.config.AllowBash))
 	if m.config.AllowBash && m.config.DefaultDeny {
-		sb.WriteString("allowlist = [\"ls *\", \"cat *\", \"grep *\", \"find *\", \"head *\", \"tail *\"]\n")
+		sb.WriteString("allowlist = [\"ls *\", \"cat *\", \"grep *\", \"find *\", \"head *\", \"tail *\", \"git *\"]\n")
 		sb.WriteString("denylist = [\"rm -rf *\", \"sudo *\", \"curl * | bash\", \"chmod 777 *\"]\n")
 	}
 	sb.WriteString("\n")
@@ -1069,18 +1541,7 @@ func (m Model) generateCredentialsTOML() string {
 
 // Run starts the setup wizard
 func Run() error {
-	p := tea.NewProgram(New(), tea.WithAltScreen())
-	finalModel, err := p.Run()
-	if err != nil {
-		return err
-	}
-
-	// Handle final messages
-	if m, ok := finalModel.(Model); ok {
-		if m.err != nil {
-			return m.err
-		}
-	}
-
-	return nil
+	p := tea.NewProgram(New())
+	_, err := p.Run()
+	return err
 }
