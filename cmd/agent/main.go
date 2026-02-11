@@ -238,7 +238,7 @@ func runWorkflow(args []string) {
 	if configPath != "" {
 		cfg, err = config.LoadFile(configPath)
 	} else {
-		cfg, err = config.LoadFile("agent.json")
+		cfg, err = config.LoadFile("agent.toml")
 		if os.IsNotExist(err) {
 			cfg = config.Default()
 			err = nil

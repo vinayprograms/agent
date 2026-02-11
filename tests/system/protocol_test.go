@@ -36,15 +36,13 @@ RUN main USING analyze
 	os.WriteFile(filepath.Join(agentDir, "Agentfile"), []byte(agentfile), 0644)
 
 	// Create config with skills path
-	config := `{
-  "skills": {
-    "paths": ["` + filepath.Join(tmpDir, "skills") + `"]
-  },
-  "llm": {
-    "provider": "mock"
-  }
-}`
-	os.WriteFile(filepath.Join(agentDir, "agent.json"), []byte(config), 0644)
+	config := `[skills]
+paths = ["` + filepath.Join(tmpDir, "skills") + `"]
+
+[llm]
+provider = "mock"
+`
+	os.WriteFile(filepath.Join(agentDir, "agent.toml"), []byte(config), 0644)
 
 	// Validate the agentfile
 	srcDir := getSrcDir(t)
@@ -134,27 +132,19 @@ Instructions.
 func TestProtocol_MCPConfigFormat(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	config := `{
-  "mcp": {
-    "servers": {
-      "filesystem": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-      },
-      "memory": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-memory"]
-      },
-      "custom": {
-        "command": "/usr/local/bin/my-mcp-server",
-        "env": {
-          "API_KEY": "test-key"
-        }
-      }
-    }
-  }
-}`
-	configPath := filepath.Join(tmpDir, "agent.json")
+	config := `[mcp.servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+[mcp.servers.memory]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-memory"]
+
+[mcp.servers.custom]
+command = "/usr/local/bin/my-mcp-server"
+env = { API_KEY = "test-key" }
+`
+	configPath := filepath.Join(tmpDir, "agent.toml")
 	os.WriteFile(configPath, []byte(config), 0644)
 
 	// Create minimal Agentfile
@@ -253,17 +243,15 @@ RUN main USING review
 `
 	os.WriteFile(filepath.Join(agentDir, "Agentfile"), []byte(agentfile), 0644)
 
-	config := `{
-  "skills": {
-    "paths": ["` + filepath.Join(tmpDir, "skills") + `"]
-  },
-  "llm": {
-    "provider": "anthropic",
-    "model": "claude-sonnet-4-20250514",
-    "api_key_env": "ANTHROPIC_API_KEY"
-  }
-}`
-	os.WriteFile(filepath.Join(agentDir, "agent.json"), []byte(config), 0644)
+	config := `[skills]
+paths = ["` + filepath.Join(tmpDir, "skills") + `"]
+
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+api_key_env = "ANTHROPIC_API_KEY"
+`
+	os.WriteFile(filepath.Join(agentDir, "agent.toml"), []byte(config), 0644)
 
 	// Validate
 	srcDir := getSrcDir(t)

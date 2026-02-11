@@ -754,9 +754,9 @@ func (p *Package) GetAgentfile() ([]byte, error) {
 	return p.GetFile("Agentfile")
 }
 
-// GetConfig returns the agent.json config from the package.
+// GetConfig returns the agent.toml config from the package.
 func (p *Package) GetConfig() ([]byte, error) {
-	return p.GetFile("agent.json")
+	return p.GetFile("agent.toml")
 }
 
 // GetPolicy returns the policy.toml from the package.
