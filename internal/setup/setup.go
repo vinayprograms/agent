@@ -431,8 +431,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.probeError = ""
 		}
 		m.step = StepMCPDenySelect
-		m.selected = make(map[int]bool)
 		m.cursor = 0
+		
+		// Pre-select previously denied tools (for edit mode)
+		m.selected = make(map[int]bool)
+		if existingSrv, exists := m.config.MCPServers[m.currentMCPName]; exists {
+			deniedSet := make(map[string]bool)
+			for _, t := range existingSrv.DeniedTools {
+				deniedSet[t] = true
+			}
+			for i, tool := range m.probedTools {
+				if deniedSet[tool] {
+					m.selected[i] = true
+				}
+			}
+		}
 		return m, nil
 
 	case filesWrittenMsg:
@@ -730,11 +743,26 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 
 	case StepMCPAdd:
-		if m.cursor == 0 { // Add new server
+		serverNames := m.getSortedMCPServerNames()
+		numServers := len(serverNames)
+		
+		if m.cursor < numServers {
+			// Edit existing server - re-probe and allow deny selection
+			m.currentMCPName = serverNames[m.cursor]
+			srv := m.config.MCPServers[m.currentMCPName]
+			m.currentMCPCommand = srv.Command
+			m.currentMCPArgs = strings.Join(srv.Args, " ")
+			m.step = StepMCPProbe
+			m.probeError = ""
+			m.probedTools = nil
+			return m, m.probeMCPServer()
+		} else if m.cursor == numServers {
+			// Add new server
 			m.step = StepMCPName
 			m.textInput.SetValue("")
 			m.textInput.Focus()
-		} else { // Done adding
+		} else {
+			// Done
 			m.step = StepCredentialMethod
 			m.cursor = 0
 		}
@@ -1630,21 +1658,26 @@ func (m Model) viewFeatures() string {
 func (m Model) viewMCPAdd() string {
 	var s strings.Builder
 	s.WriteString(titleStyle.Render("MCP Tool Servers") + "\n")
-	s.WriteString(subtitleStyle.Render("Add external tool servers") + "\n\n")
+	s.WriteString(subtitleStyle.Render("Manage external tool servers") + "\n\n")
 
-	// Show configured servers
-	if len(m.config.MCPServers) > 0 {
-		s.WriteString(normalStyle.Render("Configured servers:") + "\n")
-		for name, srv := range m.config.MCPServers {
-			toolCount := len(srv.DiscoveredTools)
-			deniedCount := len(srv.DeniedTools)
-			s.WriteString(fmt.Sprintf("  • %s (%s) - %d tools, %d denied\n", 
-				name, srv.Command, toolCount, deniedCount))
+	// Build menu options
+	var options []string
+	
+	// Add existing servers as editable options
+	serverNames := m.getSortedMCPServerNames()
+	for _, name := range serverNames {
+		srv := m.config.MCPServers[name]
+		deniedCount := len(srv.DeniedTools)
+		if deniedCount > 0 {
+			options = append(options, fmt.Sprintf("Edit %s (%d tools denied)", name, deniedCount))
+		} else {
+			options = append(options, fmt.Sprintf("Edit %s (all tools allowed)", name))
 		}
-		s.WriteString("\n")
 	}
+	
+	options = append(options, "Add new MCP server")
+	options = append(options, "Done - continue to next step")
 
-	options := []string{"Add new MCP server", "Done - continue to next step"}
 	for i, opt := range options {
 		cursor := "  "
 		style := normalStyle
@@ -1657,6 +1690,22 @@ func (m Model) viewMCPAdd() string {
 
 	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
 	return s.String()
+}
+
+func (m Model) getSortedMCPServerNames() []string {
+	names := make([]string, 0, len(m.config.MCPServers))
+	for name := range m.config.MCPServers {
+		names = append(names, name)
+	}
+	// Sort for consistent ordering
+	for i := 0; i < len(names)-1; i++ {
+		for j := i + 1; j < len(names); j++ {
+			if names[i] > names[j] {
+				names[i], names[j] = names[j], names[i]
+			}
+		}
+	}
+	return names
 }
 
 func (m Model) viewMCPName() string {
