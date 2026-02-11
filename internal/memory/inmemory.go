@@ -32,9 +32,8 @@ func NewInMemoryStore(embedder EmbeddingProvider) *InMemoryStore {
 	}
 }
 
-// Remember stores content with its embedding.
-// For compatibility: first tag is used as category if present.
-func (s *InMemoryStore) Remember(ctx context.Context, content string, meta MemoryMetadata) error {
+// RememberObservation stores an observation with its category.
+func (s *InMemoryStore) RememberObservation(ctx context.Context, content, category, source string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -47,22 +46,12 @@ func (s *InMemoryStore) Remember(ctx context.Context, content string, meta Memor
 	id := uuid.New().String()
 	now := time.Now()
 
-	// Use first tag as category if present
-	category := "insight" // default
-	if len(meta.Tags) > 0 {
-		switch meta.Tags[0] {
-		case "finding", "insight", "lesson":
-			category = meta.Tags[0]
-		}
-	}
-
 	mem := &Memory{
 		ID:        id,
 		Content:   content,
 		Category:  category,
-		Source:    meta.Source,
+		Source:    source,
 		CreatedAt: now,
-		Tags:      meta.Tags, // Keep for backward compatibility
 	}
 
 	s.memories[id] = mem
@@ -71,7 +60,95 @@ func (s *InMemoryStore) Remember(ctx context.Context, content string, meta Memor
 	return nil
 }
 
-// Recall searches for memories similar to the query.
+// RecallByCategory searches for memories in a specific category.
+func (s *InMemoryStore) RecallByCategory(ctx context.Context, query, category string, limit int) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.memories) == 0 {
+		return nil, nil
+	}
+
+	if limit <= 0 {
+		limit = 5
+	}
+
+	// Generate query embedding
+	embeddings, err := s.embedder.Embed(ctx, []string{query})
+	if err != nil {
+		return nil, err
+	}
+	queryVec := embeddings[0]
+
+	// Calculate similarity for memories in category
+	type scored struct {
+		content string
+		score   float32
+	}
+	var results []scored
+
+	for id, mem := range s.memories {
+		if mem.Category != category {
+			continue
+		}
+
+		vec, ok := s.vectors[id]
+		if !ok {
+			continue
+		}
+
+		score := cosineSimilarity(queryVec, vec)
+		results = append(results, scored{content: mem.Content, score: score})
+	}
+
+	// Sort by score descending
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].score > results[j].score
+	})
+
+	// Apply limit
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	// Extract content
+	out := make([]string, len(results))
+	for i, r := range results {
+		out[i] = r.content
+	}
+
+	return out, nil
+}
+
+// RecallFIL performs semantic search and returns results grouped as FIL.
+func (s *InMemoryStore) RecallFIL(ctx context.Context, query string, limitPerCategory int) (*FILResult, error) {
+	if limitPerCategory <= 0 {
+		limitPerCategory = 5
+	}
+
+	findings, err := s.RecallByCategory(ctx, query, "finding", limitPerCategory)
+	if err != nil {
+		return nil, err
+	}
+
+	insights, err := s.RecallByCategory(ctx, query, "insight", limitPerCategory)
+	if err != nil {
+		return nil, err
+	}
+
+	lessons, err := s.RecallByCategory(ctx, query, "lesson", limitPerCategory)
+	if err != nil {
+		return nil, err
+	}
+
+	return &FILResult{
+		Findings: findings,
+		Insights: insights,
+		Lessons:  lessons,
+	}, nil
+}
+
+// Recall searches for memories similar to the query (all categories).
 func (s *InMemoryStore) Recall(ctx context.Context, query string, opts RecallOpts) ([]MemoryResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -97,11 +174,6 @@ func (s *InMemoryStore) Recall(ctx context.Context, query string, opts RecallOpt
 
 		score := cosineSimilarity(queryVec, vec)
 		if score < opts.MinScore {
-			continue
-		}
-
-		// Apply tag filter (for backward compatibility)
-		if len(opts.Tags) > 0 && !hasAnyTag(mem.Tags, opts.Tags) {
 			continue
 		}
 
@@ -224,18 +296,4 @@ func cosineSimilarity(a, b []float32) float32 {
 	}
 
 	return float32(dotProduct / (math.Sqrt(normA) * math.Sqrt(normB)))
-}
-
-// hasAnyTag checks if the memory has any of the filter tags.
-func hasAnyTag(memTags, filterTags []string) bool {
-	tagSet := make(map[string]bool)
-	for _, t := range memTags {
-		tagSet[t] = true
-	}
-	for _, t := range filterTags {
-		if tagSet[t] {
-			return true
-		}
-	}
-	return false
 }

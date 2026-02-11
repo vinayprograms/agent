@@ -1261,12 +1261,23 @@ type semanticMemoryBridge struct {
 	adapter *memory.ToolsAdapter
 }
 
-func (b *semanticMemoryBridge) Remember(ctx context.Context, content string, meta tools.SemanticMemoryMeta) error {
-	return b.adapter.Remember(ctx, content, memory.ToolsMemoryMeta{
-		Source:     meta.Source,
-		Importance: meta.Importance,
-		Tags:       meta.Tags,
-	})
+func (b *semanticMemoryBridge) RememberObservation(ctx context.Context, content, category, source string) error {
+	return b.adapter.RememberObservation(ctx, content, category, source)
+}
+
+func (b *semanticMemoryBridge) RecallFIL(ctx context.Context, query string, limitPerCategory int) (*tools.FILResult, error) {
+	result, err := b.adapter.RecallFIL(ctx, query, limitPerCategory)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return &tools.FILResult{
+		Findings: result.Findings,
+		Insights: result.Insights,
+		Lessons:  result.Lessons,
+	}, nil
 }
 
 func (b *semanticMemoryBridge) Recall(ctx context.Context, query string, limit int) ([]tools.SemanticMemoryResult, error) {

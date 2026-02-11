@@ -14,33 +14,25 @@ func NewToolsAdapter(store Store) *ToolsAdapter {
 	return &ToolsAdapter{store: store}
 }
 
-// ToolsMemoryMeta mirrors tools.SemanticMemoryMeta
-// Deprecated: Use category-based storage instead.
-type ToolsMemoryMeta struct {
-	Source     string
-	Importance float32  // Deprecated: category implies importance
-	Tags       []string // Deprecated: first tag used as category
-}
-
 // ToolsMemoryResult mirrors tools.SemanticMemoryResult
 type ToolsMemoryResult struct {
-	ID       string `json:"id"`
-	Content  string `json:"content"`
-	Category string `json:"category,omitempty"` // "finding" | "insight" | "lesson"
-	Score    float32  `json:"score"`
+	ID       string  `json:"id"`
+	Content  string  `json:"content"`
+	Category string  `json:"category"` // "finding" | "insight" | "lesson"
+	Score    float32 `json:"score"`
 }
 
-// Remember stores a memory.
-// For compatibility: first tag is used as category if present.
-func (a *ToolsAdapter) Remember(ctx context.Context, content string, meta ToolsMemoryMeta) error {
-	return a.store.Remember(ctx, content, MemoryMetadata{
-		Source:     meta.Source,
-		Importance: meta.Importance,
-		Tags:       meta.Tags,
-	})
+// RememberObservation stores an observation with its category.
+func (a *ToolsAdapter) RememberObservation(ctx context.Context, content, category, source string) error {
+	return a.store.RememberObservation(ctx, content, category, source)
 }
 
-// Recall searches for relevant memories.
+// RecallFIL searches and returns results grouped as FIL.
+func (a *ToolsAdapter) RecallFIL(ctx context.Context, query string, limitPerCategory int) (*FILResult, error) {
+	return a.store.RecallFIL(ctx, query, limitPerCategory)
+}
+
+// Recall searches for relevant memories (all categories).
 func (a *ToolsAdapter) Recall(ctx context.Context, query string, limit int) ([]ToolsMemoryResult, error) {
 	results, err := a.store.Recall(ctx, query, RecallOpts{Limit: limit})
 	if err != nil {

@@ -74,24 +74,24 @@ type Summarizer interface {
 
 // SemanticMemory provides semantic memory operations.
 type SemanticMemory interface {
-	Remember(ctx context.Context, content string, meta SemanticMemoryMeta) error
+	RememberObservation(ctx context.Context, content, category, source string) error
+	RecallFIL(ctx context.Context, query string, limitPerCategory int) (*FILResult, error)
 	Recall(ctx context.Context, query string, limit int) ([]SemanticMemoryResult, error)
 	Forget(ctx context.Context, id string) error
 }
 
-// SemanticMemoryMeta holds metadata for semantic memory.
-// Deprecated: Use category-based storage via the observation system.
-type SemanticMemoryMeta struct {
-	Source     string
-	Importance float32  // Deprecated: category implies importance
-	Tags       []string // Deprecated: first tag used as category
+// FILResult holds categorized observation results.
+type FILResult struct {
+	Findings []string `json:"findings"`
+	Insights []string `json:"insights"`
+	Lessons  []string `json:"lessons"`
 }
 
 // SemanticMemoryResult is a memory with relevance score.
 type SemanticMemoryResult struct {
 	ID       string  `json:"id"`
 	Content  string  `json:"content"`
-	Category string  `json:"category,omitempty"` // "finding" | "insight" | "lesson"
+	Category string  `json:"category"` // "finding" | "insight" | "lesson"
 	Score    float32 `json:"score"`
 }
 
@@ -1731,19 +1731,19 @@ type memoryRememberTool struct {
 func (t *memoryRememberTool) Name() string { return "memory_remember" }
 
 func (t *memoryRememberTool) Description() string {
-	return `Store knowledge for semantic retrieval in future sessions.
+	return `Store an observation for semantic retrieval in future sessions.
 
-Use for: insights, decisions, context, knowledge - things you'd search by MEANING.
+Use for: findings, insights, lessons - things you'd search by MEANING.
 Examples:
-  - "User prefers PostgreSQL for projects needing JSON support"
-  - "The auth system uses JWT with 24h expiry, decided on 2024-01-15"
+  - finding: "API rate limit is 100 requests per minute"
+  - insight: "User prefers PostgreSQL for projects needing JSON support"
+  - lesson: "Always validate API responses before parsing"
 
 NOT for: structured data with known keys. Use memory_write for preferences/config.
 
 Parameters:
-  - content (required): The insight to remember (make it self-contained)
-  - importance (optional): 0.0-1.0 (default 0.5, higher = more important)
-  - tags (optional): Categories for filtering`
+  - content (required): The observation to remember (make it self-contained)
+  - category (required): "finding" | "insight" | "lesson"`
 }
 
 func (t *memoryRememberTool) Parameters() map[string]interface{} {
@@ -1754,17 +1754,13 @@ func (t *memoryRememberTool) Parameters() map[string]interface{} {
 				"type":        "string",
 				"description": "The information to remember",
 			},
-			"importance": map[string]interface{}{
-				"type":        "number",
-				"description": "Importance score 0.0-1.0 (default 0.5)",
-			},
-			"tags": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "Optional tags for categorization",
+			"category": map[string]interface{}{
+				"type":        "string",
+				"enum":        []string{"finding", "insight", "lesson"},
+				"description": "Category: finding (fact), insight (conclusion), lesson (guidance)",
 			},
 		},
-		"required": []string{"content"},
+		"required": []string{"content", "category"},
 	}
 }
 
@@ -1774,28 +1770,24 @@ func (t *memoryRememberTool) Execute(ctx context.Context, args map[string]interf
 		return nil, fmt.Errorf("content is required")
 	}
 
-	meta := SemanticMemoryMeta{
-		Source:     "explicit",
-		Importance: 0.5,
+	category, ok := args["category"].(string)
+	if !ok || category == "" {
+		return nil, fmt.Errorf("category is required (finding, insight, or lesson)")
 	}
 
-	if imp, ok := args["importance"].(float64); ok {
-		meta.Importance = float32(imp)
+	// Validate category
+	switch category {
+	case "finding", "insight", "lesson":
+		// valid
+	default:
+		return nil, fmt.Errorf("category must be 'finding', 'insight', or 'lesson'")
 	}
 
-	if tags, ok := args["tags"].([]interface{}); ok {
-		for _, t := range tags {
-			if s, ok := t.(string); ok {
-				meta.Tags = append(meta.Tags, s)
-			}
-		}
-	}
-
-	if err := t.memory.Remember(ctx, content, meta); err != nil {
+	if err := t.memory.RememberObservation(ctx, content, category, "explicit"); err != nil {
 		return nil, fmt.Errorf("failed to store memory: %w", err)
 	}
 
-	return "Memory stored successfully", nil
+	return fmt.Sprintf("Stored %s: %s", category, content), nil
 }
 
 // memoryRecallTool implements the memory_recall tool.

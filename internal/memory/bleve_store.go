@@ -187,20 +187,6 @@ func (s *BleveStore) RememberObservation(ctx context.Context, content, category,
 	return nil
 }
 
-// Remember stores a memory (legacy interface for compatibility).
-func (s *BleveStore) Remember(ctx context.Context, content string, meta MemoryMetadata) error {
-	// Default to "insight" category for legacy calls
-	category := "insight"
-	if len(meta.Tags) > 0 {
-		// Check if first tag is a category
-		switch meta.Tags[0] {
-		case "finding", "insight", "lesson":
-			category = meta.Tags[0]
-		}
-	}
-	return s.RememberObservation(ctx, content, category, meta.Source)
-}
-
 // RecallByCategory performs semantic search for a specific category.
 func (s *BleveStore) RecallByCategory(ctx context.Context, queryText, category string, limit int) ([]string, error) {
 	s.mu.RLock()
@@ -302,14 +288,7 @@ func (s *BleveStore) RecallFIL(ctx context.Context, queryText string, limitPerCa
 	}, nil
 }
 
-// FILResult holds categorized observation results.
-type FILResult struct {
-	Findings []string `json:"findings"`
-	Insights []string `json:"insights"`
-	Lessons  []string `json:"lessons"`
-}
-
-// Recall performs semantic search for relevant memories (legacy interface).
+// Recall performs semantic search for relevant memories.
 func (s *BleveStore) Recall(ctx context.Context, queryText string, opts RecallOpts) ([]MemoryResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -363,10 +342,10 @@ func (s *BleveStore) Recall(ctx context.Context, queryText string, opts RecallOp
 
 		result := MemoryResult{
 			Memory: Memory{
-				ID:      hit.ID,
-				Content: content,
-				Source:  source,
-				Tags:    []string{category}, // Category as single tag for compatibility
+				ID:       hit.ID,
+				Content:  content,
+				Category: category,
+				Source:   source,
 			},
 			Score: score,
 		}

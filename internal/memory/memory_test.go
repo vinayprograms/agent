@@ -31,32 +31,29 @@ func TestMockEmbedder(t *testing.T) {
 	}
 }
 
-func TestInMemoryStore_RememberRecall(t *testing.T) {
+func TestInMemoryStore_RememberObservation(t *testing.T) {
 	embedder := NewMockEmbedder(128)
 	store := NewInMemoryStore(embedder)
 
 	ctx := context.Background()
 
-	// Remember something
-	err := store.Remember(ctx, "The user prefers dark mode and vim keybindings", MemoryMetadata{
-		Source:     "explicit",
-		Importance: 0.8,
-		Tags:       []string{"preferences"},
-	})
+	// Remember observations
+	err := store.RememberObservation(ctx, "The user prefers dark mode", "finding", "explicit")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
 
-	// Remember another thing
-	err = store.Remember(ctx, "We decided to use PostgreSQL for the database", MemoryMetadata{
-		Source:     "session:123",
-		Importance: 0.7,
-	})
+	err = store.RememberObservation(ctx, "PostgreSQL is best for JSON", "insight", "session:123")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
 
-	// Recall - should find both
+	err = store.RememberObservation(ctx, "Always validate input", "lesson", "session:123")
+	if err != nil {
+		t.Fatalf("remember failed: %v", err)
+	}
+
+	// Recall - should find results
 	results, err := store.Recall(ctx, "user preferences", RecallOpts{Limit: 10})
 	if err != nil {
 		t.Fatalf("recall failed: %v", err)
@@ -74,9 +71,75 @@ func TestInMemoryStore_RememberRecall(t *testing.T) {
 		if r.Content == "" {
 			t.Error("result should have content")
 		}
+		if r.Category == "" {
+			t.Error("result should have category")
+		}
 		if r.Score < 0 || r.Score > 1 {
 			t.Errorf("score should be 0-1, got %f", r.Score)
 		}
+	}
+}
+
+func TestInMemoryStore_RecallFIL(t *testing.T) {
+	embedder := NewMockEmbedder(128)
+	store := NewInMemoryStore(embedder)
+
+	ctx := context.Background()
+
+	// Store observations in each category
+	store.RememberObservation(ctx, "API rate limit is 100 per minute", "finding", "test")
+	store.RememberObservation(ctx, "REST is simpler than GraphQL", "insight", "test")
+	store.RememberObservation(ctx, "Always check rate limits", "lesson", "test")
+
+	// Recall as FIL
+	fil, err := store.RecallFIL(ctx, "API rate", 5)
+	if err != nil {
+		t.Fatalf("recall FIL failed: %v", err)
+	}
+
+	if fil == nil {
+		t.Fatal("expected FIL result")
+	}
+
+	// Should have findings about API
+	if len(fil.Findings) == 0 {
+		t.Error("expected at least 1 finding")
+	}
+
+	t.Logf("Findings: %v", fil.Findings)
+	t.Logf("Insights: %v", fil.Insights)
+	t.Logf("Lessons: %v", fil.Lessons)
+}
+
+func TestInMemoryStore_RecallByCategory(t *testing.T) {
+	embedder := NewMockEmbedder(128)
+	store := NewInMemoryStore(embedder)
+
+	ctx := context.Background()
+
+	// Store mixed observations
+	store.RememberObservation(ctx, "Database uses PostgreSQL", "finding", "test")
+	store.RememberObservation(ctx, "Database should be indexed", "lesson", "test")
+	store.RememberObservation(ctx, "Database performance is good", "insight", "test")
+
+	// Recall only findings
+	findings, err := store.RecallByCategory(ctx, "database", "finding", 5)
+	if err != nil {
+		t.Fatalf("recall by category failed: %v", err)
+	}
+
+	if len(findings) != 1 {
+		t.Errorf("expected 1 finding, got %d", len(findings))
+	}
+
+	// Recall only lessons
+	lessons, err := store.RecallByCategory(ctx, "database", "lesson", 5)
+	if err != nil {
+		t.Fatalf("recall by category failed: %v", err)
+	}
+
+	if len(lessons) != 1 {
+		t.Errorf("expected 1 lesson, got %d", len(lessons))
 	}
 }
 
@@ -127,9 +190,7 @@ func TestInMemoryStore_Forget(t *testing.T) {
 	ctx := context.Background()
 
 	// Remember something
-	err := store.Remember(ctx, "Test memory to forget", MemoryMetadata{
-		Source: "test",
-	})
+	err := store.RememberObservation(ctx, "Test memory to forget", "finding", "test")
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
@@ -159,53 +220,6 @@ func TestInMemoryStore_Forget(t *testing.T) {
 	for _, r := range results {
 		if r.ID == id {
 			t.Error("memory should have been forgotten")
-		}
-	}
-}
-
-func TestInMemoryStore_TagFilter(t *testing.T) {
-	embedder := NewMockEmbedder(128)
-	store := NewInMemoryStore(embedder)
-
-	ctx := context.Background()
-
-	// Remember with tags
-	err := store.Remember(ctx, "User prefers dark mode", MemoryMetadata{
-		Source: "explicit",
-		Tags:   []string{"preferences", "ui"},
-	})
-	if err != nil {
-		t.Fatalf("remember failed: %v", err)
-	}
-
-	err = store.Remember(ctx, "Database is PostgreSQL", MemoryMetadata{
-		Source: "decision",
-		Tags:   []string{"architecture", "database"},
-	})
-	if err != nil {
-		t.Fatalf("remember failed: %v", err)
-	}
-
-	// Recall with tag filter
-	results, err := store.Recall(ctx, "user", RecallOpts{
-		Limit: 10,
-		Tags:  []string{"preferences"},
-	})
-	if err != nil {
-		t.Fatalf("recall failed: %v", err)
-	}
-
-	// Should only find the preferences entry
-	for _, r := range results {
-		found := false
-		for _, tag := range r.Tags {
-			if tag == "preferences" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("result should have 'preferences' tag")
 		}
 	}
 }
