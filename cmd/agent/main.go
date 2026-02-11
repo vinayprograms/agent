@@ -341,9 +341,19 @@ func runWorkflow(args []string) {
 	{
 		bashPolicy := pol.GetToolPolicy("bash")
 		allowedDirs := bashPolicy.AllowedDirs
-		if len(allowedDirs) == 0 && pol.Workspace != "" {
-			// Default: workspace + /tmp
-			allowedDirs = []string{pol.Workspace, "/tmp"}
+		if len(allowedDirs) == 0 {
+			// Fail-close: if no allowed_dirs configured, restrict to workspace only (or cwd)
+			if pol.Workspace != "" {
+				allowedDirs = []string{pol.Workspace}
+			} else {
+				// Last resort: current directory only
+				if cwd, err := os.Getwd(); err == nil {
+					allowedDirs = []string{cwd}
+				} else {
+					allowedDirs = []string{"."}
+				}
+			}
+			fmt.Printf("⚠️  No allowed_dirs configured for bash - defaulting to: %v (fail-close)\n", allowedDirs)
 		}
 		bashChecker := policy.NewBashChecker(pol.Workspace, allowedDirs, bashPolicy.Denylist)
 		registry.SetBashChecker(bashChecker)
