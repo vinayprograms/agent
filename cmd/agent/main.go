@@ -133,6 +133,8 @@ Run Options:
   --config <path>       Config file path
   --policy <path>       Policy file path
   --workspace <path>    Workspace directory
+  --persist-memory      Enable persistent memory (overrides config)
+  --no-persist-memory   Disable persistent memory (overrides config)
 
 Pack Options:
   --output, -o <path>   Output package path
@@ -189,6 +191,7 @@ func runWorkflow(args []string) {
 
 	inputs := make(map[string]string)
 	var configPath, policyPath, workspacePath string
+	var persistMemoryOverride *bool // nil = no override, use config
 
 	// Parse flags
 	for i := 0; i < len(args); i++ {
@@ -220,6 +223,12 @@ func runWorkflow(args []string) {
 			workspacePath = args[i]
 		case strings.HasPrefix(arg, "--workspace="):
 			workspacePath = strings.TrimPrefix(arg, "--workspace=")
+		case arg == "--persist-memory":
+			t := true
+			persistMemoryOverride = &t
+		case arg == "--no-persist-memory":
+			f := false
+			persistMemoryOverride = &f
 		}
 	}
 
@@ -238,6 +247,11 @@ func runWorkflow(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Apply CLI overrides
+	if persistMemoryOverride != nil {
+		cfg.Storage.PersistMemory = *persistMemoryOverride
 	}
 
 	// Override workspace if specified
@@ -371,15 +385,16 @@ func runWorkflow(args []string) {
 	sessionMgr := session.NewFileManager(sessionPath)
 
 	// Set up memory stores
-	// KV memory (photographic): always available, persisted based on config
+	// Scratchpad (KV): always available, persisted based on config
 	kvPath := filepath.Join(storagePath, "kv.json")
 	var kvStore tools.MemoryStore
-	if cfg.Storage.PersistMemory {
+	persistMemory := cfg.Storage.PersistMemory
+	if persistMemory {
 		kvStore = tools.NewFileMemoryStore(kvPath)
 	} else {
 		kvStore = tools.NewInMemoryStore()
 	}
-	registry.SetMemoryStore(kvStore)
+	registry.SetScratchpad(kvStore, persistMemory)
 
 	// Semantic memory: available if embedding provider is configured
 	var semanticMemory *memory.ToolsAdapter
@@ -392,8 +407,12 @@ func runWorkflow(args []string) {
 
 	if embedder == nil {
 		// Semantic memory disabled (provider = "none")
-		fmt.Println("🧠 Memory: KV only (semantic disabled)")
-	} else if cfg.Storage.PersistMemory {
+		if persistMemory {
+			fmt.Println("🧠 Memory: scratchpad persistent, semantic disabled")
+		} else {
+			fmt.Println("🧠 Memory: scratchpad ephemeral, semantic disabled")
+		}
+	} else if persistMemory {
 		// Persistent semantic memory using BM25 + semantic graph
 		var storeErr error
 		bleveStore, storeErr = memory.NewBleveStore(memory.BleveStoreConfig{
@@ -411,13 +430,13 @@ func runWorkflow(args []string) {
 
 		semanticMemory = memory.NewToolsAdapter(bleveStore)
 		registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
-		fmt.Println("🧠 Memory: persistent (BM25 + semantic graph)")
+		fmt.Println("🧠 Memory: persistent (scratchpad + semantic)")
 	} else {
-		// In-memory semantic store for scratchpad mode
+		// In-memory semantic store for ephemeral mode
 		memStore := memory.NewInMemoryStore(embedder)
 		semanticMemory = memory.NewToolsAdapter(memStore)
 		registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
-		fmt.Println("🧠 Memory: session-scoped (scratchpad)")
+		fmt.Println("🧠 Memory: ephemeral (scratchpad + semantic)")
 	}
 
 	// Create telemetry exporter

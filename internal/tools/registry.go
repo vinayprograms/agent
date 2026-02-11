@@ -147,13 +147,19 @@ func (r *Registry) SetCredentials(creds CredentialProvider) {
 	}
 }
 
-// SetMemoryStore sets the memory store and registers memory tools
-func (r *Registry) SetMemoryStore(store MemoryStore) {
+// SetScratchpad sets the scratchpad store and registers scratchpad tools.
+// persisted indicates whether data survives across agent runs (affects tool descriptions).
+func (r *Registry) SetScratchpad(store MemoryStore, persisted bool) {
 	r.memoryStore = store
-	r.Register(&memoryReadTool{store: store})
-	r.Register(&memoryWriteTool{store: store})
-	r.Register(&memoryListTool{store: store})
-	r.Register(&memorySearchTool{store: store})
+	r.Register(&scratchpadReadTool{store: store, persisted: persisted})
+	r.Register(&scratchpadWriteTool{store: store, persisted: persisted})
+	r.Register(&scratchpadListTool{store: store, persisted: persisted})
+	r.Register(&scratchpadSearchTool{store: store, persisted: persisted})
+}
+
+// SetMemoryStore is deprecated, use SetScratchpad instead.
+func (r *Registry) SetMemoryStore(store MemoryStore) {
+	r.SetScratchpad(store, false)
 }
 
 // SetSemanticMemory sets the semantic memory and registers semantic memory tools
@@ -1183,25 +1189,38 @@ func extractDomain(urlStr string) string {
 	return urlStr
 }
 
-// --- Memory Tools (R5.5) ---
+// --- Scratchpad Tools (KV Storage) ---
 
-// memoryReadTool implements the memory_read tool (R5.5.1).
-type memoryReadTool struct {
-	store MemoryStore
+// scratchpadReadTool implements the scratchpad_read tool.
+type scratchpadReadTool struct {
+	store     MemoryStore
+	persisted bool
 }
 
-func (t *memoryReadTool) Name() string { return "memory_read" }
+func (t *scratchpadReadTool) Name() string { return "scratchpad_read" }
 
-func (t *memoryReadTool) Description() string {
-	return `Read a structured value by exact key.
+func (t *scratchpadReadTool) Description() string {
+	if t.persisted {
+		return `Read a value by exact key from persistent scratchpad.
 
-Use for: preferences, config, counters, state - data with KNOWN keys.
-Examples: "user.theme", "project.database", "session.last_topic"
+⚠️ PERSISTENT: Data survives across agent runs.
 
-NOT for: searching past knowledge. Use memory_recall for semantic search.`
+Use for: intermediate results, temporary state, values to reference later by exact key.
+Examples: "api_endpoint", "selected_model", "step3_output"
+
+NOT for: insights or learnings. Use memory_remember for semantic storage.`
+	}
+	return `Read a value by exact key from session scratchpad.
+
+⚠️ EPHEMERAL: Data is lost when this agent run ends.
+
+Use for: intermediate results, temporary state, values to reference later by exact key.
+Examples: "api_endpoint", "selected_model", "step3_output"
+
+NOT for: insights or learnings. Use memory_remember for semantic storage.`
 }
 
-func (t *memoryReadTool) Parameters() map[string]interface{} {
+func (t *scratchpadReadTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -1214,7 +1233,7 @@ func (t *memoryReadTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *memoryReadTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func (t *scratchpadReadTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	key, ok := args["key"].(string)
 	if !ok {
 		return nil, fmt.Errorf("key is required")
@@ -1227,23 +1246,36 @@ func (t *memoryReadTool) Execute(ctx context.Context, args map[string]interface{
 	return value, nil
 }
 
-// memoryWriteTool implements the memory_write tool (R5.5.2).
-type memoryWriteTool struct {
-	store MemoryStore
+// scratchpadWriteTool implements the scratchpad_write tool.
+type scratchpadWriteTool struct {
+	store     MemoryStore
+	persisted bool
 }
 
-func (t *memoryWriteTool) Name() string { return "memory_write" }
+func (t *scratchpadWriteTool) Name() string { return "scratchpad_write" }
 
-func (t *memoryWriteTool) Description() string {
-	return `Store a structured key-value pair.
+func (t *scratchpadWriteTool) Description() string {
+	if t.persisted {
+		return `Store a key-value pair in persistent scratchpad.
 
-Use for: preferences, config, counters, state - data you'll retrieve by EXACT key.
-Examples: memory_write("user.theme", "dark"), memory_write("project.db", "postgres")
+⚠️ PERSISTENT: Data survives across agent runs.
 
-NOT for: insights, decisions, knowledge. Use memory_remember for semantic storage.`
+Use for: intermediate results, temporary state, values you'll retrieve by EXACT key.
+Examples: scratchpad_write("api_endpoint", "https://api.example.com")
+
+NOT for: insights, decisions, learnings. Use memory_remember for semantic storage.`
+	}
+	return `Store a key-value pair in session scratchpad.
+
+⚠️ EPHEMERAL: Data is lost when this agent run ends.
+
+Use for: intermediate results, temporary state, values you'll retrieve by EXACT key.
+Examples: scratchpad_write("api_endpoint", "https://api.example.com")
+
+NOT for: insights, decisions, learnings. Use memory_remember for semantic storage.`
 }
 
-func (t *memoryWriteTool) Parameters() map[string]interface{} {
+func (t *scratchpadWriteTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -1260,7 +1292,7 @@ func (t *memoryWriteTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *memoryWriteTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func (t *scratchpadWriteTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	key, ok := args["key"].(string)
 	if !ok {
 		return nil, fmt.Errorf("key is required")
@@ -1276,36 +1308,41 @@ func (t *memoryWriteTool) Execute(ctx context.Context, args map[string]interface
 	return "ok", nil
 }
 
-// memoryListTool implements the memory_list tool.
-type memoryListTool struct {
-	store MemoryStore
+// scratchpadListTool implements the scratchpad_list tool.
+type scratchpadListTool struct {
+	store     MemoryStore
+	persisted bool
 }
 
-func (t *memoryListTool) Name() string { return "memory_list" }
+func (t *scratchpadListTool) Name() string { return "scratchpad_list" }
 
-func (t *memoryListTool) Description() string {
-	return `List keys in structured storage, optionally filtered by prefix.
+func (t *scratchpadListTool) Description() string {
+	persistence := "EPHEMERAL (session only)"
+	if t.persisted {
+		persistence = "PERSISTENT (survives runs)"
+	}
+	return fmt.Sprintf(`List keys in scratchpad, optionally filtered by prefix.
 
-Use for: discovering stored preferences/config keys.
-Example: memory_list("user.") → ["user.theme", "user.timezone"]
+⚠️ %s
 
-NOT for: exploring knowledge. Use memory_recall to search by meaning.`
+Use for: discovering what's stored in scratchpad.
+Example: scratchpad_list("step") → ["step1_output", "step2_output"]`, persistence)
 }
 
-func (t *memoryListTool) Parameters() map[string]interface{} {
+func (t *scratchpadListTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"prefix": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional prefix to filter keys (e.g., 'user.' returns user.name, user.prefs)",
+				"description": "Optional prefix to filter keys",
 			},
 		},
 		"required": []string{},
 	}
 }
 
-func (t *memoryListTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func (t *scratchpadListTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	prefix := ""
 	if p, ok := args["prefix"].(string); ok {
 		prefix = p
@@ -1321,36 +1358,41 @@ func (t *memoryListTool) Execute(ctx context.Context, args map[string]interface{
 	return keys, nil
 }
 
-// memorySearchTool implements the memory_search tool.
-type memorySearchTool struct {
-	store MemoryStore
+// scratchpadSearchTool implements the scratchpad_search tool.
+type scratchpadSearchTool struct {
+	store     MemoryStore
+	persisted bool
 }
 
-func (t *memorySearchTool) Name() string { return "memory_search" }
+func (t *scratchpadSearchTool) Name() string { return "scratchpad_search" }
 
-func (t *memorySearchTool) Description() string {
-	return `Substring search in structured key-value storage.
+func (t *scratchpadSearchTool) Description() string {
+	persistence := "EPHEMERAL (session only)"
+	if t.persisted {
+		persistence = "PERSISTENT (survives runs)"
+	}
+	return fmt.Sprintf(`Substring search in scratchpad keys and values.
 
-Use for: finding a preference when you know part of the key or value.
-Example: memory_search("postgres") → finds "project.db": "postgres"
+⚠️ %s
 
-NOT for: semantic search. Use memory_recall for meaning-based retrieval.`
+Use for: finding a value when you know part of the key or value.
+Example: scratchpad_search("endpoint") → finds "api_endpoint": "https://..."`, persistence)
 }
 
-func (t *memorySearchTool) Parameters() map[string]interface{} {
+func (t *scratchpadSearchTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"query": map[string]interface{}{
 				"type":        "string",
-				"description": "Search term to find in memory values",
+				"description": "Search term to find in scratchpad keys/values",
 			},
 		},
 		"required": []string{"query"},
 	}
 }
 
-func (t *memorySearchTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func (t *scratchpadSearchTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	query, ok := args["query"].(string)
 	if !ok {
 		return nil, fmt.Errorf("query is required")
@@ -1361,12 +1403,12 @@ func (t *memorySearchTool) Execute(ctx context.Context, args map[string]interfac
 		return nil, err
 	}
 	if len(results) == 0 {
-		return "no matching memories found", nil
+		return "no matching entries found", nil
 	}
 	return results, nil
 }
 
-// MemoryStore is the interface for persistent key-value storage.
+// MemoryStore is the interface for key-value storage (scratchpad).
 type MemoryStore interface {
 	Get(key string) (string, error)
 	Set(key, value string) error
@@ -1374,7 +1416,7 @@ type MemoryStore interface {
 	Search(query string) ([]MemorySearchResult, error)
 }
 
-// MemorySearchResult represents a search hit in memory.
+// MemorySearchResult represents a search hit in scratchpad.
 type MemorySearchResult struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`

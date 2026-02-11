@@ -2,20 +2,20 @@
 
 The agent includes a memory system with two components:
 
-- **Photographic memory (KV)** — exact key-value recall, stored as JSON
-- **Semantic memory** — findings, insights, and lessons stored with BM25 full-text search and semantic query expansion
+- **Scratchpad (KV)** — exact key-value storage for intermediate results
+- **Semantic memory** — findings, insights, and lessons stored with BM25 full-text search
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Memory System                             │
-│       (persist_memory=true: shared across runs)              │
-│       (persist_memory=false: session-scoped)                 │
+│       (--persist-memory: shared across runs)                 │
+│       (--no-persist-memory: session-scoped)                  │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────┐    ┌─────────────────────────────────┐    │
-│  │ Photographic │    │      Semantic Memory            │    │
+│  │  Scratchpad  │    │      Semantic Memory            │    │
 │  │   (kv.json)  │    │                                 │    │
 │  │              │    │  observations.bleve/  (BM25)    │    │
 │  │  Exact keys  │    │  semantic_graph.json            │    │
@@ -29,11 +29,21 @@ The agent includes a memory system with two components:
 │         │                           │                        │
 │         ▼                           ▼                        │
 │  ┌────────────────────────────────────────────────────┐     │
-│  │   memory_read/write      memory_recall             │     │
+│  │   scratchpad_read/write      memory_recall         │     │
 │  └────────────────────────────────────────────────────┘     │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## CLI Flags
+
+```bash
+# Override agent.toml setting
+agent run -f Agentfile --persist-memory      # Enable persistence
+agent run -f Agentfile --no-persist-memory   # Disable persistence
+```
+
+The CLI flags override `persist_memory` from agent.toml.
 
 ## Why BM25 + Semantic Graph (not SQLite-vec)
 
@@ -172,16 +182,22 @@ When `persist_memory = false`, memory still works within a single run — useful
 
 ## Memory Tools
 
-### Photographic Memory (KV)
+### Scratchpad (KV)
 
-Exact key-value storage for precise recall:
+Temporary key-value storage for intermediate results:
 
 ```
-memory_write(key: "api_endpoint", value: "https://api.acme.com/v2")
-memory_read(key: "api_endpoint")  → "https://api.acme.com/v2"
-memory_list()                     → ["api_endpoint", ...]
-memory_search("acme")             → finds keys/values containing "acme"
+scratchpad_write(key: "api_endpoint", value: "https://api.acme.com/v2")
+scratchpad_read(key: "api_endpoint")  → "https://api.acme.com/v2"
+scratchpad_list()                     → ["api_endpoint", ...]
+scratchpad_search("acme")             → finds keys/values containing "acme"
 ```
+
+⚠️ **Persistence depends on configuration:**
+- With `--persist-memory`: data survives across runs
+- With `--no-persist-memory`: data is lost when agent exits
+
+The tool descriptions dynamically update to indicate the current persistence mode.
 
 ### Semantic Memory
 
@@ -226,13 +242,13 @@ This enables the agent to learn from its own work automatically.
 
 | Need | Tool | Example |
 |------|------|---------|
-| Exact value lookup | `memory_read` | API keys, endpoints, IDs |
+| Intermediate results | `scratchpad_write/read` | API endpoints, temp values |
 | "What did we decide about X?" | `memory_recall` | Architecture decisions |
-| Store a preference | `memory_write` | `theme = "dark"` |
+| Store a learning | `memory_remember` | Insights and lessons |
 
-**Photographic (KV):** When you need the exact value back, no fuzziness.
+**Scratchpad:** Temporary values you need to reference by exact key during this run.
 
-**Semantic:** When you want to find relevant findings, insights, and lessons by meaning.
+**Semantic:** Learnings you want to recall by meaning, now or in future runs.
 
 ## Enterprise Deployment
 
