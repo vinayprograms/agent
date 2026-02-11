@@ -1270,8 +1270,29 @@ func createEmbeddingProvider(cfg config.EmbeddingConfig, creds *credentials.Cred
 			Model:   cfg.Model,
 		})
 
+	case "litellm", "openai-compat":
+		// LiteLLM uses OpenAI-compatible API
+		apiKey := creds.GetAPIKey("litellm")
+		if apiKey == "" {
+			apiKey = creds.GetAPIKey("llm") // fallback to main LLM key
+		}
+		if apiKey == "" {
+			apiKey = os.Getenv("LITELLM_API_KEY")
+		}
+		if apiKey == "" {
+			apiKey = os.Getenv("OPENAI_API_KEY")
+		}
+		if cfg.BaseURL == "" {
+			return nil, fmt.Errorf("LiteLLM embedding requires base_url to be set")
+		}
+		return memory.NewOpenAIEmbedder(memory.OpenAIConfig{
+			APIKey:  apiKey,
+			Model:   cfg.Model,
+			BaseURL: cfg.BaseURL,
+		}), nil
+
 	default:
-		return nil, fmt.Errorf("unsupported embedding provider: %s (supported: openai, google, mistral, cohere, voyage, ollama, none)", cfg.Provider)
+		return nil, fmt.Errorf("unsupported embedding provider: %s (supported: openai, google, mistral, cohere, voyage, ollama, litellm, none)", cfg.Provider)
 	}
 }
 
