@@ -15,7 +15,7 @@ The headless agent is a CLI tool that executes workflows defined in Agentfiles u
 | Executor | Runs workflows through goals and steps |
 | Tool Registry | Built-in tools + MCP server tools |
 | Session Store | Tracks execution state |
-| LLM Client | Fantasy-based provider abstraction |
+| LLM Client | Multi-provider LLM abstraction |
 
 ## Configuration Files
 

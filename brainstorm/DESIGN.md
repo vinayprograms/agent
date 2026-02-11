@@ -89,7 +89,7 @@ For LOOP steps, detect when to stop:
 
 ### 6. LLM Provider
 
-Interface for multi-provider abstraction (via Fantasy):
+Interface for multi-provider abstraction (via native SDKs):
 - Anthropic (Claude)
 - OpenAI
 - Google (Gemini)
@@ -286,7 +286,7 @@ Primary interface. Compatible with MCP.
 | `internal/agentfile/` | Lexer, parser, AST |
 | `internal/executor/` | Workflow executor, loop handling, convergence |
 | `internal/agent/` | Core agent, multi-agent orchestration, synthesis |
-| `internal/llm/` | Provider interface, Fantasy adapter |
+| `internal/llm/` | Provider interface, LLM provider adapters |
 | `internal/tools/` | Tool registry, security, individual tools |
 | `internal/session/` | Session manager, storage backends |
 | `internal/telemetry/` | Exporters (OTLP, HTTP, file) |

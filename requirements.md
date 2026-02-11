@@ -109,8 +109,8 @@
 - R4.1.3: Support tool definitions in LLM schema format
 - R4.1.4: Parse tool calls from LLM response
 
-### R4.2 Fantasy Adapter
-- R4.2.1: Integrate charmbracelet/fantasy library
+### R4.2 Provider Adapters
+- R4.2.1: Use native LLM SDKs (anthropic-sdk-go, openai-go, generative-ai-go)
 - R4.2.2: Configure provider (Anthropic, OpenAI, Gemini, etc.)
 - R4.2.3: Configure model selection
 - R4.2.4: Configure max tokens

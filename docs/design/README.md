@@ -8,7 +8,7 @@ This documentation describes the architecture and design of the headless agent.
 |---------|-------|-------------|
 | 1 | [Architecture](01-architecture.md) | System components and data flow |
 | 2 | [Agentfile DSL](02-agentfile.md) | Workflow definition language |
-| 3 | [LLM Integration](03-llm.md) | Catwalk, Fantasy, providers |
+| 3 | [LLM Integration](03-llm.md) | Native SDKs, provider adapters |
 | 4 | [Tool System](04-tools.md) | Built-in tools, MCP, policies |
 | 5 | [Sub-Agents](05-subagents.md) | Static and dynamic spawning |
 | 6 | [Packaging](06-packaging.md) | Signed packages, installation |
@@ -22,6 +22,6 @@ This documentation describes the architecture and design of the headless agent.
 
 1. **Headless** — No UI, stdio transport, designed for automation
 2. **Declarative** — Agentfile DSL, flat syntax, no nesting
-3. **Provider agnostic** — Catwalk + Fantasy for multi-provider LLM support
+3. **Provider agnostic** — Native SDKs for multi-provider LLM support
 4. **Standards-based** — MCP for tools, ACP for editor integration, Agent Skills
 5. **Defense in depth** — Security at multiple layers
