@@ -488,7 +488,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "down", "j":
-			m.cursor++
+			max := m.maxCursorForStep()
+			if m.cursor < max {
+				m.cursor++
+			}
 			return m, nil
 
 		case " ":
@@ -543,9 +546,50 @@ func (m Model) previousStep() Step {
 	return prev
 }
 
+func (m Model) maxCursorForStep() int {
+	switch m.step {
+	case StepScenario:
+		return len(m.getScenarios()) - 1
+	case StepProvider:
+		return len(m.getProviders()) - 1
+	case StepModel:
+		return len(m.getModels()) - 1
+	case StepThinking:
+		return 4 // auto, off, low, medium, high
+	case StepSmallLLM:
+		return 1 // yes, no
+	case StepSmallLLMProvider:
+		return len(m.getProviders()) - 1 // reuses main provider list
+	case StepEmbedding:
+		return len(m.getEmbeddingProviders()) - 1
+	case StepSecurity:
+		return 1 // default, strict
+	case StepSecurityMode:
+		return 1 // default, paranoid
+	case StepProfiles:
+		return 1 // yes, no
+	case StepFeatures:
+		return 3 // 4 features (0-3)
+	case StepMCPAdd:
+		return len(m.config.MCPServers) + 1 // edit options + add + done
+	case StepMCPDenySelect:
+		if len(m.probedTools) == 0 {
+			return 0
+		}
+		return len(m.probedTools) - 1
+	case StepCredentialMethod:
+		return 1 // file, env
+	case StepConfirm:
+		return 1 // confirm, cancel
+	default:
+		return 100 // fallback high number
+	}
+}
+
 func (m Model) isTextInputStep() bool {
 	switch m.step {
-	case StepAPIKey, StepBaseURL, StepWorkspace, StepSmallLLMModel, StepEmbeddingModel:
+	case StepAPIKey, StepBaseURL, StepWorkspace, StepSmallLLMModel, StepEmbeddingModel,
+		StepMCPName, StepMCPCommand, StepMCPArgs:
 		return true
 	}
 	return false
