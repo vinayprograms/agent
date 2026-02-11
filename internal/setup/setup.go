@@ -2202,6 +2202,9 @@ func (m Model) generatePolicyTOML() string {
 	sb.WriteString("[tools.bash]\n")
 	sb.WriteString(fmt.Sprintf("enabled = %t\n", m.config.AllowBash))
 	if m.config.AllowBash {
+		// Always include allowed_dirs (defaults to workspace + /tmp)
+		sb.WriteString("allowed_dirs = [\"$WORKSPACE\", \"/tmp\"]\n")
+		
 		// Recommend sandbox for production/team scenarios
 		if m.config.Scenario == ScenarioProduction || m.config.Scenario == ScenarioTeam {
 			sb.WriteString("# Sandbox: restrict bash to workspace only (requires bwrap or docker)\n")
@@ -2214,7 +2217,7 @@ func (m Model) generatePolicyTOML() string {
 		} else {
 			sb.WriteString("# Recommended for security:\n")
 			sb.WriteString("# sandbox = \"bwrap\"  # Restricts filesystem access to workspace only\n")
-			sb.WriteString("# denylist = [\"rm -rf *\", \"sudo *\", \"curl * | bash\", \"../*\", \"/*\"]\n")
+			sb.WriteString("# denylist = [\"docker\", \"kubectl\"]  # Add commands to block\n")
 		}
 	}
 	sb.WriteString("\n")

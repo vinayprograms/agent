@@ -22,7 +22,6 @@ type Config struct {
 	MCP       MCPConfig             `toml:"mcp"`        // MCP tool servers
 	Skills    SkillsConfig          `toml:"skills"`     // Agent Skills
 	Security  SecurityConfig        `toml:"security"`   // Security framework
-	Bash      BashConfig            `toml:"bash"`       // Bash tool security
 }
 
 // AgentConfig contains agent identification settings.
@@ -116,12 +115,6 @@ type SecurityConfig struct {
 	Mode       string `toml:"mode"`        // "default" or "paranoid"
 	UserTrust  string `toml:"user_trust"`  // Trust level for user messages: "trusted", "vetted", "untrusted"
 	TriageLLM  string `toml:"triage_llm"`  // Profile name for Tier 2 triage (cheap/fast model)
-}
-
-// BashConfig contains bash tool security configuration.
-type BashConfig struct {
-	AllowedDirs     []string `toml:"allowed_dirs"`     // Directories the agent can access (default: workspace only)
-	DeniedCommands  []string `toml:"denied_commands"`  // Additional commands to block (appended to internal denylist)
 }
 
 // New creates a new config with defaults.

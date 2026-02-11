@@ -339,12 +339,13 @@ func runWorkflow(args []string) {
 
 	// Set up bash security checker with denylist + LLM policy check
 	{
-		allowedDirs := cfg.Bash.AllowedDirs
+		bashPolicy := pol.GetToolPolicy("bash")
+		allowedDirs := bashPolicy.AllowedDirs
 		if len(allowedDirs) == 0 && pol.Workspace != "" {
 			// Default: workspace + /tmp
 			allowedDirs = []string{pol.Workspace, "/tmp"}
 		}
-		bashChecker := policy.NewBashChecker(pol.Workspace, allowedDirs, cfg.Bash.DeniedCommands)
+		bashChecker := policy.NewBashChecker(pol.Workspace, allowedDirs, bashPolicy.Denylist)
 		registry.SetBashChecker(bashChecker)
 	}
 
