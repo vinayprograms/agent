@@ -479,6 +479,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Handle text input steps first - let them capture all keys except ctrl+c and enter
+		if m.isTextInputStep() {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "enter":
+				return m.handleEnter()
+			default:
+				var cmd tea.Cmd
+				m.textInput, cmd = m.textInput.Update(msg)
+				return m, cmd
+			}
+		}
+
+		// Non-text-input steps - navigation keys work
 		switch msg.String() {
 		case "ctrl+c", "q":
 			if m.step == StepComplete {
@@ -522,12 +537,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Update text input
-	if m.isTextInputStep() {
-		var cmd tea.Cmd
-		m.textInput, cmd = m.textInput.Update(msg)
-		return m, cmd
-	}
 
 	return m, nil
 }
