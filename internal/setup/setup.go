@@ -27,28 +27,31 @@ const (
 
 // Provider options
 const (
-	ProviderAnthropic  = "anthropic"
-	ProviderOpenAI     = "openai"
-	ProviderGoogle     = "google"
-	ProviderGroq       = "groq"
-	ProviderMistral    = "mistral"
-	ProviderOpenRouter = "openrouter"
-	ProviderOllama     = "ollama"
-	ProviderLiteLLM    = "litellm"
-	ProviderLMStudio   = "lmstudio"
-	ProviderCustom     = "custom"
+	ProviderAnthropic   = "anthropic"
+	ProviderOpenAI      = "openai"
+	ProviderGoogle      = "google"
+	ProviderGroq        = "groq"
+	ProviderMistral     = "mistral"
+	ProviderXAI         = "xai"
+	ProviderOpenRouter  = "openrouter"
+	ProviderOllamaCloud = "ollama-cloud"
+	ProviderOllamaLocal = "ollama-local"
+	ProviderLiteLLM     = "litellm"
+	ProviderLMStudio    = "lmstudio"
+	ProviderCustom      = "custom"
 )
 
 // Embedding provider options
 const (
 	EmbeddingOpenAI  = "openai"
 	EmbeddingGoogle  = "google"
-	EmbeddingMistral = "mistral"
-	EmbeddingCohere  = "cohere"
-	EmbeddingVoyage  = "voyage"
-	EmbeddingOllama  = "ollama"
-	EmbeddingLiteLLM = "litellm"
-	EmbeddingNone    = "none"
+	EmbeddingMistral     = "mistral"
+	EmbeddingCohere      = "cohere"
+	EmbeddingVoyage      = "voyage"
+	EmbeddingOllamaCloud = "ollama-cloud"
+	EmbeddingOllamaLocal = "ollama"
+	EmbeddingLiteLLM     = "litellm"
+	EmbeddingNone        = "none"
 )
 
 // Config holds the setup configuration
@@ -928,7 +931,7 @@ func (m *Model) applyFeatureSelection() {
 
 func (m Model) needsBaseURL() bool {
 	switch m.config.Provider {
-	case ProviderOllama, ProviderLiteLLM, ProviderLMStudio, ProviderOpenRouter, ProviderCustom:
+	case ProviderOllamaLocal, ProviderLiteLLM, ProviderLMStudio, ProviderOpenRouter, ProviderCustom:
 		return true
 	}
 	return false
@@ -936,7 +939,7 @@ func (m Model) needsBaseURL() bool {
 
 func (m Model) getDefaultBaseURL() string {
 	switch m.config.Provider {
-	case ProviderOllama:
+	case ProviderOllamaLocal:
 		return "http://localhost:11434/v1"
 	case ProviderLMStudio:
 		return "http://localhost:1234/v1"
@@ -952,12 +955,12 @@ func (m Model) getDefaultBaseURL() string {
 func (m *Model) applyScenarioDefaults() {
 	switch m.config.Scenario {
 	case ScenarioLocal:
-		m.config.Provider = ProviderOllama
+		m.config.Provider = ProviderOllamaLocal
 		m.config.DefaultDeny = false
 		m.config.AllowBash = true
 		m.config.AllowWeb = true
 		m.config.SecurityMode = "default"
-		m.config.EmbeddingProvider = "ollama"
+		m.config.EmbeddingProvider = "ollama-local"
 		m.config.SmallLLMEnabled = false
 		m.config.PersistMemory = false
 
@@ -1013,9 +1016,13 @@ func (m *Model) setDefaultModel() {
 		m.config.Model = "llama-3.3-70b-versatile"
 	case ProviderMistral:
 		m.config.Model = "mistral-large-latest"
+	case ProviderXAI:
+		m.config.Model = "grok-2"
 	case ProviderOpenRouter:
 		m.config.Model = "anthropic/claude-sonnet-4"
-	case ProviderOllama:
+	case ProviderOllamaCloud:
+		m.config.Model = "llama3.2"
+	case ProviderOllamaLocal:
 		m.config.Model = "llama3.2"
 	case ProviderLiteLLM:
 		m.config.Model = "claude-sonnet-4-20250514"
@@ -1038,7 +1045,9 @@ func (m *Model) setDefaultSmallModel() {
 		m.config.SmallLLMModel = "llama-3.1-8b-instant"
 	case ProviderMistral:
 		m.config.SmallLLMModel = "mistral-small-latest"
-	case ProviderOllama:
+	case ProviderXAI:
+		m.config.SmallLLMModel = "grok-2" // xAI doesn't have a small model yet
+	case ProviderOllamaCloud, ProviderOllamaLocal:
 		m.config.SmallLLMModel = "llama3.2:1b"
 	case ProviderLiteLLM:
 		m.config.SmallLLMModel = "claude-3-5-haiku-20241022"
@@ -1063,7 +1072,7 @@ func (m *Model) setDefaultEmbeddingModel() {
 		m.config.EmbeddingModel = "embed-english-v3.0"
 	case EmbeddingVoyage:
 		m.config.EmbeddingModel = "voyage-3-lite"
-	case EmbeddingOllama:
+	case EmbeddingOllamaCloud, EmbeddingOllamaLocal:
 		m.config.EmbeddingModel = "nomic-embed-text"
 	case EmbeddingLiteLLM:
 		m.config.EmbeddingModel = "text-embedding-3-small"
@@ -1216,8 +1225,10 @@ func (m Model) getProviders() []providerOption {
 		{ProviderGoogle, "Google", "Gemini models"},
 		{ProviderGroq, "Groq", "Fast inference (Llama, Mixtral)"},
 		{ProviderMistral, "Mistral", "Mistral models"},
+		{ProviderXAI, "xAI", "Grok models"},
 		{ProviderOpenRouter, "OpenRouter", "Multi-provider router"},
-		{ProviderOllama, "Ollama", "Local models (free)"},
+		{ProviderOllamaCloud, "Ollama Cloud", "Hosted Ollama (api.ollama.com)"},
+		{ProviderOllamaLocal, "Ollama Local", "Local Ollama (free, requires install)"},
 		{ProviderLiteLLM, "LiteLLM", "Self-hosted proxy (OpenAI-compatible)"},
 		{ProviderLMStudio, "LM Studio", "Local models with UI"},
 		{ProviderCustom, "Custom", "Custom OpenAI-compatible endpoint"},
@@ -1262,7 +1273,12 @@ func (m Model) getModels() []modelOption {
 			{"mistral-medium-latest", "Mistral Medium"},
 			{"mistral-small-latest", "Mistral Small (fast)"},
 		}
-	case ProviderOllama:
+	case ProviderXAI:
+		return []modelOption{
+			{"grok-2", "Grok 2 (recommended)"},
+			{"grok-2-mini", "Grok 2 Mini (fast)"},
+		}
+	case ProviderOllamaCloud, ProviderOllamaLocal:
 		return []modelOption{
 			{"llama3.2", "Llama 3.2 (recommended)"},
 			{"llama3.2:1b", "Llama 3.2 1B (fast)"},
@@ -1291,7 +1307,8 @@ func (m Model) getEmbeddingProviders() []embeddingOption {
 		{EmbeddingGoogle, "Google", "text-embedding-004"},
 		{EmbeddingMistral, "Mistral", "mistral-embed"},
 		{EmbeddingCohere, "Cohere", "embed-english-v3.0"},
-		{EmbeddingOllama, "Ollama", "nomic-embed-text (local, free)"},
+		{EmbeddingOllamaCloud, "Ollama Cloud", "Hosted Ollama embeddings (api.ollama.com)"},
+		{EmbeddingOllamaLocal, "Ollama Local", "nomic-embed-text (local, free)"},
 		{EmbeddingLiteLLM, "LiteLLM", "Proxy to any embedding provider"},
 	}
 }
