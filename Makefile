@@ -3,6 +3,7 @@
 # Variables
 BINARY_NAME := agent
 REPLAY_BINARY := agent-replay
+MEM_BINARY := agentmem
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -31,12 +32,13 @@ GOINSTALL := CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" $(GO) install
 # =============================================================================
 
 .PHONY: build
-build: ## Build agent and agent-replay binaries
-	@echo "Building $(BINARY_NAME) and $(REPLAY_BINARY) $(VERSION)..."
+build: ## Build agent, agent-replay, and agentmem binaries
+	@echo "Building $(BINARY_NAME), $(REPLAY_BINARY), and $(MEM_BINARY) $(VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	@$(GOBUILD) -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/agent
 	@$(GOBUILD) -o $(BIN_DIR)/$(REPLAY_BINARY) ./cmd/replay
-	@echo "Built: $(BIN_DIR)/$(BINARY_NAME), $(BIN_DIR)/$(REPLAY_BINARY)"
+	@$(GOBUILD) -o $(BIN_DIR)/$(MEM_BINARY) ./cmd/agentmem
+	@echo "Built: $(BIN_DIR)/$(BINARY_NAME), $(BIN_DIR)/$(REPLAY_BINARY), $(BIN_DIR)/$(MEM_BINARY)"
 
 .PHONY: build-agent
 build-agent: ## Build only the agent binary
@@ -51,6 +53,13 @@ build-replay: ## Build only the replay binary
 	@mkdir -p $(BIN_DIR)
 	@$(GOBUILD) -o $(BIN_DIR)/$(REPLAY_BINARY) ./cmd/replay
 	@echo "Built: $(BIN_DIR)/$(REPLAY_BINARY)"
+
+.PHONY: build-mem
+build-mem: ## Build only the agentmem binary
+	@echo "Building $(MEM_BINARY) $(VERSION)..."
+	@mkdir -p $(BIN_DIR)
+	@$(GOBUILD) -o $(BIN_DIR)/$(MEM_BINARY) ./cmd/agentmem
+	@echo "Built: $(BIN_DIR)/$(MEM_BINARY)"
 
 .PHONY: build-static
 build-static: ## Build fully static binaries (for containers)
@@ -81,16 +90,17 @@ build-all: ## Build for all platforms
 # =============================================================================
 
 .PHONY: install
-install: ## Install both binaries to GOPATH/bin using go install
-	@echo "Installing $(BINARY_NAME) and $(REPLAY_BINARY) $(VERSION)..."
+install: ## Install all binaries to GOPATH/bin using go install
+	@echo "Installing $(BINARY_NAME), $(REPLAY_BINARY), and $(MEM_BINARY) $(VERSION)..."
 	@$(GOINSTALL) ./cmd/agent
 	@$(GOINSTALL) ./cmd/replay
+	@$(GOINSTALL) ./cmd/agentmem
 	@echo "Installed to $(shell go env GOPATH)/bin"
 
 .PHONY: uninstall
 uninstall: ## Remove binaries from GOPATH/bin
 	@echo "Removing binaries from GOPATH/bin..."
-	@rm -f $(shell go env GOPATH)/bin/agent $(shell go env GOPATH)/bin/replay
+	@rm -f $(shell go env GOPATH)/bin/agent $(shell go env GOPATH)/bin/replay $(shell go env GOPATH)/bin/agentmem
 	@echo "Uninstalled."
 
 # =============================================================================
