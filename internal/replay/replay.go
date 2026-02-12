@@ -90,16 +90,32 @@ var (
 
 // Replayer reads and formats session events for forensic analysis.
 type Replayer struct {
-	output  io.Writer
-	verbose bool
+	output         io.Writer
+	verbose        bool
+	maxContentSize int // Maximum size for Content fields (0 = unlimited)
+}
+
+// ReplayerOption configures a Replayer.
+type ReplayerOption func(*Replayer)
+
+// WithMaxContentSize limits Content field size to avoid OOM on large sessions.
+func WithMaxContentSize(size int) ReplayerOption {
+	return func(r *Replayer) {
+		r.maxContentSize = size
+	}
 }
 
 // New creates a new Replayer.
-func New(output io.Writer, verbose bool) *Replayer {
-	return &Replayer{
-		output:  output,
-		verbose: verbose,
+func New(output io.Writer, verbose bool, opts ...ReplayerOption) *Replayer {
+	r := &Replayer{
+		output:         output,
+		verbose:        verbose,
+		maxContentSize: 50 * 1024, // Default: 50KB per content field
 	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // ReplayFile loads and replays a session from a file.
@@ -249,7 +265,12 @@ func (r *Replayer) parseJSONLLine(line []byte, sess *session.Session) error {
 		
 	case session.RecordTypeEvent:
 		if record.Event != nil {
-			sess.Events = append(sess.Events, *record.Event)
+			evt := *record.Event
+			// Truncate large content to avoid OOM
+			if r.maxContentSize > 0 && len(evt.Content) > r.maxContentSize {
+				evt.Content = evt.Content[:r.maxContentSize] + fmt.Sprintf("\n... [truncated, %d bytes total]", len(record.Event.Content))
+			}
+			sess.Events = append(sess.Events, evt)
 		}
 		
 	case session.RecordTypeFooter:
@@ -274,6 +295,17 @@ func (r *Replayer) loadLegacyJSON(path string) (*session.Session, error) {
 	var sess session.Session
 	if err := json.Unmarshal(data, &sess); err != nil {
 		return nil, fmt.Errorf("failed to parse session: %w", err)
+	}
+
+	// Truncate large content fields to avoid OOM
+	if r.maxContentSize > 0 {
+		for i := range sess.Events {
+			if len(sess.Events[i].Content) > r.maxContentSize {
+				originalSize := len(sess.Events[i].Content)
+				sess.Events[i].Content = sess.Events[i].Content[:r.maxContentSize] + 
+					fmt.Sprintf("\n... [truncated, %d bytes total]", originalSize)
+			}
+		}
 	}
 
 	return &sess, nil
