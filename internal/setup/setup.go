@@ -961,7 +961,7 @@ func (m *Model) applyFeatureSelection() {
 
 func (m Model) needsCustomModelInput() bool {
 	switch m.config.Provider {
-	case ProviderOllamaCloud, ProviderLiteLLM, ProviderCustom:
+	case ProviderOllamaCloud, ProviderOllamaLocal, ProviderLiteLLM, ProviderLMStudio, ProviderCustom:
 		return true
 	}
 	return false
@@ -1510,9 +1510,13 @@ func (m Model) viewCustomModel() string {
 	s.WriteString(titleStyle.Render("Model Name") + "\n")
 	
 	switch m.config.Provider {
-	case ProviderOllamaCloud:
+	case ProviderOllamaCloud, ProviderOllamaLocal:
 		s.WriteString(subtitleStyle.Render("Enter the Ollama model to use") + "\n\n")
-		s.WriteString(dimStyle.Render("Examples: llama3.2, codellama, mistral, phi3") + "\n\n")
+		s.WriteString(dimStyle.Render("Examples: llama3.2, codellama, mistral, phi3, qwen2.5") + "\n")
+		s.WriteString(dimStyle.Render("Run 'ollama list' to see your downloaded models") + "\n\n")
+	case ProviderLMStudio:
+		s.WriteString(subtitleStyle.Render("Enter the model name from LM Studio") + "\n\n")
+		s.WriteString(dimStyle.Render("Check LM Studio UI for available model names") + "\n\n")
 	case ProviderLiteLLM:
 		s.WriteString(subtitleStyle.Render("Enter the model name (as configured in LiteLLM)") + "\n\n")
 		s.WriteString(dimStyle.Render("Examples: claude-sonnet-4, gpt-4o, gemini-2.0-flash") + "\n\n")
@@ -1521,7 +1525,7 @@ func (m Model) viewCustomModel() string {
 	}
 
 	s.WriteString(m.textInput.View() + "\n\n")
-	s.WriteString(dimStyle.Render("Enter to continue, q to go back"))
+	s.WriteString(dimStyle.Render("Enter to continue"))
 	return s.String()
 }
 
