@@ -453,3 +453,45 @@ func TestDetectFormat(t *testing.T) {
 		t.Errorf("expected json, got %s", format)
 	}
 }
+
+// Test large event lines (>10MB) - verifies bufio.Reader handles arbitrary line sizes
+func TestFileStore_LargeLine(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
+
+	// Create session with a large event (15MB content)
+	largeContent := string(make([]byte, 15*1024*1024)) // 15MB of null bytes
+	sess := &Session{
+		ID:           "large-line-test",
+		WorkflowName: "test",
+		Inputs:       map[string]string{},
+		State:        map[string]interface{}{},
+		Outputs:      map[string]string{},
+		Status:       StatusComplete,
+		Events:       []Event{},
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	sess.AddEvent(Event{Type: EventToolResult, Content: largeContent, Timestamp: time.Now()})
+
+	// Save
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save error: %v", err)
+	}
+
+	// Load - should not fail with "token too long"
+	loaded, err := store.Load("large-line-test")
+	if err != nil {
+		t.Fatalf("load error (should handle large lines): %v", err)
+	}
+
+	if len(loaded.Events) != 1 {
+		t.Errorf("expected 1 event, got %d", len(loaded.Events))
+	}
+	if len(loaded.Events[0].Content) != 15*1024*1024 {
+		t.Errorf("content size mismatch: got %d bytes", len(loaded.Events[0].Content))
+	}
+}

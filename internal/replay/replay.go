@@ -3,6 +3,7 @@ package replay
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -200,49 +201,67 @@ func (r *Replayer) loadJSONL(path string) (*session.Session, error) {
 		Events:  []session.Event{},
 	}
 
-	scanner := bufio.NewScanner(f)
-	// Increase buffer for large events
-	buf := make([]byte, 1024*1024) // 1MB
-	scanner.Buffer(buf, 10*1024*1024) // 10MB max
+	// Use bufio.Reader instead of Scanner - no line length limits
+	reader := bufio.NewReader(f)
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				// Process final line if no trailing newline
+				if len(line) > 0 {
+					if parseErr := r.parseJSONLLine(line, sess); parseErr != nil {
+						return nil, parseErr
+					}
+				}
+				break
+			}
+			return nil, fmt.Errorf("error reading JSONL: %w", err)
+		}
+
+		// Skip empty lines
+		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
 		}
 
-		var record session.JSONLRecord
-		if err := json.Unmarshal(line, &record); err != nil {
-			return nil, fmt.Errorf("failed to parse JSONL line: %w", err)
+		if err := r.parseJSONLLine(line, sess); err != nil {
+			return nil, err
 		}
-
-		switch record.RecordType {
-		case session.RecordTypeHeader:
-			sess.ID = record.ID
-			sess.WorkflowName = record.WorkflowName
-			sess.Inputs = record.Inputs
-			sess.CreatedAt = record.CreatedAt
-			
-		case session.RecordTypeEvent:
-			if record.Event != nil {
-				sess.Events = append(sess.Events, *record.Event)
-			}
-			
-		case session.RecordTypeFooter:
-			sess.Status = record.Status
-			sess.Result = record.Result
-			sess.Error = record.Error
-			sess.Outputs = record.Outputs
-			sess.State = record.State
-			sess.UpdatedAt = record.UpdatedAt
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading JSONL: %w", err)
 	}
 
 	return sess, nil
+}
+
+// parseJSONLLine parses a single JSONL line into the session.
+func (r *Replayer) parseJSONLLine(line []byte, sess *session.Session) error {
+	var record session.JSONLRecord
+	if err := json.Unmarshal(line, &record); err != nil {
+		return fmt.Errorf("failed to parse JSONL line: %w", err)
+	}
+
+	switch record.RecordType {
+	case session.RecordTypeHeader:
+		sess.ID = record.ID
+		sess.WorkflowName = record.WorkflowName
+		sess.Inputs = record.Inputs
+		sess.CreatedAt = record.CreatedAt
+		
+	case session.RecordTypeEvent:
+		if record.Event != nil {
+			sess.Events = append(sess.Events, *record.Event)
+		}
+		
+	case session.RecordTypeFooter:
+		sess.Status = record.Status
+		sess.Result = record.Result
+		sess.Error = record.Error
+		sess.Outputs = record.Outputs
+		sess.State = record.State
+		sess.UpdatedAt = record.UpdatedAt
+	}
+
+	return nil
 }
 
 // loadLegacyJSON loads a session from legacy JSON format.
