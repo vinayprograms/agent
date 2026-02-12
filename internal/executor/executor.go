@@ -1544,10 +1544,12 @@ WRITE proactively when you discover:
 READ before recomputing:
 - Check scratchpad first for information that might already exist
 
-SEARCH when uncertain about exact key names:
-- Use scratchpad_search("partial_term") to find keys/values by substring
-- Keys may have been stored with slight variations (e.g., "available_hours" vs "available_time_hours")
-- Search is cheap — prefer it over failing a read
+DISCOVER what's stored:
+- Use scratchpad_list("") to see ALL keys (empty prefix = list everything)
+- Use scratchpad_list("api") to see keys starting with "api"
+- Use scratchpad_search("term") for fuzzy substring search in BOTH keys AND values
+
+When unsure what's available, list first: scratchpad_list("") shows everything.
 
 KEY NAMING: Use descriptive, consistent keys with underscores (e.g., "project_deadline", "api_base_url").
 
