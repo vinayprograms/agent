@@ -35,6 +35,35 @@ RUN main USING step1, step2
 | SUPERVISED | Enable execution supervision |
 | UNSUPERVISED | Disable supervision |
 
+## Strings
+
+### Single-line strings
+
+Use double quotes for simple descriptions:
+
+```
+GOAL analyze "Analyze the code and find issues"
+```
+
+Escape sequences: `\n`, `\t`, `\\`, `\"`
+
+### Multi-line strings (triple quotes)
+
+Use triple quotes `"""` for longer descriptions:
+
+```
+GOAL analyze """
+Analyze the provided code for:
+1. Security vulnerabilities
+2. Performance issues
+3. Code style violations
+
+Use the read tool to examine files.
+"""
+```
+
+Triple-quoted strings preserve newlines exactly. Use them when goal descriptions need multiple lines, lists, or detailed instructions.
+
 ## Variable Interpolation
 
 Use `$variable` to reference inputs:
@@ -43,6 +72,8 @@ Use `$variable` to reference inputs:
 INPUT topic DEFAULT "security"
 GOAL research "Research $topic and summarize findings"
 ```
+
+Variables work in both single-line and multi-line strings.
 
 ## Sequential Execution (RUN)
 

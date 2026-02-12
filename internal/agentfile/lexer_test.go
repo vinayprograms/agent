@@ -379,3 +379,69 @@ func TestLexerPathWithRequires(t *testing.T) {
         }
     }
 }
+
+func TestLexer_TripleQuotedString(t *testing.T) {
+	input := `GOAL test """
+First line
+Second line
+Third line
+"""`
+
+	l := NewLexer(input)
+	
+	// GOAL keyword
+	tok := l.NextToken()
+	if tok.Type != TokenGOAL {
+		t.Fatalf("expected GOAL, got %s", tok.Type)
+	}
+	
+	// identifier
+	tok = l.NextToken()
+	if tok.Type != TokenIdent || tok.Literal != "test" {
+		t.Fatalf("expected ident 'test', got %s %q", tok.Type, tok.Literal)
+	}
+	
+	// triple-quoted string
+	tok = l.NextToken()
+	if tok.Type != TokenString {
+		t.Fatalf("expected TokenString, got %s", tok.Type)
+	}
+	
+	expected := "First line\nSecond line\nThird line"
+	if tok.Literal != expected {
+		t.Errorf("triple-quoted string wrong.\nexpected: %q\ngot:      %q", expected, tok.Literal)
+	}
+}
+
+func TestLexer_TripleQuotedStringInline(t *testing.T) {
+	// Triple quotes on same line as content
+	input := `GOAL test """inline content"""`
+
+	l := NewLexer(input)
+	l.NextToken() // GOAL
+	l.NextToken() // test
+	
+	tok := l.NextToken()
+	if tok.Type != TokenString {
+		t.Fatalf("expected TokenString, got %s", tok.Type)
+	}
+	
+	if tok.Literal != "inline content" {
+		t.Errorf("expected %q, got %q", "inline content", tok.Literal)
+	}
+}
+
+func TestLexer_TripleQuotedStringUnterminated(t *testing.T) {
+	input := `GOAL test """
+This string never ends
+`
+
+	l := NewLexer(input)
+	l.NextToken() // GOAL
+	l.NextToken() // test
+	
+	tok := l.NextToken()
+	if tok.Type != TokenIllegal {
+		t.Fatalf("expected TokenIllegal for unterminated triple-quote, got %s", tok.Type)
+	}
+}

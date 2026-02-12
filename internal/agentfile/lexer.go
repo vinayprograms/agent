@@ -52,6 +52,15 @@ func (l *Lexer) peekChar() byte {
 	return l.input[l.readPosition]
 }
 
+// peekCharN returns the character N positions ahead without advancing.
+func (l *Lexer) peekCharN(n int) byte {
+	pos := l.readPosition + n - 1
+	if pos >= len(l.input) {
+		return 0
+	}
+	return l.input[pos]
+}
+
 // NextToken returns the next token from the input.
 func (l *Lexer) NextToken() Token {
 	var tok Token
@@ -201,8 +210,15 @@ func (l *Lexer) readNumber() Token {
 }
 
 // readString reads a quoted string with escape sequences.
+// Supports both single-line "..." and multi-line """...""" strings.
 func (l *Lexer) readString() Token {
 	l.startColumn = l.column
+
+	// Check for triple quotes (multi-line string)
+	if l.peekChar() == '"' && l.peekCharN(2) == '"' {
+		return l.readTripleQuoteString()
+	}
+
 	var sb strings.Builder
 
 	l.readChar() // skip opening quote
@@ -245,6 +261,66 @@ func (l *Lexer) readString() Token {
 	return Token{
 		Type:    TokenString,
 		Literal: sb.String(),
+		Line:    l.line,
+		Column:  l.startColumn,
+	}
+}
+
+// readTripleQuoteString reads a multi-line string enclosed in """.
+func (l *Lexer) readTripleQuoteString() Token {
+	var sb strings.Builder
+
+	// Skip opening """
+	l.readChar() // first "
+	l.readChar() // second "
+	l.readChar() // third "
+
+	// Skip optional newline immediately after opening """
+	if l.ch == '\n' {
+		l.readChar()
+		l.line++
+		l.column = 1
+	}
+
+	for {
+		if l.ch == 0 {
+			return Token{
+				Type:    TokenIllegal,
+				Literal: "unterminated triple-quoted string",
+				Line:    l.line,
+				Column:  l.startColumn,
+			}
+		}
+
+		// Check for closing """
+		if l.ch == '"' && l.peekChar() == '"' && l.peekCharN(2) == '"' {
+			l.readChar() // first "
+			l.readChar() // second "
+			l.readChar() // third "
+			break
+		}
+
+		// Track newlines for line counting
+		if l.ch == '\n' {
+			sb.WriteByte(l.ch)
+			l.readChar()
+			l.line++
+			l.column = 1
+		} else {
+			sb.WriteByte(l.ch)
+			l.readChar()
+		}
+	}
+
+	// Trim trailing newline if present (mirrors the optional leading newline skip)
+	result := sb.String()
+	if len(result) > 0 && result[len(result)-1] == '\n' {
+		result = result[:len(result)-1]
+	}
+
+	return Token{
+		Type:    TokenString,
+		Literal: result,
 		Line:    l.line,
 		Column:  l.startColumn,
 	}

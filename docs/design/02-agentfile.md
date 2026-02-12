@@ -48,6 +48,39 @@ LOOP step_name USING goal1 WITHIN 5
 LOOP step_name USING goal1 WITHIN $max_iter
 ```
 
+## Strings
+
+### Single-line strings
+
+Use double quotes for simple, single-line descriptions:
+
+```
+GOAL analyze "Analyze the code and find issues"
+```
+
+Escape sequences: `\n` (newline), `\t` (tab), `\\` (backslash), `\"` (quote)
+
+### Multi-line strings (triple quotes)
+
+Use triple quotes `"""` for longer descriptions spanning multiple lines:
+
+```
+GOAL analyze """
+Analyze the provided code for:
+1. Security vulnerabilities
+2. Performance issues
+3. Code style violations
+
+Use the read tool to examine files and report findings.
+"""
+```
+
+Triple-quoted strings:
+- Preserve newlines exactly as written
+- Optional newline after opening `"""` is stripped
+- Trailing newline before closing `"""` is stripped
+- No escape sequence processing needed
+
 ## Variable Interpolation
 
 Use `$variable` to reference inputs and outputs:
@@ -55,6 +88,16 @@ Use `$variable` to reference inputs and outputs:
 ```
 INPUT topic DEFAULT "Go programming"
 GOAL research "Research $topic and list 3 key facts"
+```
+
+Variables work in both single-line and multi-line strings:
+
+```
+GOAL analyze """
+Analyze $file_path for:
+- Security issues
+- Performance problems
+"""
 ```
 
 ## Structured Output

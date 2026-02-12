@@ -9,7 +9,8 @@ INPUT output_file DEFAULT "generated.agent"
 AGENT syntax-expert FROM agents/agentfile-syntax.md
 
 # Phase 1: Understand the problem
-GOAL understand "Analyze the problem description: $problem_description
+GOAL understand """
+Analyze the problem description: $problem_description
 
 Identify:
 1. What is the core task/goal?
@@ -19,24 +20,30 @@ Identify:
 5. Should this be sequential (RUN) or iterative (LOOP)?
 6. Would multiple specialized agents help?
 
-If files or directories are referenced, use glob and read to understand their structure and content."
+If files or directories are referenced, use glob and read to understand their structure and content.
+"""
 
 # Phase 2: Generate the Agentfile
-GOAL generate "Generate a complete, valid Agentfile for the problem.
+GOAL generate """
+Generate a complete, valid Agentfile for the problem.
 
 Follow the Agentfile syntax rules exactly. The workflow should:
 - Have a clear, descriptive NAME
 - Declare all necessary INPUTs with sensible DEFAULTs
 - Break work into logical GOALs (one clear step each)
 - Use RUN for sequential execution or LOOP for iterative
-- Reference inputs with \$variable syntax
+- Reference inputs with $variable syntax
 - Mention specific tools in goal descriptions
 - Add helpful comments
+- Use triple quotes for multi-line goal descriptions
 
-Match complexity to the problem - simple problem = simple workflow." USING syntax-expert
+Match complexity to the problem - simple problem = simple workflow.
+""" USING syntax-expert
 
 # Phase 3: Write and display
-GOAL output "Write the generated Agentfile to $output_file using the write tool.
-Then display the full contents for review."
+GOAL output """
+Write the generated Agentfile to $output_file using the write tool.
+Then display the full contents for review.
+"""
 
 RUN build USING understand, generate, output
