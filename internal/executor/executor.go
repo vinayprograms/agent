@@ -1511,6 +1511,28 @@ KEY NAMING: Use descriptive, consistent keys with underscores (e.g., "project_de
 
 `
 
+// SemanticMemoryGuidancePrefix is injected when semantic memory tools are available.
+const SemanticMemoryGuidancePrefix = `SEMANTIC MEMORY: You have persistent memory across sessions. USE IT.
+
+BEFORE searching externally (web, MCP, files):
+- Use memory_recall("topic") to check what you already know
+- Past findings, insights, and lessons are stored automatically
+
+WHAT'S STORED (automatically extracted from your work):
+- Findings: facts, data, observations discovered during tasks
+- Insights: conclusions, patterns, "aha" moments
+- Lessons: what worked, what didn't, mistakes to avoid
+
+WHEN TO RECALL:
+- Starting a new task? Recall related past work first
+- Making a decision? Check for relevant lessons
+- Researching a topic? You may have already found this information
+
+The memory_recall tool searches by meaning, not exact keywords.
+Example: memory_recall("database choice") finds "We chose PostgreSQL for JSON support"
+
+`
+
 // Run executes the workflow.
 func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, error) {
 	startTime := time.Now()
@@ -1981,6 +2003,11 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 	// If spawn_agent tool is available, inject orchestrator guidance
 	if e.registry != nil && e.registry.Has("spawn_agent") {
 		systemMsg = OrchestratorSystemPromptPrefix + systemMsg
+	}
+
+	// If semantic memory tools are available, inject guidance
+	if e.registry != nil && e.registry.Has("memory_recall") {
+		systemMsg = SemanticMemoryGuidancePrefix + systemMsg
 	}
 
 	// If scratchpad tools are available, inject guidance
