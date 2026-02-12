@@ -1005,6 +1005,14 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 		}
 	}
 
+	// Inject tool guidance for sub-agents (they inherit parent's tools including memory)
+	if e.registry != nil && e.registry.Has("memory_recall") {
+		systemPrompt = SemanticMemoryGuidancePrefix + systemPrompt
+	}
+	if e.registry != nil && e.registry.Has("scratchpad_write") {
+		systemPrompt = ScratchpadGuidancePrefix + systemPrompt
+	}
+
 	// Inject security research framing if enabled
 	if prefix := e.securityResearchPrefix(); prefix != "" {
 		systemPrompt = prefix + systemPrompt
