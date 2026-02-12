@@ -159,6 +159,7 @@ const (
 	StepScenario
 	StepProvider
 	StepModel
+	StepCustomModel // Text input for model name (Ollama Cloud, LiteLLM, Custom)
 	StepAPIKey
 	StepBaseURL
 	StepThinking
@@ -604,12 +605,11 @@ func (m Model) maxCursorForStep() int {
 func (m Model) isTextInputStep() bool {
 	switch m.step {
 	case StepAPIKey, StepBaseURL, StepWorkspace, StepSmallLLMModel, StepEmbeddingModel,
-		StepMCPName, StepMCPCommand, StepMCPArgs:
+		StepMCPName, StepMCPCommand, StepMCPArgs, StepCustomModel:
 		return true
 	}
 	return false
 }
-
 func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	switch m.step {
 	case StepWelcome:
@@ -636,8 +636,27 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 				m.setDefaultModel()
 			}
 		}
-		m.step = StepModel
-		m.cursor = m.findModelIndex()
+		if m.needsCustomModelInput() {
+			m.step = StepCustomModel
+			m.textInput.SetValue(m.config.Model)
+			m.textInput.Placeholder = "e.g., llama3.2, claude-sonnet-4"
+			m.textInput.Focus()
+		} else {
+			m.step = StepModel
+			m.cursor = m.findModelIndex()
+		}
+
+	case StepCustomModel:
+		model := strings.TrimSpace(m.textInput.Value())
+		if model == "" {
+			m.err = fmt.Errorf("model name is required")
+		} else {
+			m.config.Model = model
+			m.step = StepAPIKey
+			m.textInput.SetValue("")
+			m.textInput.Placeholder = "sk-... (leave empty to keep existing)"
+			m.textInput.EchoMode = textinput.EchoPassword
+		}
 
 	case StepModel:
 		models := m.getModels()
@@ -927,6 +946,14 @@ func (m *Model) applyFeatureSelection() {
 	m.config.EnableMemory = m.selected[1]
 	m.config.PersistMemory = m.selected[2]
 	m.config.EnableTelemetry = m.selected[3]
+}
+
+func (m Model) needsCustomModelInput() bool {
+	switch m.config.Provider {
+	case ProviderOllamaCloud, ProviderLiteLLM, ProviderCustom:
+		return true
+	}
+	return false
 }
 
 func (m Model) needsBaseURL() bool {
@@ -1326,6 +1353,8 @@ func (m Model) View() string {
 		s.WriteString(m.viewProvider())
 	case StepModel:
 		s.WriteString(m.viewModel())
+	case StepCustomModel:
+		s.WriteString(m.viewCustomModel())
 	case StepAPIKey:
 		s.WriteString(m.viewAPIKey())
 	case StepBaseURL:
@@ -1462,6 +1491,26 @@ func (m Model) viewModel() string {
 	}
 
 	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
+	return s.String()
+}
+
+func (m Model) viewCustomModel() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("Model Name") + "\n")
+	
+	switch m.config.Provider {
+	case ProviderOllamaCloud:
+		s.WriteString(subtitleStyle.Render("Enter the Ollama model to use") + "\n\n")
+		s.WriteString(dimStyle.Render("Examples: llama3.2, codellama, mistral, phi3") + "\n\n")
+	case ProviderLiteLLM:
+		s.WriteString(subtitleStyle.Render("Enter the model name (as configured in LiteLLM)") + "\n\n")
+		s.WriteString(dimStyle.Render("Examples: claude-sonnet-4, gpt-4o, gemini-2.0-flash") + "\n\n")
+	default:
+		s.WriteString(subtitleStyle.Render("Enter the model name") + "\n\n")
+	}
+
+	s.WriteString(m.textInput.View() + "\n\n")
+	s.WriteString(dimStyle.Render("Enter to continue, q to go back"))
 	return s.String()
 }
 
