@@ -1556,24 +1556,27 @@ KEY NAMING: Use descriptive, consistent keys with underscores (e.g., "project_de
 `
 
 // SemanticMemoryGuidancePrefix is injected when semantic memory tools are available.
-const SemanticMemoryGuidancePrefix = `SEMANTIC MEMORY: You have persistent memory across sessions. USE IT.
+const SemanticMemoryGuidancePrefix = `🧠 PERSISTENT KNOWLEDGE BASE — CHECK FIRST!
 
-BEFORE searching externally (web, MCP, files):
-- Use memory_recall("topic") to check what you already know
-- Past findings, insights, and lessons are stored automatically
+You have a PERSISTENT knowledge base that survives across sessions. This is NOT temporary scratch space.
 
-WHAT'S STORED (automatically extracted from your work):
-- Findings: facts, data, observations discovered during tasks
-- Insights: conclusions, patterns, "aha" moments
-- Lessons: what worked, what didn't, mistakes to avoid
+MANDATORY FIRST STEP for any research/decision task:
+→ memory_recall("relevant topic") BEFORE web search, file reading, or MCP calls
 
-WHEN TO RECALL:
-- Starting a new task? Recall related past work first
-- Making a decision? Check for relevant lessons
-- Researching a topic? You may have already found this information
+WHY: You may have already researched this. Don't waste time re-discovering what you learned before.
 
-The memory_recall tool searches by meaning, not exact keywords.
-Example: memory_recall("database choice") finds "We chose PostgreSQL for JSON support"
+WHAT'S IN YOUR KNOWLEDGE BASE:
+- Findings: facts discovered during past work
+- Insights: conclusions, patterns, architectural decisions
+- Lessons: what worked, what failed, mistakes to avoid
+
+EXAMPLES:
+- memory_recall("authentication") → finds past auth decisions
+- memory_recall("user preferences") → finds what the user likes
+- memory_recall("API rate limits") → finds past research on APIs
+
+The search is SEMANTIC — it matches meaning, not just keywords.
+"database choice" finds "We chose PostgreSQL for JSON support"
 
 `
 
