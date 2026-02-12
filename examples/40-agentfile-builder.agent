@@ -1,0 +1,62 @@
+# 40 - Agentfile Builder
+# Generates an Agentfile from a problem description
+# Can analyze files/directories referenced in the problem
+
+NAME agentfile-builder
+INPUT problem_description
+INPUT output_file DEFAULT "generated.agent"
+
+# Phase 1: Understand the problem
+GOAL understand "Analyze the problem description: $problem_description
+
+Identify:
+1. What is the core task/goal?
+2. What inputs are needed?
+3. Are there file paths or directories mentioned that need exploration?
+4. What tools would be needed (bash, read, write, edit, glob, etc.)?
+5. Should this be a single-pass workflow or iterative (LOOP)?
+
+If files or directories are referenced, use glob and read to understand their structure and content."
+
+# Phase 2: Design the workflow
+GOAL design "Based on your analysis, design the workflow structure:
+
+1. Define required INPUTs (with sensible DEFAULTs where appropriate)
+2. Break down into logical GOALs (each goal = one clear step)
+3. Decide if you need:
+   - Sequential execution (RUN)
+   - Iterative execution (LOOP with WITHIN limit)
+   - Multiple agents for parallel work
+   - Capability profiles (reasoning-heavy, fast)
+   - Supervision for critical steps
+
+Output a structured plan before writing the Agentfile."
+
+# Phase 3: Generate the Agentfile
+GOAL generate "Write a complete, valid Agentfile following this syntax:
+
+# Comment describing the workflow
+NAME workflow-name
+
+INPUT param1
+INPUT param2 DEFAULT \"value\"
+
+GOAL step1 \"Description with \$variables\"
+GOAL step2 \"Next step\"
+
+RUN main USING step1, step2
+# Or: LOOP main USING step1, step2 WITHIN 5
+
+Guidelines:
+- Use clear, descriptive goal names (lowercase with hyphens)
+- Reference inputs with \$variable syntax
+- Keep goal descriptions actionable and specific
+- Mention which tools to use when relevant (bash, read, write, edit, glob)
+- Add helpful comments
+- Match complexity to the problem (simple problem = simple workflow)"
+
+# Phase 4: Write the output
+GOAL write_output "Write the generated Agentfile to $output_file using the write tool.
+Then display the contents so the user can review it."
+
+RUN build USING understand, design, generate, write_output
