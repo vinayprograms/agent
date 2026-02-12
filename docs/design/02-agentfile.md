@@ -62,7 +62,7 @@ Escape sequences: `\n` (newline), `\t` (tab), `\\` (backslash), `\"` (quote)
 
 ### Multi-line strings (triple quotes)
 
-Use triple quotes `"""` for longer descriptions spanning multiple lines:
+Use triple quotes `"""` for medium-complexity descriptions:
 
 ```
 GOAL analyze """
@@ -70,8 +70,6 @@ Analyze the provided code for:
 1. Security vulnerabilities
 2. Performance issues
 3. Code style violations
-
-Use the read tool to examine files and report findings.
 """
 ```
 
@@ -80,6 +78,29 @@ Triple-quoted strings:
 - Optional newline after opening `"""` is stripped
 - Trailing newline before closing `"""` is stripped
 - No escape sequence processing needed
+
+### External markdown files (recommended for complex prompts)
+
+For complex, reusable, or lengthy prompts, use external markdown files:
+
+```
+AGENT analyzer FROM prompts/security-analyzer.md
+GOAL analyze "Run security analysis" USING analyzer
+```
+
+**When to use each:**
+
+| Complexity | Approach | Example |
+|------------|----------|---------|
+| Simple (1-2 sentences) | Inline string | `GOAL x "Do the thing"` |
+| Medium (list, few paragraphs) | Triple quotes | `GOAL x """..."""` |
+| Complex (detailed instructions) | Markdown file | `AGENT x FROM prompts/x.md` |
+
+Benefits of markdown files:
+- Syntax highlighting in editors
+- Reusable across workflows
+- Easier to maintain and version
+- Keeps Agentfiles concise
 
 ## Variable Interpolation
 

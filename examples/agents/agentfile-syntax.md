@@ -49,7 +49,7 @@ Escape sequences: `\n`, `\t`, `\\`, `\"`
 
 ### Multi-line strings (triple quotes)
 
-Use triple quotes `"""` for longer descriptions:
+Use triple quotes `"""` for medium-complexity descriptions:
 
 ```
 GOAL analyze """
@@ -57,12 +57,25 @@ Analyze the provided code for:
 1. Security vulnerabilities
 2. Performance issues
 3. Code style violations
-
-Use the read tool to examine files.
 """
 ```
 
-Triple-quoted strings preserve newlines exactly. Use them when goal descriptions need multiple lines, lists, or detailed instructions.
+### External markdown files (recommended for complex prompts)
+
+For complex or reusable prompts, use external markdown files:
+
+```
+AGENT analyzer FROM prompts/security-analyzer.md
+GOAL analyze "Run security analysis" USING analyzer
+```
+
+**When to use each:**
+
+| Complexity | Approach |
+|------------|----------|
+| Simple (1-2 sentences) | Inline `"string"` |
+| Medium (list, few paragraphs) | Triple quotes `"""..."""` |
+| Complex (detailed instructions) | Markdown file via `AGENT FROM` |
 
 ## Variable Interpolation
 
