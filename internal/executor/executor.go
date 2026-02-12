@@ -1545,9 +1545,9 @@ READ before recomputing:
 - Check scratchpad first for information that might already exist
 
 DISCOVER what's stored:
-- Use scratchpad_list("") to see ALL keys (empty prefix = list everything)
-- Use scratchpad_list("api") to see keys starting with "api"
-- Use scratchpad_search("term") for fuzzy substring search in BOTH keys AND values
+- Use scratchpad_list("") to see ALL keys
+- Use scratchpad_list("api") to find keys containing "api" (substring match)
+- Use scratchpad_search("term") for fuzzy search in BOTH keys AND values
 
 When unsure what's available, list first: scratchpad_list("") shows everything.
 
