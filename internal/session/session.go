@@ -2,12 +2,14 @@
 package session
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -331,7 +333,37 @@ func generateID() string {
 	return hex.EncodeToString(b)
 }
 
+// JSONL record types for streaming format
+const (
+	RecordTypeHeader = "header" // Session metadata (first line)
+	RecordTypeEvent  = "event"  // Individual event
+	RecordTypeFooter = "footer" // Final state (last line, optional)
+)
+
+// JSONLRecord is a wrapper for JSONL lines with type discrimination.
+type JSONLRecord struct {
+	RecordType string `json:"_type"` // header, event, footer
+	
+	// Header fields (when _type == "header")
+	ID           string            `json:"id,omitempty"`
+	WorkflowName string            `json:"workflow_name,omitempty"`
+	Inputs       map[string]string `json:"inputs,omitempty"`
+	CreatedAt    time.Time         `json:"created_at,omitempty"`
+	
+	// Event fields (when _type == "event") - embedded Event
+	*Event `json:",omitempty"`
+	
+	// Footer fields (when _type == "footer")
+	Status    string                 `json:"status,omitempty"`
+	Result    string                 `json:"result,omitempty"`
+	Error     string                 `json:"error,omitempty"`
+	Outputs   map[string]string      `json:"outputs,omitempty"`
+	State     map[string]interface{} `json:"state,omitempty"`
+	UpdatedAt time.Time              `json:"updated_at,omitempty"`
+}
+
 // FileStore implements Store using the filesystem.
+// New sessions use JSONL format; legacy JSON format is supported for reading.
 type FileStore struct {
 	dir string
 }
@@ -344,25 +376,158 @@ func NewFileStore(dir string) (*FileStore, error) {
 	return &FileStore{dir: dir}, nil
 }
 
-// Save persists a session to disk.
+// Save persists a session to disk in JSONL format.
 func (s *FileStore) Save(sess *Session) error {
 	// Ensure directory exists
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return fmt.Errorf("failed to create session directory: %w", err)
 	}
 
-	data, err := json.MarshalIndent(sess, "", "  ")
+	path := filepath.Join(s.dir, sess.ID+".jsonl")
+	
+	f, err := os.Create(path)
 	if err != nil {
+		return fmt.Errorf("failed to create session file: %w", err)
+	}
+	defer f.Close()
+
+	// Write header
+	header := JSONLRecord{
+		RecordType:   RecordTypeHeader,
+		ID:           sess.ID,
+		WorkflowName: sess.WorkflowName,
+		Inputs:       sess.Inputs,
+		CreatedAt:    sess.CreatedAt,
+	}
+	if err := s.writeLine(f, header); err != nil {
 		return err
 	}
 
-	path := filepath.Join(s.dir, sess.ID+".json")
-	return os.WriteFile(path, data, 0644)
+	// Write each event
+	for _, evt := range sess.Events {
+		evtCopy := evt // copy to avoid pointer issues
+		record := JSONLRecord{
+			RecordType: RecordTypeEvent,
+			Event:      &evtCopy,
+		}
+		if err := s.writeLine(f, record); err != nil {
+			return err
+		}
+	}
+
+	// Write footer
+	footer := JSONLRecord{
+		RecordType: RecordTypeFooter,
+		Status:     sess.Status,
+		Result:     sess.Result,
+		Error:      sess.Error,
+		Outputs:    sess.Outputs,
+		State:      sess.State,
+		UpdatedAt:  sess.UpdatedAt,
+	}
+	if err := s.writeLine(f, footer); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// writeLine writes a single JSONL record.
+func (s *FileStore) writeLine(f *os.File, record JSONLRecord) error {
+	data, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("failed to marshal record: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if _, err := f.WriteString("\n"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Load reads a session from disk.
+// Supports both JSONL (new) and JSON (legacy) formats.
 func (s *FileStore) Load(id string) (*Session, error) {
-	path := filepath.Join(s.dir, id+".json")
+	// Try JSONL first
+	jsonlPath := filepath.Join(s.dir, id+".jsonl")
+	if _, err := os.Stat(jsonlPath); err == nil {
+		return s.loadJSONL(jsonlPath)
+	}
+
+	// Fall back to legacy JSON
+	jsonPath := filepath.Join(s.dir, id+".json")
+	return s.loadLegacyJSON(jsonPath)
+}
+
+// loadJSONL loads a session from JSONL format.
+func (s *FileStore) loadJSONL(path string) (*Session, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	sess := &Session{
+		Inputs:  make(map[string]string),
+		State:   make(map[string]interface{}),
+		Outputs: make(map[string]string),
+		Events:  []Event{},
+	}
+
+	scanner := bufio.NewScanner(f)
+	// Increase buffer for large events
+	buf := make([]byte, 1024*1024) // 1MB
+	scanner.Buffer(buf, 10*1024*1024) // 10MB max
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var record JSONLRecord
+		if err := json.Unmarshal(line, &record); err != nil {
+			return nil, fmt.Errorf("failed to parse JSONL line: %w", err)
+		}
+
+		switch record.RecordType {
+		case RecordTypeHeader:
+			sess.ID = record.ID
+			sess.WorkflowName = record.WorkflowName
+			sess.Inputs = record.Inputs
+			sess.CreatedAt = record.CreatedAt
+			
+		case RecordTypeEvent:
+			if record.Event != nil {
+				sess.Events = append(sess.Events, *record.Event)
+			}
+			
+		case RecordTypeFooter:
+			sess.Status = record.Status
+			sess.Result = record.Result
+			sess.Error = record.Error
+			sess.Outputs = record.Outputs
+			sess.State = record.State
+			sess.UpdatedAt = record.UpdatedAt
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading JSONL: %w", err)
+	}
+
+	// Restore sequence counter from last event
+	if len(sess.Events) > 0 {
+		sess.seqCounter = sess.Events[len(sess.Events)-1].SeqID
+	}
+
+	return sess, nil
+}
+
+// loadLegacyJSON loads a session from legacy JSON format.
+func (s *FileStore) loadLegacyJSON(path string) (*Session, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -429,4 +594,40 @@ func (m *FileManager) Update(sess *Session) error {
 // Get retrieves a session by ID.
 func (m *FileManager) Get(id string) (*Session, error) {
 	return m.store.Load(id)
+}
+
+// DetectFormat checks if a file is JSONL or legacy JSON format.
+func DetectFormat(path string) (string, error) {
+	// Check extension first
+	if strings.HasSuffix(path, ".jsonl") {
+		return "jsonl", nil
+	}
+	if strings.HasSuffix(path, ".json") {
+		return "json", nil
+	}
+	
+	// Peek at content
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	buf := make([]byte, 256)
+	n, err := f.Read(buf)
+	if err != nil {
+		return "", err
+	}
+	
+	content := string(buf[:n])
+	// JSONL header has _type field
+	if strings.Contains(content, `"_type"`) {
+		return "jsonl", nil
+	}
+	// Legacy JSON has events array
+	if strings.Contains(content, `"events"`) {
+		return "json", nil
+	}
+	
+	return "json", nil // default to legacy
 }

@@ -2,13 +2,13 @@
 package replay
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
-
-	"encoding/json"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/vinayprograms/agent/internal/session"
@@ -101,34 +101,23 @@ func New(output io.Writer, verbose bool) *Replayer {
 	}
 }
 
-// ReplayFile loads and replays a session from a JSON file.
+// ReplayFile loads and replays a session from a file.
+// Supports both JSONL (new) and JSON (legacy) formats.
 func (r *Replayer) ReplayFile(path string) error {
-	data, err := os.ReadFile(path)
+	sess, err := r.loadSession(path)
 	if err != nil {
-		return fmt.Errorf("failed to read session file: %w", err)
+		return err
 	}
-
-	var sess session.Session
-	if err := json.Unmarshal(data, &sess); err != nil {
-		return fmt.Errorf("failed to parse session: %w", err)
-	}
-
-	return r.Replay(&sess)
+	return r.Replay(sess)
 }
 
 // ReplayFileInteractive loads and replays with interactive pager.
 func (r *Replayer) ReplayFileInteractive(path string) error {
-	data, err := os.ReadFile(path)
+	sess, err := r.loadSession(path)
 	if err != nil {
-		return fmt.Errorf("failed to read session file: %w", err)
+		return err
 	}
-
-	var sess session.Session
-	if err := json.Unmarshal(data, &sess); err != nil {
-		return fmt.Errorf("failed to parse session: %w", err)
-	}
-
-	return r.ReplayInteractive(&sess)
+	return r.ReplayInteractive(sess)
 }
 
 // ReplayInteractive outputs a formatted timeline using an interactive pager.
@@ -154,21 +143,16 @@ func (r *Replayer) ReplayInteractive(sess *session.Session) error {
 func (r *Replayer) ReplayFileLive(path string) error {
 	// Create render function that reloads the file
 	renderFunc := func() (string, error) {
-		data, err := os.ReadFile(path)
+		sess, err := r.loadSession(path)
 		if err != nil {
-			return "", fmt.Errorf("failed to read session file: %w", err)
-		}
-
-		var sess session.Session
-		if err := json.Unmarshal(data, &sess); err != nil {
-			return "", fmt.Errorf("failed to parse session: %w", err)
+			return "", err
 		}
 
 		// Render to string
 		var buf strings.Builder
 		oldOutput := r.output
 		r.output = &buf
-		err = r.Replay(&sess)
+		err = r.Replay(sess)
 		r.output = oldOutput
 		
 		if err != nil {
@@ -178,18 +162,102 @@ func (r *Replayer) ReplayFileLive(path string) error {
 	}
 
 	// Initial render to get session info for title
-	data, err := os.ReadFile(path)
+	sess, err := r.loadSession(path)
 	if err != nil {
-		return fmt.Errorf("failed to read session file: %w", err)
-	}
-	var sess session.Session
-	if err := json.Unmarshal(data, &sess); err != nil {
-		return fmt.Errorf("failed to parse session: %w", err)
+		return err
 	}
 
 	title := fmt.Sprintf("Session: %s (LIVE)", sess.ID)
 	p := NewPager(title, "")
 	return p.RunLive(path, renderFunc)
+}
+
+// loadSession loads a session from a file, detecting format automatically.
+func (r *Replayer) loadSession(path string) (*session.Session, error) {
+	format, err := session.DetectFormat(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect format: %w", err)
+	}
+
+	if format == "jsonl" {
+		return r.loadJSONL(path)
+	}
+	return r.loadLegacyJSON(path)
+}
+
+// loadJSONL loads a session from JSONL format (streaming).
+func (r *Replayer) loadJSONL(path string) (*session.Session, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read session file: %w", err)
+	}
+	defer f.Close()
+
+	sess := &session.Session{
+		Inputs:  make(map[string]string),
+		State:   make(map[string]interface{}),
+		Outputs: make(map[string]string),
+		Events:  []session.Event{},
+	}
+
+	scanner := bufio.NewScanner(f)
+	// Increase buffer for large events
+	buf := make([]byte, 1024*1024) // 1MB
+	scanner.Buffer(buf, 10*1024*1024) // 10MB max
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var record session.JSONLRecord
+		if err := json.Unmarshal(line, &record); err != nil {
+			return nil, fmt.Errorf("failed to parse JSONL line: %w", err)
+		}
+
+		switch record.RecordType {
+		case session.RecordTypeHeader:
+			sess.ID = record.ID
+			sess.WorkflowName = record.WorkflowName
+			sess.Inputs = record.Inputs
+			sess.CreatedAt = record.CreatedAt
+			
+		case session.RecordTypeEvent:
+			if record.Event != nil {
+				sess.Events = append(sess.Events, *record.Event)
+			}
+			
+		case session.RecordTypeFooter:
+			sess.Status = record.Status
+			sess.Result = record.Result
+			sess.Error = record.Error
+			sess.Outputs = record.Outputs
+			sess.State = record.State
+			sess.UpdatedAt = record.UpdatedAt
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading JSONL: %w", err)
+	}
+
+	return sess, nil
+}
+
+// loadLegacyJSON loads a session from legacy JSON format.
+func (r *Replayer) loadLegacyJSON(path string) (*session.Session, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read session file: %w", err)
+	}
+
+	var sess session.Session
+	if err := json.Unmarshal(data, &sess); err != nil {
+		return nil, fmt.Errorf("failed to parse session: %w", err)
+	}
+
+	return &sess, nil
 }
 
 // Replay outputs a formatted timeline of session events.

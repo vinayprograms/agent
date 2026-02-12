@@ -250,15 +250,15 @@ func TestFileStore_AtomicWrite(t *testing.T) {
 		t.Errorf("expected 1 file, got %d", len(files))
 	}
 
-	// Verify filename includes session ID
+	// Verify filename includes session ID and uses .jsonl extension
 	found := false
 	for _, f := range files {
-		if filepath.Ext(f.Name()) == ".json" {
+		if filepath.Ext(f.Name()) == ".jsonl" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected .json file")
+		t.Error("expected .jsonl file")
 	}
 
 	// Update and verify atomic write
@@ -266,14 +266,14 @@ func TestFileStore_AtomicWrite(t *testing.T) {
 	
 	// Should still be only 1 file (no temp files left)
 	files, _ = os.ReadDir(tmpDir)
-	jsonCount := 0
+	jsonlCount := 0
 	for _, f := range files {
-		if filepath.Ext(f.Name()) == ".json" {
-			jsonCount++
+		if filepath.Ext(f.Name()) == ".jsonl" {
+			jsonlCount++
 		}
 	}
-	if jsonCount != 1 {
-		t.Errorf("expected 1 json file after update, got %d", jsonCount)
+	if jsonlCount != 1 {
+		t.Errorf("expected 1 jsonl file after update, got %d", jsonlCount)
 	}
 }
 
@@ -318,5 +318,138 @@ func TestSession_CorrelationID(t *testing.T) {
 	}
 	if corr1 == corr2 {
 		t.Error("correlation IDs should be unique")
+	}
+}
+
+// Test JSONL format save and load
+func TestFileStore_JSONL(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
+
+	// Create session with events
+	sess := &Session{
+		ID:           "test-jsonl",
+		WorkflowName: "test-workflow",
+		Inputs:       map[string]string{"key": "value"},
+		State:        map[string]interface{}{},
+		Outputs:      map[string]string{"result": "success"},
+		Status:       StatusComplete,
+		Events:       []Event{},
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	sess.AddEvent(Event{Type: EventWorkflowStart, Timestamp: time.Now()})
+	sess.AddEvent(Event{Type: EventGoalStart, Goal: "test-goal", Timestamp: time.Now()})
+	sess.AddEvent(Event{Type: EventToolCall, Tool: "bash", Content: "echo hello", Timestamp: time.Now()})
+	sess.AddEvent(Event{Type: EventGoalEnd, Goal: "test-goal", Timestamp: time.Now()})
+	sess.AddEvent(Event{Type: EventWorkflowEnd, Timestamp: time.Now()})
+
+	// Save
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save error: %v", err)
+	}
+
+	// Verify file is JSONL
+	path := filepath.Join(tmpDir, "test-jsonl.jsonl")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Fatal("expected .jsonl file to exist")
+	}
+
+	// Load and verify
+	loaded, err := store.Load("test-jsonl")
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+
+	if loaded.ID != sess.ID {
+		t.Errorf("ID mismatch: got %s, want %s", loaded.ID, sess.ID)
+	}
+	if loaded.WorkflowName != sess.WorkflowName {
+		t.Errorf("WorkflowName mismatch: got %s, want %s", loaded.WorkflowName, sess.WorkflowName)
+	}
+	if len(loaded.Events) != len(sess.Events) {
+		t.Errorf("Events count mismatch: got %d, want %d", len(loaded.Events), len(sess.Events))
+	}
+	if loaded.Status != sess.Status {
+		t.Errorf("Status mismatch: got %s, want %s", loaded.Status, sess.Status)
+	}
+}
+
+// Test legacy JSON format loading
+func TestFileStore_LegacyJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("create store error: %v", err)
+	}
+
+	// Create legacy JSON file directly
+	legacyJSON := `{
+		"id": "legacy-test",
+		"workflow_name": "legacy-workflow",
+		"inputs": {"input1": "value1"},
+		"state": {},
+		"outputs": {},
+		"status": "complete",
+		"events": [
+			{"seq": 1, "type": "workflow_start", "timestamp": "2024-01-01T00:00:00Z"},
+			{"seq": 2, "type": "goal_start", "goal": "test", "timestamp": "2024-01-01T00:00:01Z"},
+			{"seq": 3, "type": "goal_end", "goal": "test", "timestamp": "2024-01-01T00:00:02Z"}
+		],
+		"created_at": "2024-01-01T00:00:00Z",
+		"updated_at": "2024-01-01T00:00:02Z"
+	}`
+
+	path := filepath.Join(tmpDir, "legacy-test.json")
+	if err := os.WriteFile(path, []byte(legacyJSON), 0644); err != nil {
+		t.Fatalf("failed to write legacy file: %v", err)
+	}
+
+	// Load legacy format
+	loaded, err := store.Load("legacy-test")
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+
+	if loaded.ID != "legacy-test" {
+		t.Errorf("ID mismatch: got %s", loaded.ID)
+	}
+	if loaded.WorkflowName != "legacy-workflow" {
+		t.Errorf("WorkflowName mismatch: got %s", loaded.WorkflowName)
+	}
+	if len(loaded.Events) != 3 {
+		t.Errorf("Events count mismatch: got %d, want 3", len(loaded.Events))
+	}
+}
+
+// Test format detection
+func TestDetectFormat(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// JSONL file
+	jsonlPath := filepath.Join(tmpDir, "test.jsonl")
+	os.WriteFile(jsonlPath, []byte(`{"_type":"header","id":"test"}`), 0644)
+	
+	format, err := DetectFormat(jsonlPath)
+	if err != nil {
+		t.Fatalf("detect error: %v", err)
+	}
+	if format != "jsonl" {
+		t.Errorf("expected jsonl, got %s", format)
+	}
+
+	// JSON file
+	jsonPath := filepath.Join(tmpDir, "test.json")
+	os.WriteFile(jsonPath, []byte(`{"id":"test","events":[]}`), 0644)
+	
+	format, err = DetectFormat(jsonPath)
+	if err != nil {
+		t.Fatalf("detect error: %v", err)
+	}
+	if format != "json" {
+		t.Errorf("expected json, got %s", format)
 	}
 }
