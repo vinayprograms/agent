@@ -507,6 +507,9 @@ func runWorkflow(args []string) {
 		defer mcpManager.Close()
 	}
 
+	// Set up bash security logging callback
+	registry.SetBashSecurityCallback(exec.LogBashSecurity)
+
 	// Set up security verifier if configured or if workflow has security mode
 	securityMode := security.ModeDefault
 	researchScope := ""

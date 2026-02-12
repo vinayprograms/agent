@@ -409,6 +409,40 @@ func (e *Executor) logEvent(eventType, content string) {
 	e.sessionManager.Update(e.session)
 }
 
+// LogBashSecurity logs a bash security decision to the session.
+// This is called by the bash security checker callback.
+func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason string) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+
+	verdict := "ALLOW"
+	if !allowed {
+		verdict = "BLOCK"
+	}
+
+	content := fmt.Sprintf("[%s] %s: %s", step, verdict, command)
+	if reason != "" {
+		content += fmt.Sprintf(" | reason: %s", reason)
+	}
+
+	e.session.Events = append(e.session.Events, session.Event{
+		Type:      session.EventBashSecurity,
+		Goal:      e.currentGoal,
+		Content:   content,
+		Timestamp: time.Now(),
+	})
+	e.sessionManager.Update(e.session)
+
+	// Also log to structured logger
+	e.logger.Debug("bash security check", map[string]interface{}{
+		"step":    step,
+		"allowed": allowed,
+		"command": command,
+		"reason":  reason,
+	})
+}
+
 // logToolCall logs a tool call event to the session.
 // Returns a correlation ID that should be passed to logToolResult.
 func (e *Executor) logToolCall(ctx context.Context, name string, args map[string]interface{}) string {

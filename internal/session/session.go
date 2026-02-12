@@ -58,6 +58,7 @@ const (
 	EventSecurityTriage     = "security_triage"     // LLM triage for suspicious content
 	EventSecuritySupervisor = "security_supervisor" // Full supervisor review
 	EventSecurityDecision   = "security_decision"   // Final decision
+	EventBashSecurity       = "bash_security"       // Bash command security check
 
 	// Sub-agent events
 	EventSubAgentStart = "subagent_start" // Sub-agent spawned
