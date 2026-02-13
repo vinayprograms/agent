@@ -52,6 +52,10 @@ var (
 				Bold(true).
 				Foreground(lipgloss.Color("14")) // Cyan bold
 
+	// Bash security - Orange (distinct from general security)
+	bashStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("208")) // Orange
+
 	// Sub-agents - Magenta
 	subagentStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("13")) // Magenta
@@ -513,14 +517,36 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
 			flowStyle.Render("COMMIT"),
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
-		if r.verbosity >= 1 && event.Meta != nil && event.Meta.Confidence != "" {
-			fmt.Fprintf(r.output, "      │          │   %s\n",
-				dimStyle.Render(fmt.Sprintf("confidence: %s", event.Meta.Confidence)))
+		if r.verbosity >= 1 && event.Meta != nil {
+			if event.Meta.Confidence != "" {
+				fmt.Fprintf(r.output, "      │          │   %s\n",
+					dimStyle.Render(fmt.Sprintf("confidence: %s", event.Meta.Confidence)))
+			}
+			// Show commitment summary at -v
+			if event.Meta.Commitment != "" {
+				summary := truncateContent(event.Meta.Commitment, 80)
+				fmt.Fprintf(r.output, "      │          │   %s %s\n",
+					dimStyle.Render("intent:"),
+					dimStyle.Render(summary))
+			}
+		}
+		if r.verbosity >= 2 && event.Meta != nil && event.Meta.Commitment != "" {
+			// Show full commitment at -vv
+			if len(event.Meta.Commitment) > 80 {
+				fmt.Fprintf(r.output, "      │          │\n")
+				fmt.Fprintf(r.output, "      │          │   %s\n", blockHeaderStyle.Render("── COMMITMENT ──"))
+				r.printContent(event.Meta.Commitment)
+			}
 		}
 
 	case session.EventPhaseExecute:
-		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
+		result := ""
+		if event.Meta != nil && event.Meta.Result != "" {
+			result = dimStyle.Render(fmt.Sprintf(" [%s]", event.Meta.Result))
+		}
+		fmt.Fprintf(r.output, "%s │ %s │ %s%s %s\n", seqNum, ts,
 			flowStyle.Render("EXECUTE"),
+			result,
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 
 	case session.EventPhaseReconcile:
@@ -706,6 +732,9 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 				dimStyle.Render("CHECKPOINT:"),
 				valueStyle.Render(event.Meta.CheckpointType))
 		}
+
+	case session.EventBashSecurity:
+		r.formatBashSecurity(seqNum, ts, event)
 
 	default:
 		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, dimStyle.Render(string(event.Type)))
@@ -999,6 +1028,74 @@ func (r *Replayer) printTaintNode(node session.TaintNode, depth int) {
 	// Print parent blocks (TaintedBy)
 	for _, parent := range node.TaintedBy {
 		r.printTaintNode(parent, depth+1)
+	}
+}
+
+// formatBashSecurity formats a bash security event.
+func (r *Replayer) formatBashSecurity(seqNum, ts string, event *session.Event) {
+	step := "check"
+	action := "allow"
+	command := ""
+	reason := ""
+	durationMs := event.DurationMs
+
+	if event.Meta != nil {
+		step = event.Meta.CheckName
+		if event.Meta.Pass {
+			action = "allow"
+		} else {
+			action = "deny"
+		}
+		if event.Meta.Source != "" {
+			command = event.Meta.Source
+		}
+		reason = event.Meta.Reason
+	}
+
+	actionStyled := r.actionStyle(action).Render(strings.ToUpper(action))
+	stepLabel := dimStyle.Render(fmt.Sprintf("[%s]", step))
+
+	// Non-verbose: Just show step and action
+	if r.verbosity == 0 {
+		// Only show denials at verbosity 0
+		if action == "deny" {
+			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
+				bashStyle.Render("BASH:"),
+				stepLabel,
+				actionStyled)
+		}
+		return
+	}
+
+	// Verbosity >= 1: Show step, action, command hint
+	cmdHint := ""
+	if command != "" {
+		cmdHint = dimStyle.Render(fmt.Sprintf(" %s", truncateContent(command, 50)))
+	}
+	timing := ""
+	if durationMs > 0 {
+		timing = dimStyle.Render(fmt.Sprintf(" (%dms)", durationMs))
+	}
+
+	fmt.Fprintf(r.output, "%s │ %s │ %s %s %s%s%s\n", seqNum, ts,
+		bashStyle.Render("BASH:"),
+		stepLabel,
+		actionStyled,
+		cmdHint,
+		timing)
+
+	// Verbosity >= 2: Show full command and reason
+	if r.verbosity >= 2 {
+		if command != "" && len(command) > 50 {
+			fmt.Fprintf(r.output, "      │          │   %s %s\n",
+				dimStyle.Render("command:"),
+				valueStyle.Render(command))
+		}
+		if reason != "" {
+			fmt.Fprintf(r.output, "      │          │   %s %s\n",
+				dimStyle.Render("reason:"),
+				dimStyle.Render(reason))
+		}
 	}
 }
 

@@ -109,14 +109,29 @@ func ComputeStats(sess *session.Session) *Stats {
 			}
 
 		case session.EventBashSecurity:
-			// Parse step from content: "[deterministic] ..." or "[llm] ..."
-			if len(event.Content) > 1 && event.Content[0] == '[' {
-				if len(event.Content) > 14 && event.Content[1:14] == "deterministic" {
+			// Use structured Meta when available
+			if event.Meta != nil {
+				step := event.Meta.CheckName
+				if step == "deterministic" {
 					stats.BashDeterministicCount++
-				} else if len(event.Content) > 4 && event.Content[1:4] == "llm" {
+				} else if step == "llm" {
 					stats.BashLLMCount++
 					if event.DurationMs > 0 {
 						stats.BashLLMTotalMs += event.DurationMs
+					} else if event.Meta.LatencyMs > 0 {
+						stats.BashLLMTotalMs += event.Meta.LatencyMs
+					}
+				}
+			} else {
+				// Fallback: Parse step from content: "[deterministic] ..." or "[llm] ..."
+				if len(event.Content) > 1 && event.Content[0] == '[' {
+					if len(event.Content) > 14 && event.Content[1:14] == "deterministic" {
+						stats.BashDeterministicCount++
+					} else if len(event.Content) > 4 && event.Content[1:4] == "llm" {
+						stats.BashLLMCount++
+						if event.DurationMs > 0 {
+							stats.BashLLMTotalMs += event.DurationMs
+						}
 					}
 				}
 			}

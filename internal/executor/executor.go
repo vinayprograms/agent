@@ -422,8 +422,10 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 	}
 
 	verdict := "ALLOW"
+	action := "allow"
 	if !allowed {
 		verdict = "BLOCK"
+		action = "deny"
 	}
 
 	content := fmt.Sprintf("[%s] %s: %s", step, verdict, command)
@@ -437,6 +439,15 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 		Content:    content,
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
+		Meta: &session.EventMeta{
+			CheckName: step, // "deterministic" or "llm"
+			Pass:      allowed,
+			Action:    action,
+			Reason:    reason,
+			LatencyMs: durationMs,
+			// Store the command in Source for easy access
+			Source: command,
+		},
 	})
 	e.sessionManager.Update(e.session)
 
