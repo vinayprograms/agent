@@ -1,0 +1,184 @@
+// Package main provides workflow configuration loading.
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/config"
+	"github.com/vinayprograms/agentkit/policy"
+	"github.com/vinayprograms/agentkit/security"
+)
+
+// workflow handles the configuration phase of a run.
+type workflow struct {
+	// Parsed from CLI
+	agentfilePath         string
+	inputs                map[string]string
+	configPath            string
+	policyPath            string
+	workspacePath         string
+	persistMemoryOverride *bool
+
+	// Loaded artifacts
+	wf      *agentfile.Workflow
+	cfg     *config.Config
+	pol     *policy.Policy
+	baseDir string
+}
+
+// parseWorkflow parses CLI args and returns a configured workflow.
+func parseWorkflow(args []string) *workflow {
+	w := &workflow{inputs: make(map[string]string)}
+	w.agentfilePath, args = resolveAgentfile(args)
+
+	if _, err := os.Stat(w.agentfilePath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "error: %s not found\n", w.agentfilePath)
+		fmt.Fprintln(os.Stderr, "Use -f <path> to specify a different Agentfile")
+		os.Exit(1)
+	}
+
+	w.parseFlags(args)
+	return w
+}
+
+// parseFlags extracts run options from args.
+func (w *workflow) parseFlags(args []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--input" && i+1 < len(args):
+			i++
+			w.parseInput(args[i])
+		case strings.HasPrefix(arg, "--input="):
+			w.parseInput(strings.TrimPrefix(arg, "--input="))
+		case arg == "--config" && i+1 < len(args):
+			i++
+			w.configPath = args[i]
+		case strings.HasPrefix(arg, "--config="):
+			w.configPath = strings.TrimPrefix(arg, "--config=")
+		case arg == "--policy" && i+1 < len(args):
+			i++
+			w.policyPath = args[i]
+		case strings.HasPrefix(arg, "--policy="):
+			w.policyPath = strings.TrimPrefix(arg, "--policy=")
+		case arg == "--workspace" && i+1 < len(args):
+			i++
+			w.workspacePath = args[i]
+		case strings.HasPrefix(arg, "--workspace="):
+			w.workspacePath = strings.TrimPrefix(arg, "--workspace=")
+		case arg == "--persist-memory":
+			t := true
+			w.persistMemoryOverride = &t
+		case arg == "--no-persist-memory":
+			f := false
+			w.persistMemoryOverride = &f
+		}
+	}
+}
+
+// parseInput handles key=value input parsing.
+func (w *workflow) parseInput(s string) {
+	parts := strings.SplitN(s, "=", 2)
+	if len(parts) == 2 {
+		w.inputs[parts[0]] = parts[1]
+	}
+}
+
+// load loads config, agentfile, and policy.
+func (w *workflow) load() error {
+	if err := w.loadConfig(); err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	if err := w.loadAgentfile(); err != nil {
+		return fmt.Errorf("loading Agentfile: %w", err)
+	}
+	if err := w.loadPolicy(); err != nil {
+		return fmt.Errorf("loading policy: %w", err)
+	}
+	return nil
+}
+
+// loadConfig loads and applies configuration.
+func (w *workflow) loadConfig() error {
+	var err error
+	if w.configPath != "" {
+		w.cfg, err = config.LoadFile(w.configPath)
+	} else {
+		w.cfg, err = config.LoadFile("agent.toml")
+		if os.IsNotExist(err) {
+			w.cfg = config.Default()
+			err = nil
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	// Apply CLI overrides
+	if w.persistMemoryOverride != nil {
+		w.cfg.Storage.PersistMemory = *w.persistMemoryOverride
+	}
+	if w.workspacePath != "" {
+		w.cfg.Agent.Workspace = w.workspacePath
+	}
+	if w.cfg.Agent.Workspace == "" {
+		w.cfg.Agent.Workspace, _ = os.Getwd()
+	}
+	if !filepath.IsAbs(w.cfg.Agent.Workspace) {
+		w.cfg.Agent.Workspace, _ = filepath.Abs(w.cfg.Agent.Workspace)
+	}
+	return nil
+}
+
+// loadAgentfile parses and validates the Agentfile.
+func (w *workflow) loadAgentfile() error {
+	var err error
+	w.wf, err = agentfile.LoadFile(w.agentfilePath)
+	if err != nil {
+		return err
+	}
+	w.baseDir = filepath.Dir(w.agentfilePath)
+	return nil
+}
+
+// loadPolicy loads the policy file.
+func (w *workflow) loadPolicy() error {
+	var err error
+	if w.policyPath != "" {
+		w.pol, err = policy.LoadFile(w.policyPath)
+	} else {
+		defaultPath := filepath.Join(w.baseDir, "policy.toml")
+		w.pol, err = policy.LoadFile(defaultPath)
+		if os.IsNotExist(err) {
+			w.pol = policy.New()
+			err = nil
+		}
+	}
+	if err != nil {
+		return err
+	}
+	w.pol.Workspace = w.cfg.Agent.Workspace
+
+	// Register custom security patterns
+	w.registerSecurityExtensions()
+	return nil
+}
+
+// registerSecurityExtensions registers custom patterns and keywords from policy.
+func (w *workflow) registerSecurityExtensions() {
+	if w.pol.Security == nil {
+		return
+	}
+	if len(w.pol.Security.ExtraPatterns) > 0 {
+		if err := security.RegisterCustomPatterns(w.pol.Security.ExtraPatterns); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: invalid security pattern in policy: %v\n", err)
+		}
+	}
+	if len(w.pol.Security.ExtraKeywords) > 0 {
+		security.RegisterCustomKeywords(w.pol.Security.ExtraKeywords)
+	}
+}
