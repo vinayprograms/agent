@@ -1,10 +1,8 @@
 package replay
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -77,21 +75,19 @@ func (m *MultiReplayer) ReplayFilesInteractive(paths []string) error {
 func (m *MultiReplayer) loadSessions(paths []string) ([]sessionInfo, error) {
 	var sessions []sessionInfo
 
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read %s: %w", path, err)
-		}
+	// Create a temporary replayer for loading (uses format detection)
+	loader := New(m.output, m.verbosity)
 
-		var sess session.Session
-		if err := json.Unmarshal(data, &sess); err != nil {
-			return nil, fmt.Errorf("failed to parse %s: %w", path, err)
+	for _, path := range paths {
+		sess, err := loader.loadSession(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load %s: %w", path, err)
 		}
 
 		info := sessionInfo{
-			Session:   &sess,
+			Session:   sess,
 			Source:    path,
-			AgentName: inferAgentName(&sess, path),
+			AgentName: inferAgentName(sess, path),
 		}
 		sessions = append(sessions, info)
 	}
