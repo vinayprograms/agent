@@ -22,15 +22,19 @@ func main() {
 	args := os.Args[1:]
 
 	// Parse flags
-	verbose := false
+	verbosity := 0 // 0=normal, 1=-v, 2=-vv
 	noInteractive := false
 	liveMode := false
 	var paths []string
 
 	for i := 0; i < len(args); i++ {
 		switch {
+		case args[i] == "-vv":
+			verbosity = 2
 		case args[i] == "-v" || args[i] == "--verbose":
-			verbose = true
+			if verbosity < 1 {
+				verbosity = 1
+			}
 		case args[i] == "--no-pager":
 			noInteractive = true
 		case args[i] == "-f" || args[i] == "--follow" || args[i] == "--live":
@@ -71,7 +75,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		r := replay.New(os.Stdout, verbose)
+		r := replay.New(os.Stdout, verbosity)
 		if err := r.ReplayFileLive(paths[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -92,7 +96,7 @@ func main() {
 	}
 
 	// Create multi-session replayer
-	r := replay.NewMulti(os.Stdout, verbose)
+	r := replay.NewMulti(os.Stdout, verbosity)
 
 	// Use interactive pager when stdout is a TTY and not disabled
 	if !noInteractive && isTerminal(os.Stdout) {
@@ -122,7 +126,8 @@ Arguments:
 
 Options:
   -f, --follow      Live mode - watch file for changes and reload
-  -v, --verbose     Show full message and result content
+  -v, --verbose     Show message content and tool results
+  -vv               Very verbose - show full LLM prompts, responses, tokens, thinking
   --no-pager        Disable interactive pager (for piping)
   --version         Show version
   -h, --help        Show this help
@@ -130,6 +135,7 @@ Options:
 Examples:
   agent-replay session.json
   agent-replay -v session1.json session2.json
+  agent-replay -vv session.json          # Full LLM details
   agent-replay ./sessions/              # All .json files in directory
   agent-replay --no-pager session.json | grep SECURITY
   agent-replay -f session.json          # Watch for live updates

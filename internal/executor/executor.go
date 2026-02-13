@@ -515,6 +515,52 @@ func (e *Executor) logToolResult(ctx context.Context, name string, args map[stri
 	e.sessionManager.Update(e.session)
 }
 
+// logLLMCall logs full LLM request/response details for forensic replay.
+// This captures everything needed for -vv verbosity in replay.
+func (e *Executor) logLLMCall(ctx context.Context, eventType string, messages []llm.Message, resp *llm.ChatResponse, duration time.Duration) {
+	if e.session == nil || e.sessionManager == nil {
+		return
+	}
+
+	agentID := getAgentIdentity(ctx)
+
+	// Build full prompt from messages
+	var promptBuilder strings.Builder
+	for _, msg := range messages {
+		promptBuilder.WriteString(fmt.Sprintf("[%s]\n%s\n\n", msg.Role, msg.Content))
+		if len(msg.ToolCalls) > 0 {
+			for _, tc := range msg.ToolCalls {
+				argsJSON, _ := json.Marshal(tc.Args)
+				promptBuilder.WriteString(fmt.Sprintf("  tool_call: %s(%s)\n", tc.Name, string(argsJSON)))
+			}
+		}
+		if msg.ToolCallID != "" {
+			promptBuilder.WriteString(fmt.Sprintf("  tool_result_for: %s\n", msg.ToolCallID))
+		}
+	}
+
+	event := session.Event{
+		Type:      eventType,
+		Goal:      e.currentGoal,
+		Content:   resp.Content,
+		Agent:     agentID.Name,
+		AgentRole: agentID.Role,
+		Timestamp: time.Now(),
+		Meta: &session.EventMeta{
+			Model:     resp.Model,
+			LatencyMs: duration.Milliseconds(),
+			TokensIn:  resp.InputTokens,
+			TokensOut: resp.OutputTokens,
+			Prompt:    promptBuilder.String(),
+			Response:  resp.Content,
+			Thinking:  resp.Thinking,
+		},
+	}
+
+	e.session.Events = append(e.session.Events, event)
+	e.sessionManager.Update(e.session)
+}
+
 // logGoalStart logs the start of a goal.
 func (e *Executor) logGoalStart(goalName string) {
 	if e.session == nil || e.sessionManager == nil {
@@ -1224,14 +1270,19 @@ func (e *Executor) subAgentExecutePhaseWithProvider(ctx context.Context, provide
 
 	// Execute sub-agent loop
 	for {
+		llmStart := time.Now()
 		resp, err := provider.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    toolDefs,
 		})
+		llmDuration := time.Since(llmStart)
 		if err != nil {
 			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "error")
 			return "", nil, fmt.Errorf("sub-agent LLM error: %w", err)
 		}
+
+		// Log full LLM interaction (for -vv replay)
+		e.logLLMCall(ctx, session.EventAssistant, messages, resp, llmDuration)
 
 		// No tool calls = sub-agent complete
 		if len(resp.ToolCalls) == 0 {
@@ -2091,10 +2142,12 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 
 	// Execute goal loop
 	for {
+		llmStart := time.Now()
 		resp, err := e.provider.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    toolDefs,
 		})
+		llmDuration := time.Since(llmStart)
 		if err != nil {
 			if e.OnLLMError != nil {
 				e.OnLLMError(err)
@@ -2103,8 +2156,8 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 			return "", nil, toolCallsMade, fmt.Errorf("LLM error: %w", err)
 		}
 
-		// Log assistant response
-		e.logEvent(session.EventAssistant, resp.Content)
+		// Log full LLM interaction (for -vv replay)
+		e.logLLMCall(ctx, session.EventAssistant, messages, resp, llmDuration)
 
 		// Check for skill activation in response
 		if skill := e.checkSkillActivation(resp.Content); skill != nil {

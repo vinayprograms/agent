@@ -1158,15 +1158,19 @@ func runSetup() {
 
 // replaySession replays a session from a JSON file for forensic analysis.
 func replaySession(args []string) {
-	verbose := false
+	verbosity := 0 // 0=normal, 1=-v, 2=-vv
 	noInteractive := false
 	var sessionPath string
 
 	// Parse args
 	for i := 0; i < len(args); i++ {
 		switch {
+		case args[i] == "-vv":
+			verbosity = 2
 		case args[i] == "-v" || args[i] == "--verbose":
-			verbose = true
+			if verbosity < 1 {
+				verbosity = 1
+			}
 		case args[i] == "--no-pager":
 			noInteractive = true
 		case !strings.HasPrefix(args[i], "-"):
@@ -1175,15 +1179,16 @@ func replaySession(args []string) {
 	}
 
 	if sessionPath == "" {
-		fmt.Fprintf(os.Stderr, "Usage: agent replay [-v|--verbose] [--no-pager] <session.json>\n")
+		fmt.Fprintf(os.Stderr, "Usage: agent replay [-v|--verbose|-vv] [--no-pager] <session.json>\n")
 		fmt.Fprintf(os.Stderr, "\nReplays a session for forensic analysis.\n")
 		fmt.Fprintf(os.Stderr, "\nOptions:\n")
-		fmt.Fprintf(os.Stderr, "  -v, --verbose    Show full message and result content\n")
+		fmt.Fprintf(os.Stderr, "  -v, --verbose    Show message content and tool results\n")
+		fmt.Fprintf(os.Stderr, "  -vv              Very verbose - show full LLM prompts, responses, tokens\n")
 		fmt.Fprintf(os.Stderr, "  --no-pager       Disable interactive pager (for piping)\n")
 		os.Exit(1)
 	}
 
-	r := replay.New(os.Stdout, verbose)
+	r := replay.New(os.Stdout, verbosity)
 
 	// Use interactive pager when stdout is a TTY and not disabled
 	if !noInteractive && isTerminal(os.Stdout) {

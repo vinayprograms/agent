@@ -15,15 +15,16 @@ import (
 
 // MultiReplayer handles multiple session files.
 type MultiReplayer struct {
-	output  io.Writer
-	verbose bool
+	output    io.Writer
+	verbosity int // 0=normal, 1=verbose (-v), 2=very verbose (-vv)
 }
 
 // NewMulti creates a new MultiReplayer.
-func NewMulti(output io.Writer, verbose bool) *MultiReplayer {
+// verbosity: 0=normal, 1=verbose (-v), 2=very verbose (-vv)
+func NewMulti(output io.Writer, verbosity int) *MultiReplayer {
 	return &MultiReplayer{
-		output:  output,
-		verbose: verbose,
+		output:    output,
+		verbosity: verbosity,
 	}
 }
 
@@ -117,7 +118,7 @@ func inferAgentName(sess *session.Session, path string) string {
 
 // replayAll renders all sessions.
 func (m *MultiReplayer) replayAll(sessions []sessionInfo) error {
-	r := New(m.output, m.verbose)
+	r := New(m.output, m.verbosity)
 
 	for i, info := range sessions {
 		if len(sessions) > 1 {

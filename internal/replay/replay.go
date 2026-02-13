@@ -91,7 +91,7 @@ var (
 // Replayer reads and formats session events for forensic analysis.
 type Replayer struct {
 	output         io.Writer
-	verbose        bool
+	verbosity      int // 0=normal, 1=verbose (-v), 2=very verbose (-vv)
 	maxContentSize int // Maximum size for Content fields (0 = unlimited)
 }
 
@@ -106,10 +106,11 @@ func WithMaxContentSize(size int) ReplayerOption {
 }
 
 // New creates a new Replayer.
-func New(output io.Writer, verbose bool, opts ...ReplayerOption) *Replayer {
+// verbosity: 0=normal, 1=verbose (-v), 2=very verbose (-vv)
+func New(output io.Writer, verbosity int, opts ...ReplayerOption) *Replayer {
 	r := &Replayer{
 		output:         output,
-		verbose:        verbose,
+		verbosity:      verbosity,
 		maxContentSize: 50 * 1024, // Default: 50KB per content field
 	}
 	for _, opt := range opts {
@@ -394,7 +395,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
 			flowStyle.Render("GOAL END"),
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
-		if r.verbose && event.Content != "" {
+		if r.verbosity >= 1 && event.Content != "" {
 			r.printContent(event.Content)
 		}
 
@@ -408,7 +409,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 				subagentStyle.Render("SUBAGENT START:"),
 				valueStyle.Render(event.Meta.SubAgentName),
 				model)
-			if r.verbose && event.Meta.SubAgentTask != "" {
+			if r.verbosity >= 1 && event.Meta.SubAgentTask != "" {
 				fmt.Fprintf(r.output, "      │          │   %s %s\n",
 					dimStyle.Render("task:"),
 					dimStyle.Render(truncateContent(event.Meta.SubAgentTask, 100)))
@@ -439,20 +440,24 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	case session.EventSystem:
 		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, dimStyle.Render("SYSTEM"))
-		if r.verbose && event.Content != "" {
+		if r.verbosity >= 1 && event.Content != "" {
 			r.printContent(event.Content)
 		}
 
 	case session.EventUser:
 		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("USER"))
-		if r.verbose && event.Content != "" {
+		if r.verbosity >= 1 && event.Content != "" {
 			r.printContent(event.Content)
 		}
 
 	case session.EventAssistant:
 		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("ASSISTANT"))
-		if r.verbose && event.Content != "" {
+		if r.verbosity >= 1 && event.Content != "" {
 			r.printContent(event.Content)
+		}
+		// -vv: Show full LLM metadata
+		if r.verbosity >= 2 && event.Meta != nil {
+			r.printLLMMeta(event.Meta)
 		}
 
 	case session.EventToolCall:
@@ -467,7 +472,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			toolStyle.Render("TOOL CALL:"),
 			valueStyle.Render(event.Tool),
 			corr)
-		if r.verbose && len(event.Args) > 0 {
+		if r.verbosity >= 1 && len(event.Args) > 0 {
 			r.printArgs(event.Args)
 		}
 
@@ -496,7 +501,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 				argsHint,
 				dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)),
 				corr)
-			if r.verbose && event.Content != "" {
+			if r.verbosity >= 1 && event.Content != "" {
 				r.printContent(event.Content)
 			}
 		}
@@ -505,7 +510,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
 			flowStyle.Render("COMMIT"),
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
-		if r.verbose && event.Meta != nil && event.Meta.Confidence != "" {
+		if r.verbosity >= 1 && event.Meta != nil && event.Meta.Confidence != "" {
 			fmt.Fprintf(r.output, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("confidence: %s", event.Meta.Confidence)))
 		}
@@ -524,7 +529,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			flowStyle.Render("RECONCILE:"),
 			status,
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
-		if r.verbose && event.Meta != nil && len(event.Meta.Triggers) > 0 {
+		if r.verbosity >= 1 && event.Meta != nil && len(event.Meta.Triggers) > 0 {
 			fmt.Fprintf(r.output, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("triggers: %v", event.Meta.Triggers)))
 		}
@@ -566,7 +571,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 				fmt.Fprintf(r.output, "      │          │   %s\n",
 					dimStyle.Render(fmt.Sprintf("correction: %s", event.Meta.Correction)))
 			}
-			if r.verbose {
+			if r.verbosity >= 1 {
 				r.printLLMDetails(event.Meta)
 			}
 		}
@@ -639,7 +644,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			fmt.Fprintf(r.output, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("no escalation: %s", event.Meta.SkipReason)))
 		}
-		if r.verbose && event.Meta != nil {
+		if r.verbosity >= 1 && event.Meta != nil {
 			r.printLLMDetails(event.Meta)
 		}
 
@@ -666,7 +671,7 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 			fmt.Fprintf(r.output, "      │          │   %s\n",
 				dimStyle.Render(event.Meta.Reason))
 		}
-		if r.verbose && event.Meta != nil {
+		if r.verbosity >= 1 && event.Meta != nil {
 			r.printLLMDetails(event.Meta)
 		}
 
@@ -861,7 +866,7 @@ func (r *Replayer) printContent(content string) {
 func (r *Replayer) printSubAgentOutput(content string) {
 	lines := strings.Split(content, "\n")
 	maxLines := 10
-	if r.verbose {
+	if r.verbosity >= 1 {
 		maxLines = 50
 	}
 
@@ -889,6 +894,40 @@ func (r *Replayer) printArgs(args map[string]interface{}) {
 // printError prints an error.
 func (r *Replayer) printError(err string) {
 	fmt.Fprintf(r.output, "      │          │   %s\n", errorStyle.Render(err))
+}
+
+// printLLMMeta prints LLM metadata (model, tokens, latency) and optionally full prompt/response.
+func (r *Replayer) printLLMMeta(meta *session.EventMeta) {
+	if meta == nil {
+		return
+	}
+
+	// Always show summary in -vv mode
+	fmt.Fprintf(r.output, "      │          │   %s %s",
+		labelStyle.Render("model:"), valueStyle.Render(meta.Model))
+	if meta.TokensIn > 0 || meta.TokensOut > 0 {
+		fmt.Fprintf(r.output, "  %s %d→%d",
+			labelStyle.Render("tokens:"), meta.TokensIn, meta.TokensOut)
+	}
+	if meta.LatencyMs > 0 {
+		fmt.Fprintf(r.output, "  %s %dms",
+			labelStyle.Render("latency:"), meta.LatencyMs)
+	}
+	fmt.Fprintf(r.output, "\n")
+
+	// Show thinking if available
+	if meta.Thinking != "" {
+		fmt.Fprintf(r.output, "      │          │\n")
+		fmt.Fprintf(r.output, "      │          │   %s\n", blockHeaderStyle.Render("── THINKING ──"))
+		r.printContent(meta.Thinking)
+	}
+
+	// Show full prompt
+	if meta.Prompt != "" {
+		fmt.Fprintf(r.output, "      │          │\n")
+		fmt.Fprintf(r.output, "      │          │   %s\n", blockHeaderStyle.Render("── FULL PROMPT ──"))
+		r.printContent(meta.Prompt)
+	}
 }
 
 // printLLMDetails prints full LLM interaction details.
