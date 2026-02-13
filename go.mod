@@ -10,7 +10,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/joho/godotenv v1.5.1
 	github.com/muesli/reflow v0.3.0
-	github.com/vinayprograms/agentkit v0.0.0-20260212174357-a8a2622d5e27
+	github.com/vinayprograms/agentkit v0.0.0-20260213185847-461d0f93730b
 	gopkg.in/yaml.v3 v3.0.1
 )
 

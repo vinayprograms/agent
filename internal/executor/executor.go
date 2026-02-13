@@ -134,6 +134,9 @@ type Executor struct {
 	// Last security check result - used to taint tool results with influencing blocks
 	lastSecurityRelatedBlocks []string
 
+	// Goal timing tracking
+	goalStartTimes map[string]time.Time
+
 	// Security research context (for defensive framing in prompts)
 	securityResearchScope string
 
@@ -153,6 +156,7 @@ func NewExecutor(wf *agentfile.Workflow, provider llm.Provider, registry *tools.
 		logger:          logging.New().WithComponent("executor"),
 		outputs:         make(map[string]string),
 		loadedSkills:    make(map[string]*skills.Skill),
+		goalStartTimes:  make(map[string]time.Time),
 	}
 	e.initSpawner()
 	return e
@@ -170,6 +174,7 @@ func NewExecutorWithFactory(wf *agentfile.Workflow, factory llm.ProviderFactory,
 		logger:          logging.New().WithComponent("executor"),
 		outputs:         make(map[string]string),
 		loadedSkills:    make(map[string]*skills.Skill),
+		goalStartTimes:  make(map[string]time.Time),
 	}
 	e.initSpawner()
 	return e
@@ -259,7 +264,7 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		if !result.Tier2.Suspicious {
 			skipReason = "triage_benign"
 		}
-		e.logSecurityTriage(toolName, blockID, result.Tier2.Suspicious, "triage", 0, skipReason)
+		e.logSecurityTriage(toolName, blockID, result.Tier2.Suspicious, "triage", result.Tier2.LatencyMs, skipReason)
 	}
 
 	if result.Tier3 != nil {
@@ -267,7 +272,7 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		if result.Tier1 != nil && result.Tier1.Block != nil {
 			blockID = result.Tier1.Block.ID
 		}
-		e.logSecuritySupervisor(toolName, blockID, string(result.Tier3.Verdict), result.Tier3.Reason, "supervisor", 0)
+		e.logSecuritySupervisor(toolName, blockID, string(result.Tier3.Verdict), result.Tier3.Reason, "supervisor", result.Tier3.LatencyMs)
 	}
 
 	// Determine check path
@@ -411,7 +416,7 @@ func (e *Executor) logEvent(eventType, content string) {
 
 // LogBashSecurity logs a bash security decision to the session.
 // This is called by the bash security checker callback.
-func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason string) {
+func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason string, durationMs int64) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -427,10 +432,11 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 	}
 
 	e.session.Events = append(e.session.Events, session.Event{
-		Type:      session.EventBashSecurity,
-		Goal:      e.currentGoal,
-		Content:   content,
-		Timestamp: time.Now(),
+		Type:       session.EventBashSecurity,
+		Goal:       e.currentGoal,
+		Content:    content,
+		DurationMs: durationMs,
+		Timestamp:  time.Now(),
 	})
 	e.sessionManager.Update(e.session)
 
@@ -563,6 +569,9 @@ func (e *Executor) logLLMCall(ctx context.Context, eventType string, messages []
 
 // logGoalStart logs the start of a goal.
 func (e *Executor) logGoalStart(goalName string) {
+	now := time.Now()
+	e.goalStartTimes[goalName] = now
+	
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -570,21 +579,29 @@ func (e *Executor) logGoalStart(goalName string) {
 		Type:      session.EventGoalStart,
 		Goal:      goalName,
 		Content:   fmt.Sprintf("Starting goal: %s", goalName),
-		Timestamp: time.Now(),
+		Timestamp: now,
 	})
 	e.sessionManager.Update(e.session)
 }
 
 // logGoalEnd logs the end of a goal.
 func (e *Executor) logGoalEnd(goalName, output string) {
+	now := time.Now()
+	var durationMs int64
+	if startTime, ok := e.goalStartTimes[goalName]; ok {
+		durationMs = now.Sub(startTime).Milliseconds()
+		delete(e.goalStartTimes, goalName)
+	}
+	
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
 	e.session.Events = append(e.session.Events, session.Event{
-		Type:      session.EventGoalEnd,
-		Goal:      goalName,
-		Content:   output,
-		Timestamp: time.Now(),
+		Type:       session.EventGoalEnd,
+		Goal:       goalName,
+		Content:    output,
+		DurationMs: durationMs,
+		Timestamp:  now,
 	})
 	e.sessionManager.Update(e.session)
 }

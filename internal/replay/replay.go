@@ -346,7 +346,10 @@ func (r *Replayer) Replay(sess *session.Session) error {
 	default:
 		fmt.Fprintln(r.output, warnStyle.Render("RUNNING"))
 	}
-	fmt.Fprintln(r.output)
+
+	// Aggregate statistics
+	stats := ComputeStats(sess)
+	PrintStats(r.output, stats)
 
 	return nil
 }
