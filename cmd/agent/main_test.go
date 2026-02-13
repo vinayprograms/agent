@@ -9,7 +9,7 @@ import (
 )
 
 func TestCLI_Help(t *testing.T) {
-	cmd := exec.Command("go", "run", ".", "help")
+	cmd := exec.Command("go", "run", ".", "--help")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("CLI help failed: %v\n%s", err, output)
@@ -49,7 +49,8 @@ RUN main USING analyze
 		t.Fatalf("failed to write Agentfile: %v", err)
 	}
 
-	cmd := exec.Command("go", "run", ".", "validate", "-f", agentfilePath)
+	// Kong uses positional arguments, not -f
+	cmd := exec.Command("go", "run", ".", "validate", agentfilePath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("CLI validate failed: %v\n%s", err, output)
@@ -77,7 +78,8 @@ LOOP step2 USING summarize WITHIN $max
 		t.Fatalf("failed to write Agentfile: %v", err)
 	}
 
-	cmd := exec.Command("go", "run", ".", "inspect", "--file", agentfilePath)
+	// Kong uses positional arguments
+	cmd := exec.Command("go", "run", ".", "inspect", agentfilePath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("CLI inspect failed: %v\n%s", err, output)
@@ -113,11 +115,11 @@ RUN main USING analyze
 		t.Fatalf("failed to write Agentfile: %v", err)
 	}
 
-	cmd := exec.Command("go", "run", ".", "validate", "-f", agentfilePath)
-	output, _ := cmd.CombinedOutput()
+	cmd := exec.Command("go", "run", ".", "validate", agentfilePath)
+	err := cmd.Run()
 
 	// Should fail (non-zero exit)
-	if strings.Contains(string(output), "Valid") {
+	if err == nil {
 		t.Error("expected validation to fail for invalid Agentfile")
 	}
 }
@@ -126,17 +128,17 @@ func TestCLI_ValidateDefault(t *testing.T) {
 	// Get repo root directory (parent of cmd/agent)
 	repoDir, _ := os.Getwd()
 	repoDir = filepath.Dir(filepath.Dir(repoDir))
-	
+
 	tmpDir := t.TempDir()
 	agentBinary := filepath.Join(tmpDir, "agent")
-	
+
 	// Build into tmpDir
 	cmd := exec.Command("go", "build", "-o", agentBinary, "./cmd/agent")
 	cmd.Dir = repoDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build: %v\n%s", err, output)
 	}
-	
+
 	// Create Agentfile in a work directory
 	workDir := filepath.Join(tmpDir, "work")
 	os.MkdirAll(workDir, 0755)
@@ -148,7 +150,7 @@ RUN main USING test
 		t.Fatalf("failed to write Agentfile: %v", err)
 	}
 
-	// Run from workDir without -f flag
+	// Run from workDir without path argument (uses default)
 	cmd = exec.Command(agentBinary, "validate")
 	cmd.Dir = workDir
 	output, err := cmd.CombinedOutput()

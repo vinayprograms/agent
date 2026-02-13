@@ -3,63 +3,65 @@ package main
 import (
 	"os"
 	"testing"
+
+	"github.com/alecthomas/kong"
 )
 
-func TestParseKeygenArgs(t *testing.T) {
-	tests := []struct {
-		name   string
-		args   []string
-		want   string
-	}{
-		{
-			name: "default",
-			args: []string{},
-			want: "agent-key",
-		},
-		{
-			name: "with output",
-			args: []string{"--output", "my-key"},
-			want: "my-key",
-		},
-		{
-			name: "short output",
-			args: []string{"-o", "my-key"},
-			want: "my-key",
-		},
-		{
-			name: "equals syntax",
-			args: []string{"--output=my-key"},
-			want: "my-key",
-		},
+func TestKeygenCmd_Default(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseKeygenArgs(tt.args)
-			if got != tt.want {
-				t.Errorf("parseKeygenArgs() = %q, want %q", got, tt.want)
-			}
-		})
+	_, err = parser.Parse([]string{"keygen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cli.Keygen.Output != "agent-key" {
+		t.Errorf("expected default output 'agent-key', got %q", cli.Keygen.Output)
 	}
 }
 
-func TestCheckKeyPaths_NotExist(t *testing.T) {
-	err := checkKeyPaths("/nonexistent/path.pem", "/nonexistent/path.pub")
+func TestKeygenCmd_CustomOutput(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
 	if err != nil {
-		t.Errorf("expected no error for non-existent paths, got: %v", err)
+		t.Fatal(err)
+	}
+
+	_, err = parser.Parse([]string{"keygen", "-o", "custom-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cli.Keygen.Output != "custom-key" {
+		t.Errorf("expected output 'custom-key', got %q", cli.Keygen.Output)
 	}
 }
 
 func TestCheckKeyPaths_Exists(t *testing.T) {
-	f, err := os.CreateTemp("", "key-*.pem")
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
-	defer os.Remove(f.Name())
+	dir := t.TempDir()
+	privPath := dir + "/test.pem"
+	pubPath := dir + "/test.pub"
 
-	err = checkKeyPaths(f.Name(), "/nonexistent/path.pub")
+	// Create priv file
+	os.WriteFile(privPath, []byte("test"), 0600)
+
+	err := checkKeyPaths(privPath, pubPath)
 	if err == nil {
-		t.Error("expected error for existing private key path")
+		t.Error("expected error when priv key exists")
+	}
+}
+
+func TestCheckKeyPaths_NotExists(t *testing.T) {
+	dir := t.TempDir()
+	privPath := dir + "/new.pem"
+	pubPath := dir + "/new.pub"
+
+	err := checkKeyPaths(privPath, pubPath)
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
 	}
 }

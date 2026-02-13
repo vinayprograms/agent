@@ -9,22 +9,30 @@ import (
 	"github.com/vinayprograms/agent/internal/packaging"
 )
 
-// inspectWorkflow shows the structure of an Agentfile.
-func inspectWorkflow(args []string) {
-	agentfilePath, _ := resolveAgentfile(args)
-
-	if _, err := os.Stat(agentfilePath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "error: %s not found\n", agentfilePath)
-		os.Exit(1)
+// runInspectWorkflow shows the structure of an Agentfile.
+func runInspectWorkflow(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return fmt.Errorf("%s not found", path)
 	}
 
-	wf, err := agentfile.LoadFile(agentfilePath)
+	wf, err := agentfile.LoadFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	printWorkflowInfo(wf)
+	return nil
+}
+
+// runInspectPackage shows the manifest of a package.
+func runInspectPackage(path string) error {
+	pkg, err := packaging.Load(path)
+	if err != nil {
+		return fmt.Errorf("loading package: %w", err)
+	}
+
+	printPackageInfo(pkg)
+	return nil
 }
 
 func printWorkflowInfo(wf *agentfile.Workflow) {
@@ -85,22 +93,6 @@ func printStep(step agentfile.Step) {
 		}
 		fmt.Printf("  LOOP %s: %s (max %s)\n", step.Name, strings.Join(step.UsingGoals, ", "), limit)
 	}
-}
-
-// inspectPackage shows the manifest of a package.
-func inspectPackage(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: package path required")
-		os.Exit(1)
-	}
-
-	pkg, err := packaging.Load(args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error loading package: %v\n", err)
-		os.Exit(1)
-	}
-
-	printPackageInfo(pkg)
 }
 
 func printPackageInfo(pkg *packaging.Package) {

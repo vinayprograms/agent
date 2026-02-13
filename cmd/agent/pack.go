@@ -2,85 +2,41 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/vinayprograms/agent/internal/packaging"
 )
 
-// packAgent creates a signed agent package.
-func packAgent(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: source directory required")
-		os.Exit(1)
+// runPack creates a signed agent package.
+func runPack(c *PackCmd) error {
+	opts := packaging.PackOptions{
+		SourceDir:  c.Dir,
+		OutputPath: c.Output,
+		License:    c.License,
 	}
 
-	sourceDir := args[0]
-	opts := parsePackArgs(args[1:], sourceDir)
-
-	pkg, err := packaging.Pack(opts)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error creating package: %v\n", err)
-		os.Exit(1)
-	}
-
-	printPackResult(pkg, opts)
-}
-
-func parsePackArgs(args []string, sourceDir string) packaging.PackOptions {
-	opts := packaging.PackOptions{SourceDir: sourceDir}
-	var signKeyPath, authorName, authorEmail string
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case (arg == "--output" || arg == "-o") && i+1 < len(args):
-			i++
-			opts.OutputPath = args[i]
-		case strings.HasPrefix(arg, "--output="):
-			opts.OutputPath = strings.TrimPrefix(arg, "--output=")
-		case strings.HasPrefix(arg, "-o="):
-			opts.OutputPath = strings.TrimPrefix(arg, "-o=")
-		case arg == "--sign" && i+1 < len(args):
-			i++
-			signKeyPath = args[i]
-		case strings.HasPrefix(arg, "--sign="):
-			signKeyPath = strings.TrimPrefix(arg, "--sign=")
-		case arg == "--author" && i+1 < len(args):
-			i++
-			authorName = args[i]
-		case strings.HasPrefix(arg, "--author="):
-			authorName = strings.TrimPrefix(arg, "--author=")
-		case arg == "--email" && i+1 < len(args):
-			i++
-			authorEmail = args[i]
-		case strings.HasPrefix(arg, "--email="):
-			authorEmail = strings.TrimPrefix(arg, "--email=")
-		case arg == "--license" && i+1 < len(args):
-			i++
-			opts.License = args[i]
-		case strings.HasPrefix(arg, "--license="):
-			opts.License = strings.TrimPrefix(arg, "--license=")
-		}
-	}
-
-	if authorName != "" || authorEmail != "" {
+	if c.Author != "" || c.Email != "" {
 		opts.Author = &packaging.Author{
-			Name:  authorName,
-			Email: authorEmail,
+			Name:  c.Author,
+			Email: c.Email,
 		}
 	}
 
-	if signKeyPath != "" {
-		privKey, err := packaging.LoadPrivateKey(signKeyPath)
+	if c.Sign != "" {
+		privKey, err := packaging.LoadPrivateKey(c.Sign)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error loading signing key: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("loading signing key: %w", err)
 		}
 		opts.PrivateKey = privKey
 	}
 
-	return opts
+	pkg, err := packaging.Pack(opts)
+	if err != nil {
+		return fmt.Errorf("creating package: %w", err)
+	}
+
+	printPackResult(pkg, opts)
+	return nil
 }
 
 func printPackResult(pkg *packaging.Package, opts packaging.PackOptions) {

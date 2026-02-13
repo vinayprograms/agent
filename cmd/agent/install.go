@@ -2,65 +2,35 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/vinayprograms/agent/internal/packaging"
 )
 
-// installPackage installs a package.
-func installPackage(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: package path required")
-		os.Exit(1)
+// runInstall installs a package.
+func runInstall(c *InstallCmd) error {
+	opts := packaging.InstallOptions{
+		PackagePath: c.Package,
+		TargetDir:   c.Target,
+		NoDeps:      c.NoDeps,
+		DryRun:      c.DryRun,
 	}
 
-	pkgPath := args[0]
-	opts := parseInstallArgs(args[1:], pkgPath)
+	if c.Key != "" {
+		pubKey, err := packaging.LoadPublicKey(c.Key)
+		if err != nil {
+			return fmt.Errorf("loading public key: %w", err)
+		}
+		opts.PublicKey = pubKey
+	}
 
 	result, err := packaging.Install(opts)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error installing package: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("installing package: %w", err)
 	}
 
 	printInstallResult(result, opts)
-}
-
-func parseInstallArgs(args []string, pkgPath string) packaging.InstallOptions {
-	opts := packaging.InstallOptions{PackagePath: pkgPath}
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--key" && i+1 < len(args):
-			i++
-			pubKey, err := packaging.LoadPublicKey(args[i])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error loading public key: %v\n", err)
-				os.Exit(1)
-			}
-			opts.PublicKey = pubKey
-		case strings.HasPrefix(arg, "--key="):
-			pubKey, err := packaging.LoadPublicKey(strings.TrimPrefix(arg, "--key="))
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error loading public key: %v\n", err)
-				os.Exit(1)
-			}
-			opts.PublicKey = pubKey
-		case arg == "--target" && i+1 < len(args):
-			i++
-			opts.TargetDir = args[i]
-		case strings.HasPrefix(arg, "--target="):
-			opts.TargetDir = strings.TrimPrefix(arg, "--target=")
-		case arg == "--no-deps":
-			opts.NoDeps = true
-		case arg == "--dry-run":
-			opts.DryRun = true
-		}
-	}
-
-	return opts
+	return nil
 }
 
 func printInstallResult(result *packaging.InstallResult, opts packaging.InstallOptions) {

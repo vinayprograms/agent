@@ -3,56 +3,32 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/vinayprograms/agent/internal/packaging"
 )
 
-// generateKeys generates a new signing key pair.
-func generateKeys(args []string) {
-	outputPrefix := parseKeygenArgs(args)
-
+// runKeygen generates a new signing key pair.
+func runKeygen(outputPrefix string) error {
 	privPath := outputPrefix + ".pem"
 	pubPath := outputPrefix + ".pub"
 
 	if err := checkKeyPaths(privPath, pubPath); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	pubKey, privKey, err := packaging.GenerateKeyPair()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error generating key pair: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("generating key pair: %w", err)
 	}
 
 	if err := saveKeyPair(privPath, pubPath, privKey, pubKey); err != nil {
-		fmt.Fprintf(os.Stderr, "error saving keys: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("saving keys: %w", err)
 	}
 
 	fmt.Printf("✓ Generated key pair\n")
 	fmt.Printf("  Private key: %s (keep secret!)\n", privPath)
 	fmt.Printf("  Public key:  %s (share for verification)\n", pubPath)
-}
-
-func parseKeygenArgs(args []string) string {
-	outputPrefix := "agent-key"
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case (arg == "--output" || arg == "-o") && i+1 < len(args):
-			i++
-			outputPrefix = args[i]
-		case strings.HasPrefix(arg, "--output="):
-			outputPrefix = strings.TrimPrefix(arg, "--output=")
-		case strings.HasPrefix(arg, "-o="):
-			outputPrefix = strings.TrimPrefix(arg, "-o=")
-		}
-	}
-
-	return outputPrefix
+	return nil
 }
 
 func checkKeyPaths(privPath, pubPath string) error {

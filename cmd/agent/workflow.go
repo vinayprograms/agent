@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/config"
@@ -15,7 +14,7 @@ import (
 
 // workflow handles the configuration phase of a run.
 type workflow struct {
-	// Parsed from CLI
+	// Parsed from CLI (populated by kong via RunCmd)
 	agentfilePath         string
 	inputs                map[string]string
 	configPath            string
@@ -28,64 +27,6 @@ type workflow struct {
 	cfg     *config.Config
 	pol     *policy.Policy
 	baseDir string
-}
-
-// parseWorkflow parses CLI args and returns a configured workflow.
-func parseWorkflow(args []string) *workflow {
-	w := &workflow{inputs: make(map[string]string)}
-	w.agentfilePath, args = resolveAgentfile(args)
-
-	if _, err := os.Stat(w.agentfilePath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "error: %s not found\n", w.agentfilePath)
-		fmt.Fprintln(os.Stderr, "Use -f <path> to specify a different Agentfile")
-		os.Exit(1)
-	}
-
-	w.parseFlags(args)
-	return w
-}
-
-// parseFlags extracts run options from args.
-func (w *workflow) parseFlags(args []string) {
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--input" && i+1 < len(args):
-			i++
-			w.parseInput(args[i])
-		case strings.HasPrefix(arg, "--input="):
-			w.parseInput(strings.TrimPrefix(arg, "--input="))
-		case arg == "--config" && i+1 < len(args):
-			i++
-			w.configPath = args[i]
-		case strings.HasPrefix(arg, "--config="):
-			w.configPath = strings.TrimPrefix(arg, "--config=")
-		case arg == "--policy" && i+1 < len(args):
-			i++
-			w.policyPath = args[i]
-		case strings.HasPrefix(arg, "--policy="):
-			w.policyPath = strings.TrimPrefix(arg, "--policy=")
-		case arg == "--workspace" && i+1 < len(args):
-			i++
-			w.workspacePath = args[i]
-		case strings.HasPrefix(arg, "--workspace="):
-			w.workspacePath = strings.TrimPrefix(arg, "--workspace=")
-		case arg == "--persist-memory":
-			t := true
-			w.persistMemoryOverride = &t
-		case arg == "--no-persist-memory":
-			f := false
-			w.persistMemoryOverride = &f
-		}
-	}
-}
-
-// parseInput handles key=value input parsing.
-func (w *workflow) parseInput(s string) {
-	parts := strings.SplitN(s, "=", 2)
-	if len(parts) == 2 {
-		w.inputs[parts[0]] = parts[1]
-	}
 }
 
 // load loads config, agentfile, and policy.

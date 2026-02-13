@@ -2,59 +2,62 @@ package main
 
 import (
 	"testing"
+
+	"github.com/alecthomas/kong"
 )
 
-func TestParsePackArgs(t *testing.T) {
-	tests := []struct {
-		name      string
-		args      []string
-		sourceDir string
-		wantOut   string
-		wantLic   string
-	}{
-		{
-			name:      "minimal",
-			args:      []string{},
-			sourceDir: "/src",
-		},
-		{
-			name:      "with output",
-			args:      []string{"--output", "pkg.agent"},
-			sourceDir: "/src",
-			wantOut:   "pkg.agent",
-		},
-		{
-			name:      "with output equals",
-			args:      []string{"--output=pkg.agent"},
-			sourceDir: "/src",
-			wantOut:   "pkg.agent",
-		},
-		{
-			name:      "short output",
-			args:      []string{"-o", "pkg.agent"},
-			sourceDir: "/src",
-			wantOut:   "pkg.agent",
-		},
-		{
-			name:      "with license",
-			args:      []string{"--license", "MIT"},
-			sourceDir: "/src",
-			wantLic:   "MIT",
-		},
+func TestPackCmd_AllFlags(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			opts := parsePackArgs(tt.args, tt.sourceDir)
-			if opts.SourceDir != tt.sourceDir {
-				t.Errorf("SourceDir = %q, want %q", opts.SourceDir, tt.sourceDir)
-			}
-			if opts.OutputPath != tt.wantOut {
-				t.Errorf("OutputPath = %q, want %q", opts.OutputPath, tt.wantOut)
-			}
-			if opts.License != tt.wantLic {
-				t.Errorf("License = %q, want %q", opts.License, tt.wantLic)
-			}
-		})
+	_, err = parser.Parse([]string{
+		"pack", "mydir",
+		"--output", "output.agent",
+		"--sign", "key.pem",
+		"--author", "Test Author",
+		"--email", "test@example.com",
+		"--license", "MIT",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cli.Pack.Dir != "mydir" {
+		t.Errorf("expected dir 'mydir', got %q", cli.Pack.Dir)
+	}
+	if cli.Pack.Output != "output.agent" {
+		t.Errorf("expected output 'output.agent', got %q", cli.Pack.Output)
+	}
+	if cli.Pack.Sign != "key.pem" {
+		t.Errorf("expected sign 'key.pem', got %q", cli.Pack.Sign)
+	}
+	if cli.Pack.Author != "Test Author" {
+		t.Errorf("expected author 'Test Author', got %q", cli.Pack.Author)
+	}
+	if cli.Pack.Email != "test@example.com" {
+		t.Errorf("expected email, got %q", cli.Pack.Email)
+	}
+	if cli.Pack.License != "MIT" {
+		t.Errorf("expected license 'MIT', got %q", cli.Pack.License)
+	}
+}
+
+func TestPackCmd_ShortOutput(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = parser.Parse([]string{"pack", "src", "-o", "out.zip"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cli.Pack.Output != "out.zip" {
+		t.Errorf("expected output 'out.zip', got %q", cli.Pack.Output)
 	}
 }

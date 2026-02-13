@@ -2,58 +2,31 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/vinayprograms/agent/internal/packaging"
 )
 
-// verifyPackage verifies a package signature.
-func verifyPackage(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: package path required")
-		os.Exit(1)
-	}
-
-	pkgPath := args[0]
-	pubKeyPath := parseVerifyArgs(args[1:])
-
+// runVerify verifies a package signature.
+func runVerify(pkgPath, keyPath string) error {
 	pkg, err := packaging.Load(pkgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error loading package: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("loading package: %w", err)
 	}
 
 	var pubKey []byte
-	if pubKeyPath != "" {
-		pubKey, err = packaging.LoadPublicKey(pubKeyPath)
+	if keyPath != "" {
+		pubKey, err = packaging.LoadPublicKey(keyPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error loading public key: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("loading public key: %w", err)
 		}
 	}
 
 	if err := packaging.Verify(pkg, pubKey); err != nil {
-		fmt.Fprintf(os.Stderr, "✗ Verification failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("verification failed: %w", err)
 	}
 
 	printVerifyResult(pkg)
-}
-
-func parseVerifyArgs(args []string) string {
-	var pubKeyPath string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--key" && i+1 < len(args):
-			i++
-			pubKeyPath = args[i]
-		case strings.HasPrefix(arg, "--key="):
-			pubKeyPath = strings.TrimPrefix(arg, "--key=")
-		}
-	}
-	return pubKeyPath
+	return nil
 }
 
 func printVerifyResult(pkg *packaging.Package) {

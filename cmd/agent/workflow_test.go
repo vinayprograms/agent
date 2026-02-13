@@ -1,102 +1,110 @@
 package main
 
 import (
-	"os"
 	"testing"
+
+	"github.com/alecthomas/kong"
 )
 
-func TestParseWorkflow_DefaultAgentfile(t *testing.T) {
-	// Create temp dir with Agentfile
-	dir := t.TempDir()
-	agentfile := dir + "/Agentfile"
-	if err := os.WriteFile(agentfile, []byte("NAME test\nGOAL main\n  OUTPUT result\nENDGOAL"), 0644); err != nil {
+func TestRunCmd_Defaults(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	oldWd, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldWd)
-
-	w := parseWorkflow(nil)
-	if w.agentfilePath != "Agentfile" {
-		t.Errorf("expected Agentfile path 'Agentfile', got %q", w.agentfilePath)
-	}
-}
-
-func TestParseWorkflow_CustomPath(t *testing.T) {
-	dir := t.TempDir()
-	agentfile := dir + "/custom.agent"
-	if err := os.WriteFile(agentfile, []byte("NAME test\nGOAL main\n  OUTPUT result\nENDGOAL"), 0644); err != nil {
+	_, err = parser.Parse([]string{"run"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	w := parseWorkflow([]string{"-f", agentfile})
-	if w.agentfilePath != agentfile {
-		t.Errorf("expected path %q, got %q", agentfile, w.agentfilePath)
+	if cli.Run.File != "Agentfile" {
+		t.Errorf("expected default file 'Agentfile', got %q", cli.Run.File)
 	}
 }
 
-func TestParseFlags_Inputs(t *testing.T) {
-	w := &workflow{inputs: make(map[string]string)}
-	w.parseFlags([]string{"--input", "key=value", "--input=foo=bar"})
-
-	if w.inputs["key"] != "value" {
-		t.Errorf("expected input key=value, got %v", w.inputs)
+func TestRunCmd_CustomFile(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if w.inputs["foo"] != "bar" {
-		t.Errorf("expected input foo=bar, got %v", w.inputs)
-	}
-}
 
-func TestParseFlags_Config(t *testing.T) {
-	w := &workflow{inputs: make(map[string]string)}
-	w.parseFlags([]string{"--config", "/path/to/config.toml"})
-	if w.configPath != "/path/to/config.toml" {
-		t.Errorf("expected config path, got %q", w.configPath)
+	_, err = parser.Parse([]string{"run", "-f", "custom.agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cli.Run.File != "custom.agent" {
+		t.Errorf("expected 'custom.agent', got %q", cli.Run.File)
 	}
 }
 
-func TestParseFlags_Policy(t *testing.T) {
-	w := &workflow{inputs: make(map[string]string)}
-	w.parseFlags([]string{"--policy=/path/to/policy.toml"})
-	if w.policyPath != "/path/to/policy.toml" {
-		t.Errorf("expected policy path, got %q", w.policyPath)
+func TestRunCmd_Inputs(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = parser.Parse([]string{"run", "-i", "key=value", "-i", "foo=bar"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cli.Run.Input["key"] != "value" {
+		t.Errorf("expected input key=value, got %v", cli.Run.Input)
+	}
+	if cli.Run.Input["foo"] != "bar" {
+		t.Errorf("expected input foo=bar, got %v", cli.Run.Input)
 	}
 }
 
-func TestParseFlags_Workspace(t *testing.T) {
-	w := &workflow{inputs: make(map[string]string)}
-	w.parseFlags([]string{"--workspace", "/tmp/workspace"})
-	if w.workspacePath != "/tmp/workspace" {
-		t.Errorf("expected workspace path, got %q", w.workspacePath)
+func TestRunCmd_AllFlags(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = parser.Parse([]string{
+		"run",
+		"--config", "/path/to/config.toml",
+		"--policy", "/path/to/policy.toml",
+		"--workspace", "/tmp/workspace",
+		"--persist-memory",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cli.Run.Config != "/path/to/config.toml" {
+		t.Errorf("expected config path, got %q", cli.Run.Config)
+	}
+	if cli.Run.Policy != "/path/to/policy.toml" {
+		t.Errorf("expected policy path, got %q", cli.Run.Policy)
+	}
+	if cli.Run.Workspace != "/tmp/workspace" {
+		t.Errorf("expected workspace path, got %q", cli.Run.Workspace)
+	}
+	if !cli.Run.PersistMemory {
+		t.Error("expected persist-memory to be true")
 	}
 }
 
-func TestParseFlags_PersistMemory(t *testing.T) {
-	tests := []struct {
-		flag     string
-		expected *bool
-	}{
-		{"--persist-memory", ptrBool(true)},
-		{"--no-persist-memory", ptrBool(false)},
+func TestRunCmd_NoPersistMemory(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		w := &workflow{inputs: make(map[string]string)}
-		w.parseFlags([]string{tt.flag})
-		if w.persistMemoryOverride == nil {
-			t.Errorf("%s: expected override, got nil", tt.flag)
-		} else if *w.persistMemoryOverride != *tt.expected {
-			t.Errorf("%s: expected %v, got %v", tt.flag, *tt.expected, *w.persistMemoryOverride)
-		}
+
+	_, err = parser.Parse([]string{"run", "--no-persist-memory"})
+	if err != nil {
+		t.Fatal(err)
 	}
-}
 
-func ptrBool(v bool) *bool { return &v }
-
-func TestParseInput(t *testing.T) {
-	w := &workflow{inputs: make(map[string]string)}
-	w.parseInput("key=value=with=equals")
-	if w.inputs["key"] != "value=with=equals" {
-		t.Errorf("expected value with equals, got %q", w.inputs["key"])
+	if !cli.Run.NoPersistMemory {
+		t.Error("expected no-persist-memory to be true")
 	}
 }
