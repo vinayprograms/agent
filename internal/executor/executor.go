@@ -264,7 +264,7 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		if !result.Tier2.Suspicious {
 			skipReason = "triage_benign"
 		}
-		e.logSecurityTriage(toolName, blockID, result.Tier2.Suspicious, "triage", result.Tier2.LatencyMs, skipReason)
+		e.logSecurityTriage(toolName, blockID, result.Tier2.Suspicious, "triage", result.Tier2.LatencyMs, result.Tier2.InputTokens, result.Tier2.OutputTokens, skipReason)
 	}
 
 	if result.Tier3 != nil {
@@ -272,7 +272,7 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		if result.Tier1 != nil && result.Tier1.Block != nil {
 			blockID = result.Tier1.Block.ID
 		}
-		e.logSecuritySupervisor(toolName, blockID, string(result.Tier3.Verdict), result.Tier3.Reason, "supervisor", result.Tier3.LatencyMs)
+		e.logSecuritySupervisor(toolName, blockID, string(result.Tier3.Verdict), result.Tier3.Reason, "supervisor", result.Tier3.LatencyMs, result.Tier3.InputTokens, result.Tier3.OutputTokens)
 	}
 
 	// Determine check path
@@ -416,7 +416,7 @@ func (e *Executor) logEvent(eventType, content string) {
 
 // LogBashSecurity logs a bash security decision to the session.
 // This is called by the bash security checker callback.
-func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason string, durationMs int64) {
+func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason string, durationMs int64, inputTokens, outputTokens int) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -440,13 +440,14 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
 		Meta: &session.EventMeta{
-			CheckName: step, // "deterministic" or "llm"
-			Pass:      allowed,
-			Action:    action,
-			Reason:    reason,
-			LatencyMs: durationMs,
-			// Store the command in Source for easy access
-			Source: command,
+			CheckName:    step, // "deterministic" or "llm"
+			Pass:         allowed,
+			Action:       action,
+			Reason:       reason,
+			LatencyMs:    durationMs,
+			Source:       command,
+			TokensIn:     inputTokens,
+			TokensOut:    outputTokens,
 		},
 	})
 	e.sessionManager.Update(e.session)
@@ -806,12 +807,12 @@ func convertTaintNode(n *security.TaintLineageNode) session.TaintNode {
 }
 
 // logSecurityTriage logs LLM triage check to session.
-func (e *Executor) logSecurityTriage(tool, blockID string, suspicious bool, model string, latencyMs int64, skipReason string) {
-	e.logSecurityTriageWithDetails(tool, blockID, suspicious, model, latencyMs, "", "", "", skipReason)
+func (e *Executor) logSecurityTriage(tool, blockID string, suspicious bool, model string, latencyMs int64, inputTokens, outputTokens int, skipReason string) {
+	e.logSecurityTriageWithDetails(tool, blockID, suspicious, model, latencyMs, inputTokens, outputTokens, "", "", "", skipReason)
 }
 
 // logSecurityTriageWithDetails logs LLM triage with full details.
-func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious bool, model string, latencyMs int64, prompt, response, thinking, skipReason string) {
+func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious bool, model string, latencyMs int64, inputTokens, outputTokens int, prompt, response, thinking, skipReason string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -826,6 +827,8 @@ func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious
 			Suspicious: suspicious,
 			Model:      model,
 			LatencyMs:  latencyMs,
+			TokensIn:   inputTokens,
+			TokensOut:  outputTokens,
 			Prompt:     prompt,
 			Response:   response,
 			Thinking:   thinking,
@@ -836,12 +839,12 @@ func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious
 }
 
 // logSecuritySupervisor logs supervisor review to session.
-func (e *Executor) logSecuritySupervisor(tool, blockID, verdict, reason, model string, latencyMs int64) {
-	e.logSecuritySupervisorWithDetails(tool, blockID, verdict, reason, model, latencyMs, "", "", "")
+func (e *Executor) logSecuritySupervisor(tool, blockID, verdict, reason, model string, latencyMs int64, inputTokens, outputTokens int) {
+	e.logSecuritySupervisorWithDetails(tool, blockID, verdict, reason, model, latencyMs, inputTokens, outputTokens, "", "", "")
 }
 
 // logSecuritySupervisorWithDetails logs supervisor review with full LLM details.
-func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reason, model string, latencyMs int64, prompt, response, thinking string) {
+func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reason, model string, latencyMs int64, inputTokens, outputTokens int, prompt, response, thinking string) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
@@ -858,6 +861,8 @@ func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reas
 			Reason:         reason,
 			Model:          model,
 			LatencyMs:      latencyMs,
+			TokensIn:       inputTokens,
+			TokensOut:      outputTokens,
 			Prompt:         prompt,
 			Response:       response,
 			Thinking:       thinking,

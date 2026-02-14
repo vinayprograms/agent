@@ -5,6 +5,7 @@ import (
 
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/memory"
+	"github.com/vinayprograms/agentkit/policy"
 	"github.com/vinayprograms/agentkit/tools"
 )
 
@@ -69,14 +70,18 @@ type llmGenerateAdapter struct {
 	provider llm.Provider
 }
 
-func (a *llmGenerateAdapter) Generate(ctx context.Context, prompt string) (string, error) {
+func (a *llmGenerateAdapter) Generate(ctx context.Context, prompt string) (*policy.GenerateResult, error) {
 	resp, err := a.provider.Chat(ctx, llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "user", Content: prompt},
 		},
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return resp.Content, nil
+	return &policy.GenerateResult{
+		Content:      resp.Content,
+		InputTokens:  resp.InputTokens,
+		OutputTokens: resp.OutputTokens,
+	}, nil
 }

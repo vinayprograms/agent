@@ -30,8 +30,8 @@ func TestLLMGenerateAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "test response" {
-		t.Errorf("got %q, want %q", result, "test response")
+	if result.Content != "test response" {
+		t.Errorf("got %q, want %q", result.Content, "test response")
 	}
 }
 
