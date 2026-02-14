@@ -33,3 +33,4 @@ sessions/
 # Signing keys
 *.pem
 /agent
+replay
