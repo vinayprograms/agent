@@ -56,7 +56,7 @@ RUN main USING analyze
 
 	// Run from src directory
 	srcDir := getSrcDir(t)
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", path)
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", path)
 	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -108,7 +108,7 @@ func TestSystem_ValidateInvalidAgentfile(t *testing.T) {
 			os.WriteFile(path, []byte(tt.content), 0644)
 
 			srcDir := getSrcDir(t)
-			cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", path)
+			cmd := exec.Command("go", "run", "./cmd/agent", "validate", path)
 			cmd.Dir = srcDir
 			output, _ := cmd.CombinedOutput()
 
@@ -134,7 +134,7 @@ LOOP step2 USING summarize WITHIN $max
 	path := filepath.Join(tmpDir, "Agentfile")
 	os.WriteFile(path, []byte(agentfile), 0644)
 
-	cmd := exec.Command("go", "run", "./cmd/agent", "inspect", "-f", path)
+	cmd := exec.Command("go", "run", "./cmd/agent", "inspect", path)
 	srcDir := getSrcDir(t); cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -193,7 +193,7 @@ RUN main USING analyze
 	path := filepath.Join(tmpDir, "Agentfile")
 	os.WriteFile(path, []byte(agentfile), 0644)
 
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", path)
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", path)
 	srcDir := getSrcDir(t); cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -217,7 +217,7 @@ RUN main USING analyze
 	path := filepath.Join(tmpDir, "Agentfile")
 	os.WriteFile(path, []byte(agentfile), 0644)
 
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", path)
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", path)
 	srcDir := getSrcDir(t); cmd.Dir = srcDir
 	output, _ := cmd.CombinedOutput()
 
@@ -229,7 +229,7 @@ RUN main USING analyze
 
 // TestSystem_HelpCommand tests the help command.
 func TestSystem_HelpCommand(t *testing.T) {
-	cmd := exec.Command("go", "run", "./cmd/agent", "help")
+	cmd := exec.Command("go", "run", "./cmd/agent", "--help")
 	srcDir := getSrcDir(t); cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -271,8 +271,9 @@ func TestSystem_UnknownCommand(t *testing.T) {
 	srcDir := getSrcDir(t); cmd.Dir = srcDir
 	output, _ := cmd.CombinedOutput()
 
-	if !strings.Contains(string(output), "unknown command") {
-		t.Errorf("expected 'unknown command' error, got: %s", output)
+	// Kong reports unknown commands as "unexpected argument"
+	if !strings.Contains(string(output), "unexpected argument") {
+		t.Errorf("expected 'unexpected argument' error, got: %s", output)
 	}
 }
 
@@ -303,7 +304,7 @@ RUN main USING review
 	os.WriteFile(filepath.Join(tmpDir, "Agentfile"), []byte(agentfile), 0644)
 
 	srcDir := getSrcDir(t)
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", filepath.Join(tmpDir, "Agentfile"))
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", filepath.Join(tmpDir, "Agentfile"))
 	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -347,7 +348,7 @@ RUN phase3 USING parallel-review
 	os.WriteFile(filepath.Join(tmpDir, "Agentfile"), []byte(agentfile), 0644)
 
 	srcDir := getSrcDir(t)
-	cmd := exec.Command("go", "run", "./cmd/agent", "validate", "-f", filepath.Join(tmpDir, "Agentfile"))
+	cmd := exec.Command("go", "run", "./cmd/agent", "validate", filepath.Join(tmpDir, "Agentfile"))
 	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
