@@ -617,7 +617,7 @@ RUN main USING risky_operation`
 	}
 
 	goal := wf.Goals[0]
-	if goal.Supervised == nil || !*goal.Supervised {
+	if goal.Supervision != SupervisionEnabled {
 		t.Error("expected goal to be supervised")
 	}
 	if goal.HumanOnly {
@@ -637,7 +637,7 @@ RUN main USING deploy`
 	}
 
 	goal := wf.Goals[0]
-	if goal.Supervised == nil || !*goal.Supervised {
+	if goal.Supervision != SupervisionEnabled {
 		t.Error("expected goal to be supervised")
 	}
 	if !goal.HumanOnly {
@@ -662,7 +662,7 @@ RUN main USING trivial`
 	}
 
 	goal := wf.Goals[0]
-	if goal.Supervised == nil || *goal.Supervised {
+	if goal.Supervision != SupervisionDisabled {
 		t.Error("expected goal to be unsupervised")
 	}
 }
@@ -680,7 +680,7 @@ RUN main USING analyze`
 	}
 
 	agent := wf.Agents[0]
-	if agent.Supervised == nil || !*agent.Supervised {
+	if agent.Supervision != SupervisionEnabled {
 		t.Error("expected agent to be supervised")
 	}
 }
@@ -701,7 +701,7 @@ RUN main USING deploy`
 	if agent.Requires != "production" {
 		t.Errorf("expected Requires 'production', got %q", agent.Requires)
 	}
-	if agent.Supervised == nil || !*agent.Supervised {
+	if agent.Supervision != SupervisionEnabled {
 		t.Error("expected agent to be supervised")
 	}
 	if !agent.HumanOnly {
@@ -721,7 +721,7 @@ RUN main USING analyze SUPERVISED`
 	}
 
 	step := wf.Steps[0]
-	if step.Supervised == nil || !*step.Supervised {
+	if step.Supervision != SupervisionEnabled {
 		t.Error("expected step to be supervised")
 	}
 }
@@ -741,7 +741,7 @@ LOOP refine_loop USING refine WITHIN 10 SUPERVISED HUMAN`
 	if step.Type != StepLOOP {
 		t.Error("expected LOOP step")
 	}
-	if step.Supervised == nil || !*step.Supervised {
+	if step.Supervision != SupervisionEnabled {
 		t.Error("expected step to be supervised")
 	}
 	if !step.HumanOnly {
@@ -771,17 +771,17 @@ RUN phase3 USING deploy`
 	}
 
 	// Goal 1: inherits from workflow (supervised)
-	if wf.Goals[0].Supervised != nil {
-		t.Error("expected goal[0].Supervised to be nil (inherits)")
+	if wf.Goals[0].Supervision != SupervisionInherit {
+		t.Error("expected goal[0].Supervision to be Inherit")
 	}
 
 	// Goal 2: explicitly unsupervised
-	if wf.Goals[1].Supervised == nil || *wf.Goals[1].Supervised {
+	if wf.Goals[1].Supervision != SupervisionDisabled {
 		t.Error("expected goal[1] to be unsupervised")
 	}
 
 	// Goal 3: explicitly supervised with human
-	if wf.Goals[2].Supervised == nil || !*wf.Goals[2].Supervised {
+	if wf.Goals[2].Supervision != SupervisionEnabled {
 		t.Error("expected goal[2] to be supervised")
 	}
 	if !wf.Goals[2].HumanOnly {

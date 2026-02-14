@@ -61,14 +61,8 @@ func (c *RunCmd) Run(ctx *runContext) error {
 		debug:         c.Debug,
 	}
 
-	// Handle persist memory flags
-	if c.PersistMemory {
-		t := true
-		w.persistMemoryOverride = &t
-	} else if c.NoPersistMemory {
-		f := false
-		w.persistMemoryOverride = &f
-	}
+	// Handle persist memory flag
+	w.persistMemory = c.PersistMemory
 
 	if _, err := os.Stat(w.agentfilePath); os.IsNotExist(err) {
 		return fmt.Errorf("%s not found", w.agentfilePath)

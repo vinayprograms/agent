@@ -570,25 +570,12 @@ func (e *Executor) executeGoal(ctx context.Context, goal *agentfile.Goal) (strin
 
 // isSupervised determines if a goal should be supervised based on goal settings and workflow defaults.
 func (e *Executor) isSupervised(goal *agentfile.Goal) bool {
-	// Goal-level override takes precedence
-	if goal.Supervised != nil {
-		return *goal.Supervised
-	}
-	// Fall back to workflow-level default
-	return e.workflow.Supervised
+	return goal.IsSupervised(e.workflow)
 }
 
 // requiresHuman determines if a goal requires human approval.
 func (e *Executor) requiresHuman(goal *agentfile.Goal) bool {
-	// Goal-level override takes precedence
-	if goal.Supervised != nil && *goal.Supervised {
-		return goal.HumanOnly
-	}
-	// Fall back to workflow-level default
-	if e.workflow.Supervised {
-		return e.workflow.HumanOnly
-	}
-	return false
+	return goal.RequiresHuman(e.workflow)
 }
 
 // executeGoalWithTracking executes a single goal with four-phase execution when supervision is enabled.

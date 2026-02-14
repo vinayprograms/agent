@@ -871,7 +871,6 @@ func TestExecutor_GoalWithStructuredOutput(t *testing.T) {
 
 
 // Test supervision helpers
-func boolPtr(b bool) *bool { return &b }
 
 // Test isSupervised with goal-level override
 func TestExecutor_IsSupervised_GoalOverride(t *testing.T) {
@@ -880,7 +879,7 @@ func TestExecutor_IsSupervised_GoalOverride(t *testing.T) {
 		Supervised: true, // workflow is supervised
 		Goals: []agentfile.Goal{
 			{Name: "normal", Outcome: "Do something"},
-			{Name: "unsupervised", Outcome: "Quick task", Supervised: boolPtr(false)},
+			{Name: "unsupervised", Outcome: "Quick task", Supervision: agentfile.SupervisionDisabled},
 		},
 	}
 
@@ -904,7 +903,7 @@ func TestExecutor_IsSupervised_WorkflowDefault(t *testing.T) {
 		Supervised: false, // workflow is NOT supervised
 		Goals: []agentfile.Goal{
 			{Name: "normal", Outcome: "Do something"},
-			{Name: "supervised", Outcome: "Critical task", Supervised: boolPtr(true)},
+			{Name: "supervised", Outcome: "Critical task", Supervision: agentfile.SupervisionEnabled},
 		},
 	}
 
@@ -929,7 +928,7 @@ func TestExecutor_RequiresHuman(t *testing.T) {
 		HumanOnly:  false,
 		Goals: []agentfile.Goal{
 			{Name: "auto", Outcome: "Auto supervised"},
-			{Name: "human", Outcome: "Needs human", Supervised: boolPtr(true), HumanOnly: true},
+			{Name: "human", Outcome: "Needs human", Supervision: agentfile.SupervisionEnabled, HumanOnly: true},
 		},
 	}
 
@@ -1013,7 +1012,7 @@ func TestExecutor_PreFlight_GoalRequiresHuman(t *testing.T) {
 		Supervised: false, // workflow not supervised
 		Goals: []agentfile.Goal{
 			{Name: "analyze", Outcome: "Analyze data"},
-			{Name: "deploy", Outcome: "Deploy to prod", Supervised: boolPtr(true), HumanOnly: true},
+			{Name: "deploy", Outcome: "Deploy to prod", Supervision: agentfile.SupervisionEnabled, HumanOnly: true},
 		},
 	}
 

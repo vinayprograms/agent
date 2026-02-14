@@ -211,16 +211,14 @@ func (p *Parser) parseAgentStatement() (*Agent, error) {
 
 	// Check for optional supervision modifiers
 	if p.curToken.Type == TokenSUPERVISED {
-		supervised := true
-		agent.Supervised = &supervised
+		agent.Supervision = SupervisionEnabled
 		p.nextToken()
 		if p.curToken.Type == TokenHUMAN {
 			agent.HumanOnly = true
 			p.nextToken()
 		}
 	} else if p.curToken.Type == TokenUNSUPERVISED {
-		supervised := false
-		agent.Supervised = &supervised
+		agent.Supervision = SupervisionDisabled
 		p.nextToken()
 	}
 
@@ -278,16 +276,14 @@ func (p *Parser) parseGoalStatement() (*Goal, error) {
 
 	// Check for optional supervision modifiers
 	if p.curToken.Type == TokenSUPERVISED {
-		supervised := true
-		goal.Supervised = &supervised
+		goal.Supervision = SupervisionEnabled
 		p.nextToken()
 		if p.curToken.Type == TokenHUMAN {
 			goal.HumanOnly = true
 			p.nextToken()
 		}
 	} else if p.curToken.Type == TokenUNSUPERVISED {
-		supervised := false
-		goal.Supervised = &supervised
+		goal.Supervision = SupervisionDisabled
 		p.nextToken()
 	}
 
@@ -323,16 +319,14 @@ func (p *Parser) parseRunStatement() (*Step, error) {
 
 	// Check for optional supervision modifiers
 	if p.curToken.Type == TokenSUPERVISED {
-		supervised := true
-		step.Supervised = &supervised
+		step.Supervision = SupervisionEnabled
 		p.nextToken()
 		if p.curToken.Type == TokenHUMAN {
 			step.HumanOnly = true
 			p.nextToken()
 		}
 	} else if p.curToken.Type == TokenUNSUPERVISED {
-		supervised := false
-		step.Supervised = &supervised
+		step.Supervision = SupervisionDisabled
 		p.nextToken()
 	}
 
@@ -385,16 +379,14 @@ func (p *Parser) parseLoopStatement() (*Step, error) {
 
 	// Check for optional supervision modifiers
 	if p.curToken.Type == TokenSUPERVISED {
-		supervised := true
-		step.Supervised = &supervised
+		step.Supervision = SupervisionEnabled
 		p.nextToken()
 		if p.curToken.Type == TokenHUMAN {
 			step.HumanOnly = true
 			p.nextToken()
 		}
 	} else if p.curToken.Type == TokenUNSUPERVISED {
-		supervised := false
-		step.Supervised = &supervised
+		step.Supervision = SupervisionDisabled
 		p.nextToken()
 	}
 
