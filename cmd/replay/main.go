@@ -26,7 +26,7 @@ func main() {
 	verbosity := 0 // 0=normal, 1=-v, 2=-vv
 	noInteractive := false
 	liveMode := false
-	var inputCost, outputCost float64
+	var costSpecs []string
 	var paths []string
 
 	for i := 0; i < len(args); i++ {
@@ -41,30 +41,15 @@ func main() {
 			noInteractive = true
 		case args[i] == "-f" || args[i] == "--follow" || args[i] == "--live":
 			liveMode = true
-		case args[i] == "--in":
+		case args[i] == "--cost":
 			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "error: --in requires a value\n")
+				fmt.Fprintf(os.Stderr, "error: --cost requires a value (model:input,output)\n")
 				os.Exit(1)
 			}
 			i++
-			v, err := strconv.ParseFloat(args[i], 64)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: --in requires a number: %v\n", err)
-				os.Exit(1)
-			}
-			inputCost = v
-		case args[i] == "--out":
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "error: --out requires a value\n")
-				os.Exit(1)
-			}
-			i++
-			v, err := strconv.ParseFloat(args[i], 64)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: --out requires a number: %v\n", err)
-				os.Exit(1)
-			}
-			outputCost = v
+			costSpecs = append(costSpecs, args[i])
+		case strings.HasPrefix(args[i], "--cost="):
+			costSpecs = append(costSpecs, strings.TrimPrefix(args[i], "--cost="))
 		case args[i] == "-h" || args[i] == "--help":
 			printUsage()
 			os.Exit(0)
@@ -81,6 +66,13 @@ func main() {
 
 	if len(paths) == 0 {
 		printUsage()
+		os.Exit(1)
+	}
+
+	// Parse cost specs into options
+	opts, err := parseCostSpecs(costSpecs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -101,10 +93,6 @@ func main() {
 			os.Exit(1)
 		}
 
-		var opts []replay.ReplayerOption
-		if inputCost > 0 || outputCost > 0 {
-			opts = append(opts, replay.WithPricing(inputCost, outputCost))
-		}
 		r := replay.New(os.Stdout, verbosity, opts...)
 		if err := r.ReplayFileLive(paths[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -125,12 +113,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build options
-	var opts []replay.ReplayerOption
-	if inputCost > 0 || outputCost > 0 {
-		opts = append(opts, replay.WithPricing(inputCost, outputCost))
-	}
-
 	// Create multi-session replayer
 	r := replay.NewMulti(os.Stdout, verbosity, opts...)
 
@@ -146,6 +128,47 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+// parseCostSpecs parses cost specifications into replay options.
+func parseCostSpecs(specs []string) ([]replay.ReplayerOption, error) {
+	var opts []replay.ReplayerOption
+	for _, spec := range specs {
+		model, inPrice, outPrice, err := parseCostSpec(spec)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --cost %q: %w", spec, err)
+		}
+		opts = append(opts, replay.WithModelPricing(model, inPrice, outPrice))
+	}
+	return opts, nil
+}
+
+// parseCostSpec parses "model:input,output" format.
+func parseCostSpec(spec string) (string, float64, float64, error) {
+	parts := strings.SplitN(spec, ":", 2)
+	if len(parts) != 2 {
+		return "", 0, 0, fmt.Errorf("expected model:input,output format")
+	}
+	model := parts[0]
+	if model == "" {
+		return "", 0, 0, fmt.Errorf("model name cannot be empty")
+	}
+
+	prices := strings.Split(parts[1], ",")
+	if len(prices) != 2 {
+		return "", 0, 0, fmt.Errorf("expected input,output prices")
+	}
+
+	inPrice, err := strconv.ParseFloat(strings.TrimSpace(prices[0]), 64)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("invalid input price: %w", err)
+	}
+	outPrice, err := strconv.ParseFloat(strings.TrimSpace(prices[1]), 64)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("invalid output price: %w", err)
+	}
+
+	return model, inPrice, outPrice, nil
 }
 
 func printUsage() {
@@ -164,8 +187,8 @@ Options:
   -f, --follow      Live mode - watch file for changes and reload
   -v, --verbose     Show message content and tool results
   -vv               Very verbose - show full LLM prompts, responses, tokens, thinking
-  --in <cost>       Input token cost per 1M tokens (e.g., --in 3)
-  --out <cost>      Output token cost per 1M tokens (e.g., --out 15)
+  --cost MODEL:IN,OUT  Model pricing (per 1M tokens). Repeatable.
+                       Example: --cost claude-3-5-sonnet:3,15 --cost gpt-4o-mini:0.15,0.6
   --no-pager        Disable interactive pager (for piping)
   --version         Show version
   -h, --help        Show this help
@@ -177,7 +200,8 @@ Examples:
   agent-replay ./sessions/              # All .json files in directory
   agent-replay --no-pager session.json | grep SECURITY
   agent-replay -f session.json          # Watch for live updates
-  agent-replay --in 3 --out 15 session.json  # Show cost estimate
+  agent-replay --cost claude-3-5-sonnet:3,15 session.json
+  agent-replay --cost=claude-3-5-sonnet:3,15 --cost=gpt-4o-mini:0.15,0.6 session.json
 
 Navigation (interactive mode):
   ↑/↓, j/k          Scroll line by line

@@ -143,7 +143,7 @@ func (c *SetupCmd) Run(ctx *runContext) error {
 
 // Run executes the replay command.
 func (c *ReplayCmd) Run(ctx *runContext) error {
-	return runReplay(c.Session, c.Verbose, c.NoPager)
+	return runReplay(c.Session, c.Verbose, c.NoPager, c.Cost)
 }
 
 // Run executes the version command.

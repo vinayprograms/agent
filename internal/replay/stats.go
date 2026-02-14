@@ -318,14 +318,17 @@ func PrintStats(w io.Writer, stats *Stats) {
 	}
 }
 
-// Pricing holds cost per 1M tokens.
-type Pricing struct {
+// ModelPricing holds cost per 1M tokens for a single model.
+type ModelPricing struct {
 	InputPer1M  float64
 	OutputPer1M float64
 }
 
+// PricingMap maps model names to their pricing.
+type PricingMap map[string]*ModelPricing
+
 // PrintTokenUsage outputs token usage by model with optional cost calculation.
-func PrintTokenUsage(w io.Writer, stats *Stats, pricing *Pricing) {
+func PrintTokenUsage(w io.Writer, stats *Stats, pricing PricingMap) {
 	if len(stats.ModelUsage) == 0 {
 		return
 	}
@@ -334,6 +337,7 @@ func PrintTokenUsage(w io.Writer, stats *Stats, pricing *Pricing) {
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 	costStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // Green
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 
 	fmt.Fprintln(w, headerStyle.Render("Token Usage by Model:"))
 
@@ -346,6 +350,7 @@ func PrintTokenUsage(w io.Writer, stats *Stats, pricing *Pricing) {
 
 	var totalIn, totalOut int64
 	var totalCost float64
+	hasPricing := len(pricing) > 0
 
 	for _, model := range models {
 		usage := stats.ModelUsage[model]
@@ -363,12 +368,18 @@ func PrintTokenUsage(w io.Writer, stats *Stats, pricing *Pricing) {
 			labelStyle.Render("Output:"),
 			valueStyle.Render(formatTokens(usage.TokensOut)))
 
-		if pricing != nil {
-			cost := calculateCost(usage.TokensIn, usage.TokensOut, pricing)
-			totalCost += cost
-			fmt.Fprintf(w, "    %s %s\n",
-				labelStyle.Render("Cost:"),
-				costStyle.Render(fmt.Sprintf("$%.4f", cost)))
+		if hasPricing {
+			if mp, ok := pricing[model]; ok {
+				cost := calculateCost(usage.TokensIn, usage.TokensOut, mp)
+				totalCost += cost
+				fmt.Fprintf(w, "    %s %s\n",
+					labelStyle.Render("Cost:"),
+					costStyle.Render(fmt.Sprintf("$%.4f", cost)))
+			} else {
+				fmt.Fprintf(w, "    %s %s\n",
+					labelStyle.Render("Cost:"),
+					dimStyle.Render("(no pricing)"))
+			}
 		}
 	}
 
@@ -381,7 +392,7 @@ func PrintTokenUsage(w io.Writer, stats *Stats, pricing *Pricing) {
 		labelStyle.Render("Output:"),
 		valueStyle.Render(formatTokens(totalOut)))
 
-	if pricing != nil {
+	if hasPricing && totalCost > 0 {
 		fmt.Fprintf(w, "    %s %s\n",
 			labelStyle.Render("Total Cost:"),
 			costStyle.Render(fmt.Sprintf("$%.4f", totalCost)))
@@ -390,7 +401,7 @@ func PrintTokenUsage(w io.Writer, stats *Stats, pricing *Pricing) {
 }
 
 // calculateCost calculates cost from tokens and pricing.
-func calculateCost(tokensIn, tokensOut int64, pricing *Pricing) float64 {
+func calculateCost(tokensIn, tokensOut int64, pricing *ModelPricing) float64 {
 	inCost := float64(tokensIn) / 1_000_000 * pricing.InputPer1M
 	outCost := float64(tokensOut) / 1_000_000 * pricing.OutputPer1M
 	return inCost + outCost

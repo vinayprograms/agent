@@ -73,9 +73,10 @@ type SetupCmd struct{}
 
 // ReplayCmd replays a session for analysis.
 type ReplayCmd struct {
-	Session string `arg:"" help:"Session file(s) to replay (supports glob patterns)"`
-	Verbose int    `short:"v" type:"counter" help:"Verbosity level (-v, -vv)"`
-	NoPager bool   `help:"Disable pager for output"`
+	Session string   `arg:"" help:"Session file(s) to replay (supports glob patterns)"`
+	Verbose int      `short:"v" type:"counter" help:"Verbosity level (-v, -vv)"`
+	NoPager bool     `help:"Disable pager for output"`
+	Cost    []string `help:"Model pricing: model:input,output (per 1M tokens). Repeatable." placeholder:"MODEL:IN,OUT"`
 }
 
 // VersionCmd shows version information.

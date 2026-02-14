@@ -13,9 +13,9 @@ import (
 // Replayer reads and formats session events for forensic analysis.
 type Replayer struct {
 	output         io.Writer
-	verbosity      int      // 0=normal, 1=verbose (-v), 2=very verbose (-vv)
-	maxContentSize int      // Maximum size for Content fields (0 = unlimited)
-	pricing        *Pricing // Optional pricing for cost calculation
+	verbosity      int        // 0=normal, 1=verbose (-v), 2=very verbose (-vv)
+	maxContentSize int        // Maximum size for Content fields (0 = unlimited)
+	pricing        PricingMap // Optional per-model pricing for cost calculation
 }
 
 // ReplayerOption configures a Replayer.
@@ -28,10 +28,13 @@ func WithMaxContentSize(size int) ReplayerOption {
 	}
 }
 
-// WithPricing enables cost calculation with the given pricing.
-func WithPricing(inputPer1M, outputPer1M float64) ReplayerOption {
+// WithModelPricing adds pricing for a specific model (per 1M tokens).
+func WithModelPricing(model string, inputPer1M, outputPer1M float64) ReplayerOption {
 	return func(r *Replayer) {
-		r.pricing = &Pricing{
+		if r.pricing == nil {
+			r.pricing = make(PricingMap)
+		}
+		r.pricing[model] = &ModelPricing{
 			InputPer1M:  inputPer1M,
 			OutputPer1M: outputPer1M,
 		}
