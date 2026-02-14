@@ -11,7 +11,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/joho/godotenv v1.5.1
 	github.com/muesli/reflow v0.3.0
-	github.com/vinayprograms/agentkit v0.0.0-20260214003136-c889f925685a
+	github.com/vinayprograms/agentkit v0.0.0-20260214011219-2ecde8ec8e42
 	gopkg.in/yaml.v3 v3.0.1
 )
 
