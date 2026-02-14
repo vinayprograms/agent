@@ -280,6 +280,7 @@ func (rt *runtime) setupTelemetry() error {
 			Endpoint:       rt.cfg.Telemetry.Endpoint,
 			Protocol:       protocol,
 			Insecure:       rt.cfg.Telemetry.Insecure,
+			Headers:        rt.cfg.Telemetry.Headers,
 			Debug:          rt.debug,
 		})
 		if err != nil {
