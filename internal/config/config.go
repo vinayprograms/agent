@@ -61,8 +61,9 @@ type WebConfig struct {
 // TelemetryConfig contains telemetry settings.
 type TelemetryConfig struct {
 	Enabled  bool   `toml:"enabled"`
-	Endpoint string `toml:"endpoint"`
-	Protocol string `toml:"protocol"` // http, otlp, file, noop
+	Endpoint string `toml:"endpoint"` // OTLP endpoint (e.g., localhost:4317)
+	Protocol string `toml:"protocol"` // grpc (default) or http
+	Insecure bool   `toml:"insecure"` // Disable TLS (default false)
 }
 
 // StorageConfig contains persistent storage settings.

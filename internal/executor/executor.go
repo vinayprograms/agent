@@ -409,12 +409,19 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 	}
 	e.logger.ExecutionStart(workflowName)
 
+	// Start workflow span
+	ctx, workflowSpan := e.startWorkflowSpan(ctx, workflowName)
+	defer func() {
+		// Span will be ended by the return paths below
+	}()
+
 	// Set main agent identity in context (workflow name as both name and role)
 	ctx = withAgentIdentity(ctx, workflowName, "main")
 
 	// Pre-flight check for SUPERVISED HUMAN requirements
 	if err := e.PreFlight(); err != nil {
 		e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
+		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
 		return &Result{Status: StatusFailed, Error: err.Error()}, err
 	}
 
@@ -431,6 +438,7 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 	// Bind inputs
 	if err := e.bindInputs(inputs); err != nil {
 		e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
+		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
 		return &Result{Status: StatusFailed, Error: err.Error()}, err
 	}
 
@@ -447,6 +455,7 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 				result.Status = StatusFailed
 				result.Error = err.Error()
 				e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
+				e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
 				return result, err
 			}
 		} else if step.Type == agentfile.StepLOOP {
@@ -454,6 +463,7 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 				result.Status = StatusFailed
 				result.Error = err.Error()
 				e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
+				e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
 				return result, err
 			}
 		}
@@ -462,6 +472,7 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 	result.Status = StatusComplete
 	result.Outputs = e.outputs
 	e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusComplete))
+	e.endWorkflowSpan(workflowSpan, string(StatusComplete), nil)
 	return result, nil
 }
 

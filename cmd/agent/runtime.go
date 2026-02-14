@@ -39,6 +39,7 @@ type runtime struct {
 	registry       *tools.Registry
 	bashLLMChecker *policy.SmallLLMChecker
 	telem          telemetry.Exporter
+	otelProvider   *telemetry.Provider // OpenTelemetry tracing provider
 	exec           *executor.Executor
 	mcpManager     *mcp.Manager
 	sessionMgr     session.SessionManager
@@ -249,10 +250,13 @@ func (rt *runtime) printMemoryStatus(persist, semantic bool) {
 	}
 }
 
-// setupTelemetry creates the telemetry exporter.
+// setupTelemetry creates the telemetry exporter and OTel provider.
 func (rt *runtime) setupTelemetry() error {
 	var err error
-	if rt.cfg.Telemetry.Enabled {
+
+	// Legacy exporter (for backwards compatibility)
+	if rt.cfg.Telemetry.Enabled && rt.cfg.Telemetry.Protocol != "grpc" && rt.cfg.Telemetry.Protocol != "http" {
+		// Old-style protocol (file, http endpoint, etc.)
 		rt.telem, err = telemetry.NewExporter(rt.cfg.Telemetry.Protocol, rt.cfg.Telemetry.Endpoint)
 		if err != nil {
 			return fmt.Errorf("creating telemetry exporter: %w", err)
@@ -261,6 +265,35 @@ func (rt *runtime) setupTelemetry() error {
 		rt.telem = telemetry.NewNoopExporter()
 	}
 	rt.addCloser(func() { rt.telem.Close() })
+
+	// OpenTelemetry tracing provider
+	if rt.cfg.Telemetry.Enabled && rt.cfg.Telemetry.Endpoint != "" {
+		protocol := rt.cfg.Telemetry.Protocol
+		if protocol == "" {
+			protocol = "grpc"
+		}
+
+		ctx := context.Background()
+		rt.otelProvider, err = telemetry.InitProvider(ctx, telemetry.ProviderConfig{
+			ServiceName:    "agent",
+			ServiceVersion: version,
+			Endpoint:       rt.cfg.Telemetry.Endpoint,
+			Protocol:       protocol,
+			Insecure:       rt.cfg.Telemetry.Insecure,
+			Debug:          rt.debug,
+		})
+		if err != nil {
+			// Log warning but don't fail - tracing is optional
+			fmt.Fprintf(os.Stderr, "WARN: failed to initialize OpenTelemetry: %v\n", err)
+		} else {
+			rt.addCloser(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				rt.otelProvider.Shutdown(ctx)
+			})
+		}
+	}
+
 	return nil
 }
 
