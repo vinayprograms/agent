@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/vinayprograms/agent/internal/replay"
@@ -25,6 +26,7 @@ func main() {
 	verbosity := 0 // 0=normal, 1=-v, 2=-vv
 	noInteractive := false
 	liveMode := false
+	var inputCost, outputCost float64
 	var paths []string
 
 	for i := 0; i < len(args); i++ {
@@ -39,6 +41,30 @@ func main() {
 			noInteractive = true
 		case args[i] == "-f" || args[i] == "--follow" || args[i] == "--live":
 			liveMode = true
+		case args[i] == "--in":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: --in requires a value\n")
+				os.Exit(1)
+			}
+			i++
+			v, err := strconv.ParseFloat(args[i], 64)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: --in requires a number: %v\n", err)
+				os.Exit(1)
+			}
+			inputCost = v
+		case args[i] == "--out":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: --out requires a value\n")
+				os.Exit(1)
+			}
+			i++
+			v, err := strconv.ParseFloat(args[i], 64)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: --out requires a number: %v\n", err)
+				os.Exit(1)
+			}
+			outputCost = v
 		case args[i] == "-h" || args[i] == "--help":
 			printUsage()
 			os.Exit(0)
@@ -75,7 +101,11 @@ func main() {
 			os.Exit(1)
 		}
 
-		r := replay.New(os.Stdout, verbosity)
+		var opts []replay.ReplayerOption
+		if inputCost > 0 || outputCost > 0 {
+			opts = append(opts, replay.WithPricing(inputCost, outputCost))
+		}
+		r := replay.New(os.Stdout, verbosity, opts...)
 		if err := r.ReplayFileLive(paths[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -95,8 +125,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Build options
+	var opts []replay.ReplayerOption
+	if inputCost > 0 || outputCost > 0 {
+		opts = append(opts, replay.WithPricing(inputCost, outputCost))
+	}
+
 	// Create multi-session replayer
-	r := replay.NewMulti(os.Stdout, verbosity)
+	r := replay.NewMulti(os.Stdout, verbosity, opts...)
 
 	// Use interactive pager when stdout is a TTY and not disabled
 	if !noInteractive && isTerminal(os.Stdout) {
@@ -128,6 +164,8 @@ Options:
   -f, --follow      Live mode - watch file for changes and reload
   -v, --verbose     Show message content and tool results
   -vv               Very verbose - show full LLM prompts, responses, tokens, thinking
+  --in <cost>       Input token cost per 1M tokens (e.g., --in 3)
+  --out <cost>      Output token cost per 1M tokens (e.g., --out 15)
   --no-pager        Disable interactive pager (for piping)
   --version         Show version
   -h, --help        Show this help
@@ -139,6 +177,7 @@ Examples:
   agent-replay ./sessions/              # All .json files in directory
   agent-replay --no-pager session.json | grep SECURITY
   agent-replay -f session.json          # Watch for live updates
+  agent-replay --in 3 --out 15 session.json  # Show cost estimate
 
 Navigation (interactive mode):
   ↑/↓, j/k          Scroll line by line
