@@ -33,15 +33,16 @@ type runtime struct {
 	inputs map[string]string
 
 	// Components
-	provider    llm.Provider
-	smallLLM    llm.Provider
-	registry    *tools.Registry
-	telem       telemetry.Exporter
-	exec        *executor.Executor
-	mcpManager  *mcp.Manager
-	sessionMgr  session.SessionManager
-	sess        *session.Session
-	secVerifier *security.Verifier
+	provider       llm.Provider
+	smallLLM       llm.Provider
+	registry       *tools.Registry
+	bashLLMChecker *policy.SmallLLMChecker
+	telem          telemetry.Exporter
+	exec           *executor.Executor
+	mcpManager     *mcp.Manager
+	sessionMgr     session.SessionManager
+	sess           *session.Session
+	secVerifier    *security.Verifier
 
 	// Storage
 	storagePath string
@@ -161,7 +162,8 @@ func (rt *runtime) setupRegistry() {
 	rt.setupBashChecker()
 	if rt.smallLLM != nil {
 		rt.registry.SetSummarizer(llm.NewSummarizer(rt.smallLLM))
-		rt.registry.SetBashLLMChecker(policy.NewSmallLLMChecker(&llmGenerateAdapter{rt.smallLLM}))
+		rt.bashLLMChecker = policy.NewSmallLLMChecker(&llmGenerateAdapter{rt.smallLLM})
+		rt.registry.SetBashLLMChecker(rt.bashLLMChecker)
 	}
 	rt.registry.SetCredentials(rt.creds)
 }
@@ -332,6 +334,10 @@ func (rt *runtime) setupSecurity() {
 	if mode == security.ModeResearch {
 		fmt.Fprintf(os.Stderr, "🔓 Security: mode=research, scope=%q\n", scope)
 		rt.exec.SetSecurityResearchScope(scope)
+		// Also set scope on bash LLM checker so it knows about research context
+		if rt.bashLLMChecker != nil {
+			rt.bashLLMChecker.SetSecurityScope(scope)
+		}
 	} else {
 		fmt.Fprintf(os.Stderr, "🔒 Security: mode=%s, user_trust=%s\n", mode, userTrust)
 	}
