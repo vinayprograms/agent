@@ -26,6 +26,7 @@ type RunCmd struct {
 	Workspace       string            `help:"Workspace directory"`
 	PersistMemory   bool              `help:"Enable persistent memory (overrides config)"`
 	NoPersistMemory bool              `help:"Disable persistent memory (overrides config)"`
+	Debug           bool              `help:"Enable verbose logging (prompts, responses, tool outputs)"`
 }
 
 // ValidateCmd validates an Agentfile.

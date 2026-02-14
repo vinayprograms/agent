@@ -31,6 +31,7 @@ type runtime struct {
 	pol    *policy.Policy
 	creds  *credentials.Credentials
 	inputs map[string]string
+	debug  bool
 
 	// Components
 	provider       llm.Provider
@@ -61,6 +62,7 @@ func newRuntime(w *workflow, creds *credentials.Credentials) *runtime {
 		pol:    w.pol,
 		creds:  creds,
 		inputs: w.inputs,
+		debug:  w.debug,
 	}
 	rt.resolveStoragePath()
 	return rt
@@ -265,6 +267,7 @@ func (rt *runtime) setupTelemetry() error {
 // createExecutor creates the workflow executor.
 func (rt *runtime) createExecutor() {
 	rt.exec = executor.NewExecutor(rt.wf, rt.provider, rt.registry, rt.pol)
+	rt.exec.SetDebug(rt.debug)
 }
 
 // setupMCP initializes MCP servers.

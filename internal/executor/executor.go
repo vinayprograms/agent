@@ -92,6 +92,9 @@ type Executor struct {
 	policy          *policy.Policy
 	logger          *logging.Logger
 
+	// Debug mode - when true, logs full content (prompts, responses, tool outputs)
+	debug bool
+
 	// MCP support
 	mcpManager *mcp.Manager
 
@@ -189,6 +192,12 @@ func (e *Executor) SetSecurityVerifier(v *security.Verifier) {
 // When set, system prompts will include context indicating authorized security research.
 func (e *Executor) SetSecurityResearchScope(scope string) {
 	e.securityResearchScope = scope
+}
+
+// SetDebug enables verbose logging of prompts, responses, and tool outputs.
+// When disabled (default), content is redacted to prevent PII leakage in production.
+func (e *Executor) SetDebug(debug bool) {
+	e.debug = debug
 }
 
 // SetObservationExtraction enables observation extraction and storage for semantic memory.

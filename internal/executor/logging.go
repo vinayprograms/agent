@@ -111,18 +111,20 @@ func (e *Executor) logToolResult(ctx context.Context, name string, args map[stri
 	// Get agent identity from context (thread-safe for parallel execution)
 	agentID := getAgentIdentity(ctx)
 
-	// Convert result to string for content
+	// Only include tool output in debug mode (PII protection)
 	var content string
-	switch v := result.(type) {
-	case string:
-		content = v
-	case []byte:
-		content = string(v)
-	default:
-		if b, err := json.Marshal(result); err == nil {
-			content = string(b)
-		} else {
-			content = fmt.Sprintf("%v", result)
+	if e.debug {
+		switch v := result.(type) {
+		case string:
+			content = v
+		case []byte:
+			content = string(v)
+		default:
+			if b, err := json.Marshal(result); err == nil {
+				content = string(b)
+			} else {
+				content = fmt.Sprintf("%v", result)
+			}
 		}
 	}
 
@@ -153,28 +155,35 @@ func (e *Executor) logLLMCall(ctx context.Context, eventType string, messages []
 
 	agentID := getAgentIdentity(ctx)
 
-	// Build prompt from messages
-	var promptParts []string
-	for _, msg := range messages {
-		promptParts = append(promptParts, fmt.Sprintf("[%s] %s", msg.Role, truncateForLog(msg.Content, 500)))
+	// Build meta with model/token info (always logged)
+	meta := &session.EventMeta{
+		Model:     resp.Model,
+		TokensIn:  resp.InputTokens,
+		TokensOut: resp.OutputTokens,
+	}
+
+	// Only log content in debug mode (PII protection)
+	var content string
+	if e.debug {
+		var promptParts []string
+		for _, msg := range messages {
+			promptParts = append(promptParts, fmt.Sprintf("[%s] %s", msg.Role, truncateForLog(msg.Content, 500)))
+		}
+		content = truncateForLog(resp.Content, 1000)
+		meta.Prompt = truncateForLog(fmt.Sprintf("%v", promptParts), 2000)
+		meta.Response = truncateForLog(resp.Content, 2000)
+		meta.Thinking = truncateForLog(resp.Thinking, 2000)
 	}
 
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:       eventType,
 		Goal:       e.currentGoal,
-		Content:    truncateForLog(resp.Content, 1000),
+		Content:    content,
 		DurationMs: duration.Milliseconds(),
 		Agent:      agentID.Name,
 		AgentRole:  agentID.Role,
 		Timestamp:  time.Now(),
-		Meta: &session.EventMeta{
-			Model:     resp.Model,
-			TokensIn:  resp.InputTokens,
-			TokensOut: resp.OutputTokens,
-			Prompt:    truncateForLog(fmt.Sprintf("%v", promptParts), 2000),
-			Response:  truncateForLog(resp.Content, 2000),
-			Thinking:  truncateForLog(resp.Thinking, 2000),
-		},
+		Meta:       meta,
 	})
 	e.sessionManager.Update(e.session)
 }
@@ -200,17 +209,21 @@ func (e *Executor) logGoalEnd(goalName, output string) {
 		return
 	}
 
-	// Truncate long outputs
-	truncatedOutput := output
-	const maxLen = 2000
-	if len(output) > maxLen {
-		truncatedOutput = output[:maxLen] + "... (truncated)"
+	// Only include output content in debug mode (PII protection)
+	var content string
+	if e.debug {
+		const maxLen = 2000
+		if len(output) > maxLen {
+			content = output[:maxLen] + "... (truncated)"
+		} else {
+			content = output
+		}
 	}
 
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:      session.EventGoalEnd,
 		Goal:      goalName,
-		Content:   truncatedOutput,
+		Content:   content,
 		Timestamp: time.Now(),
 	})
 	e.sessionManager.Update(e.session)
@@ -221,15 +234,23 @@ func (e *Executor) logPhaseCommit(goal, commitment, confidence string, durationM
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
+
+	// Only include commitment content in debug mode (PII protection)
+	var content, commitmentMeta string
+	if e.debug {
+		content = commitment
+		commitmentMeta = commitment
+	}
+
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:       session.EventPhaseCommit,
 		Goal:       goal,
-		Content:    commitment,
+		Content:    content,
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
 		Meta: &session.EventMeta{
 			Phase:      "COMMIT",
-			Commitment: commitment,
+			Commitment: commitmentMeta,
 			Confidence: confidence,
 		},
 	})
@@ -241,15 +262,23 @@ func (e *Executor) logPhaseExecute(goal, result string, durationMs int64) {
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
+
+	// Only include result content in debug mode (PII protection)
+	var content, resultMeta string
+	if e.debug {
+		content = truncateForLog(result, 1000)
+		resultMeta = truncateForLog(result, 2000)
+	}
+
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:       session.EventPhaseExecute,
 		Goal:       goal,
-		Content:    truncateForLog(result, 1000),
+		Content:    content,
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
 		Meta: &session.EventMeta{
 			Phase:  "EXECUTE",
-			Result: truncateForLog(result, 2000),
+			Result: resultMeta,
 		},
 	})
 	e.sessionManager.Update(e.session)
@@ -286,6 +315,23 @@ func (e *Executor) logPhaseSuperviseWithDetails(goal, step, verdict, guidance st
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
+
+	meta := &session.EventMeta{
+		Phase:          "SUPERVISE",
+		SupervisorType: supervisorType,
+		Verdict:        verdict,
+		HumanRequired:  humanRequired,
+		Model:          model,
+	}
+
+	// Only include LLM content in debug mode (PII protection)
+	if e.debug {
+		meta.Guidance = guidance
+		meta.Prompt = prompt
+		meta.Response = response
+		meta.Thinking = thinking
+	}
+
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:       session.EventPhaseSupervise,
 		Goal:       goal,
@@ -293,17 +339,7 @@ func (e *Executor) logPhaseSuperviseWithDetails(goal, step, verdict, guidance st
 		Content:    fmt.Sprintf("Verdict: %s", verdict),
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
-		Meta: &session.EventMeta{
-			Phase:          "SUPERVISE",
-			SupervisorType: supervisorType,
-			Verdict:        verdict,
-			Guidance:       guidance,
-			HumanRequired:  humanRequired,
-			Model:          model,
-			Prompt:         prompt,
-			Response:       response,
-			Thinking:       thinking,
-		},
+		Meta:       meta,
 	})
 	e.sessionManager.Update(e.session)
 }
@@ -337,10 +373,17 @@ func (e *Executor) logSecurityBlockWithTaint(blockID, trust, blockType, source, 
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
+
+	// Only include XML content in debug mode (PII protection)
+	var content string
+	if e.debug {
+		content = truncateForLog(xmlBlock, 500)
+	}
+
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:      session.EventSecurityBlock,
 		Goal:      e.currentGoal,
-		Content:   truncateForLog(xmlBlock, 500),
+		Content:   content,
 		Timestamp: time.Now(),
 		Meta: &session.EventMeta{
 			BlockID:   blockID,
@@ -414,25 +457,32 @@ func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
+
+	meta := &session.EventMeta{
+		CheckName:  "triage",
+		BlockID:    blockID,
+		Suspicious: suspicious,
+		Model:      model,
+		LatencyMs:  latencyMs,
+		TokensIn:   inputTokens,
+		TokensOut:  outputTokens,
+		SkipReason: skipReason,
+	}
+
+	// Only include LLM content in debug mode (PII protection)
+	if e.debug {
+		meta.Prompt = prompt
+		meta.Response = response
+		meta.Thinking = thinking
+	}
+
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:       session.EventSecurityTriage,
 		Tool:       tool,
 		Goal:       e.currentGoal,
 		DurationMs: latencyMs,
 		Timestamp:  time.Now(),
-		Meta: &session.EventMeta{
-			CheckName:  "triage",
-			BlockID:    blockID,
-			Suspicious: suspicious,
-			Model:      model,
-			LatencyMs:  latencyMs,
-			TokensIn:   inputTokens,
-			TokensOut:  outputTokens,
-			Prompt:     prompt,
-			Response:   response,
-			Thinking:   thinking,
-			SkipReason: skipReason,
-		},
+		Meta:       meta,
 	})
 	e.sessionManager.Update(e.session)
 }
@@ -447,26 +497,33 @@ func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reas
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
+
+	meta := &session.EventMeta{
+		SupervisorType: "security",
+		CheckName:      "supervisor",
+		BlockID:        blockID,
+		Verdict:        verdict,
+		Model:          model,
+		LatencyMs:      latencyMs,
+		TokensIn:       inputTokens,
+		TokensOut:      outputTokens,
+	}
+
+	// Only include LLM content in debug mode (PII protection)
+	if e.debug {
+		meta.Reason = reason
+		meta.Prompt = prompt
+		meta.Response = response
+		meta.Thinking = thinking
+	}
+
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:       session.EventSecuritySupervisor,
 		Tool:       tool,
 		Goal:       e.currentGoal,
 		DurationMs: latencyMs,
 		Timestamp:  time.Now(),
-		Meta: &session.EventMeta{
-			SupervisorType: "security",
-			CheckName:      "supervisor",
-			BlockID:        blockID,
-			Verdict:        verdict,
-			Reason:         reason,
-			Model:          model,
-			LatencyMs:      latencyMs,
-			TokensIn:       inputTokens,
-			TokensOut:      outputTokens,
-			Prompt:         prompt,
-			Response:       response,
-			Thinking:       thinking,
-		},
+		Meta:       meta,
 	})
 	e.sessionManager.Update(e.session)
 }
@@ -496,19 +553,26 @@ func (e *Executor) logSubAgentStart(name, role, model, task string, inputs map[s
 	if e.session == nil || e.sessionManager == nil {
 		return
 	}
+
+	meta := &session.EventMeta{
+		SubAgentName:  name,
+		SubAgentRole:  role,
+		SubAgentModel: model,
+	}
+
+	// Only include task and inputs in debug mode (PII protection)
+	if e.debug {
+		meta.SubAgentTask = task
+		meta.SubAgentInputs = inputs
+	}
+
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:      session.EventSubAgentStart,
 		Goal:      e.currentGoal,
 		Agent:     name,
 		AgentRole: role,
 		Timestamp: time.Now(),
-		Meta: &session.EventMeta{
-			SubAgentName:   name,
-			SubAgentRole:   role,
-			SubAgentModel:  model,
-			SubAgentTask:   task,
-			SubAgentInputs: inputs,
-		},
+		Meta:      meta,
 	})
 	e.sessionManager.Update(e.session)
 }
@@ -524,6 +588,18 @@ func (e *Executor) logSubAgentEnd(name, role, model, output string, durationMs i
 		errStr = err.Error()
 		success = false
 	}
+
+	meta := &session.EventMeta{
+		SubAgentName:  name,
+		SubAgentRole:  role,
+		SubAgentModel: model,
+	}
+
+	// Only include output in debug mode (PII protection)
+	if e.debug {
+		meta.SubAgentOutput = truncateForLog(output, 2000)
+	}
+
 	e.session.Events = append(e.session.Events, session.Event{
 		Type:       session.EventSubAgentEnd,
 		Goal:       e.currentGoal,
@@ -533,12 +609,7 @@ func (e *Executor) logSubAgentEnd(name, role, model, output string, durationMs i
 		Success:    &success,
 		Error:      errStr,
 		Timestamp:  time.Now(),
-		Meta: &session.EventMeta{
-			SubAgentName:   name,
-			SubAgentRole:   role,
-			SubAgentModel:  model,
-			SubAgentOutput: truncateForLog(output, 2000),
-		},
+		Meta:       meta,
 	})
 	e.sessionManager.Update(e.session)
 }

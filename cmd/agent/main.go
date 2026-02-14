@@ -58,6 +58,7 @@ func (c *RunCmd) Run(ctx *runContext) error {
 		configPath:    c.Config,
 		policyPath:    c.Policy,
 		workspacePath: c.Workspace,
+		debug:         c.Debug,
 	}
 
 	// Handle persist memory flags

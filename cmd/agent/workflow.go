@@ -21,6 +21,7 @@ type workflow struct {
 	policyPath            string
 	workspacePath         string
 	persistMemoryOverride *bool
+	debug                 bool
 
 	// Loaded artifacts
 	wf      *agentfile.Workflow
