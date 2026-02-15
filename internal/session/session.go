@@ -371,6 +371,7 @@ type JSONLRecord struct {
 type FileStore struct {
 	dir           string
 	writtenEvents map[string]int // session ID -> number of events written
+	mu            sync.Mutex     // protects concurrent Save calls
 }
 
 // NewFileStore creates a new file-based store.
@@ -385,6 +386,9 @@ func NewFileStore(dir string) (*FileStore, error) {
 // On first call, writes header. On subsequent calls, appends new events only.
 // Always appends footer (loader takes the last footer).
 func (s *FileStore) Save(sess *Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return fmt.Errorf("failed to create session directory: %w", err)
 	}
@@ -448,6 +452,11 @@ func (s *FileStore) Save(sess *Session) error {
 	}
 	if err := s.writeLine(f, footer); err != nil {
 		return err
+	}
+
+	// Sync to disk before closing to ensure durability
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("failed to sync session file: %w", err)
 	}
 
 	return nil
