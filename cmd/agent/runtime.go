@@ -503,9 +503,18 @@ func (rt *runtime) run(ctx context.Context) int {
 	rt.sess.Outputs = result.Outputs
 	rt.sessionMgr.Update(rt.sess)
 
-	fmt.Fprintf(os.Stderr, "\n✓ Workflow complete\n")
-	output, _ := json.MarshalIndent(result, "", "  ")
-	fmt.Println(string(output))
+	fmt.Fprintf(os.Stderr, "\n✓ Workflow complete\n\n")
+
+	// For inline goals, print the output directly in a user-friendly format
+	if rt.wf.Name == "inline-goal" && len(result.Outputs) > 0 {
+		for _, output := range result.Outputs {
+			fmt.Println(output)
+		}
+	} else {
+		// For regular workflows, print full JSON result
+		output, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(output))
+	}
 	return 0
 }
 
