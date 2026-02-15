@@ -71,6 +71,9 @@ func (c *RunCmd) Run(ctx *runContext) error {
 			Goals: []agentfile.Goal{
 				{Name: "goal", Outcome: c.Goal},
 			},
+			Steps: []agentfile.Step{
+				{Type: agentfile.StepRUN, Name: "run-goal", UsingGoals: []string{"goal"}},
+			},
 		}
 		// Still load config and policy, but skip Agentfile
 		if err := w.loadConfig(); err != nil {
