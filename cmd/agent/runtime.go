@@ -92,7 +92,9 @@ func (rt *runtime) setup() error {
 	if err := rt.createProvider(); err != nil {
 		return err
 	}
-	rt.createSmallLLM()
+	if err := rt.createSmallLLM(); err != nil {
+		return err
+	}
 	rt.setupRegistry()
 	if err := rt.setupMemory(); err != nil {
 		return err
@@ -139,10 +141,11 @@ func (rt *runtime) createProvider() error {
 }
 
 // createSmallLLM creates the small LLM for summarization and triage.
-func (rt *runtime) createSmallLLM() {
+// Returns error if small_llm is configured but fails to create.
+func (rt *runtime) createSmallLLM() error {
 	if rt.cfg.SmallLLM.Model == "" {
-		fmt.Fprintf(os.Stderr, "ℹ️  Small LLM: not configured (security triage will use main LLM)\n")
-		return
+		// Not configured - this is fine, proceed without it
+		return nil
 	}
 	smallProvider := rt.cfg.SmallLLM.Provider
 	if smallProvider == "" {
@@ -156,12 +159,10 @@ func (rt *runtime) createSmallLLM() {
 		MaxTokens: rt.cfg.SmallLLM.MaxTokens,
 	})
 	if err != nil {
-		rt.smallLLM = nil
-		fmt.Fprintf(os.Stderr, "⚠️  Warning: failed to create small_llm (model=%s, provider=%s): %v\n", rt.cfg.SmallLLM.Model, smallProvider, err)
-		fmt.Fprintf(os.Stderr, "   Security triage will use main LLM instead.\n")
-		return
+		return fmt.Errorf("failed to create small_llm (model=%s, provider=%s): %w", rt.cfg.SmallLLM.Model, smallProvider, err)
 	}
 	fmt.Fprintf(os.Stderr, "✓ Small LLM: %s via %s (for summarization and security triage)\n", rt.cfg.SmallLLM.Model, smallProvider)
+	return nil
 }
 
 // setupRegistry creates and configures the tool registry.
