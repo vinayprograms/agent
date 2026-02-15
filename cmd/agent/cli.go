@@ -24,6 +24,7 @@ type RunCmd struct {
 	Config          string            `help:"Config file path"`
 	Policy          string            `help:"Policy file path"`
 	Workspace       string            `help:"Workspace directory"`
+	Goal            string            `help:"Inline goal description (skips Agentfile)"`
 	PersistMemory   bool              `help:"Enable persistent memory (overrides config)"`
 	NoPersistMemory bool              `help:"Disable persistent memory (overrides config)"`
 	Debug           bool              `help:"Enable verbose logging (prompts, responses, tool outputs)"`

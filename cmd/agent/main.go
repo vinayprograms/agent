@@ -64,12 +64,29 @@ func (c *RunCmd) Run(ctx *runContext) error {
 	// Handle persist memory flag
 	w.persistMemory = c.PersistMemory
 
-	if _, err := os.Stat(w.agentfilePath); os.IsNotExist(err) {
-		return fmt.Errorf("%s not found", w.agentfilePath)
-	}
+	// Handle inline goal (skip Agentfile if provided)
+	if c.Goal != "" {
+		w.wf = &agentfile.Workflow{
+			Name: "inline-goal",
+			Goals: []agentfile.Goal{
+				{Name: "goal", Outcome: c.Goal},
+			},
+		}
+		// Still load config and policy, but skip Agentfile
+		if err := w.loadConfig(); err != nil {
+			return fmt.Errorf("loading config: %w", err)
+		}
+		if err := w.loadPolicy(); err != nil {
+			return fmt.Errorf("loading policy: %w", err)
+		}
+	} else {
+		if _, err := os.Stat(w.agentfilePath); os.IsNotExist(err) {
+			return fmt.Errorf("%s not found", w.agentfilePath)
+		}
 
-	if err := w.load(); err != nil {
-		return err
+		if err := w.load(); err != nil {
+			return err
+		}
 	}
 
 	rt := newRuntime(w, ctx.creds)
