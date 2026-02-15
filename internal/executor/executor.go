@@ -283,13 +283,17 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		e.logSecuritySupervisor(toolName, blockID, string(result.Tier3.Verdict), result.Tier3.Reason, "supervisor", result.Tier3.LatencyMs, result.Tier3.InputTokens, result.Tier3.OutputTokens)
 	}
 
-	// Determine check path
+	// Determine check path - accurately reflect which tiers actually ran
 	checkPath := "static"
 	if result.Tier2 != nil {
 		checkPath = "static→triage"
 	}
 	if result.Tier3 != nil {
-		checkPath = "static→triage→supervisor"
+		if result.Tier2 != nil {
+			checkPath = "static→triage→supervisor"
+		} else {
+			checkPath = "static→supervisor"
+		}
 	}
 
 	if !result.Allowed {

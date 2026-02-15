@@ -141,6 +141,7 @@ func (rt *runtime) createProvider() error {
 // createSmallLLM creates the small LLM for summarization and triage.
 func (rt *runtime) createSmallLLM() {
 	if rt.cfg.SmallLLM.Model == "" {
+		fmt.Fprintf(os.Stderr, "ℹ️  Small LLM: not configured (security triage will use main LLM)\n")
 		return
 	}
 	smallProvider := rt.cfg.SmallLLM.Provider
@@ -156,7 +157,11 @@ func (rt *runtime) createSmallLLM() {
 	})
 	if err != nil {
 		rt.smallLLM = nil
+		fmt.Fprintf(os.Stderr, "⚠️  Warning: failed to create small_llm (model=%s, provider=%s): %v\n", rt.cfg.SmallLLM.Model, smallProvider, err)
+		fmt.Fprintf(os.Stderr, "   Security triage will use main LLM instead.\n")
+		return
 	}
+	fmt.Fprintf(os.Stderr, "✓ Small LLM: %s via %s (for summarization and security triage)\n", rt.cfg.SmallLLM.Model, smallProvider)
 }
 
 // setupRegistry creates and configures the tool registry.
