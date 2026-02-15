@@ -367,8 +367,10 @@ type JSONLRecord struct {
 
 // FileStore implements Store using the filesystem.
 // New sessions use JSONL format; legacy JSON format is supported for reading.
+// Uses append-only writes for efficient event streaming.
 type FileStore struct {
-	dir string
+	dir           string
+	writtenEvents map[string]int // session ID -> number of events written
 }
 
 // NewFileStore creates a new file-based store.
@@ -376,39 +378,52 @@ func NewFileStore(dir string) (*FileStore, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
-	return &FileStore{dir: dir}, nil
+	return &FileStore{dir: dir, writtenEvents: make(map[string]int)}, nil
 }
 
-// Save persists a session to disk in JSONL format.
+// Save persists a session to disk using append-only writes.
+// On first call, writes header. On subsequent calls, appends new events only.
+// Always appends footer (loader takes the last footer).
 func (s *FileStore) Save(sess *Session) error {
-	// Ensure directory exists
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return fmt.Errorf("failed to create session directory: %w", err)
 	}
 
 	path := filepath.Join(s.dir, sess.ID+".jsonl")
 	
-	f, err := os.Create(path)
+	// Check if file exists (header already written)
+	fileExists := false
+	if _, err := os.Stat(path); err == nil {
+		fileExists = true
+	}
+	
+	// Open file in append mode (or create if new)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to create session file: %w", err)
+		return fmt.Errorf("failed to open session file: %w", err)
 	}
 	defer f.Close()
 
-	// Write header
-	header := JSONLRecord{
-		RecordType:   RecordTypeHeader,
-		ID:           sess.ID,
-		WorkflowName: sess.WorkflowName,
-		Inputs:       sess.Inputs,
-		CreatedAt:    sess.CreatedAt,
-	}
-	if err := s.writeLine(f, header); err != nil {
-		return err
+	// Write header if this is a new file
+	if !fileExists {
+		header := JSONLRecord{
+			RecordType:   RecordTypeHeader,
+			ID:           sess.ID,
+			WorkflowName: sess.WorkflowName,
+			Inputs:       sess.Inputs,
+			CreatedAt:    sess.CreatedAt,
+		}
+		if err := s.writeLine(f, header); err != nil {
+			return err
+		}
 	}
 
-	// Write each event
-	for _, evt := range sess.Events {
-		evtCopy := evt // copy to avoid pointer issues
+	// Get count of already-written events
+	writtenCount := s.writtenEvents[sess.ID]
+	
+	// Append only new events
+	for i := writtenCount; i < len(sess.Events); i++ {
+		evtCopy := sess.Events[i] // copy to avoid pointer issues
 		record := JSONLRecord{
 			RecordType: RecordTypeEvent,
 			Event:      &evtCopy,
@@ -417,8 +432,11 @@ func (s *FileStore) Save(sess *Session) error {
 			return err
 		}
 	}
+	
+	// Update written count
+	s.writtenEvents[sess.ID] = len(sess.Events)
 
-	// Write footer
+	// Append footer (most recent footer wins on load)
 	footer := JSONLRecord{
 		RecordType: RecordTypeFooter,
 		Status:     sess.Status,
@@ -577,7 +595,7 @@ func NewFileManager(dir string) SessionManager {
 	store, err := NewFileStore(dir)
 	if err != nil {
 		// Fallback: create with error handling in actual use
-		return &FileManager{store: &FileStore{dir: dir}}
+		return &FileManager{store: &FileStore{dir: dir, writtenEvents: make(map[string]int)}}
 	}
 	return &FileManager{store: store}
 }
