@@ -5,12 +5,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/vinayprograms/agentkit/llm"
 )
+
+// concurrencyLimit returns the maximum number of concurrent tool executions.
+// Calculated based on CPU count with I/O-bound multiplier.
+// For I/O-bound operations (web_fetch, etc.), we can oversubscribe CPUs.
+var concurrencyLimit = func() int {
+	cpuCount := runtime.NumCPU()
+	// 4x CPU count for I/O-bound workloads (network, disk waits)
+	// Minimum 4, maximum 32 to avoid overwhelming resources
+	limit := cpuCount * 4
+	if limit < 4 {
+		limit = 4
+	}
+	if limit > 32 {
+		limit = 32
+	}
+	return limit
+}()
 
 func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (interface{}, error) {
 	start := time.Now()
@@ -138,6 +156,7 @@ func isAsyncTool(name string) bool {
 // executeToolsParallel executes multiple tool calls concurrently and returns
 // messages in the original order. Async tools (memory_remember, scratchpad_write)
 // fire in background and return immediately with "OK".
+// Concurrency is limited based on CPU count to avoid overwhelming resources.
 func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.ToolCallResponse) []llm.Message {
 	if len(toolCalls) == 0 {
 		return nil
@@ -197,7 +216,9 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 		return messages
 	}
 
-	// Execute sync tools in parallel
+	// Execute sync tools in parallel with concurrency limit
+	// Use a semaphore (buffered channel) to limit concurrent executions
+	sem := make(chan struct{}, concurrencyLimit)
 	results := make(chan toolResult, len(syncCalls))
 	var wg sync.WaitGroup
 
@@ -206,6 +227,11 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 		wg.Add(1)
 		go func(idx int, tc llm.ToolCallResponse) {
 			defer wg.Done()
+			
+			// Acquire semaphore (blocks if at capacity)
+			sem <- struct{}{}
+			defer func() { <-sem }() // Release when done
+			
 			result, err := e.executeTool(ctx, tc)
 			var content string
 			if err != nil {
