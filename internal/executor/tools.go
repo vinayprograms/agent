@@ -144,7 +144,7 @@ type toolResult struct {
 // asyncTools are fire-and-forget tools that don't need to block the LLM turn.
 // They execute in background and always return "OK" immediately.
 var asyncTools = map[string]bool{
-	"memory_remember":  true, // Writes to memory - result not needed for turn
+	"remember":  true, // Writes to memory - result not needed for turn
 	"scratchpad_write": true, // Writes to scratchpad - result not needed for turn
 }
 
@@ -167,7 +167,7 @@ func isSerializeTool(name string) bool {
 }
 
 // executeToolsParallel executes multiple tool calls concurrently and returns
-// messages in the original order. Async tools (memory_remember, scratchpad_write)
+// messages in the original order. Async tools (remember, scratchpad_write)
 // fire in background and return immediately with "OK".
 // Concurrency is limited based on CPU count to avoid overwhelming resources.
 func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.ToolCallResponse) []llm.Message {

@@ -193,7 +193,7 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	}
 
 	// Inject tool guidance for sub-agents (they inherit parent's tools including memory)
-	if e.registry != nil && e.registry.Has("memory_recall") {
+	if e.registry != nil && e.registry.Has("recall") {
 		systemPrompt = SemanticMemoryGuidancePrefix + systemPrompt
 	}
 	if e.registry != nil && e.registry.Has("scratchpad_write") {
@@ -719,7 +719,7 @@ const SemanticMemoryGuidancePrefix = `🧠 PERSISTENT KNOWLEDGE BASE — CHECK F
 You have a PERSISTENT knowledge base that survives across sessions. This is NOT temporary scratch space.
 
 MANDATORY FIRST STEP for any research/decision task:
-→ memory_recall("relevant topic") BEFORE web search, file reading, or MCP calls
+→ recall("relevant topic") BEFORE web search, file reading, or MCP calls
 
 WHY: You may have already researched this. Don't waste time re-discovering what you learned before.
 
@@ -729,9 +729,9 @@ WHAT'S IN YOUR KNOWLEDGE BASE:
 - Lessons: what worked, what failed, mistakes to avoid
 
 EXAMPLES:
-- memory_recall("authentication") → finds past auth decisions
-- memory_recall("user preferences") → finds what the user likes
-- memory_recall("API rate limits") → finds past research on APIs
+- recall("authentication") → finds past auth decisions
+- recall("user preferences") → finds what the user likes
+- recall("API rate limits") → finds past research on APIs
 
 The search is SEMANTIC — it matches meaning, not just keywords.
 "database choice" finds "We chose PostgreSQL for JSON support"

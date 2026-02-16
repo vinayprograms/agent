@@ -29,8 +29,8 @@ base_url = "http://localhost:11434"  # optional, this is the default
 ### simple-memory.agent
 
 Basic demonstration of the three memory tools:
-- `memory_remember` - Store insights semantically
-- `memory_recall` - Search for relevant memories
+- `remember` - Store insights semantically
+- `recall` - Search for relevant memories
 - `memory_forget` - Delete memories by ID
 
 ```bash
@@ -61,8 +61,8 @@ Unlike key-value storage, semantic memory uses embeddings to store content:
 
 | Tool | Purpose |
 |------|---------|
-| `memory_remember` | Store content with importance and tags |
-| `memory_recall` | Semantic search for relevant memories |
+| `remember` | Store content with importance and tags |
+| `recall` | Semantic search for relevant memories |
 | `memory_forget` | Delete a memory by ID |
 | `memory_read` | Get value by exact key (legacy) |
 | `memory_write` | Store key-value pair (legacy) |
@@ -71,13 +71,13 @@ Unlike key-value storage, semantic memory uses embeddings to store content:
 
 ### Consolidation
 
-At the end of each session, the agent automatically extracts key insights from the conversation and stores them. This happens without explicit `memory_remember` calls.
+At the end of each session, the agent automatically extracts key insights from the conversation and stores them. This happens without explicit `remember` calls.
 
 Consolidated memories are tagged with `source: session:<id>` for traceability.
 
 ## Best Practices
 
-1. **Use memory_recall early** - Check for relevant context before starting complex tasks
+1. **Use recall early** - Check for relevant context before starting complex tasks
 2. **Store distilled insights** - Don't store raw data, store conclusions and decisions
 3. **Use meaningful content** - Memories should be self-contained and understandable later
 4. **Tag appropriately** - Tags help with filtering and organization

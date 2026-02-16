@@ -875,7 +875,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 	}
 
 	// If semantic memory tools are available, inject guidance
-	if e.registry != nil && e.registry.Has("memory_recall") {
+	if e.registry != nil && e.registry.Has("recall") {
 		systemMsg = SemanticMemoryGuidancePrefix + systemMsg
 	}
 

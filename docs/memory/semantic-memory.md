@@ -29,7 +29,7 @@ The agent includes a memory system with two components:
 │         │                           │                        │
 │         ▼                           ▼                        │
 │  ┌────────────────────────────────────────────────────┐     │
-│  │   scratchpad_read/write      memory_recall         │     │
+│  │   scratchpad_read/write      recall         │     │
 │  └────────────────────────────────────────────────────┘     │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -204,7 +204,7 @@ The tool descriptions dynamically update to indicate the current persistence mod
 Meaning-based storage for findings, insights, and lessons:
 
 ```
-memory_recall(
+recall(
   query: "database decision",
   limit: 5  # per category, default 5
 )
@@ -243,8 +243,8 @@ This enables the agent to learn from its own work automatically.
 | Need | Tool | Example |
 |------|------|---------|
 | Intermediate results | `scratchpad_write/read` | API endpoints, temp values |
-| "What did we decide about X?" | `memory_recall` | Architecture decisions |
-| Store a learning | `memory_remember` | Insights and lessons |
+| "What did we decide about X?" | `recall` | Architecture decisions |
+| Store a learning | `remember` | Insights and lessons |
 
 **Scratchpad:** Temporary values you need to reference by exact key during this run.
 
@@ -332,7 +332,7 @@ The agent will still have:
 
 ## Best Practices
 
-1. **Check memory early** — Use `memory_recall` at the start of complex tasks
+1. **Check memory early** — Use `recall` at the start of complex tasks
 2. **Store conclusions, not raw data** — Distill insights before storing
 3. **Use categories appropriately**:
    - Finding: facts discovered

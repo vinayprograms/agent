@@ -389,21 +389,21 @@ persist_memory = true            # true = memory survives across runs
 **Semantic — requires embedding provider:**
 | Tool | Purpose |
 |------|---------|
-| `memory_remember` | Store content with keywords for semantic search |
-| `memory_recall` | Find relevant memories by meaning |
+| `remember` | Store content with keywords for semantic search |
+| `recall` | Find relevant memories by meaning |
 | `memory_forget` | Delete a memory by ID |
 
 **Example workflow:**
 ```
 # Store an insight
-memory_remember(
+remember(
   content: "We decided to use PostgreSQL for better JSON support",
   importance: 0.8,
   tags: ["architecture", "database"]
 )
 
 # Later, recall it semantically
-memory_recall(query: "database decision")
+recall(query: "database decision")
 # Returns the PostgreSQL insight via keyword expansion
 ```
 
