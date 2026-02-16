@@ -148,9 +148,22 @@ var asyncTools = map[string]bool{
 	"scratchpad_write": true, // Writes to scratchpad - result not needed for turn
 }
 
+// serializeTools must NOT be parallelized - they have side effects or are expensive.
+// These run sequentially in the order the LLM requested.
+var serializeTools = map[string]bool{
+	"write":        true, // File writes - potential conflicts
+	"bash":         true, // Arbitrary side effects - unpredictable
+	"spawn_agents": true, // Expensive resource creation
+}
+
 // isAsyncTool returns true if the tool can be executed asynchronously.
 func isAsyncTool(name string) bool {
 	return asyncTools[name]
+}
+
+// isSerializeTool returns true if the tool must run sequentially.
+func isSerializeTool(name string) bool {
+	return serializeTools[name]
 }
 
 // executeToolsParallel executes multiple tool calls concurrently and returns
@@ -185,14 +198,18 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 		}}
 	}
 
-	// Categorize tools: sync vs async
-	var syncCalls []int       // indices of sync tools
-	var asyncCalls []int      // indices of async tools
+// Categorize tools: async, serialize, parallel
+	var asyncCalls []int     // indices of async tools (fire-and-forget)
+	var serializeCalls []int // indices of tools that must run sequentially
+	var parallelCalls []int  // indices of tools that can run in parallel
 	for i, tc := range toolCalls {
-		if isAsyncTool(tc.Name) {
+		switch {
+		case isAsyncTool(tc.Name):
 			asyncCalls = append(asyncCalls, i)
-		} else {
-			syncCalls = append(syncCalls, i)
+		case isSerializeTool(tc.Name):
+			serializeCalls = append(serializeCalls, i)
+		default:
+			parallelCalls = append(parallelCalls, i)
 		}
 	}
 
@@ -202,66 +219,71 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 		go e.executeAsyncTool(ctx, tc)
 	}
 
-	// Only wait for sync tools
-	if len(syncCalls) == 0 {
-		// All async - return immediately
-		messages := make([]llm.Message, len(toolCalls))
-		for _, idx := range asyncCalls {
-			messages[idx] = llm.Message{
-				Role:       "tool",
-				ToolCallID: toolCalls[idx].ID,
-				Content:    "OK",
+	// Helper to run tool and return result
+	runTool := func(idx int, tc llm.ToolCallResponse) toolResult {
+		result, err := e.executeTool(ctx, tc)
+		var content string
+		if err != nil {
+			content = fmt.Sprintf("Error: %v", err)
+		} else {
+			switch v := result.(type) {
+			case string:
+				content = v
+			default:
+				data, _ := json.Marshal(v)
+				content = string(data)
 			}
 		}
-		return messages
+		return toolResult{index: idx, id: tc.ID, content: content}
 	}
 
-	// Execute sync tools in parallel with concurrency limit
-	// Use a semaphore (buffered channel) to limit concurrent executions
-	sem := make(chan struct{}, concurrencyLimit)
-	results := make(chan toolResult, len(syncCalls))
-	var wg sync.WaitGroup
-
-	for _, idx := range syncCalls {
-		tc := toolCalls[idx]
-		wg.Add(1)
-		go func(idx int, tc llm.ToolCallResponse) {
-			defer wg.Done()
-			
-			// Acquire semaphore (blocks if at capacity)
-			sem <- struct{}{}
-			defer func() { <-sem }() // Release when done
-			
-			result, err := e.executeTool(ctx, tc)
-			var content string
-			if err != nil {
-				content = fmt.Sprintf("Error: %v", err)
-			} else {
-				switch v := result.(type) {
-				case string:
-					content = v
-				default:
-					data, _ := json.Marshal(v)
-					content = string(data)
-				}
-			}
-			results <- toolResult{index: idx, id: tc.ID, content: content}
-		}(idx, tc)
-	}
-
-	// Wait for sync tools to complete
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect sync results
+	// Prepare messages array
 	messages := make([]llm.Message, len(toolCalls))
-	for r := range results {
-		messages[r.index] = llm.Message{
+
+	// Execute parallel tools with concurrency limit
+	if len(parallelCalls) > 0 {
+		sem := make(chan struct{}, concurrencyLimit)
+		results := make(chan toolResult, len(parallelCalls))
+		var wg sync.WaitGroup
+
+		for _, idx := range parallelCalls {
+			tc := toolCalls[idx]
+			wg.Add(1)
+			go func(idx int, tc llm.ToolCallResponse) {
+				defer wg.Done()
+				
+				// Acquire semaphore (blocks if at capacity)
+				sem <- struct{}{}
+				defer func() { <-sem }() // Release when done
+				
+				results <- runTool(idx, tc)
+			}(idx, tc)
+		}
+
+		// Wait for parallel tools to complete
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
+
+		// Collect parallel results
+		for r := range results {
+			messages[r.index] = llm.Message{
+				Role:       "tool",
+				ToolCallID: r.id,
+				Content:    r.content,
+			}
+		}
+	}
+
+	// Execute serialized tools sequentially (in order), blocking
+	for _, idx := range serializeCalls {
+		tc := toolCalls[idx]
+		result := runTool(idx, tc)
+		messages[result.index] = llm.Message{
 			Role:       "tool",
-			ToolCallID: r.id,
-			Content:    r.content,
+			ToolCallID: result.id,
+			Content:    result.content,
 		}
 	}
 
