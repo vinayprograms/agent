@@ -208,23 +208,11 @@ func (rt *runtime) setupMemory() error {
 	}
 	rt.registry.SetScratchpad(kvStore, persist)
 
-	embedder, err := createEmbeddingProvider(rt.cfg.Embedding, rt.creds)
-	if err != nil {
-		return fmt.Errorf("creating embedding provider: %w", err)
-	}
-
-	if embedder == nil {
-		rt.printMemoryStatus(persist, false)
-		return nil
-	}
-
+	// Semantic memory uses pure BM25 text search (no embeddings needed)
 	if persist {
+		var err error
 		rt.bleveStore, err = memory.NewBleveStore(memory.BleveStoreConfig{
 			BasePath: rt.storagePath,
-			Embedder: embedder,
-			Provider: rt.cfg.Embedding.Provider,
-			Model:    rt.cfg.Embedding.Model,
-			BaseURL:  rt.cfg.Embedding.BaseURL,
 		})
 		if err != nil {
 			return fmt.Errorf("creating semantic memory store: %w", err)
@@ -233,7 +221,7 @@ func (rt *runtime) setupMemory() error {
 		semanticMemory := memory.NewToolsAdapter(rt.bleveStore)
 		rt.registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
 	} else {
-		memStore := memory.NewInMemoryStore(embedder)
+		memStore := memory.NewInMemoryStore()
 		semanticMemory := memory.NewToolsAdapter(memStore)
 		rt.registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
 	}

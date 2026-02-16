@@ -386,7 +386,6 @@ func cmdScratchpad(args []string) {
 func openStore(storagePath string) (*memory.BleveStore, error) {
 	return memory.NewBleveStore(memory.BleveStoreConfig{
 		BasePath: storagePath,
-		Embedder: nil, // Read-only, no embedder needed
 	})
 }
 
