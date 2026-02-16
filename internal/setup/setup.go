@@ -41,19 +41,6 @@ const (
 	ProviderCustom      = "custom"
 )
 
-// Embedding provider options
-const (
-	EmbeddingOpenAI  = "openai"
-	EmbeddingGoogle  = "google"
-	EmbeddingMistral     = "mistral"
-	EmbeddingCohere      = "cohere"
-	EmbeddingVoyage      = "voyage"
-	EmbeddingOllamaCloud = "ollama-cloud"
-	EmbeddingOllamaLocal = "ollama"
-	EmbeddingLiteLLM     = "litellm"
-	EmbeddingNone        = "none"
-)
-
 // Config holds the setup configuration
 type Config struct {
 	// Deployment
@@ -73,11 +60,6 @@ type Config struct {
 	SmallLLMProvider string
 	SmallLLMModel    string
 	SmallLLMBaseURL  string
-
-	// Embedding (for semantic memory)
-	EmbeddingProvider string
-	EmbeddingModel    string
-	EmbeddingBaseURL  string
 
 	// Profiles
 	UseProfiles bool
@@ -166,8 +148,6 @@ const (
 	StepSmallLLM
 	StepSmallLLMProvider
 	StepSmallLLMModel
-	StepEmbedding
-	StepEmbeddingModel
 	StepWorkspace
 	StepSecurity
 	StepSecurityMode
@@ -236,7 +216,6 @@ func New() Model {
 			SecurityMode:      "default",
 			Thinking:          "auto",
 			CredentialMethod:  "file",
-			EmbeddingProvider: "none",
 		},
 		selected: make(map[int]bool),
 	}
@@ -269,11 +248,6 @@ type existingConfig struct {
 		MaxTokens int    `toml:"max_tokens"`
 		BaseURL   string `toml:"base_url"`
 	} `toml:"small_llm"`
-	Embedding struct {
-		Provider string `toml:"provider"`
-		Model    string `toml:"model"`
-		BaseURL  string `toml:"base_url"`
-	} `toml:"embedding"`
 	Profiles map[string]struct {
 		Provider string `toml:"provider"`
 		Model    string `toml:"model"`
@@ -355,13 +329,6 @@ func (m *Model) loadExistingConfig() error {
 		m.config.SmallLLMBaseURL = cfg.SmallLLM.BaseURL
 	}
 
-	// Embedding
-	if cfg.Embedding.Provider != "" {
-		m.config.EmbeddingProvider = cfg.Embedding.Provider
-		m.config.EmbeddingModel = cfg.Embedding.Model
-		m.config.EmbeddingBaseURL = cfg.Embedding.BaseURL
-	}
-
 	// Profiles
 	if len(cfg.Profiles) > 0 {
 		m.config.UseProfiles = true
@@ -397,9 +364,6 @@ func (m *Model) loadExistingConfig() error {
 			// DiscoveredTools will be populated when user edits
 		}
 	}
-
-	// Memory enabled if embedding provider is not none
-	m.config.EnableMemory = cfg.Embedding.Provider != "" && cfg.Embedding.Provider != "none"
 
 	// Try to load policy.toml too
 	if _, err := os.Stat("policy.toml"); err == nil {
@@ -555,11 +519,6 @@ func (m Model) previousStep() Step {
 		prev = StepSmallLLM
 	}
 
-	// Skip embedding model if provider is none
-	if prev == StepEmbeddingModel && m.config.EmbeddingProvider == "none" {
-		prev = StepEmbedding
-	}
-
 	// Skip base URL for direct providers
 	if prev == StepBaseURL && !m.needsBaseURL() {
 		prev = StepAPIKey
@@ -587,8 +546,6 @@ func (m Model) maxCursorForStep() int {
 		return 1 // yes, no
 	case StepSmallLLMProvider:
 		return len(m.getProviders()) - 1 // reuses main provider list
-	case StepEmbedding:
-		return len(m.getEmbeddingProviders()) - 1
 	case StepSecurity:
 		return 1 // default, strict
 	case StepSecurityMode:
@@ -615,7 +572,7 @@ func (m Model) maxCursorForStep() int {
 
 func (m Model) isTextInputStep() bool {
 	switch m.step {
-	case StepAPIKey, StepBaseURL, StepWorkspace, StepSmallLLMModel, StepEmbeddingModel,
+	case StepAPIKey, StepBaseURL, StepWorkspace, StepSmallLLMModel,
 		StepMCPName, StepMCPCommand, StepMCPArgs, StepCustomModel:
 		return true
 	}
@@ -720,8 +677,9 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.step = StepSmallLLMProvider
 			m.cursor = m.findProviderIndex(m.config.SmallLLMProvider)
 		} else {
-			m.step = StepEmbedding
-			m.cursor = m.findEmbeddingIndex()
+			m.step = StepWorkspace
+			m.textInput.SetValue(m.config.Workspace)
+			m.textInput.Placeholder = "/path/to/workspace"
 		}
 
 	case StepSmallLLMProvider:
@@ -738,29 +696,6 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 	case StepSmallLLMModel:
 		m.config.SmallLLMModel = m.textInput.Value()
-		m.step = StepEmbedding
-		m.cursor = m.findEmbeddingIndex()
-
-	case StepEmbedding:
-		embeddingProviders := m.getEmbeddingProviders()
-		if m.cursor >= 0 && m.cursor < len(embeddingProviders) {
-			m.config.EmbeddingProvider = embeddingProviders[m.cursor].id
-			if !m.editMode || m.config.EmbeddingModel == "" {
-				m.setDefaultEmbeddingModel()
-			}
-		}
-		if m.config.EmbeddingProvider != "none" {
-			m.step = StepEmbeddingModel
-			m.textInput.SetValue(m.config.EmbeddingModel)
-			m.textInput.Placeholder = "model name"
-		} else {
-			m.step = StepWorkspace
-			m.textInput.SetValue(m.config.Workspace)
-			m.textInput.Placeholder = "/path/to/workspace"
-		}
-
-	case StepEmbeddingModel:
-		m.config.EmbeddingModel = m.textInput.Value()
 		m.step = StepWorkspace
 		m.textInput.SetValue(m.config.Workspace)
 		m.textInput.Placeholder = "/path/to/workspace"
@@ -998,7 +933,6 @@ func (m *Model) applyScenarioDefaults() {
 		m.config.AllowBash = true
 		m.config.AllowWeb = true
 		m.config.SecurityMode = "default"
-		m.config.EmbeddingProvider = "ollama-local"
 		m.config.SmallLLMEnabled = false
 		m.config.PersistMemory = false
 
@@ -1009,7 +943,6 @@ func (m *Model) applyScenarioDefaults() {
 		m.config.AllowWeb = true
 		m.config.SecurityMode = "default"
 		m.config.SmallLLMEnabled = true
-		m.config.EmbeddingProvider = "voyage"
 
 	case ScenarioTeam:
 		m.config.Provider = ProviderLiteLLM
@@ -1029,7 +962,6 @@ func (m *Model) applyScenarioDefaults() {
 		m.config.SmallLLMEnabled = true
 		m.config.UseProfiles = true
 		m.config.EnableTelemetry = true
-		m.config.EmbeddingProvider = "voyage"
 
 	case ScenarioDocker:
 		m.config.Provider = ProviderLiteLLM
@@ -1095,27 +1027,6 @@ func (m *Model) setDefaultSmallModel() {
 	// Inherit base URL from main LLM if same provider type
 	if m.config.SmallLLMProvider == m.config.Provider {
 		m.config.SmallLLMBaseURL = m.config.BaseURL
-	}
-}
-
-func (m *Model) setDefaultEmbeddingModel() {
-	switch m.config.EmbeddingProvider {
-	case EmbeddingOpenAI:
-		m.config.EmbeddingModel = "text-embedding-3-small"
-	case EmbeddingGoogle:
-		m.config.EmbeddingModel = "text-embedding-004"
-	case EmbeddingMistral:
-		m.config.EmbeddingModel = "mistral-embed"
-	case EmbeddingCohere:
-		m.config.EmbeddingModel = "embed-english-v3.0"
-	case EmbeddingVoyage:
-		m.config.EmbeddingModel = "voyage-3-lite"
-	case EmbeddingOllamaCloud, EmbeddingOllamaLocal:
-		m.config.EmbeddingModel = "nomic-embed-text"
-	case EmbeddingLiteLLM:
-		m.config.EmbeddingModel = "text-embedding-3-small"
-	default:
-		m.config.EmbeddingModel = ""
 	}
 }
 
@@ -1237,19 +1148,6 @@ func (m Model) findThinkingIndex() int {
 	return 0
 }
 
-func (m Model) findEmbeddingIndex() int {
-	if m.config.EmbeddingProvider == "" {
-		return 0 // none
-	}
-	providers := m.getEmbeddingProviders()
-	for i, p := range providers {
-		if p.id == m.config.EmbeddingProvider {
-			return i
-		}
-	}
-	return 0
-}
-
 type providerOption struct {
 	id   string
 	name string
@@ -1331,26 +1229,6 @@ func (m Model) getModels() []modelOption {
 	}
 }
 
-type embeddingOption struct {
-	id   string
-	name string
-	desc string
-}
-
-func (m Model) getEmbeddingProviders() []embeddingOption {
-	return []embeddingOption{
-		{EmbeddingNone, "None", "Disable semantic memory (use scratchpad only)"},
-		{EmbeddingOpenAI, "OpenAI", "text-embedding-3-small (recommended)"},
-		{EmbeddingVoyage, "Voyage", "Anthropic's recommended partner"},
-		{EmbeddingGoogle, "Google", "text-embedding-004"},
-		{EmbeddingMistral, "Mistral", "mistral-embed"},
-		{EmbeddingCohere, "Cohere", "embed-english-v3.0"},
-		{EmbeddingOllamaCloud, "Ollama Cloud", "Hosted Ollama embeddings (api.ollama.com)"},
-		{EmbeddingOllamaLocal, "Ollama Local", "nomic-embed-text (local, free)"},
-		{EmbeddingLiteLLM, "LiteLLM", "Proxy to any embedding provider"},
-	}
-}
-
 // View renders the current step
 func (m Model) View() string {
 	var s strings.Builder
@@ -1378,10 +1256,6 @@ func (m Model) View() string {
 		s.WriteString(m.viewSmallLLMProvider())
 	case StepSmallLLMModel:
 		s.WriteString(m.viewSmallLLMModel())
-	case StepEmbedding:
-		s.WriteString(m.viewEmbedding())
-	case StepEmbeddingModel:
-		s.WriteString(m.viewEmbeddingModel())
 	case StepWorkspace:
 		s.WriteString(m.viewWorkspace())
 	case StepSecurity:
@@ -1626,38 +1500,6 @@ func (m Model) viewSmallLLMModel() string {
 	s.WriteString(subtitleStyle.Render("Enter the model name for fast/cheap operations") + "\n\n")
 	s.WriteString(m.textInput.View() + "\n\n")
 	s.WriteString(dimStyle.Render("e.g., claude-3-5-haiku-20241022, gpt-4o-mini"))
-	return s.String()
-}
-
-func (m Model) viewEmbedding() string {
-	var s strings.Builder
-	s.WriteString(titleStyle.Render("Embedding Provider") + "\n")
-	s.WriteString(subtitleStyle.Render("Select provider for semantic memory") + "\n\n")
-
-	providers := m.getEmbeddingProviders()
-	for i, p := range providers {
-		if m.cursor >= len(providers) {
-			m.cursor = len(providers) - 1
-		}
-		cursor := "  "
-		style := normalStyle
-		if i == m.cursor {
-			cursor = "> "
-			style = selectedStyle
-		}
-		s.WriteString(cursor + style.Render(p.name) + " - " + dimStyle.Render(p.desc) + "\n")
-	}
-
-	s.WriteString("\n" + infoStyle.Render("Note: Anthropic/Groq don't offer embeddings. Use Voyage (Anthropic partner) or OpenAI."))
-	return s.String()
-}
-
-func (m Model) viewEmbeddingModel() string {
-	var s strings.Builder
-	s.WriteString(titleStyle.Render("Embedding Model") + "\n")
-	s.WriteString(subtitleStyle.Render("Enter the embedding model name") + "\n\n")
-	s.WriteString(m.textInput.View() + "\n\n")
-	s.WriteString(dimStyle.Render("e.g., text-embedding-3-small, nomic-embed-text"))
 	return s.String()
 }
 
@@ -1981,10 +1823,6 @@ func (m Model) viewConfirm() string {
 		s.WriteString(normalStyle.Render("Small LLM: ") + selectedStyle.Render(m.config.SmallLLMModel) + "\n")
 	}
 
-	if m.config.EmbeddingProvider != "none" {
-		s.WriteString(normalStyle.Render("Embedding: ") + selectedStyle.Render(m.config.EmbeddingProvider+"/"+m.config.EmbeddingModel) + "\n")
-	}
-
 	s.WriteString(normalStyle.Render("Workspace: ") + selectedStyle.Render(m.config.Workspace) + "\n")
 	s.WriteString(normalStyle.Render("Security: ") + selectedStyle.Render(m.config.SecurityMode) + "\n")
 	s.WriteString(normalStyle.Render("Credentials: ") + selectedStyle.Render(m.config.CredentialMethod) + "\n")
@@ -2173,18 +2011,6 @@ func (m Model) generateAgentTOML() string {
 		sb.WriteString("max_tokens = 1024\n")
 		if m.config.SmallLLMBaseURL != "" {
 			sb.WriteString(fmt.Sprintf("base_url = \"%s\"\n", m.config.SmallLLMBaseURL))
-		}
-		sb.WriteString("\n")
-	}
-
-	// Embedding
-	if m.config.EmbeddingProvider != "none" {
-		sb.WriteString("# Embedding model for semantic memory\n")
-		sb.WriteString("[embedding]\n")
-		sb.WriteString(fmt.Sprintf("provider = \"%s\"\n", m.config.EmbeddingProvider))
-		sb.WriteString(fmt.Sprintf("model = \"%s\"\n", m.config.EmbeddingModel))
-		if m.config.EmbeddingBaseURL != "" {
-			sb.WriteString(fmt.Sprintf("base_url = \"%s\"\n", m.config.EmbeddingBaseURL))
 		}
 		sb.WriteString("\n")
 	}

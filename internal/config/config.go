@@ -14,7 +14,6 @@ type Config struct {
 	Agent     AgentConfig           `toml:"agent"`
 	LLM       LLMConfig             `toml:"llm"`        // Default LLM settings
 	SmallLLM  LLMConfig             `toml:"small_llm"`  // Fast/cheap model for summarization
-	Embedding EmbeddingConfig       `toml:"embedding"`  // Embedding model for semantic memory
 	Profiles  map[string]Profile    `toml:"profiles"`   // Capability profiles
 	Web       WebConfig             `toml:"web"`
 	Telemetry TelemetryConfig       `toml:"telemetry"`
@@ -71,27 +70,6 @@ type TelemetryConfig struct {
 type StorageConfig struct {
 	Path          string `toml:"path"`           // Base directory for all persistent data
 	PersistMemory bool   `toml:"persist_memory"` // true = memory survives across runs, false = in-memory only
-}
-
-// EmbeddingConfig contains embedding provider settings.
-//
-// Supported providers:
-//   - openai:  text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002
-//   - google:  text-embedding-004, embedding-001
-//   - mistral: mistral-embed
-//   - cohere:  embed-english-v3.0, embed-multilingual-v3.0, embed-english-light-v3.0
-//   - voyage:  voyage-2, voyage-large-2, voyage-code-2
-//   - ollama:  nomic-embed-text, mxbai-embed-large, all-minilm (local)
-//   - none:    Disables semantic memory (KV memory still works)
-//
-// NOT supported (no embedding endpoints):
-//   - anthropic (Claude) - use voyage instead (Anthropic's recommended partner)
-//   - openrouter - chat completions only
-//   - groq - chat completions only
-type EmbeddingConfig struct {
-	Provider string `toml:"provider"` // openai, google, mistral, cohere, voyage, ollama, none
-	Model    string `toml:"model"`    // Model name (e.g., nomic-embed-text, text-embedding-3-small)
-	BaseURL  string `toml:"base_url"` // Base URL (for ollama or custom endpoint)
 }
 
 // MCPConfig contains MCP tool server configuration.

@@ -97,11 +97,6 @@ protocol = "otlp"
 [storage]
 path = "/data/grid"
 persist_memory = true
-
-[embedding]
-provider = "ollama"
-model = "nomic-embed-text"
-base_url = "http://localhost:11434"
 `), 0644)
 
 	cfg, err := LoadFile(configPath)
@@ -156,14 +151,6 @@ base_url = "http://localhost:11434"
 	}
 	if !cfg.Storage.PersistMemory {
 		t.Error("storage.persist_memory: expected true")
-	}
-
-	// Embedding section
-	if cfg.Embedding.Provider != "ollama" {
-		t.Errorf("embedding.provider: expected 'ollama', got %s", cfg.Embedding.Provider)
-	}
-	if cfg.Embedding.Model != "nomic-embed-text" {
-		t.Errorf("embedding.model: expected 'nomic-embed-text', got %s", cfg.Embedding.Model)
 	}
 }
 
