@@ -123,8 +123,21 @@ type toolResult struct {
 	content string
 }
 
+// asyncTools are fire-and-forget tools that don't need to block the LLM turn.
+// They execute in background and always return "OK" immediately.
+var asyncTools = map[string]bool{
+	"memory_remember":  true, // Writes to memory - result not needed for turn
+	"scratchpad_write": true, // Writes to scratchpad - result not needed for turn
+}
+
+// isAsyncTool returns true if the tool can be executed asynchronously.
+func isAsyncTool(name string) bool {
+	return asyncTools[name]
+}
+
 // executeToolsParallel executes multiple tool calls concurrently and returns
-// messages in the original order.
+// messages in the original order. Async tools (memory_remember, scratchpad_write)
+// fire in background and return immediately with "OK".
 func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.ToolCallResponse) []llm.Message {
 	if len(toolCalls) == 0 {
 		return nil
@@ -153,11 +166,43 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 		}}
 	}
 
-	// Execute tools in parallel
-	results := make(chan toolResult, len(toolCalls))
+	// Categorize tools: sync vs async
+	var syncCalls []int       // indices of sync tools
+	var asyncCalls []int      // indices of async tools
+	for i, tc := range toolCalls {
+		if isAsyncTool(tc.Name) {
+			asyncCalls = append(asyncCalls, i)
+		} else {
+			syncCalls = append(syncCalls, i)
+		}
+	}
+
+	// Fire async tools in background (fire-and-forget)
+	for _, idx := range asyncCalls {
+		tc := toolCalls[idx]
+		go e.executeAsyncTool(ctx, tc)
+	}
+
+	// Only wait for sync tools
+	if len(syncCalls) == 0 {
+		// All async - return immediately
+		messages := make([]llm.Message, len(toolCalls))
+		for _, idx := range asyncCalls {
+			messages[idx] = llm.Message{
+				Role:       "tool",
+				ToolCallID: toolCalls[idx].ID,
+				Content:    "OK",
+			}
+		}
+		return messages
+	}
+
+	// Execute sync tools in parallel
+	results := make(chan toolResult, len(syncCalls))
 	var wg sync.WaitGroup
 
-	for i, tc := range toolCalls {
+	for _, idx := range syncCalls {
+		tc := toolCalls[idx]
 		wg.Add(1)
 		go func(idx int, tc llm.ToolCallResponse) {
 			defer wg.Done()
@@ -175,24 +220,18 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 				}
 			}
 			results <- toolResult{index: idx, id: tc.ID, content: content}
-		}(i, tc)
+		}(idx, tc)
 	}
 
-	// Wait for all to complete
+	// Wait for sync tools to complete
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
 
-	// Collect results and sort by original index
-	collected := make([]toolResult, 0, len(toolCalls))
-	for r := range results {
-		collected = append(collected, r)
-	}
-
-	// Sort by original order
+	// Collect sync results
 	messages := make([]llm.Message, len(toolCalls))
-	for _, r := range collected {
+	for r := range results {
 		messages[r.index] = llm.Message{
 			Role:       "tool",
 			ToolCallID: r.id,
@@ -200,7 +239,37 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 		}
 	}
 
+	// Fill in async tool results (already fired)
+	for _, idx := range asyncCalls {
+		messages[idx] = llm.Message{
+			Role:       "tool",
+			ToolCallID: toolCalls[idx].ID,
+			Content:    "OK",
+		}
+	}
+
 	return messages
+}
+
+// executeAsyncTool executes a tool asynchronously without blocking.
+// Errors are logged but don't fail the LLM turn.
+func (e *Executor) executeAsyncTool(ctx context.Context, tc llm.ToolCallResponse) {
+	defer func() {
+		if r := recover(); r != nil {
+			e.logger.Error("async tool panic", map[string]interface{}{
+				"tool":  tc.Name,
+				"panic": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	_, err := e.executeTool(ctx, tc)
+	if err != nil {
+		e.logger.Warn("async tool failed (non-blocking)", map[string]interface{}{
+			"tool":  tc.Name,
+			"error": err.Error(),
+		})
+	}
 }
 
 // executeMCPTool executes an MCP tool call.
