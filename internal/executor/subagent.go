@@ -178,7 +178,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 // spawnAgentWithPrompt spawns a sub-agent with a custom system prompt and optional profile.
 // This is the unified entry point used by both AGENT entries and dynamic sub-agents.
 // The profile parameter allows using a different LLM provider (e.g., "fast", "reasoning-heavy").
-func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt, task string, outputs []string, profile string, priorGoals []GoalOutput) (string, error) {
+func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt, task string, outputs []string, profile string, priorGoals []GoalOutput, agentSupervised bool) (string, error) {
 	// Set sub-agent context
 	ctx = withAgentIdentity(ctx, role, role)
 
@@ -231,8 +231,9 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 		e.OnSubAgentStart(role, map[string]string{"task": task})
 	}
 
-	// Sub-agents inherit supervision from their parent goal
-	supervised := e.currentGoalSupervised && e.supervisor != nil && e.checkpointStore != nil
+	// Agent is supervised if: agent has SUPERVISED flag OR parent goal is supervised
+	// Infrastructure must also be available (supervisor + checkpoint store)
+	supervised := (agentSupervised || e.currentGoalSupervised) && e.supervisor != nil && e.checkpointStore != nil
 
 	// PHASE 1: COMMIT
 	var preCheckpoint *checkpoint.PreCheckpoint

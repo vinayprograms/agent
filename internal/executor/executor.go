@@ -1104,7 +1104,8 @@ func (e *Executor) getAllToolDefinitions() []llm.ToolDef {
 	return toolDefs
 }
 
-// checkSkillActivation checks if response requests a skill.
+// executeMultiAgentGoal executes a goal that uses multiple agents in parallel.
+// Applies the four-phase checkpoint model at the goal level.
 func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Goal) (string, error) {
 	// Collect agent definitions
 	var agents []*agentfile.Agent
@@ -1116,8 +1117,128 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 		agents = append(agents, agent)
 	}
 
-	// Execute agents in parallel with full tool access
-	return e.executeSimpleParallel(ctx, goal, agents)
+	// Set current goal for logging and sub-agent inheritance
+	e.currentGoal = goal.Name
+
+	// Determine supervision status
+	supervised := e.isSupervised(goal)
+	e.currentGoalSupervised = supervised
+
+	// Build prompt description for checkpoint
+	prompt := fmt.Sprintf("Execute goal %q using agents: %v\nOutcome: %s",
+		goal.Name, goal.UsingAgent, e.interpolate(goal.Outcome))
+
+	// ============================================
+	// PHASE 1: COMMIT - Declare intent for multi-agent goal
+	// ============================================
+	var preCheckpoint *checkpoint.PreCheckpoint
+	if e.checkpointStore != nil {
+		preCheckpoint = e.commitPhase(ctx, goal, prompt)
+		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
+			e.logger.Warn("failed to save pre-checkpoint", map[string]interface{}{
+				"error": err.Error(),
+			})
+		} else {
+			e.logCheckpoint("pre", goal.Name, "", preCheckpoint.StepID)
+		}
+		if e.OnSupervisionEvent != nil {
+			e.OnSupervisionEvent(goal.Name, "commit", preCheckpoint)
+		}
+	}
+
+	// ============================================
+	// PHASE 2: EXECUTE - Run agents in parallel
+	// ============================================
+	output, err := e.executeSimpleParallel(ctx, goal, agents)
+	if err != nil {
+		return "", err
+	}
+
+	// Collect tool names from agents for checkpoint (agents used as "tools")
+	var toolsUsed []string
+	for _, agent := range agents {
+		toolsUsed = append(toolsUsed, "agent:"+agent.Name)
+	}
+
+	// ============================================
+	// PHASE 3 & 4: POST-CHECKPOINT, RECONCILE & SUPERVISE
+	// ============================================
+	var postCheckpoint *checkpoint.PostCheckpoint
+	if e.checkpointStore != nil && preCheckpoint != nil {
+		postCheckpoint = e.createPostCheckpoint(ctx, goal, preCheckpoint, output, toolsUsed)
+		if err := e.checkpointStore.SavePost(postCheckpoint); err != nil {
+			e.logger.Warn("failed to save post-checkpoint", map[string]interface{}{
+				"error": err.Error(),
+			})
+		} else {
+			e.logCheckpoint("post", goal.Name, "", postCheckpoint.StepID)
+		}
+		if e.OnSupervisionEvent != nil {
+			e.OnSupervisionEvent(goal.Name, "execute", postCheckpoint)
+		}
+	}
+
+	// RECONCILE & SUPERVISE (only for supervised goals)
+	if supervised && e.supervisor != nil && preCheckpoint != nil && postCheckpoint != nil {
+		humanRequired := e.requiresHuman(goal)
+
+		reconcileStart := time.Now()
+		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
+		reconcileDuration := time.Since(reconcileStart).Milliseconds()
+
+		if e.checkpointStore != nil {
+			if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
+				e.logger.Warn("failed to save reconcile result", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
+		}
+		e.logPhaseReconcile(goal.Name, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
+
+		if e.OnSupervisionEvent != nil {
+			e.OnSupervisionEvent(goal.Name, "reconcile", reconcileResult)
+		}
+
+		if reconcileResult.Supervise {
+			superviseStart := time.Now()
+			decisionTrail := e.checkpointStore.GetDecisionTrail()
+			superviseResult, superviseErr := e.supervisor.Supervise(
+				ctx,
+				preCheckpoint,
+				postCheckpoint,
+				reconcileResult.Triggers,
+				decisionTrail,
+				humanRequired,
+			)
+			superviseDuration := time.Since(superviseStart).Milliseconds()
+
+			if superviseErr != nil {
+				e.logger.Warn("supervision failed", map[string]interface{}{
+					"error": superviseErr.Error(),
+				})
+			} else {
+				if e.checkpointStore != nil {
+					if err := e.checkpointStore.SaveSupervise(superviseResult); err != nil {
+						e.logger.Warn("failed to save supervise result", map[string]interface{}{
+							"error": err.Error(),
+						})
+					}
+				}
+				e.logPhaseSupervise(goal.Name, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, humanRequired, superviseDuration)
+
+				if e.OnSupervisionEvent != nil {
+					e.OnSupervisionEvent(goal.Name, "supervise", superviseResult)
+				}
+
+				// Handle supervision verdict
+				if superviseResult.Verdict == "PAUSE" {
+					return "", fmt.Errorf("supervision paused: %s", superviseResult.Question)
+				}
+			}
+		}
+	}
+
+	return output, nil
 }
 
 // executeSimpleParallel executes AGENT entries in parallel using the same
@@ -1152,7 +1273,8 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 			}
 
 			// Use spawnAgentWithPrompt which shares code with dynamic agents
-			output, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires, priorGoals)
+			// Pass agent's supervision flag - agent is supervised if it has SUPERVISED or inherits from goal
+			output, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires, priorGoals, agent.IsSupervised(e.workflow))
 
 			resultChan <- agentResult{
 				name:       agent.Name,
