@@ -32,7 +32,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	ctx = withAgentIdentity(ctx, role, role)
 
 	// Build system prompt for the sub-agent
-	systemPrompt := fmt.Sprintf("You are a %s. Complete the following task thoroughly and return your findings.", role)
+	systemPrompt := TersenessGuidance + fmt.Sprintf("You are a %s. Complete the task and return your findings.", role)
 
 	// Inject security research framing if enabled
 	if prefix := e.securityResearchPrefix(); prefix != "" {
@@ -711,6 +711,11 @@ DISCOVER what's stored:
 When unsure what's available, list first: scratchpad_list("") shows everything.
 
 KEY NAMING: Use descriptive, consistent keys with underscores (e.g., "project_deadline", "api_base_url").
+
+`
+
+// TersenessGuidance is prepended to execution prompts to reduce verbosity.
+const TersenessGuidance = `OUTPUT STYLE: Be direct and concise. No preamble, no filler, no unnecessary explanation. Substance over ceremony.
 
 `
 
