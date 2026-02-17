@@ -157,6 +157,7 @@ func (rt *runtime) createSmallLLM() error {
 		Model:     rt.cfg.SmallLLM.Model,
 		APIKey:    rt.creds.GetAPIKey(smallProvider),
 		MaxTokens: rt.cfg.SmallLLM.MaxTokens,
+		BaseURL:   rt.cfg.SmallLLM.BaseURL,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create small_llm (model=%s, provider=%s): %w", rt.cfg.SmallLLM.Model, smallProvider, err)
