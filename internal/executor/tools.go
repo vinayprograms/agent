@@ -30,11 +30,45 @@ var concurrencyLimit = func() int {
 	return limit
 }()
 
+// applyToolTimeout wraps the context with a timeout for network-dependent tools.
+// Returns the original context if no timeout is configured for the tool.
+func (e *Executor) applyToolTimeout(ctx context.Context, toolName string) context.Context {
+	var timeoutSec int
+
+	switch {
+	case strings.HasPrefix(toolName, "mcp_"):
+		timeoutSec = e.timeoutMCP
+	case toolName == "web_search":
+		timeoutSec = e.timeoutWebSearch
+	case toolName == "web_fetch":
+		timeoutSec = e.timeoutWebFetch
+	default:
+		return ctx // No timeout for other tools
+	}
+
+	if timeoutSec <= 0 {
+		return ctx // No timeout configured
+	}
+
+	// Only add timeout if context doesn't already have a shorter deadline
+	if deadline, ok := ctx.Deadline(); ok {
+		if time.Until(deadline) < time.Duration(timeoutSec)*time.Second {
+			return ctx // Existing deadline is shorter
+		}
+	}
+
+	ctx, _ = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	return ctx
+}
+
 func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (interface{}, error) {
 	start := time.Now()
 	
 	// Get agent identity early for error callbacks
 	agentID := getAgentIdentity(ctx)
+
+	// Apply timeout based on tool type
+	ctx = e.applyToolTimeout(ctx, tc.Name)
 
 	// Security verification before execution
 	if err := e.verifyToolCall(ctx, tc.Name, tc.Args); err != nil {

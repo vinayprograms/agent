@@ -21,6 +21,7 @@ type Config struct {
 	MCP       MCPConfig             `toml:"mcp"`        // MCP tool servers
 	Skills    SkillsConfig          `toml:"skills"`     // Agent Skills
 	Security  SecurityConfig        `toml:"security"`   // Security framework
+	Timeouts  TimeoutsConfig        `toml:"timeouts"`   // Network operation timeouts
 }
 
 // AgentConfig contains agent identification settings.
@@ -97,6 +98,13 @@ type SecurityConfig struct {
 	TriageLLM  string `toml:"triage_llm"`  // Profile name for Tier 2 triage (cheap/fast model)
 }
 
+// TimeoutsConfig contains timeout settings for network operations.
+type TimeoutsConfig struct {
+	MCP       int `toml:"mcp"`        // MCP tool call timeout in seconds (default 60)
+	WebSearch int `toml:"web_search"` // web_search timeout in seconds (default 30)
+	WebFetch  int `toml:"web_fetch"`  // web_fetch timeout in seconds (default 60)
+}
+
 // New creates a new config with defaults.
 func New() *Config {
 	return &Config{
@@ -109,6 +117,11 @@ func New() *Config {
 		},
 		Telemetry: TelemetryConfig{
 			Protocol: "noop",
+		},
+		Timeouts: TimeoutsConfig{
+			MCP:       60, // 60 seconds for MCP calls
+			WebSearch: 30, // 30 seconds for web search
+			WebFetch:  60, // 60 seconds for web fetch
 		},
 	}
 }

@@ -136,6 +136,11 @@ type Executor struct {
 	// Last security check result - used to taint tool results with influencing blocks
 	lastSecurityRelatedBlocks []string
 
+	// Timeouts for network operations (seconds)
+	timeoutMCP       int
+	timeoutWebSearch int
+	timeoutWebFetch  int
+
 	// Goal timing tracking
 	goalStartTimes map[string]time.Time
 
@@ -371,6 +376,26 @@ func (e *Executor) SetSkills(refs []skills.SkillRef) {
 func (e *Executor) SetSession(sess *session.Session, mgr session.SessionManager) {
 	e.session = sess
 	e.sessionManager = mgr
+}
+
+// SetTimeouts configures timeouts for network operations.
+// Values are in seconds. Zero means use default (60s for MCP/WebFetch, 30s for WebSearch).
+func (e *Executor) SetTimeouts(mcp, webSearch, webFetch int) {
+	if mcp > 0 {
+		e.timeoutMCP = mcp
+	} else {
+		e.timeoutMCP = 60
+	}
+	if webSearch > 0 {
+		e.timeoutWebSearch = webSearch
+	} else {
+		e.timeoutWebSearch = 30
+	}
+	if webFetch > 0 {
+		e.timeoutWebFetch = webFetch
+	} else {
+		e.timeoutWebFetch = 60
+	}
 }
 
 // SetSupervision configures supervision for the executor.

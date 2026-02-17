@@ -297,6 +297,7 @@ func (rt *runtime) setupTelemetry() error {
 func (rt *runtime) createExecutor() {
 	rt.exec = executor.NewExecutor(rt.wf, rt.provider, rt.registry, rt.pol)
 	rt.exec.SetDebug(rt.debug)
+	rt.exec.SetTimeouts(rt.cfg.Timeouts.MCP, rt.cfg.Timeouts.WebSearch, rt.cfg.Timeouts.WebFetch)
 }
 
 // setupMCP initializes MCP servers.
