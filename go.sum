@@ -191,6 +191,8 @@ github.com/vinayprograms/agentkit v0.0.0-20260218034449-4a0d53080f94 h1:U/ZkWrPp
 github.com/vinayprograms/agentkit v0.0.0-20260218034449-4a0d53080f94/go.mod h1:TwLIwJwnV82IdKCRA2Ii0HBlWeR+/zyBteTyTnz1EMc=
 github.com/vinayprograms/agentkit v0.0.0-20260218035050-c8b078986f56 h1:uQ2G9Bp/6InOE/IZvUv5naCEu5b+Q2XCny0HulxfCuc=
 github.com/vinayprograms/agentkit v0.0.0-20260218035050-c8b078986f56/go.mod h1:TwLIwJwnV82IdKCRA2Ii0HBlWeR+/zyBteTyTnz1EMc=
+github.com/vinayprograms/agentkit v0.0.0-20260218035759-64396cd9c8d0 h1:WND75wOfZjosYlxRi31P/QWGfM8fk3dDKsdkrHrWzZM=
+github.com/vinayprograms/agentkit v0.0.0-20260218035759-64396cd9c8d0/go.mod h1:TwLIwJwnV82IdKCRA2Ii0HBlWeR+/zyBteTyTnz1EMc=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e h1:JVG44RsyaB9T2KIHavMF/ppJZNG9ZpyihvCd0w101no=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e/go.mod h1:RbqR21r5mrJuqunuUZ/Dhy/avygyECGrLceyNeo4LiM=
 go.etcd.io/bbolt v1.4.0 h1:TU77id3TnN/zKr7CO/uk+fBCwF2jGcMuw2B/FMAzYIk=
