@@ -13,6 +13,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/vinayprograms/agentkit/auth"
+	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/mcp"
 )
 
@@ -81,7 +83,10 @@ type Config struct {
 	MCPServers map[string]MCPServerSetup
 
 	// Credentials
-	CredentialMethod string // "file", "env"
+	CredentialMethod string // "file", "env", "oauth"
+
+	// OAuth (populated during OAuth flow)
+	OAuthToken *credentials.OAuthToken
 }
 
 // MCPServerSetup holds MCP server configuration during setup
@@ -161,6 +166,7 @@ const (
 	StepMCPProbe
 	StepMCPDenySelect
 	StepCredentialMethod
+	StepOAuthFlow
 	StepConfirm
 	StepWriteFiles
 	StepComplete
@@ -189,6 +195,13 @@ type Model struct {
 	currentMCPArgs    string   // Args as space-separated string
 	probedTools       []string // Tools discovered from current MCP
 	probeError        string   // Error from probing, if any
+
+	// OAuth state
+	oauthStatus    string // Status message during OAuth flow
+	oauthUserCode  string // Code to show user
+	oauthVerifyURI string // URL for user to visit
+	oauthError     string // Error during OAuth, if any
+	oauthComplete  bool   // True when OAuth flow completed
 
 	// Results
 	filesWritten []string
@@ -402,6 +415,19 @@ type mcpProbeResult struct {
 // Update handles messages
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case oauthResultMsg:
+		if msg.err != nil {
+			m.oauthError = msg.err.Error()
+			m.oauthComplete = false
+		} else {
+			m.config.OAuthToken = msg.token
+			m.oauthComplete = true
+			m.oauthError = ""
+		}
+		m.step = StepConfirm
+		m.cursor = 0
+		return m, nil
+
 	case mcpProbeResult:
 		if msg.err != nil {
 			m.probeError = msg.err.Error()
@@ -855,9 +881,15 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		m.cursor = 0
 
 	case StepCredentialMethod:
-		methods := []string{"file", "env"}
+		methods := m.getCredentialMethods()
 		if m.cursor >= 0 && m.cursor < len(methods) {
-			m.config.CredentialMethod = methods[m.cursor]
+			m.config.CredentialMethod = methods[m.cursor].name
+		}
+
+		if m.config.CredentialMethod == "oauth" {
+			// Start OAuth flow
+			m.step = StepOAuthFlow
+			return m, m.startOAuthFlow()
 		}
 		m.step = StepConfirm
 		m.cursor = 0
@@ -892,6 +924,36 @@ func (m *Model) applyFeatureSelection() {
 	m.config.EnableMemory = m.selected[1]
 	m.config.PersistMemory = m.selected[2]
 	m.config.EnableTelemetry = m.selected[3]
+}
+
+// oauthResultMsg is sent when OAuth completes
+type oauthResultMsg struct {
+	token *credentials.OAuthToken
+	err   error
+}
+
+// startOAuthFlow initiates the OAuth device flow
+func (m *Model) startOAuthFlow() tea.Cmd {
+	return func() tea.Msg {
+		cfg := auth.GetProviderConfig(m.config.Provider, "")
+		if cfg == nil {
+			return oauthResultMsg{err: fmt.Errorf("OAuth not supported for provider: %s", m.config.Provider)}
+		}
+
+		// Use default callbacks which print to stdout
+		callbacks := auth.DefaultCallbacks()
+
+		// Run OAuth flow (blocking - will print prompts to stdout)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		token, err := auth.DeviceAuth(ctx, *cfg, callbacks)
+		if err != nil {
+			return oauthResultMsg{err: err}
+		}
+
+		return oauthResultMsg{token: token}
+	}
 }
 
 func (m Model) needsCustomModelInput() bool {
@@ -1282,6 +1344,8 @@ func (m Model) View() string {
 		s.WriteString(m.viewMCPDenySelect())
 	case StepCredentialMethod:
 		s.WriteString(m.viewCredentialMethod())
+	case StepOAuthFlow:
+		s.WriteString(m.viewOAuthFlow())
 	case StepConfirm:
 		s.WriteString(m.viewConfirm())
 	case StepWriteFiles:
@@ -1785,13 +1849,7 @@ func (m Model) viewCredentialMethod() string {
 	s.WriteString(titleStyle.Render("Credential Storage") + "\n")
 	s.WriteString(subtitleStyle.Render("How should credentials be stored?") + "\n\n")
 
-	options := []struct {
-		name string
-		desc string
-	}{
-		{"file", "credentials.toml file (mode 0400)"},
-		{"env", "Environment variables only"},
-	}
+	options := m.getCredentialMethods()
 
 	for i, opt := range options {
 		cursor := "  "
@@ -1804,6 +1862,47 @@ func (m Model) viewCredentialMethod() string {
 	}
 
 	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
+	return s.String()
+}
+
+// getCredentialMethods returns available credential methods for the current provider.
+func (m Model) getCredentialMethods() []struct{ name, desc string } {
+	methods := []struct{ name, desc string }{
+		{"file", "API key in credentials.toml (mode 0600)"},
+		{"env", "Environment variables only"},
+	}
+
+	// Add OAuth option for supported providers
+	if auth.SupportsOAuth(m.config.Provider) {
+		methods = append([]struct{ name, desc string }{
+			{"oauth", "OAuth2 login (browser-based, no API key needed)"},
+		}, methods...)
+	}
+
+	return methods
+}
+
+func (m Model) viewOAuthFlow() string {
+	var s strings.Builder
+	s.WriteString(titleStyle.Render("OAuth Authentication") + "\n\n")
+
+	if m.oauthError != "" {
+		s.WriteString(errorStyle.Render("✗ Error: "+m.oauthError) + "\n\n")
+		s.WriteString(dimStyle.Render("Press Enter to continue with API key instead"))
+		return s.String()
+	}
+
+	if m.oauthComplete {
+		s.WriteString(successStyle.Render("✓ Authentication successful!") + "\n\n")
+		s.WriteString(dimStyle.Render("Token will be saved to ~/.config/grid/credentials.toml"))
+		return s.String()
+	}
+
+	// Show waiting state
+	s.WriteString("🔐 " + selectedStyle.Render("Authenticating with "+m.config.Provider) + "\n\n")
+	s.WriteString(dimStyle.Render("Please complete authentication in your browser...") + "\n\n")
+	s.WriteString(dimStyle.Render("This may take a moment."))
+
 	return s.String()
 }
 
@@ -1964,13 +2063,20 @@ func (m Model) writeFiles() tea.Cmd {
 		}
 		files = append(files, "policy.toml")
 
-		// Write credentials.toml if using file method
+		// Write credentials to ~/.config/grid/credentials.toml
 		if m.config.CredentialMethod == "file" && m.config.APIKey != "" {
-			credsTOML := m.generateCredentialsTOML()
-			if err := os.WriteFile("credentials.toml", []byte(credsTOML), 0400); err != nil {
+			if err := m.writeCredentials(); err != nil {
 				return errMsg{err}
 			}
-			files = append(files, "credentials.toml")
+			files = append(files, credentials.DefaultPath())
+		}
+
+		// Save OAuth token to ~/.config/grid/credentials.toml
+		if m.config.CredentialMethod == "oauth" && m.config.OAuthToken != nil {
+			if err := m.writeOAuthCredentials(); err != nil {
+				return errMsg{err}
+			}
+			files = append(files, credentials.DefaultPath())
 		}
 
 		return filesWrittenMsg{files}
@@ -2170,17 +2276,32 @@ func (m Model) generatePolicyTOML() string {
 	return sb.String()
 }
 
-func (m Model) generateCredentialsTOML() string {
-	var sb strings.Builder
+// writeCredentials saves API key to ~/.config/grid/credentials.toml
+func (m Model) writeCredentials() error {
+	// Load existing credentials or create new
+	creds, _, _ := credentials.Load()
+	if creds == nil {
+		creds = &credentials.Credentials{}
+	}
 
-	sb.WriteString("# API Credentials\n")
-	sb.WriteString("# Generated by: agent setup\n")
-	sb.WriteString("# Permissions: 0400 (owner read-only)\n\n")
+	// Set the API key for the provider
+	creds.SetAPIKey(m.config.Provider, m.config.APIKey)
 
-	sb.WriteString("[llm]\n")
-	sb.WriteString(fmt.Sprintf("api_key = \"%s\"\n", m.config.APIKey))
+	return creds.Save()
+}
 
-	return sb.String()
+// writeOAuthCredentials saves OAuth token to ~/.config/grid/credentials.toml
+func (m Model) writeOAuthCredentials() error {
+	// Load existing credentials or create new
+	creds, _, _ := credentials.Load()
+	if creds == nil {
+		creds = &credentials.Credentials{}
+	}
+
+	// Set the OAuth token for the provider
+	creds.SetOAuthToken(m.config.Provider, m.config.OAuthToken)
+
+	return creds.Save()
 }
 
 // Run starts the setup wizard
