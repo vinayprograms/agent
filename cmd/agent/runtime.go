@@ -125,14 +125,16 @@ func (rt *runtime) createProvider() error {
 	}
 
 	var err error
+	cred := rt.creds.GetCredential(llmProvider)
 	rt.provider, err = llm.NewProvider(llm.ProviderConfig{
-		Provider:    llmProvider,
-		Model:       rt.cfg.LLM.Model,
-		APIKey:      rt.creds.GetAPIKey(llmProvider),
-		MaxTokens:   rt.cfg.LLM.MaxTokens,
-		BaseURL:     rt.cfg.LLM.BaseURL,
-		Thinking:    llm.ThinkingConfig{Level: llm.ThinkingLevel(rt.cfg.LLM.Thinking)},
-		RetryConfig: parseRetryConfig(rt.cfg.LLM.MaxRetries, rt.cfg.LLM.RetryBackoff),
+		Provider:     llmProvider,
+		Model:        rt.cfg.LLM.Model,
+		APIKey:       cred.Key,
+		IsOAuthToken: cred.IsOAuthToken,
+		MaxTokens:    rt.cfg.LLM.MaxTokens,
+		BaseURL:      rt.cfg.LLM.BaseURL,
+		Thinking:     llm.ThinkingConfig{Level: llm.ThinkingLevel(rt.cfg.LLM.Thinking)},
+		RetryConfig:  parseRetryConfig(rt.cfg.LLM.MaxRetries, rt.cfg.LLM.RetryBackoff),
 	})
 	if err != nil {
 		return fmt.Errorf("creating LLM provider: %w", err)
@@ -151,13 +153,15 @@ func (rt *runtime) createSmallLLM() error {
 	if smallProvider == "" {
 		smallProvider = llm.InferProviderFromModel(rt.cfg.SmallLLM.Model)
 	}
+	smallCred := rt.creds.GetCredential(smallProvider)
 	var err error
 	rt.smallLLM, err = llm.NewProvider(llm.ProviderConfig{
-		Provider:  smallProvider,
-		Model:     rt.cfg.SmallLLM.Model,
-		APIKey:    rt.creds.GetAPIKey(smallProvider),
-		MaxTokens: rt.cfg.SmallLLM.MaxTokens,
-		BaseURL:   rt.cfg.SmallLLM.BaseURL,
+		Provider:     smallProvider,
+		Model:        rt.cfg.SmallLLM.Model,
+		APIKey:       smallCred.Key,
+		IsOAuthToken: smallCred.IsOAuthToken,
+		MaxTokens:    rt.cfg.SmallLLM.MaxTokens,
+		BaseURL:      rt.cfg.SmallLLM.BaseURL,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create small_llm (model=%s, provider=%s): %w", rt.cfg.SmallLLM.Model, smallProvider, err)
@@ -405,11 +409,13 @@ func (rt *runtime) createTriageProvider() llm.Provider {
 		if providerName == "" {
 			providerName = llm.InferProviderFromModel(triageCfg.Model)
 		}
+		triageCred := rt.creds.GetCredential(providerName)
 		provider, _ := llm.NewProvider(llm.ProviderConfig{
-			Provider:  providerName,
-			Model:     triageCfg.Model,
-			APIKey:    rt.creds.GetAPIKey(providerName),
-			MaxTokens: triageCfg.MaxTokens,
+			Provider:     providerName,
+			Model:        triageCfg.Model,
+			APIKey:       triageCred.Key,
+			IsOAuthToken: triageCred.IsOAuthToken,
+			MaxTokens:    triageCfg.MaxTokens,
 		})
 		return provider
 	}
