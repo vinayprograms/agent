@@ -25,7 +25,12 @@ var globalCreds *credentials.Credentials
 func init() {
 	// Load credentials from standard locations
 	// Priority: credentials.toml > env vars (handled by GetAPIKey)
-	if creds, _, err := credentials.Load(); err == nil && creds != nil {
+	creds, path, err := credentials.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: failed to load credentials from %s: %v\n", path, err)
+		os.Exit(1)
+	}
+	if creds != nil {
 		globalCreds = creds
 	}
 
