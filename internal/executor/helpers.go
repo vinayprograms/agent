@@ -83,6 +83,7 @@ func extractJSON(content string) string {
 }
 
 // interpolate replaces variable placeholders in text.
+// Warns about unresolved variables that might indicate Agentfile bugs.
 func (e *Executor) interpolate(text string) string {
 	// Replace input variables
 	for name, value := range e.inputs {
@@ -94,7 +95,10 @@ func (e *Executor) interpolate(text string) string {
 		text = strings.ReplaceAll(text, "$"+name, value)
 	}
 
-	// Handle any remaining $var patterns (leave as-is or empty)
+	// Track unresolved variables for warning
+	var unresolved []string
+
+	// Handle any remaining $var patterns
 	re := regexp.MustCompile(`\$([a-zA-Z_][a-zA-Z0-9_]*)`)
 	text = re.ReplaceAllStringFunc(text, func(match string) string {
 		varName := strings.TrimPrefix(match, "$")
@@ -104,8 +108,17 @@ func (e *Executor) interpolate(text string) string {
 		if val, ok := e.outputs[varName]; ok {
 			return val
 		}
+		unresolved = append(unresolved, varName)
 		return match // Leave unresolved variables as-is
 	})
+
+	// Warn about unresolved variables
+	if len(unresolved) > 0 {
+		e.logger.Warn("unresolved variables in prompt (check Agentfile)", map[string]interface{}{
+			"variables": unresolved,
+			"hint":      "ensure prior goals output these variables with -> syntax",
+		})
+	}
 
 	return text
 }
