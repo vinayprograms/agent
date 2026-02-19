@@ -621,8 +621,22 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	// Check for multi-agent execution
 	if len(goal.UsingAgent) > 0 {
 		output, err := e.executeMultiAgentGoal(ctx, goal)
+		if err != nil {
+			return nil, err
+		}
+		// Parse structured output if declared (same as regular goals)
+		if len(goal.Outputs) > 0 {
+			parsedOutputs, err := parseStructuredOutput(output, goal.Outputs)
+			if err != nil {
+				e.logEvent(session.EventSystem, fmt.Sprintf("Warning: failed to parse structured output: %v", err))
+			} else {
+				for field, value := range parsedOutputs {
+					e.outputs[field] = value
+				}
+			}
+		}
 		e.logGoalEnd(goal.Name, output)
-		return &GoalResult{Output: output, ToolCallsMade: false}, err
+		return &GoalResult{Output: output, ToolCallsMade: false}, nil
 	}
 
 	// Build XML-structured prompt with context from previous goals
