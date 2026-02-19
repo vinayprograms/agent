@@ -72,7 +72,6 @@ func TestRunCmd_AllFlags(t *testing.T) {
 		"--config", "/path/to/config.toml",
 		"--policy", "/path/to/policy.toml",
 		"--workspace", "/tmp/workspace",
-		"--persist-memory",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -86,25 +85,5 @@ func TestRunCmd_AllFlags(t *testing.T) {
 	}
 	if cli.Run.Workspace != "/tmp/workspace" {
 		t.Errorf("expected workspace path, got %q", cli.Run.Workspace)
-	}
-	if !cli.Run.PersistMemory {
-		t.Error("expected persist-memory to be true")
-	}
-}
-
-func TestRunCmd_NoPersistMemory(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"run", "--no-persist-memory"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !cli.Run.NoPersistMemory {
-		t.Error("expected no-persist-memory to be true")
 	}
 }

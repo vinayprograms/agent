@@ -15,13 +15,12 @@ import (
 // workflow handles the configuration phase of a run.
 type workflow struct {
 	// Parsed from CLI (populated by kong via RunCmd)
-	agentfilePath  string
-	inputs         map[string]string
-	configPath     string
-	policyPath     string
-	workspacePath  string
-	persistMemory  bool // CLI flag: --persist-memory (default false)
-	debug          bool
+	agentfilePath string
+	inputs        map[string]string
+	configPath    string
+	policyPath    string
+	workspacePath string
+	debug         bool
 
 	// Loaded artifacts
 	wf      *agentfile.Workflow
@@ -61,9 +60,6 @@ func (w *workflow) loadConfig() error {
 	}
 
 	// Apply CLI overrides
-	if w.persistMemory {
-		w.cfg.Storage.PersistMemory = true
-	}
 	if w.workspacePath != "" {
 		w.cfg.Agent.Workspace = w.workspacePath
 	}

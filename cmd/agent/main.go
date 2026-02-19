@@ -66,9 +66,6 @@ func (c *RunCmd) Run(ctx *runContext) error {
 		debug:         c.Debug,
 	}
 
-	// Handle persist memory flag
-	w.persistMemory = c.PersistMemory
-
 	// Handle inline goal (skip Agentfile if provided)
 	if c.Goal != "" {
 		w.wf = &agentfile.Workflow{

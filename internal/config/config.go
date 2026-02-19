@@ -67,10 +67,9 @@ type TelemetryConfig struct {
 	Headers  map[string]string `toml:"headers"`  // Auth headers (e.g., DD-API-KEY, x-honeycomb-team)
 }
 
-// StorageConfig contains persistent storage settings.
+// StorageConfig contains storage settings.
 type StorageConfig struct {
-	Path          string `toml:"path"`           // Base directory for all persistent data
-	PersistMemory bool   `toml:"persist_memory"` // true = memory survives across runs, false = in-memory only
+	Path string `toml:"path"` // Base directory for persistent data (BM25 memory)
 }
 
 // MCPConfig contains MCP tool server configuration.
@@ -112,8 +111,7 @@ func New() *Config {
 			MaxTokens: 4096,
 		},
 		Storage: StorageConfig{
-			Path:          "~/.local/grid",
-			PersistMemory: true,
+			Path: "~/.local/grid",
 		},
 		Telemetry: TelemetryConfig{
 			Protocol: "noop",

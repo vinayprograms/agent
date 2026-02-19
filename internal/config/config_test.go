@@ -96,7 +96,6 @@ protocol = "otlp"
 
 [storage]
 path = "/data/grid"
-persist_memory = true
 `), 0644)
 
 	cfg, err := LoadFile(configPath)
@@ -149,9 +148,6 @@ persist_memory = true
 	if cfg.Storage.Path != "/data/grid" {
 		t.Errorf("storage.path: expected '/data/grid', got %s", cfg.Storage.Path)
 	}
-	if !cfg.Storage.PersistMemory {
-		t.Error("storage.persist_memory: expected true")
-	}
 }
 
 // Test defaults
@@ -163,9 +159,6 @@ func TestConfig_Defaults(t *testing.T) {
 	}
 	if cfg.Storage.Path != "~/.local/grid" {
 		t.Errorf("default storage.path should be '~/.local/grid', got %s", cfg.Storage.Path)
-	}
-	if !cfg.Storage.PersistMemory {
-		t.Error("default storage.persist_memory should be true")
 	}
 	if cfg.Telemetry.Protocol != "noop" {
 		t.Errorf("default telemetry protocol should be 'noop', got %s", cfg.Telemetry.Protocol)

@@ -76,7 +76,6 @@ type Config struct {
 	EnableMCP       bool
 	EnableTelemetry bool
 	EnableMemory    bool
-	PersistMemory   bool
 
 	// MCP Servers
 	MCPServers map[string]MCPServerSetup
@@ -213,7 +212,6 @@ func New() Model {
 			AllowBash:         true,
 			AllowWeb:          true,
 			EnableMemory:      true,
-			PersistMemory:     true,
 			SecurityMode:      "default",
 			Thinking:          "auto",
 			CredentialMethod:  "file",
@@ -256,8 +254,7 @@ type existingConfig struct {
 		Thinking string `toml:"thinking"`
 	} `toml:"profiles"`
 	Storage struct {
-		Path          string `toml:"path"`
-		PersistMemory bool   `toml:"persist_memory"`
+		Path string `toml:"path"`
 	} `toml:"storage"`
 	Security struct {
 		Mode string `toml:"mode"`
@@ -343,9 +340,6 @@ func (m *Model) loadExistingConfig() error {
 			}
 		}
 	}
-
-	// Storage
-	m.config.PersistMemory = cfg.Storage.PersistMemory
 
 	// Security
 	if cfg.Security.Mode != "" {
@@ -883,16 +877,14 @@ func (m *Model) initFeatureSelection() {
 	m.selected = map[int]bool{
 		0: m.config.EnableMCP,
 		1: m.config.EnableMemory,
-		2: m.config.PersistMemory,
-		3: m.config.EnableTelemetry,
+		2: m.config.EnableTelemetry,
 	}
 }
 
 func (m *Model) applyFeatureSelection() {
 	m.config.EnableMCP = m.selected[0]
 	m.config.EnableMemory = m.selected[1]
-	m.config.PersistMemory = m.selected[2]
-	m.config.EnableTelemetry = m.selected[3]
+	m.config.EnableTelemetry = m.selected[2]
 }
 
 func (m Model) needsCustomModelInput() bool {
@@ -935,7 +927,6 @@ func (m *Model) applyScenarioDefaults() {
 		m.config.AllowWeb = true
 		m.config.SecurityMode = "default"
 		m.config.SmallLLMEnabled = false
-		m.config.PersistMemory = false
 
 	case ScenarioDev:
 		m.config.Provider = ProviderAnthropic
@@ -1611,8 +1602,7 @@ func (m Model) viewFeatures() string {
 		desc string
 	}{
 		{"MCP Tools", "External tool servers via Model Context Protocol"},
-		{"Semantic Memory", "Remember insights across conversations (FIL model)"},
-		{"Persist Memory", "Save memory to disk between runs"},
+		{"Semantic Memory", "Remember insights across conversations (always persistent)"},
 		{"Telemetry", "OpenTelemetry observability"},
 	}
 
@@ -2047,12 +2037,6 @@ func (m Model) generateAgentTOML() string {
 			sb.WriteString("\n")
 		}
 	}
-
-	// Storage
-	sb.WriteString("# Storage\n")
-	sb.WriteString("[storage]\n")
-	sb.WriteString(fmt.Sprintf("persist_memory = %t\n", m.config.PersistMemory))
-	sb.WriteString("\n")
 
 	// Security
 	sb.WriteString("# Security Framework\n")

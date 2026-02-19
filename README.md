@@ -80,8 +80,7 @@ provider = "openai"              # see supported list above
 model = "text-embedding-3-small"
 
 [storage]
-path = "~/.local/grid"           # Base directory for sessions, memory, logs
-persist_memory = true            # true = memory survives across runs
+path = "~/.local/grid"           # Base directory for persistent BM25 memory
 
 [telemetry]
 enabled = false
@@ -360,19 +359,28 @@ provider = "openai"
 model = "text-embedding-3-small"
 
 [storage]
-path = "~/.local/grid"           # Base directory for all persistent data
-persist_memory = true            # true = memory survives across runs
-                                 # false = session-scoped (scratchpad)
+path = "~/.local/grid"           # Base directory for persistent data
 ```
+
+### Memory Design
+
+| Mechanism | Scope | Who Decides | Persistence |
+|-----------|-------|-------------|-------------|
+| **$var** | Workflow | Human (Agentfile) | Ephemeral |
+| **Scratchpad** | Session | Agent (runtime) | Ephemeral |
+| **BM25 memory** | Cross-session | Agent (runtime) | **Always persistent** |
+
+- **$var**: Explicit data flow between goals, defined in Agentfile
+- **Scratchpad**: Agent's working notes during a session (cleared on exit)
+- **BM25 memory**: Long-term knowledge via `remember`/`recall` (survives restarts)
 
 ### Directory Structure
 
 ```
 {storage.path}/
-├── sessions/               # Session state (always persisted)
-├── kv.json                 # Photographic memory (if persist_memory=true)
-├── observations.bleve/     # BM25 index (if persist_memory=true)
-├── semantic_graph.json     # Term relationships (if persist_memory=true)
+├── sessions/               # Session state
+├── observations.bleve/     # BM25 index (persistent)
+├── semantic_graph.json     # Term relationships (persistent)
 └── logs/                   # Audit logs
 ```
 

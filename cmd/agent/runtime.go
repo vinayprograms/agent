@@ -201,52 +201,28 @@ func (rt *runtime) setupBashChecker() {
 }
 
 // setupMemory configures scratchpad and semantic memory.
+// Design:
+//   - Scratchpad: always ephemeral (session-scoped, agent-decided working memory)
+//   - BM25 memory: always persistent (cross-session, "remember"/"recall" implies persistence)
 func (rt *runtime) setupMemory() error {
-	kvPath := filepath.Join(rt.storagePath, "kv.json")
-	persist := rt.cfg.Storage.PersistMemory
+	// Scratchpad: ephemeral (in-memory only, cleared each run)
+	kvStore := tools.NewInMemoryStore()
+	rt.registry.SetScratchpad(kvStore, false)
 
-	var kvStore tools.MemoryStore
-	if persist {
-		kvStore = tools.NewFileMemoryStore(kvPath)
-	} else {
-		kvStore = tools.NewInMemoryStore()
+	// BM25 semantic memory: always persistent
+	var err error
+	rt.bleveStore, err = memory.NewBleveStore(memory.BleveStoreConfig{
+		BasePath: rt.storagePath,
+	})
+	if err != nil {
+		return fmt.Errorf("creating semantic memory store: %w", err)
 	}
-	rt.registry.SetScratchpad(kvStore, persist)
+	rt.addCloser(func() { rt.bleveStore.Close() })
+	semanticMemory := memory.NewToolsAdapter(rt.bleveStore)
+	rt.registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
 
-	// Semantic memory uses pure BM25 text search (no embeddings needed)
-	if persist {
-		var err error
-		rt.bleveStore, err = memory.NewBleveStore(memory.BleveStoreConfig{
-			BasePath: rt.storagePath,
-		})
-		if err != nil {
-			return fmt.Errorf("creating semantic memory store: %w", err)
-		}
-		rt.addCloser(func() { rt.bleveStore.Close() })
-		semanticMemory := memory.NewToolsAdapter(rt.bleveStore)
-		rt.registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
-	} else {
-		memStore := memory.NewInMemoryStore()
-		semanticMemory := memory.NewToolsAdapter(memStore)
-		rt.registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
-	}
-
-	rt.printMemoryStatus(persist, true)
+	fmt.Println("🧠 Memory: scratchpad (session) + BM25 (persistent)")
 	return nil
-}
-
-// printMemoryStatus prints memory configuration status.
-func (rt *runtime) printMemoryStatus(persist, semantic bool) {
-	switch {
-	case persist && semantic:
-		fmt.Println("🧠 Memory: persistent (scratchpad + semantic)")
-	case persist:
-		fmt.Println("🧠 Memory: scratchpad persistent, semantic disabled")
-	case semantic:
-		fmt.Println("🧠 Memory: ephemeral (scratchpad + semantic)")
-	default:
-		fmt.Println("🧠 Memory: scratchpad ephemeral, semantic disabled")
-	}
 }
 
 // setupTelemetry creates the telemetry exporter and OTel provider.

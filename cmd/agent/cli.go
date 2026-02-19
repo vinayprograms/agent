@@ -19,15 +19,13 @@ type CLI struct {
 
 // RunCmd executes a workflow from an Agentfile.
 type RunCmd struct {
-	File            string            `short:"f" default:"Agentfile" help:"Agentfile path"`
-	Input           map[string]string `short:"i" help:"Input key=value (repeatable)"`
-	Config          string            `help:"Config file path"`
-	Policy          string            `help:"Policy file path"`
-	Workspace       string            `help:"Workspace directory"`
-	Goal            string            `help:"Inline goal description (skips Agentfile)"`
-	PersistMemory   bool              `help:"Enable persistent memory (overrides config)"`
-	NoPersistMemory bool              `help:"Disable persistent memory (overrides config)"`
-	Debug           bool              `help:"Enable verbose logging (prompts, responses, tool outputs)"`
+	File      string            `short:"f" default:"Agentfile" help:"Agentfile path"`
+	Input     map[string]string `short:"i" help:"Input key=value (repeatable)"`
+	Config    string            `help:"Config file path"`
+	Policy    string            `help:"Policy file path"`
+	Workspace string            `help:"Workspace directory"`
+	Goal      string            `help:"Inline goal description (skips Agentfile)"`
+	Debug     bool              `help:"Enable verbose logging (prompts, responses, tool outputs)"`
 }
 
 // ValidateCmd validates an Agentfile.
