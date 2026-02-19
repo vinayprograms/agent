@@ -693,10 +693,15 @@ IMPORTANT: When you do spawn multiple agents, use unique descriptive role names 
 `
 
 // ScratchpadGuidancePrefix is injected when scratchpad tools are available.
-const ScratchpadGuidancePrefix = `SCRATCHPAD: Use scratchpad extensively to accelerate future goals.
+const ScratchpadGuidancePrefix = `SCRATCHPAD (session-only working notes):
+
+⚠️ TWO SEPARATE MEMORY SYSTEMS — DON'T MIX!
+  • scratchpad_write → scratchpad_read (session only, exact key match)
+  • remember → recall (persistent across runs, semantic search)
+If you write to scratchpad, READ from scratchpad. If you remember(), recall().
 
 WRITE proactively when you discover:
-- Facts, values, or config that may be reused (e.g., "api_endpoint", "user_timezone", "repo_branch")
+- Facts, values, or config that may be reused (e.g., "api_endpoint", "user_timezone")
 - Computed results that were expensive to obtain
 - Decisions or preferences expressed by the user
 
@@ -704,13 +709,10 @@ READ before recomputing:
 - Check scratchpad first for information that might already exist
 
 DISCOVER what's stored:
-- Use scratchpad_list("") to see ALL keys
-- Use scratchpad_list("api") to find keys containing "api" (substring match)
-- Use scratchpad_search("term") for fuzzy search in BOTH keys AND values
+- scratchpad_list("") shows ALL keys
+- scratchpad_list("api") finds keys containing "api"
 
-When unsure what's available, list first: scratchpad_list("") shows everything.
-
-KEY NAMING: Use descriptive, consistent keys with underscores (e.g., "project_deadline", "api_base_url").
+KEY NAMING: Use descriptive keys with underscores (e.g., "project_deadline", "api_base_url").
 
 `
 
@@ -720,14 +722,15 @@ const TersenessGuidance = `OUTPUT STYLE: Be direct and concise. No preamble, no 
 `
 
 // SemanticMemoryGuidancePrefix is injected when semantic memory tools are available.
-const SemanticMemoryGuidancePrefix = `🧠 PERSISTENT KNOWLEDGE BASE — CHECK FIRST!
+const SemanticMemoryGuidancePrefix = `🧠 PERSISTENT KNOWLEDGE BASE (remember/recall):
 
-You have a PERSISTENT knowledge base that survives across sessions. This is NOT temporary scratch space.
+⚠️ TWO SEPARATE MEMORY SYSTEMS — DON'T MIX!
+  • remember → recall (persistent across runs, semantic search)
+  • scratchpad_write → scratchpad_read (session only, exact key match)
+If you remember(), use recall() to find it. NOT scratchpad_read.
 
-MANDATORY FIRST STEP for any research/decision task:
+MANDATORY FIRST STEP for research/decision tasks:
 → recall("relevant topic") BEFORE web search, file reading, or MCP calls
-
-WHY: You may have already researched this. Don't waste time re-discovering what you learned before.
 
 WHAT'S IN YOUR KNOWLEDGE BASE:
 - Findings: facts discovered during past work
@@ -736,11 +739,9 @@ WHAT'S IN YOUR KNOWLEDGE BASE:
 
 EXAMPLES:
 - recall("authentication") → finds past auth decisions
-- recall("user preferences") → finds what the user likes
 - recall("API rate limits") → finds past research on APIs
 
-The search is SEMANTIC — it matches meaning, not just keywords.
-"database choice" finds "We chose PostgreSQL for JSON support"
+The search uses KEYWORDS (BM25) — use distinctive terms, not sentences.
 
 `
 
