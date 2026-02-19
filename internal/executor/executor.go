@@ -1281,7 +1281,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 
 			// Use agent's prompt as the role/persona, falling back to name
 			role := agent.Name
-			systemPrompt := agent.Prompt
+			systemPrompt := e.interpolate(agent.Prompt) // Interpolate $vars in skill/prompt
 			if systemPrompt == "" {
 				systemPrompt = fmt.Sprintf("You are a %s. Complete the task and return your findings.", role)
 			}
