@@ -717,7 +717,13 @@ KEY NAMING: Use descriptive keys with underscores (e.g., "project_deadline", "ap
 `
 
 // TersenessGuidance is prepended to execution prompts to reduce verbosity.
-const TersenessGuidance = `OUTPUT STYLE: Be direct and concise. No preamble, no filler, no unnecessary explanation. Substance over ceremony.
+const TersenessGuidance = `OUTPUT RULES (HEADLESS AGENT — no human is reading this):
+• Output ONLY the requested data/results
+• NO preamble ("I'll help you...", "Let me...", "Now I can see...")
+• NO narration ("First I'll...", "Next I need to...", "I have all the data...")
+• NO filler ("Great question!", "Certainly!", "I understand...")
+• NO sign-offs ("Let me know if...", "Hope this helps!")
+• Think silently, output results only
 
 `
 
