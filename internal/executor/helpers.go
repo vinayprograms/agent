@@ -3,10 +3,12 @@ package executor
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/session"
 )
 
 // truncateForLog truncates a string for logging purposes.
@@ -112,12 +114,14 @@ func (e *Executor) interpolate(text string) string {
 		return match // Leave unresolved variables as-is
 	})
 
-	// Warn about unresolved variables
+	// Warn about unresolved variables (both console and session for replay)
 	if len(unresolved) > 0 {
 		e.logger.Warn("unresolved variables in prompt (check Agentfile)", map[string]interface{}{
 			"variables": unresolved,
 			"hint":      "ensure prior goals output these variables with -> syntax",
 		})
+		// Also log to session for replay visibility
+		e.logEvent(session.EventWarning, fmt.Sprintf("Unresolved variables: %v (ensure prior goals output these with -> syntax)", unresolved))
 	}
 
 	return text

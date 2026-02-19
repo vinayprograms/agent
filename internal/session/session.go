@@ -64,6 +64,9 @@ const (
 	EventSubAgentStart = "subagent_start" // Sub-agent spawned
 	EventSubAgentEnd   = "subagent_end"   // Sub-agent completed
 
+	// Warning events (shown in yellow in replay)
+	EventWarning = "warning"
+
 	// Deprecated: use the descriptive names above
 	EventSecurityTier1 = EventSecurityStatic
 	EventSecurityTier2 = EventSecurityTriage

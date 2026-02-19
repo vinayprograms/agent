@@ -65,6 +65,8 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 		r.fmtCheckpoint(seqNum, ts, event)
 	case session.EventBashSecurity:
 		r.fmtBashSecurity(seqNum, ts, event)
+	case session.EventWarning:
+		r.fmtWarning(seqNum, ts, event)
 	default:
 		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, dimStyle.Render(string(event.Type)))
 	}
@@ -138,6 +140,12 @@ func (r *Replayer) fmtSystem(seqNum, ts string, event *session.Event) {
 	if r.verbosity >= 1 && event.Content != "" {
 		r.printContent(event.Content)
 	}
+}
+
+func (r *Replayer) fmtWarning(seqNum, ts string, event *session.Event) {
+	fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
+		warnStyle.Render("⚠ WARNING:"),
+		warnStyle.Render(event.Content))
 }
 
 func (r *Replayer) fmtUser(seqNum, ts string, event *session.Event) {
