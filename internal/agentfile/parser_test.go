@@ -1050,7 +1050,7 @@ RUN main USING refine`
 func TestParser_ConvergeWithUsing(t *testing.T) {
 	input := `NAME test
 AGENT reviewer "You are a code reviewer"
-CONVERGE polish "Polish the code" WITHIN 5 USING reviewer
+CONVERGE polish "Polish the code" USING reviewer WITHIN 5
 RUN main USING polish`
 
 	wf, err := ParseString(input)
@@ -1088,7 +1088,7 @@ RUN main USING refine`
 func TestParser_ConvergeFull(t *testing.T) {
 	input := `NAME test
 AGENT critic "You critique code"
-CONVERGE polish "Polish until perfect" WITHIN 8 -> refined_code USING critic SUPERVISED
+CONVERGE polish "Polish until perfect" USING critic WITHIN 8 -> refined_code SUPERVISED
 RUN main USING polish`
 
 	wf, err := ParseString(input)

@@ -297,7 +297,7 @@ func (p *Parser) parseGoalStatement() (*Goal, error) {
 	return goal, nil
 }
 
-// parseConvergeStatement parses: CONVERGE <identifier> (<string> | FROM <path>) WITHIN (<number> | <variable>) [-> outputs] [USING <identifier_list>] [SUPERVISED [HUMAN] | UNSUPERVISED]
+// parseConvergeStatement parses: CONVERGE <identifier> (<string> | FROM <path>) [USING <identifier_list>] WITHIN (<number> | <variable>) [-> outputs] [SUPERVISED [HUMAN] | UNSUPERVISED]
 func (p *Parser) parseConvergeStatement() (*Goal, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume CONVERGE
@@ -328,6 +328,15 @@ func (p *Parser) parseConvergeStatement() (*Goal, error) {
 		return nil, fmt.Errorf("line %d: expected string or FROM after CONVERGE name, got %s", line, p.curToken.Type)
 	}
 
+	// Check for optional USING clause (before WITHIN)
+	if p.curToken.Type == TokenUSING {
+		agents, err := p.parseIdentifierList()
+		if err != nil {
+			return nil, err
+		}
+		goal.UsingAgent = agents
+	}
+
 	// WITHIN is mandatory for CONVERGE
 	if p.curToken.Type != TokenWITHIN {
 		return nil, fmt.Errorf("line %d: CONVERGE requires WITHIN clause, got %s", line, p.curToken.Type)
@@ -353,15 +362,6 @@ func (p *Parser) parseConvergeStatement() (*Goal, error) {
 			return nil, err
 		}
 		goal.Outputs = outputs
-	}
-
-	// Check for optional USING clause
-	if p.curToken.Type == TokenUSING {
-		agents, err := p.parseIdentifierList()
-		if err != nil {
-			return nil, err
-		}
-		goal.UsingAgent = agents
 	}
 
 	// Check for optional supervision modifiers
