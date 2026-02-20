@@ -12,11 +12,12 @@ Flat, declarative workflow definition. One instruction per line, no indentation,
 | INPUT | Declare input parameter (with optional DEFAULT) |
 | AGENT | Define agent from prompt, file, or skill |
 | GOAL | Define goal with description |
+| CONVERGE | Define convergence goal (iterative refinement) |
 | RUN | Execute goals sequentially |
 | LOOP | Execute goals repeatedly within a limit |
 | FROM | Load content from path |
 | USING | Specify which agents/goals to use |
-| WITHIN | Set iteration limit for LOOP |
+| WITHIN | Set iteration limit for LOOP/CONVERGE |
 | DEFAULT | Default value for INPUT |
 | REQUIRES | Capability profile requirement |
 | SUPERVISED | Enable execution supervision |
@@ -46,6 +47,10 @@ GOAL name "Description" USING agent1, agent2
 RUN step_name USING goal1, goal2
 LOOP step_name USING goal1 WITHIN 5
 LOOP step_name USING goal1 WITHIN $max_iter
+
+CONVERGE refine "Refine until clean" WITHIN 10
+CONVERGE polish "Polish the output" WITHIN $max_iter -> result
+CONVERGE improve "Improve with feedback" WITHIN 5 USING critic
 ```
 
 ## Strings
@@ -144,6 +149,60 @@ GOAL analyze "Analyze $topic" -> summary USING researcher, critic
 ```
 
 An implicit synthesizer transforms their outputs into the goal's fields.
+
+## Convergence Goals
+
+CONVERGE goals implement iterative refinement (the "Ralph Wiggum loop" pattern). The agent refines its output repeatedly until it converges on a stable result.
+
+```
+CONVERGE refine "Refine the code until it's clean" WITHIN 10
+```
+
+### How it works
+
+1. Agent executes the goal and produces output
+2. Output is fed back as context for the next iteration
+3. Agent sees all previous iterations in `<convergence-history>` tags
+4. Process repeats until agent outputs `CONVERGED` or hits the WITHIN limit
+5. Final output is the last substantive iteration (not the "CONVERGED" signal)
+
+### Syntax
+
+```
+CONVERGE <name> "<description>" WITHIN <limit|$var> [-> outputs] [USING agents] [SUPERVISED]
+```
+
+### Key features
+
+- **Same capabilities as GOAL**: tools, USING, spawn_agent, supervision all work
+- **Safety limit**: WITHIN prevents infinite loops
+- **Limit is hidden**: The LLM never sees the max iteration count (prevents gaming)
+- **Graceful degradation**: If limit is hit, returns last output with a warning
+- **Side effects persist**: File changes from all iterations are kept
+
+### Example: Code refinement
+
+```
+NAME code-polish
+
+AGENT critic "You are a code critic. Find issues."
+CONVERGE polish "Refine the code until it passes review" WITHIN 5 USING critic -> clean_code
+
+RUN main USING polish
+```
+
+Each iteration:
+1. Agent produces refined code
+2. Critic agent evaluates it (via USING)
+3. If issues found, another iteration runs
+4. When agent believes code is clean, outputs `CONVERGED`
+
+### Warning on non-convergence
+
+If the WITHIN limit is reached without convergence, replay shows:
+```
+⚠ WARNING: Goal "polish" did not converge within limit (used all iterations)
+```
 
 ## AGENT FROM Resolution
 
