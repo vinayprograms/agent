@@ -1,0 +1,20 @@
+# 44 - Simple Convergence Example
+# Basic CONVERGE without multi-agent - self-refining summarization
+
+NAME converge-simple
+
+INPUT content
+INPUT max_words DEFAULT "100"
+
+CONVERGE summarize """Summarize the following content in $max_words words or less:
+
+$content
+
+Review your summary and refine it for:
+- Clarity and conciseness  
+- Coverage of key points
+- Readability
+
+Continue refining until further changes would not meaningfully improve the summary.""" -> summary WITHIN 5
+
+RUN main USING summarize

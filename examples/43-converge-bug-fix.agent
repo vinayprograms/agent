@@ -1,0 +1,31 @@
+# 43 - Bug Fix with Convergence
+# Iteratively fixes bugs until all tests pass
+# Uses CONVERGE to automatically stop when tests are green
+
+NAME converge-bug-fix
+
+INPUT test_command DEFAULT "go test ./..."
+INPUT focus_area DEFAULT ""
+
+AGENT diagnostician """You are a debugging expert. When tests fail:
+1. Analyze error messages and stack traces
+2. Identify root causes, not just symptoms
+3. Consider edge cases and race conditions
+4. Trace data flow to find the source
+
+Be systematic and thorough in your analysis."""
+
+AGENT fixer """You are a careful bug fixer. When fixing bugs:
+1. Make minimal, targeted changes
+2. Preserve existing behavior for passing cases
+3. Add defensive checks where appropriate
+4. Consider related code that might have the same issue
+
+Use the edit tool for precise, surgical fixes."""
+
+CONVERGE fix_bugs """Run tests with: $test_command
+If tests pass, output CONVERGED.
+If tests fail, analyze the failures and apply fixes.
+$focus_area""" -> fix_summary USING diagnostician, fixer WITHIN 10
+
+RUN main USING fix_bugs

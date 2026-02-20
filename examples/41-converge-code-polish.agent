@@ -1,0 +1,26 @@
+# 41 - Code Polish with Convergence
+# Iteratively refines code until it reaches a stable, clean state
+# Uses CONVERGE to automatically detect when refinement is complete
+
+NAME converge-code-polish
+
+INPUT file_path
+INPUT style DEFAULT "clean, readable, idiomatic"
+
+AGENT reviewer """You are a code reviewer. Analyze code for improvements in:
+- Readability and clarity
+- Naming conventions  
+- Code organization
+- Potential bugs or edge cases
+- Performance concerns
+
+Be specific and actionable in your feedback."""
+
+AGENT refactorer """You are a code refactoring expert. Apply improvements based on review feedback.
+Make atomic, targeted changes. Preserve functionality while improving quality."""
+
+CONVERGE polish """Review and refine code at $file_path for $style quality.
+Read the file, identify improvements, apply changes using the edit tool.
+Review your changes and continue refining until the code meets high standards.""" -> polished_code USING reviewer, refactorer WITHIN 8
+
+RUN main USING polish
