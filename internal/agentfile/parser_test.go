@@ -1032,7 +1032,7 @@ RUN main USING refine`
 // TestParser_ConvergeWithOutputs tests parsing CONVERGE with output variable.
 func TestParser_ConvergeWithOutputs(t *testing.T) {
 	input := `NAME test
-CONVERGE refine "Refine until done" WITHIN 10 -> result
+CONVERGE refine "Refine until done" -> result WITHIN 10
 RUN main USING refine`
 
 	wf, err := ParseString(input)
@@ -1064,6 +1064,30 @@ RUN main USING polish`
 	}
 }
 
+// TestParser_ConvergeWithOutputsAndUsing tests parsing CONVERGE with -> outputs before USING.
+func TestParser_ConvergeWithOutputsAndUsing(t *testing.T) {
+	input := `NAME test
+AGENT reviewer "You are a code reviewer"
+CONVERGE polish "Polish the code" -> result USING reviewer WITHIN 5
+RUN main USING polish`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	goal := wf.Goals[0]
+	if len(goal.Outputs) != 1 || goal.Outputs[0] != "result" {
+		t.Errorf("expected Outputs=['result'], got %v", goal.Outputs)
+	}
+	if len(goal.UsingAgent) != 1 || goal.UsingAgent[0] != "reviewer" {
+		t.Errorf("expected UsingAgent=['reviewer'], got %v", goal.UsingAgent)
+	}
+	if goal.WithinLimit == nil || *goal.WithinLimit != 5 {
+		t.Errorf("expected WithinLimit=5, got %v", goal.WithinLimit)
+	}
+}
+
 // TestParser_ConvergeSupervised tests parsing CONVERGE with SUPERVISED modifier.
 func TestParser_ConvergeSupervised(t *testing.T) {
 	input := `NAME test
@@ -1088,7 +1112,7 @@ RUN main USING refine`
 func TestParser_ConvergeFull(t *testing.T) {
 	input := `NAME test
 AGENT critic "You critique code"
-CONVERGE polish "Polish until perfect" USING critic WITHIN 8 -> refined_code SUPERVISED
+CONVERGE polish "Polish until perfect" -> refined_code USING critic WITHIN 8 SUPERVISED
 RUN main USING polish`
 
 	wf, err := ParseString(input)

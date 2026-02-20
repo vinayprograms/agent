@@ -49,8 +49,8 @@ LOOP step_name USING goal1 WITHIN 5
 LOOP step_name USING goal1 WITHIN $max_iter
 
 CONVERGE refine "Refine until clean" WITHIN 10
-CONVERGE polish "Polish the output" WITHIN $max_iter -> result
-CONVERGE improve "Improve with feedback" USING critic WITHIN 5
+CONVERGE polish "Polish the output" -> result WITHIN $max_iter
+CONVERGE improve "Improve with feedback" -> result USING critic WITHIN 5
 ```
 
 ## Strings
@@ -169,7 +169,7 @@ CONVERGE refine "Refine the code until it's clean" WITHIN 10
 ### Syntax
 
 ```
-CONVERGE <name> "<description>" [USING agents] WITHIN <limit|$var> [-> outputs] [SUPERVISED]
+CONVERGE <name> "<description>" [-> outputs] [USING agents] WITHIN <limit|$var> [SUPERVISED]
 ```
 
 ### Key features
@@ -186,7 +186,7 @@ CONVERGE <name> "<description>" [USING agents] WITHIN <limit|$var> [-> outputs] 
 NAME code-polish
 
 AGENT critic "You are a code critic. Find issues."
-CONVERGE polish "Refine the code until it passes review" USING critic WITHIN 5 -> clean_code
+CONVERGE polish "Refine the code until it passes review" -> clean_code USING critic WITHIN 5
 
 RUN main USING polish
 ```
