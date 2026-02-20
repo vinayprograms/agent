@@ -275,9 +275,67 @@ func (rt *runtime) setupTelemetry() error {
 
 // createExecutor creates the workflow executor.
 func (rt *runtime) createExecutor() {
-	rt.exec = executor.NewExecutor(rt.wf, rt.provider, rt.registry, rt.pol)
+	// Create a profile-aware provider factory
+	factory := &profileProviderFactory{
+		cfg:      rt.cfg,
+		creds:    rt.creds,
+		fallback: rt.provider,
+	}
+	rt.exec = executor.NewExecutorWithFactory(rt.wf, factory, rt.registry, rt.pol)
 	rt.exec.SetDebug(rt.debug)
 	rt.exec.SetTimeouts(rt.cfg.Timeouts.MCP, rt.cfg.Timeouts.WebSearch, rt.cfg.Timeouts.WebFetch)
+}
+
+// profileProviderFactory creates providers based on capability profiles.
+type profileProviderFactory struct {
+	cfg      *config.Config
+	creds    *credentials.Credentials
+	fallback llm.Provider
+	cache    map[string]llm.Provider
+}
+
+// GetProvider returns a provider for the given profile name.
+func (f *profileProviderFactory) GetProvider(profile string) (llm.Provider, error) {
+	if profile == "" {
+		return f.fallback, nil
+	}
+
+	if f.cache != nil {
+		if cached, ok := f.cache[profile]; ok {
+			return cached, nil
+		}
+	}
+
+	profileCfg := f.cfg.GetProfile(profile)
+	if profileCfg.Model == "" {
+		return f.fallback, nil
+	}
+
+	providerName := profileCfg.Provider
+	if providerName == "" {
+		providerName = llm.InferProviderFromModel(profileCfg.Model)
+	}
+	cred := f.creds.GetCredential(providerName)
+
+	provider, err := llm.NewProvider(llm.ProviderConfig{
+		Provider:     providerName,
+		Model:        profileCfg.Model,
+		APIKey:       cred.Key,
+		IsOAuthToken: cred.IsOAuthToken,
+		MaxTokens:    profileCfg.MaxTokens,
+		BaseURL:      profileCfg.BaseURL,
+		Thinking:     llm.ThinkingConfig{Level: llm.ThinkingLevel(profileCfg.Thinking)},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("creating provider for profile %q: %w", profile, err)
+	}
+
+	if f.cache == nil {
+		f.cache = make(map[string]llm.Provider)
+	}
+	f.cache[profile] = provider
+
+	return provider, nil
 }
 
 // setupMCP initializes MCP servers.
