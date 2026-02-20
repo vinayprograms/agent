@@ -208,6 +208,30 @@ func Validate(wf *Workflow) error {
 		}
 	}
 
+	// Supervision downgrade validation: SUPERVISED HUMAN cannot be downgraded
+	// Per docs/execution/03-supervision-modes.md: "Goals can escalate or downgrade
+	// supervision, except when global is SUPERVISED HUMAN — then downgrading is an error."
+	if wf.Supervised && wf.HumanOnly {
+		for _, goal := range wf.Goals {
+			if goal.Supervision == SupervisionDisabled {
+				errs = append(errs, fmt.Sprintf("line %d: goal %q cannot be UNSUPERVISED when global is SUPERVISED HUMAN",
+					goal.Line, goal.Name))
+			}
+		}
+		for _, agent := range wf.Agents {
+			if agent.Supervision == SupervisionDisabled {
+				errs = append(errs, fmt.Sprintf("line %d: agent %q cannot be UNSUPERVISED when global is SUPERVISED HUMAN",
+					agent.Line, agent.Name))
+			}
+		}
+		for _, step := range wf.Steps {
+			if step.Supervision == SupervisionDisabled {
+				errs = append(errs, fmt.Sprintf("line %d: step %q cannot be UNSUPERVISED when global is SUPERVISED HUMAN",
+					step.Line, step.Name))
+			}
+		}
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("validation errors:\n  %s", strings.Join(errs, "\n  "))
 	}

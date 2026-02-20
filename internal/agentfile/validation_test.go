@@ -206,3 +206,80 @@ RUN setup USING analyze`), 0644)
 		t.Errorf("name wrong: %s", wf.Name)
 	}
 }
+
+// Test supervision downgrade validation: SUPERVISED HUMAN cannot be downgraded
+func TestValidation_SupervisionDowngrade(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		shouldError bool
+		errContains string
+	}{
+		{
+			name: "global SUPERVISED HUMAN with UNSUPERVISED goal - error",
+			input: `SUPERVISED HUMAN
+NAME test
+GOAL analyze "test" UNSUPERVISED
+RUN step USING analyze`,
+			shouldError: true,
+			errContains: "UNSUPERVISED when global is SUPERVISED HUMAN",
+		},
+		{
+			name: "global SUPERVISED HUMAN with UNSUPERVISED agent - error",
+			input: `SUPERVISED HUMAN
+NAME test
+AGENT critic "critic" UNSUPERVISED
+GOAL analyze "test" USING critic
+RUN step USING analyze`,
+			shouldError: true,
+			errContains: "UNSUPERVISED when global is SUPERVISED HUMAN",
+		},
+		{
+			name: "global SUPERVISED with UNSUPERVISED goal - allowed",
+			input: `SUPERVISED
+NAME test
+GOAL analyze "test" UNSUPERVISED
+RUN step USING analyze`,
+			shouldError: false,
+		},
+		{
+			name: "global SUPERVISED HUMAN with no override - allowed",
+			input: `SUPERVISED HUMAN
+NAME test
+GOAL analyze "test"
+RUN step USING analyze`,
+			shouldError: false,
+		},
+		{
+			name: "global SUPERVISED HUMAN with SUPERVISED goal - allowed",
+			input: `SUPERVISED HUMAN
+NAME test
+GOAL analyze "test" SUPERVISED
+RUN step USING analyze`,
+			shouldError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wf, err := ParseString(tt.input)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+
+			err = ValidateWithoutPaths(wf)
+			if tt.shouldError {
+				if err == nil {
+					t.Fatal("expected validation error")
+				}
+				if !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("error should contain %q: %v", tt.errContains, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
