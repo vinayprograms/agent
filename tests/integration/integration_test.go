@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
@@ -221,16 +222,17 @@ RUN main USING review
 	}
 
 	// Track agent calls
+	// Note: system prompts now include TersenessGuidance prefix, so use Contains
 	agentCalls := make(map[string]bool)
 	provider := llm.NewMockProvider()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		for _, msg := range req.Messages {
 			if msg.Role == "system" {
-				if msg.Content == "You are a critic" {
+				if strings.Contains(msg.Content, "You are a critic") {
 					agentCalls["critic"] = true
 					return &llm.ChatResponse{Content: "Needs improvement"}, nil
 				}
-				if msg.Content == "You are an optimist" {
+				if strings.Contains(msg.Content, "You are an optimist") {
 					agentCalls["optimist"] = true
 					return &llm.ChatResponse{Content: "Looks great!"}, nil
 				}
