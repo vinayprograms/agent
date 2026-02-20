@@ -95,6 +95,12 @@ func (p *Parser) Parse() (*Workflow, error) {
 				return nil, err
 			}
 			wf.Goals = append(wf.Goals, *goal)
+		case TokenCONVERGE:
+			goal, err := p.parseConvergeStatement()
+			if err != nil {
+				return nil, err
+			}
+			wf.Goals = append(wf.Goals, *goal)
 		case TokenRUN:
 			step, err := p.parseRunStatement()
 			if err != nil {
@@ -254,6 +260,90 @@ func (p *Parser) parseGoalStatement() (*Goal, error) {
 		p.nextToken()
 	} else {
 		return nil, fmt.Errorf("line %d: expected string or FROM after GOAL name, got %s", line, p.curToken.Type)
+	}
+
+	// Check for optional -> outputs
+	if p.curToken.Type == TokenArrow {
+		outputs, err := p.parseOutputList()
+		if err != nil {
+			return nil, err
+		}
+		goal.Outputs = outputs
+	}
+
+	// Check for optional USING clause
+	if p.curToken.Type == TokenUSING {
+		agents, err := p.parseIdentifierList()
+		if err != nil {
+			return nil, err
+		}
+		goal.UsingAgent = agents
+	}
+
+	// Check for optional supervision modifiers
+	if p.curToken.Type == TokenSUPERVISED {
+		goal.Supervision = SupervisionEnabled
+		p.nextToken()
+		if p.curToken.Type == TokenHUMAN {
+			goal.HumanOnly = true
+			p.nextToken()
+		}
+	} else if p.curToken.Type == TokenUNSUPERVISED {
+		goal.Supervision = SupervisionDisabled
+		p.nextToken()
+	}
+
+	p.skipNewline()
+	return goal, nil
+}
+
+// parseConvergeStatement parses: CONVERGE <identifier> (<string> | FROM <path>) WITHIN (<number> | <variable>) [-> outputs] [USING <identifier_list>] [SUPERVISED [HUMAN] | UNSUPERVISED]
+func (p *Parser) parseConvergeStatement() (*Goal, error) {
+	line := p.curToken.Line
+	p.nextToken() // consume CONVERGE
+
+	if !p.isIdentifier() {
+		return nil, fmt.Errorf("line %d: expected identifier after CONVERGE, got %s", line, p.curToken.Type)
+	}
+
+	goal := &Goal{
+		Name:       p.curToken.Literal,
+		IsConverge: true,
+		Line:       line,
+	}
+	p.nextToken()
+
+	// Either string or FROM path
+	if p.curToken.Type == TokenString {
+		goal.Outcome = p.curToken.Literal
+		p.nextToken()
+	} else if p.curToken.Type == TokenFROM {
+		p.nextToken() // consume FROM
+		if p.curToken.Type != TokenPath {
+			return nil, fmt.Errorf("line %d: expected path after FROM, got %s", line, p.curToken.Type)
+		}
+		goal.FromPath = p.curToken.Literal
+		p.nextToken()
+	} else {
+		return nil, fmt.Errorf("line %d: expected string or FROM after CONVERGE name, got %s", line, p.curToken.Type)
+	}
+
+	// WITHIN is mandatory for CONVERGE
+	if p.curToken.Type != TokenWITHIN {
+		return nil, fmt.Errorf("line %d: CONVERGE requires WITHIN clause, got %s", line, p.curToken.Type)
+	}
+	p.nextToken() // consume WITHIN
+
+	// Either number or variable
+	if p.curToken.Type == TokenNumber {
+		val, _ := strconv.Atoi(p.curToken.Literal)
+		goal.WithinLimit = &val
+		p.nextToken()
+	} else if p.curToken.Type == TokenVar {
+		goal.WithinVar = p.curToken.Literal
+		p.nextToken()
+	} else {
+		return nil, fmt.Errorf("line %d: expected number or variable after WITHIN, got %s", line, p.curToken.Type)
 	}
 
 	// Check for optional -> outputs

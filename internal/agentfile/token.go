@@ -15,6 +15,7 @@ const (
 	TokenINPUT
 	TokenAGENT
 	TokenGOAL
+	TokenCONVERGE
 	TokenRUN
 	TokenLOOP
 	TokenFROM
@@ -56,6 +57,8 @@ func (t TokenType) String() string {
 		return "AGENT"
 	case TokenGOAL:
 		return "GOAL"
+	case TokenCONVERGE:
+		return "CONVERGE"
 	case TokenRUN:
 		return "RUN"
 	case TokenLOOP:
@@ -111,6 +114,7 @@ var keywords = map[string]TokenType{
 	"INPUT":        TokenINPUT,
 	"AGENT":        TokenAGENT,
 	"GOAL":         TokenGOAL,
+	"CONVERGE":     TokenCONVERGE,
 	"RUN":          TokenRUN,
 	"LOOP":         TokenLOOP,
 	"FROM":         TokenFROM,

@@ -150,6 +150,10 @@ type Executor struct {
 	// Observation extraction for semantic memory
 	observationExtractor ObservationExtractor
 	observationStore     ObservationStore
+
+	// Convergence tracking
+	convergenceFailures map[string]int // goals that hit WITHIN limit without converging
+	mu                  sync.Mutex     // protects convergenceFailures
 }
 
 // NewExecutor creates a new executor.
@@ -616,6 +620,27 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 
 	if e.OnGoalStart != nil {
 		e.OnGoalStart(goal.Name)
+	}
+
+	// Check for convergence goal
+	if goal.IsConverge {
+		result, err := e.executeConvergeGoal(ctx, goal)
+		if err != nil {
+			return nil, err
+		}
+		// Parse structured output if declared
+		if len(goal.Outputs) > 0 {
+			parsedOutputs, err := parseStructuredOutput(result.Output, goal.Outputs)
+			if err != nil {
+				e.logEvent(session.EventSystem, fmt.Sprintf("Warning: failed to parse structured output: %v", err))
+			} else {
+				for field, value := range parsedOutputs {
+					e.outputs[field] = value
+				}
+			}
+		}
+		e.logGoalEnd(goal.Name, result.Output)
+		return &GoalResult{Output: result.Output, ToolCallsMade: false}, nil
 	}
 
 	// Check for multi-agent execution

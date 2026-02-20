@@ -46,13 +46,16 @@ type Agent struct {
 
 func (a *Agent) node() {}
 
-// Goal represents a GOAL declaration.
+// Goal represents a GOAL or CONVERGE declaration.
 type Goal struct {
 	Name        string
 	Outcome     string          // inline string content
 	FromPath    string          // path to outcome file (mutually exclusive with Outcome)
 	Outputs     []string        // structured output field names (after ->)
 	UsingAgent  []string        // agent names for multi-agent goals
+	IsConverge  bool            // true if this is a CONVERGE goal (iterative convergence)
+	WithinLimit *int            // max iterations for CONVERGE (nil if variable reference)
+	WithinVar   string          // variable name for CONVERGE limit (if not literal)
 	Supervision SupervisionMode // inherit/supervised/unsupervised
 	HumanOnly   bool            // requires human approval (SUPERVISED HUMAN)
 	Line        int

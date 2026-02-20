@@ -18,12 +18,20 @@ type LoopIteration struct {
 	Goals []GoalOutput // Goals completed in this iteration
 }
 
+// ConvergenceIteration represents a completed convergence iteration.
+type ConvergenceIteration struct {
+	N      int    // Iteration number (1-indexed)
+	Output string // The output from this iteration
+}
+
 // XMLContextBuilder builds XML-structured prompts for LLM communication.
 type XMLContextBuilder struct {
-	workflowName string
-	priorGoals   []GoalOutput
-	iterations   []LoopIteration
-	currentGoal  struct {
+	workflowName            string
+	priorGoals              []GoalOutput
+	iterations              []LoopIteration
+	convergenceIterations   []ConvergenceIteration
+	isConverge              bool
+	currentGoal             struct {
 		id          string
 		description string
 		loopName    string
@@ -49,6 +57,16 @@ func (b *XMLContextBuilder) AddPriorGoal(id, output string) {
 // AddIteration adds a completed loop iteration to the context.
 func (b *XMLContextBuilder) AddIteration(n int, goals []GoalOutput) {
 	b.iterations = append(b.iterations, LoopIteration{N: n, Goals: goals})
+}
+
+// SetConvergenceMode enables convergence mode for the context builder.
+func (b *XMLContextBuilder) SetConvergenceMode() {
+	b.isConverge = true
+}
+
+// AddConvergenceIteration adds a completed convergence iteration to the context.
+func (b *XMLContextBuilder) AddConvergenceIteration(n int, output string) {
+	b.convergenceIterations = append(b.convergenceIterations, ConvergenceIteration{N: n, Output: output})
 }
 
 // SetCurrentGoal sets the current goal to be executed.
@@ -78,8 +96,8 @@ func (b *XMLContextBuilder) Build() string {
 
 	buf.WriteString(fmt.Sprintf("<workflow name=%q>\n", b.workflowName))
 
-	// Build context section if there are prior goals or iterations
-	if len(b.priorGoals) > 0 || len(b.iterations) > 0 {
+	// Build context section if there are prior goals, iterations, or convergence iterations
+	if len(b.priorGoals) > 0 || len(b.iterations) > 0 || len(b.convergenceIterations) > 0 {
 		buf.WriteString("\n<context>\n")
 
 		// Add prior goals (non-loop goals)
@@ -106,6 +124,20 @@ func (b *XMLContextBuilder) Build() string {
 			buf.WriteString("  </iteration>\n\n")
 		}
 
+		// Add convergence iterations
+		if len(b.convergenceIterations) > 0 {
+			buf.WriteString("  <convergence-history>\n")
+			for _, iter := range b.convergenceIterations {
+				buf.WriteString(fmt.Sprintf("    <iteration n=\"%d\">\n", iter.N))
+				buf.WriteString(iter.Output)
+				if !strings.HasSuffix(iter.Output, "\n") {
+					buf.WriteString("\n")
+				}
+				buf.WriteString("    </iteration>\n")
+			}
+			buf.WriteString("  </convergence-history>\n\n")
+		}
+
 		buf.WriteString("</context>\n")
 	}
 
@@ -122,6 +154,15 @@ func (b *XMLContextBuilder) Build() string {
 		buf.WriteString("\n")
 	}
 	buf.WriteString("</current-goal>\n")
+
+	// Add convergence instruction if in convergence mode
+	if b.isConverge {
+		buf.WriteString("\n<convergence-instruction>\n")
+		buf.WriteString("This is a convergence goal. Review your previous iterations in <convergence-history> and refine your output.\n")
+		buf.WriteString("When you are confident that further refinement would not meaningfully improve the result, output ONLY the word: CONVERGED\n")
+		buf.WriteString("Do not output CONVERGED prematurely. Only converge when the output is truly stable and complete.\n")
+		buf.WriteString("</convergence-instruction>\n")
+	}
 
 	// Add correction if present
 	if b.correction != "" {

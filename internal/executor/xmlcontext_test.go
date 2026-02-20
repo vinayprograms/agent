@@ -250,3 +250,83 @@ func TestBuildTaskContextWithPriorGoals_NoPriorGoals(t *testing.T) {
 		t.Error("expected task in objective")
 	}
 }
+
+func TestXMLContextBuilder_ConvergenceMode(t *testing.T) {
+	b := NewXMLContextBuilder("refine-code")
+	b.SetConvergenceMode()
+	b.SetCurrentGoal("polish", "Refine the code until it's clean")
+
+	result := b.Build()
+
+	// Should have convergence instruction
+	if !strings.Contains(result, "<convergence-instruction>") {
+		t.Error("expected convergence-instruction tag")
+	}
+	if !strings.Contains(result, "CONVERGED") {
+		t.Error("expected CONVERGED keyword in instruction")
+	}
+	// Should NOT have convergence-history section (no iterations yet)
+	// Note: the instruction text mentions <convergence-history>, so we check
+	// that there's no actual history section with iteration tags
+	if strings.Contains(result, `<iteration n="`) {
+		t.Error("should not have iteration tags with no iterations")
+	}
+	// Should not have context section (no prior goals or iterations)
+	if strings.Contains(result, "<context>") {
+		t.Error("should not have context section with no prior goals/iterations")
+	}
+}
+
+func TestXMLContextBuilder_ConvergenceWithIterations(t *testing.T) {
+	b := NewXMLContextBuilder("refine-code")
+	b.SetConvergenceMode()
+	b.AddConvergenceIteration(1, "First attempt at cleaning the code")
+	b.AddConvergenceIteration(2, "Second attempt with better formatting")
+	b.SetCurrentGoal("polish", "Refine the code until it's clean")
+
+	result := b.Build()
+
+	// Should have convergence-history
+	if !strings.Contains(result, "<convergence-history>") {
+		t.Error("expected convergence-history tag")
+	}
+	if !strings.Contains(result, `<iteration n="1">`) {
+		t.Error("expected first iteration tag")
+	}
+	if !strings.Contains(result, `<iteration n="2">`) {
+		t.Error("expected second iteration tag")
+	}
+	if !strings.Contains(result, "First attempt at cleaning") {
+		t.Error("expected first iteration content")
+	}
+	if !strings.Contains(result, "Second attempt with better") {
+		t.Error("expected second iteration content")
+	}
+	// Should also have convergence instruction
+	if !strings.Contains(result, "<convergence-instruction>") {
+		t.Error("expected convergence-instruction tag")
+	}
+}
+
+func TestXMLContextBuilder_ConvergenceWithPriorGoals(t *testing.T) {
+	b := NewXMLContextBuilder("refine-workflow")
+	b.AddPriorGoal("analyze", "Analysis results: code has issues")
+	b.SetConvergenceMode()
+	b.AddConvergenceIteration(1, "First fix attempt")
+	b.SetCurrentGoal("polish", "Refine based on analysis")
+
+	result := b.Build()
+
+	// Should have prior goals in context
+	if !strings.Contains(result, `<goal id="analyze">`) {
+		t.Error("expected prior goal in context")
+	}
+	// Should have convergence-history in context
+	if !strings.Contains(result, "<convergence-history>") {
+		t.Error("expected convergence-history in context")
+	}
+	// Both should be in context section
+	if !strings.Contains(result, "<context>") {
+		t.Error("expected context section")
+	}
+}

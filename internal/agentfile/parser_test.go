@@ -974,3 +974,157 @@ func TestParser_SecurityResearchMode(t *testing.T) {
 		})
 	}
 }
+
+// TestParser_ConvergeStatement tests parsing CONVERGE with literal limit.
+func TestParser_ConvergeStatement(t *testing.T) {
+	input := `NAME test
+CONVERGE refine "Refine the code until clean" WITHIN 10
+RUN main USING refine`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	if len(wf.Goals) != 1 {
+		t.Fatalf("expected 1 goal, got %d", len(wf.Goals))
+	}
+
+	goal := wf.Goals[0]
+	if goal.Name != "refine" {
+		t.Errorf("expected name 'refine', got %q", goal.Name)
+	}
+	if goal.Outcome != "Refine the code until clean" {
+		t.Errorf("expected outcome 'Refine the code until clean', got %q", goal.Outcome)
+	}
+	if !goal.IsConverge {
+		t.Error("expected IsConverge to be true")
+	}
+	if goal.WithinLimit == nil || *goal.WithinLimit != 10 {
+		t.Errorf("expected WithinLimit=10, got %v", goal.WithinLimit)
+	}
+}
+
+// TestParser_ConvergeStatementVariable tests parsing CONVERGE with variable limit.
+func TestParser_ConvergeStatementVariable(t *testing.T) {
+	input := `NAME test
+INPUT max_iterations DEFAULT 5
+CONVERGE refine "Refine iteratively" WITHIN $max_iterations
+RUN main USING refine`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	goal := wf.Goals[0]
+	if !goal.IsConverge {
+		t.Error("expected IsConverge to be true")
+	}
+	if goal.WithinLimit != nil {
+		t.Error("expected WithinLimit to be nil for variable reference")
+	}
+	if goal.WithinVar != "max_iterations" {
+		t.Errorf("expected WithinVar='max_iterations', got %q", goal.WithinVar)
+	}
+}
+
+// TestParser_ConvergeWithOutputs tests parsing CONVERGE with output variable.
+func TestParser_ConvergeWithOutputs(t *testing.T) {
+	input := `NAME test
+CONVERGE refine "Refine until done" WITHIN 10 -> result
+RUN main USING refine`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	goal := wf.Goals[0]
+	if len(goal.Outputs) != 1 || goal.Outputs[0] != "result" {
+		t.Errorf("expected Outputs=['result'], got %v", goal.Outputs)
+	}
+}
+
+// TestParser_ConvergeWithUsing tests parsing CONVERGE with USING clause.
+func TestParser_ConvergeWithUsing(t *testing.T) {
+	input := `NAME test
+AGENT reviewer "You are a code reviewer"
+CONVERGE polish "Polish the code" WITHIN 5 USING reviewer
+RUN main USING polish`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	goal := wf.Goals[0]
+	if len(goal.UsingAgent) != 1 || goal.UsingAgent[0] != "reviewer" {
+		t.Errorf("expected UsingAgent=['reviewer'], got %v", goal.UsingAgent)
+	}
+}
+
+// TestParser_ConvergeSupervised tests parsing CONVERGE with SUPERVISED modifier.
+func TestParser_ConvergeSupervised(t *testing.T) {
+	input := `NAME test
+CONVERGE refine "Refine carefully" WITHIN 10 SUPERVISED HUMAN
+RUN main USING refine`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	goal := wf.Goals[0]
+	if goal.Supervision != SupervisionEnabled {
+		t.Error("expected goal to be supervised")
+	}
+	if !goal.HumanOnly {
+		t.Error("expected HumanOnly to be true")
+	}
+}
+
+// TestParser_ConvergeFull tests parsing CONVERGE with all options.
+func TestParser_ConvergeFull(t *testing.T) {
+	input := `NAME test
+AGENT critic "You critique code"
+CONVERGE polish "Polish until perfect" WITHIN 8 -> refined_code USING critic SUPERVISED
+RUN main USING polish`
+
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	goal := wf.Goals[0]
+	if goal.Name != "polish" {
+		t.Errorf("expected name 'polish', got %q", goal.Name)
+	}
+	if !goal.IsConverge {
+		t.Error("expected IsConverge to be true")
+	}
+	if goal.WithinLimit == nil || *goal.WithinLimit != 8 {
+		t.Errorf("expected WithinLimit=8, got %v", goal.WithinLimit)
+	}
+	if len(goal.Outputs) != 1 || goal.Outputs[0] != "refined_code" {
+		t.Errorf("expected Outputs=['refined_code'], got %v", goal.Outputs)
+	}
+	if len(goal.UsingAgent) != 1 || goal.UsingAgent[0] != "critic" {
+		t.Errorf("expected UsingAgent=['critic'], got %v", goal.UsingAgent)
+	}
+	if goal.Supervision != SupervisionEnabled {
+		t.Error("expected goal to be supervised")
+	}
+}
+
+// TestParser_ConvergeMissingWithin tests that CONVERGE without WITHIN fails.
+func TestParser_ConvergeMissingWithin(t *testing.T) {
+	input := `NAME test
+CONVERGE refine "Refine forever"
+RUN main USING refine`
+
+	_, err := ParseString(input)
+	if err == nil {
+		t.Error("expected error for CONVERGE without WITHIN, got nil")
+	}
+}
