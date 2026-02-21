@@ -166,8 +166,10 @@ func (e *Executor) executeConvergeIteration(ctx context.Context, goal *agentfile
 
 // executeConvergeMultiAgent handles multi-agent execution within a convergence loop.
 func (e *Executor) executeConvergeMultiAgent(ctx context.Context, goal *agentfile.Goal, prompt string) (string, error) {
-	// For now, delegate to the standard multi-agent execution
-	// The convergence context is already in the prompt
+	// Store convergence context so executeSimpleParallel can use it
+	e.convergenceContext = prompt
+	defer func() { e.convergenceContext = "" }()
+	
 	return e.executeMultiAgentGoal(ctx, goal)
 }
 

@@ -153,6 +153,7 @@ type Executor struct {
 
 	// Convergence tracking
 	convergenceFailures map[string]int // goals that hit WITHIN limit without converging
+	convergenceContext  string         // current convergence history (for multi-agent goals)
 	mu                  sync.Mutex     // protects convergenceFailures
 }
 
@@ -1291,6 +1292,12 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	}
 
 	task := e.interpolate(goal.Outcome)
+
+	// If we're in a convergence loop, use the convergence-aware prompt instead
+	// This includes the full XML context with convergence history
+	if e.convergenceContext != "" {
+		task = e.convergenceContext
+	}
 
 	// Build prior goals context from completed goals
 	priorGoals := e.buildPriorGoalsContext()
