@@ -36,9 +36,8 @@ args = ["-y", "@modelcontextprotocol/server-memory"]
 [skills]
 paths = ["./skills", "~/.agent/skills"]
 
-[session]
-store = "file"
-path = "./sessions"
+[storage]
+path = "./storage"
 
 [telemetry]
 enabled = false
