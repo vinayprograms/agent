@@ -4,9 +4,9 @@
 NAME meeting-processor
 INPUT notes_file
 
-GOAL read_notes "Read the meeting notes from $notes_file using the read tool."
-GOAL extract "Extract: decisions made, action items (with owners if mentioned), open questions, and key discussion points."
-GOAL format "Format into a clean summary with sections: Summary, Decisions, Action Items, Open Questions, Next Steps."
-GOAL save "Write the processed notes to a new file with '-processed' suffix using write tool."
+GOAL read_notes "Read meeting notes from $notes_file."
+GOAL extract "Extract: decisions (max 5), action items with owners, open questions. Skip redundant discussion."
+GOAL format "Format as: Summary (2-3 sentences), Decisions, Action Items, Open Questions."
+GOAL save "Write to file with '-processed' suffix."
 
 RUN process USING read_notes, extract, format, save

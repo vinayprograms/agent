@@ -13,13 +13,13 @@ AGENT docs FROM agents/creative-writer.md
 AGENT tests FROM skills/testing
 AGENT deps FROM agents/devils-advocate.md
 
-# All specialists analyze in parallel
-GOAL comprehensive-review "Analyze $codebase_path" USING security, performance, style, docs, tests, deps
+# All specialists: top 2 findings each
+GOAL comprehensive-review "Analyze $codebase_path. Each specialist: top 2 issues only." USING security, performance, style, docs, tests, deps
 
-# Single agent synthesizes
-GOAL synthesize "Create unified report from all specialist findings"
+# Synthesize
+GOAL synthesize "Combine findings. Remove duplicates. Max 10 items."
 
-# Final recommendations
-GOAL prioritize "Prioritize recommendations by impact and effort"
+# Prioritize
+GOAL prioritize "Rank by impact. Top 5 recommendations."
 
 RUN main USING comprehensive-review, synthesize, prioritize

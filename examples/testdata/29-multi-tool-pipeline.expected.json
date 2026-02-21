@@ -22,7 +22,7 @@
 
   "convergence": {
     "expected": true,
-    "max_iterations": 5,
+    "max_iterations": 3,
     "success_indicator": "No critical issues remaining or no more improvements possible"
   },
 

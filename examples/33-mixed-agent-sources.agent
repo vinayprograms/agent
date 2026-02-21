@@ -19,11 +19,11 @@ AGENT tester FROM skills/testing
 AGENT security FROM agents/security-auditor.md REQUIRES "reasoning-heavy"
 AGENT helper FROM agents/editor.md REQUIRES "fast"
 
-GOAL plan "Create project improvement plan" USING project-lead
-GOAL review "Review code quality" USING code-reviewer
-GOAL security-scan "Scan for vulnerabilities" USING security
-GOAL test-plan "Create test plan" USING tester
-GOAL quick-fixes "Apply quick fixes" USING helper
+GOAL plan "Brief improvement plan: top 3 priorities." USING project-lead
+GOAL review "Top 3 code quality issues." USING code-reviewer
+GOAL security-scan "Top 3 vulnerabilities." USING security
+GOAL test-plan "3-5 key tests needed." USING tester
+GOAL quick-fixes "Apply 1-2 quick fixes if obvious." USING helper
 
 RUN analysis USING plan, review, security-scan
 RUN action USING test-plan, quick-fixes

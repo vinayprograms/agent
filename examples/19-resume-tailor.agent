@@ -5,9 +5,9 @@ NAME resume-tailor
 INPUT resume_file
 INPUT job_description_file
 
-GOAL parse "Read $resume_file and $job_description_file. Extract skills, experience, and job requirements."
-GOAL match "Match resume content to job requirements. Identify: strong matches, gaps, and transferable skills."
-GOAL tailor "Rewrite resume sections to emphasize relevant experience and use job posting keywords naturally."
-GOAL output "Generate the tailored resume and a cover letter draft. Save the resume to tailored-resume.md and cover letter to cover-letter.md."
+GOAL parse "Read $resume_file and $job_description_file. List key requirements vs candidate skills."
+GOAL match "Identify top 5 matches and top 3 gaps."
+GOAL tailor "Adjust resume bullet points to emphasize matches. Don't fabricate experience."
+GOAL output "Save tailored resume to tailored-resume.md. Brief cover letter (200 words) to cover-letter.md."
 
 RUN tailor USING parse, match, tailor, output

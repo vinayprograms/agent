@@ -6,9 +6,9 @@ INPUT spec_file
 INPUT language DEFAULT "go"
 INPUT framework DEFAULT "gin"
 
-GOAL parse_spec "Read $spec_file and extract: endpoints, methods, request/response schemas, and auth requirements."
-GOAL design "Design the $language code structure using $framework: handlers, models, routes, middleware."
-GOAL generate "Generate the complete API code with proper error handling, validation, and documentation comments."
-GOAL write_files "Write each file to the appropriate location using the write tool. Create a clean project structure."
+GOAL parse_spec "Read $spec_file. List endpoints and schemas concisely."
+GOAL design "Design minimal $language/$framework structure: handlers + routes. Skip middleware unless specified."
+GOAL generate "Generate API code. Basic error handling. Brief comments only."
+GOAL write_files "Write files to appropriate locations."
 
 RUN build USING parse_spec, design, generate, write_files

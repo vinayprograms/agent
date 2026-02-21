@@ -7,9 +7,9 @@ INPUT scope DEFAULT "web application"
 
 AGENT auditor FROM agents/security-auditor.md REQUIRES "reasoning-heavy"
 
-GOAL recon "Use glob, ls, and read to understand the codebase structure at $target_path. Identify entry points and sensitive areas."
-GOAL analyze "Analyze for $scope vulnerabilities: auth, injection, data exposure, misconfigurations." USING auditor
-GOAL classify "Classify findings by severity (Critical/High/Medium/Low) with CVSS-like scoring."
-GOAL report "Generate a security report with: executive summary, detailed findings, and remediation steps. Save to security-audit-output.md."
+GOAL recon "Glob for key files at $target_path. Read max 5 critical files (auth, handlers, config)."
+GOAL analyze "Focus on $scope. Find top 5 vulnerabilities. Prioritize critical issues." USING auditor
+GOAL classify "Classify by severity. Skip Low unless nothing else found."
+GOAL report "Brief report: 1-paragraph summary, top 5 findings with fixes. Save to security-audit-output.md."
 
 RUN audit USING recon, analyze, classify, report

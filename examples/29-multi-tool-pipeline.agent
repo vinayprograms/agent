@@ -9,12 +9,12 @@ INPUT branch DEFAULT "main"
 AGENT planner FROM agents/optimist.md
 AGENT executor FROM agents/security-auditor.md REQUIRES "reasoning-heavy"
 
-GOAL clone "Clone repository from $repo_url (branch: $branch) to workspace"
-GOAL scan "Scan codebase for security issues using available tools" USING executor
-GOAL plan "Create remediation plan for identified issues" USING planner
-GOAL report "Generate comprehensive security audit report"
+GOAL clone "Clone $repo_url (branch: $branch). Shallow clone if possible."
+GOAL scan "Scan for top 5 security issues. Critical/High only." USING executor
+GOAL plan "Brief remediation plan: 1-2 sentences per issue." USING planner
+GOAL report "Concise security report."
 
-CONVERGE fix "Generate patches for critical issues and verify they don't break functionality. Output CONVERGED when all issues are resolved or no more improvements possible." WITHIN 5
+CONVERGE fix "Fix one critical issue per iteration. CONVERGED when critical issues fixed or blocked." WITHIN 3
 
 RUN setup USING clone
 RUN analysis USING scan, plan

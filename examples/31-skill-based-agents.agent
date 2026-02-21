@@ -12,8 +12,8 @@ AGENT reviewer FROM skills/code-review
 AGENT tester FROM skills/testing
 AGENT git-helper FROM skills/git-workflow
 
-GOAL analyze "Analyze code at $code_path for $language patterns" USING reviewer
-GOAL suggest-tests "Suggest tests for the analyzed code" USING tester
-GOAL prepare-commit "Prepare a commit for the changes" USING git-helper
+GOAL analyze "Analyze $code_path. Top 3 $language patterns/issues." USING reviewer
+GOAL suggest-tests "Suggest 2-3 key tests." USING tester
+GOAL prepare-commit "Prepare commit message. Brief description." USING git-helper
 
 RUN main USING analyze, suggest-tests, prepare-commit

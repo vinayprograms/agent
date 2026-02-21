@@ -8,8 +8,8 @@ INPUT context DEFAULT "business"
 AGENT optimist FROM agents/optimist.md REQUIRES "fast"
 AGENT critic FROM agents/devils-advocate.md REQUIRES "reasoning-heavy"
 
-GOAL frame "Clearly frame the decision: $decision. Identify the key factors and stakeholders in a $context context."
-GOAL evaluate "Evaluate this decision thoroughly." USING optimist, critic
-GOAL synthesize "Synthesize both perspectives into a balanced recommendation with pros, cons, and mitigations. Save the analysis to decision-output.md."
+GOAL frame "Frame decision: $decision. List 3-4 key factors for $context context."
+GOAL evaluate "Each perspective: 3 key points max. Be concise." USING optimist, critic
+GOAL synthesize "Balanced recommendation: top 3 pros, top 3 cons, 2 mitigations. Save to decision-output.md."
 
 RUN analyze USING frame, evaluate, synthesize

@@ -7,8 +7,8 @@ INPUT target_language
 INPUT context DEFAULT "general"
 
 GOAL read "Read content from $source_file."
-GOAL analyze "Analyze the text: identify idioms, cultural references, tone, and domain-specific terms for $context context."
-GOAL translate "Translate to $target_language preserving meaning, tone, and cultural appropriateness."
-GOAL review "Review translation for: accuracy, naturalness, and handling of untranslatable concepts."
+GOAL analyze "Note key terms and tone for $context. Brief analysis only."
+GOAL translate "Translate to $target_language. Preserve meaning and tone."
+GOAL review "Quick accuracy check. Fix obvious errors only."
 
 RUN translate USING read, analyze, translate, review

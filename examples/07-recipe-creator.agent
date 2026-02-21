@@ -6,8 +6,8 @@ INPUT ingredients
 INPUT cuisine DEFAULT "any"
 INPUT dietary DEFAULT "none"
 
-GOAL brainstorm "Given these ingredients: $ingredients, brainstorm 3 possible $cuisine dishes. Consider $dietary dietary restrictions."
-GOAL select "Choose the best recipe based on: ingredient usage, flavor balance, and preparation simplicity."
-GOAL detail "Write the complete recipe with: ingredients list, step-by-step instructions, timing, and tips. Save the final recipe to recipe-output.md."
+GOAL brainstorm "Given $ingredients, list 2-3 $cuisine dish ideas respecting $dietary restrictions. One line each."
+GOAL select "Pick the simplest recipe that uses most ingredients."
+GOAL detail "Write recipe: ingredients list + 5-8 steps max. Save to recipe-output.md."
 
 RUN create USING brainstorm, select, detail

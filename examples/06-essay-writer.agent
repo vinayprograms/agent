@@ -6,8 +6,8 @@ INPUT topic
 INPUT style DEFAULT "academic"
 INPUT word_count DEFAULT 1000
 
-GOAL outline "Create a detailed outline for a $word_count-word $style essay about $topic. Include thesis, main points, and conclusion structure."
-GOAL draft "Write the full essay following the outline. Match the $style tone throughout."
-GOAL polish "Review and improve: fix grammar, improve flow, strengthen arguments, and ensure coherence. Save the final essay to essay-output.md."
+GOAL outline "Create brief outline: thesis + 3 main points + conclusion. No more than 10 bullets."
+GOAL draft "Write $word_count-word $style essay on $topic. Stay within word limit."
+GOAL polish "Quick review for clarity and grammar. No rewrites, just fixes. Save to essay-output.md."
 
 RUN write USING outline, draft, polish

@@ -3,5 +3,5 @@
 
 NAME hello-world
 INPUT topic DEFAULT "artificial intelligence"
-GOAL greet "Say hello and share one interesting fact about $topic"
+GOAL greet "Say hello and share one specific, interesting fact about $topic. Keep response under 100 words."
 RUN main USING greet

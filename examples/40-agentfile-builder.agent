@@ -10,8 +10,8 @@ AGENT analyzer FROM agent-builder/understand-problem.md
 AGENT syntax-expert FROM agent-builder/agentfile-syntax.md
 AGENT generator FROM agent-builder/generate-agentfile.md
 
-GOAL understand "Analyze this problem: $problem_description" USING analyzer
-GOAL generate "Generate an Agentfile based on the analysis" USING syntax-expert, generator
-GOAL output "Write the Agentfile to $output_file and display it for review"
+GOAL understand "Analyze problem: $problem_description. Identify 2-3 key goals needed." USING analyzer
+GOAL generate "Generate minimal Agentfile. 3-5 goals max." USING syntax-expert, generator
+GOAL output "Write Agentfile to $output_file."
 
 RUN build USING understand, generate, output

@@ -8,30 +8,19 @@ INPUT initial_content
 INPUT quality_threshold DEFAULT "high"
 INPUT output_file DEFAULT "improved-content.md"
 
-AGENT creator """You are a skilled content creator. Create and refine content that is:
-- Clear and well-structured
-- Engaging and appropriate for the audience
-- Free of errors"""
+AGENT creator """Content creator. Create clear, concise content. No fluff."""
 
-AGENT critic """You are a demanding critic. Evaluate content for:
-- Clarity and conciseness
-- Argument strength
-- Engagement and flow
-Provide specific, actionable feedback. If content meets $quality_threshold quality, say so clearly."""
+AGENT critic """Critic. Identify top 2-3 weaknesses only. Say GOOD if quality met."""
 
-AGENT improver """You are an expert editor. Implement improvements based on feedback.
-Make targeted changes while preserving what works well."""
+AGENT improver """Editor. Make targeted fixes. Don't rewrite unless necessary."""
 
-GOAL create "Create initial content based on: $initial_content" -> draft USING creator
+GOAL create "Create initial content (200-400 words) based on: $initial_content" -> draft USING creator
 
-CONVERGE refine """Review the current content critically for $quality_threshold quality.
-If it meets the quality threshold, output CONVERGED.
-Otherwise:
-1. Identify specific weaknesses
-2. Implement targeted improvements
-3. Continue until quality threshold is met""" -> refined_content USING critic, improver WITHIN 5
+CONVERGE refine """Critic: top 2-3 issues or GOOD.
+Improver: fix issues.
+CONVERGED when GOOD or no major issues.""" -> refined_content USING critic, improver WITHIN 3
 
-GOAL finalize "Apply final polish and formatting to the refined content. Save to $output_file." USING improver
+GOAL finalize "Light polish only. Save to $output_file." USING improver
 
 RUN init USING create
 RUN improve USING refine

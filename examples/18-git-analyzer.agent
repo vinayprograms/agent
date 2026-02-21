@@ -5,8 +5,8 @@ NAME git-analyzer
 INPUT repo_path DEFAULT "."
 INPUT period DEFAULT "30 days"
 
-GOAL gather "Use bash to run git log, git shortlog, git diff --stat for the last $period in $repo_path."
-GOAL analyze "Analyze: commit frequency, active contributors, hotspots (most changed files), and commit patterns."
-GOAL insights "Generate insights: development velocity, code churn areas, collaboration patterns, and recommendations. Save the analysis to git-analysis-output.md."
+GOAL gather "Run: git log --oneline (last 20), git shortlog -sn for $period in $repo_path. Minimal output."
+GOAL analyze "Extract: commit count, top 3 contributors, top 5 changed files."
+GOAL insights "3-5 key insights. Brief recommendations. Save to git-analysis-output.md."
 
 RUN analyze USING gather, analyze, insights

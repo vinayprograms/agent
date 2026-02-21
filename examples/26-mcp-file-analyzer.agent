@@ -8,8 +8,8 @@ INPUT pattern DEFAULT "*.go"
 
 AGENT analyzer FROM agents/analyzer.md REQUIRES "reasoning-heavy"
 
-GOAL discover "List all files matching $pattern in $directory using filesystem tools"
-GOAL analyze "Analyze the discovered files for patterns and summarize findings" USING analyzer
-GOAL report "Generate a structured report of the analysis"
+GOAL discover "List files matching $pattern in $directory. Max 10 files."
+GOAL analyze "Analyze top 3-5 files. Identify main patterns briefly." USING analyzer
+GOAL report "Brief report: key patterns found, 3-5 bullet points."
 
 RUN main USING discover, analyze, report

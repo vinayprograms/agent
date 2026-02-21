@@ -5,8 +5,8 @@ NAME code-review
 INPUT path
 INPUT language DEFAULT "auto-detect"
 
-GOAL scan "Use glob and read tools to find and read source files in $path. Identify the $language if auto-detect."
-GOAL review "Review the code for: bugs, security issues, performance problems, and style inconsistencies."
-GOAL suggest "Provide specific, actionable improvements with code examples where helpful. Save the review to code-review-output.md."
+GOAL scan "Use glob to find source files in $path. Read only key files (max 5). Identify $language if auto-detect."
+GOAL review "Review for top 3-5 issues: prioritize bugs and security over style. Be specific."
+GOAL suggest "List top 5 actionable improvements. Brief code examples only if essential. Save to code-review-output.md."
 
 RUN review_flow USING scan, review, suggest

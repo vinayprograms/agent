@@ -8,25 +8,15 @@ INPUT topic
 INPUT tone DEFAULT "professional"
 INPUT target_audience DEFAULT "general readers"
 
-AGENT writer """You are an expert writer. Create and refine content that is:
-- Clear and engaging
-- Well-structured with logical flow
-- Appropriate for the target audience
-- Free of grammatical errors"""
+AGENT writer """Writer. Clear, concise content. 300-500 words per draft."""
 
-AGENT critic """You are a demanding editor. Evaluate writing for:
-- Clarity and conciseness
-- Argument strength and evidence
-- Engagement and readability
-- Grammar, style, and tone consistency
+AGENT critic """Editor. Top 2 issues per review. Say DONE if essay is good."""
 
-Provide specific, actionable feedback. Be constructively critical."""
+GOAL draft "Write 300-500 word draft about $topic. $tone tone for $target_audience." -> initial_draft USING writer
 
-GOAL draft "Write a first draft about $topic in a $tone tone for $target_audience." -> initial_draft USING writer
-
-CONVERGE refine """Refine the essay based on critical feedback.
-Review the current draft, identify weaknesses, and improve them.
-Focus on one aspect per iteration: structure, clarity, evidence, or style.""" -> final_essay USING writer, critic WITHIN 6
+CONVERGE refine """Critic: top 2 issues or DONE.
+Writer: fix issues briefly.
+CONVERGED when DONE.""" -> final_essay USING writer, critic WITHIN 3
 
 RUN step1 USING draft
 RUN step2 USING refine

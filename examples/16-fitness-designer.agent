@@ -7,9 +7,9 @@ INPUT current_fitness DEFAULT "sedentary"
 INPUT equipment DEFAULT "minimal home equipment"
 INPUT days_per_week DEFAULT 4
 
-GOAL assess "Understand the goal: $fitness_goal from $current_fitness level with $equipment, training $days_per_week days/week."
-GOAL design "Design a progressive program: exercises, sets, reps, rest periods, and weekly progression."
-GOAL schedule "Create a $days_per_week-day weekly schedule with muscle group splits and recovery days."
-GOAL guide "Add form cues for key exercises, warm-up/cool-down routines, and nutrition tips. Save the complete program to fitness-program-output.md."
+GOAL assess "Scope: $fitness_goal from $current_fitness with $equipment, $days_per_week days/week. Brief assessment."
+GOAL design "Design program: 4-6 exercises per day, sets/reps. Simple progression (add weight or reps)."
+GOAL schedule "Create $days_per_week-day schedule. One line per day."
+GOAL guide "Add 2-3 form tips for key lifts. Skip nutrition unless asked. Save to fitness-program-output.md."
 
 RUN create USING assess, design, schedule, guide

@@ -5,9 +5,9 @@ NAME doc-generator
 INPUT source_dir
 INPUT output_file DEFAULT "DOCUMENTATION.md"
 
-GOAL discover "Use glob to find all source files in $source_dir. List them with their purposes."
-GOAL extract "Read each file and extract: functions, classes, interfaces, and their purposes."
-GOAL document "Generate comprehensive documentation in markdown format."
-GOAL write_output "Write the documentation to $output_file using the write tool."
+GOAL discover "Use glob to find source files in $source_dir. List max 10 key files."
+GOAL extract "Read key files. Extract public functions/classes with brief descriptions."
+GOAL document "Generate concise documentation. One paragraph per function/class max."
+GOAL write_output "Write documentation to $output_file."
 
 RUN generate USING discover, extract, document, write_output

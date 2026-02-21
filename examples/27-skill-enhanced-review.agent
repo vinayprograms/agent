@@ -9,8 +9,8 @@ INPUT language DEFAULT "auto"
 AGENT reviewer FROM agents/security-auditor.md REQUIRES "reasoning-heavy"
 AGENT helper FROM agents/editor.md REQUIRES "fast"
 
-GOAL security-scan "Scan $code_path for security vulnerabilities" USING reviewer
-GOAL style-check "Check code style and formatting" USING helper
-GOAL synthesize "Combine security and style findings into actionable recommendations"
+GOAL security-scan "Scan $code_path. Top 3 security issues only." USING reviewer
+GOAL style-check "Top 3 style issues only." USING helper
+GOAL synthesize "Combined list: 5-6 prioritized recommendations."
 
 RUN main USING security-scan, style-check, synthesize

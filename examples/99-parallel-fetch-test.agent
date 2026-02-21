@@ -4,8 +4,7 @@
 NAME parallel-fetch-test
 INPUT urls DEFAULT "https://example.com,https://httpbin.org/html,https://jsonplaceholder.typicode.com"
 
-# This will spawn multiple sub-agents that each fetch different URLs
-# Each sub-agent should only see blocks from its own context
-GOAL fetch-all "For each URL in $urls (comma-separated), spawn a sub-agent to fetch and summarize the content. Use spawn_agent with roles like 'fetcher-1', 'fetcher-2', etc. Each agent should call web_fetch on its assigned URL and return a brief summary."
+# Spawn sub-agents to fetch URLs in parallel
+GOAL fetch-all "For each URL in $urls (comma-separated), spawn a sub-agent to fetch and return a 1-sentence summary. Max 3 URLs."
 
 RUN test USING fetch-all

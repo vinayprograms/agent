@@ -35,7 +35,7 @@
 
   "convergence": {
     "expected": true,
-    "max_iterations": 6,
+    "max_iterations": 3,
     "success_indicator": "Critic finds no major issues OR max iterations"
   }
 }
