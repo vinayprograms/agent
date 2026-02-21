@@ -32,7 +32,7 @@ var concurrencyLimit = func() int {
 
 // applyToolTimeout wraps the context with a timeout for network-dependent tools.
 // Returns the original context if no timeout is configured for the tool.
-func (e *Executor) applyToolTimeout(ctx context.Context, toolName string) context.Context {
+func (e *Executor) applyToolTimeout(ctx context.Context, toolName string) (context.Context, context.CancelFunc) {
 	var timeoutSec int
 
 	switch {
@@ -43,22 +43,22 @@ func (e *Executor) applyToolTimeout(ctx context.Context, toolName string) contex
 	case toolName == "web_fetch":
 		timeoutSec = e.timeoutWebFetch
 	default:
-		return ctx // No timeout for other tools
+		return ctx, nil // No timeout for other tools
 	}
 
 	if timeoutSec <= 0 {
-		return ctx // No timeout configured
+		return ctx, nil // No timeout configured
 	}
 
 	// Only add timeout if context doesn't already have a shorter deadline
 	if deadline, ok := ctx.Deadline(); ok {
 		if time.Until(deadline) < time.Duration(timeoutSec)*time.Second {
-			return ctx // Existing deadline is shorter
+			return ctx, nil // Existing deadline is shorter
 		}
 	}
 
-	ctx, _ = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
-	return ctx
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	return ctx, cancel
 }
 
 func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (interface{}, error) {
@@ -68,7 +68,10 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	agentID := getAgentIdentity(ctx)
 
 	// Apply timeout based on tool type
-	ctx = e.applyToolTimeout(ctx, tc.Name)
+	ctx, cancel := e.applyToolTimeout(ctx, tc.Name)
+	if cancel != nil {
+		defer cancel()
+	}
 
 	// Security verification before execution
 	if err := e.verifyToolCall(ctx, tc.Name, tc.Args); err != nil {
