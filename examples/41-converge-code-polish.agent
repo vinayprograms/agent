@@ -20,7 +20,7 @@ AGENT refactorer """You are a code refactoring expert. Apply improvements based 
 Make atomic, targeted changes. Preserve functionality while improving quality."""
 
 CONVERGE polish """Review and refine code at $file_path for $style quality.
-Read the file, identify improvements, apply changes using the edit tool.
-Review your changes and continue refining until the code meets high standards.""" -> polished_code USING reviewer, refactorer WITHIN 8
+Read the file, identify top 2-3 improvements, apply changes using the edit tool.
+Focus on high-impact changes. Output CONVERGED when code is clean.""" -> polished_code USING reviewer, refactorer WITHIN 4
 
 RUN main USING polish

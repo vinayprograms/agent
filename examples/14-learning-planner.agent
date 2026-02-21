@@ -7,9 +7,9 @@ INPUT current_level DEFAULT "beginner"
 INPUT time_available DEFAULT "10 hours per week"
 INPUT goal_timeline DEFAULT "3 months"
 
-GOAL assess "Understand the learning scope: $subject at $current_level level, with $time_available available over $goal_timeline."
-GOAL research "Research the best resources: books, courses, tutorials, and practice projects for $subject."
-GOAL structure "Create a week-by-week learning plan with milestones, resources, and practice exercises."
-GOAL output "Format as a clear, actionable plan with checkboxes for tracking progress. Save the plan to learning-plan-output.md."
+GOAL assess "Define learning scope: $subject at $current_level level, $time_available over $goal_timeline. Output: key topics to cover."
+GOAL research "Find 3-5 quality resources (books, courses) for $subject. Use existing knowledge; max 1 web search if needed for current resources."
+GOAL structure "Create week-by-week plan with milestones. Keep concise: 1-2 bullets per week."
+GOAL output "Format as actionable plan with progress checkboxes. Save to learning-plan-output.md."
 
 RUN plan USING assess, research, structure, output

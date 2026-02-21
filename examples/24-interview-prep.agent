@@ -6,9 +6,9 @@ INPUT role
 INPUT company DEFAULT "tech company"
 INPUT experience_level DEFAULT "mid-level"
 
-GOAL research "Research typical $role interviews at a $company. Identify common question categories and expectations for $experience_level."
-GOAL questions "Generate 15 likely questions across: technical, behavioral, situational, and role-specific."
-GOAL frameworks "Provide answer frameworks: STAR method examples, technical explanation structures, and red flags to avoid."
-GOAL practice "Create a mock interview script with questions, ideal answer points, and follow-up probes. Save the complete prep guide to interview-prep-output.md."
+GOAL research "Identify key interview focus areas for $role at $experience_level. Use existing knowledge of $company interview patterns. No web search needed."
+GOAL questions "Generate 15 questions: 5 technical, 5 behavioral, 5 role-specific. Brief, focused questions."
+GOAL frameworks "Provide concise answer frameworks: STAR method overview, 2-3 key tips per category."
+GOAL practice "Create mock interview outline with questions and key answer points. Save to interview-prep-output.md."
 
 RUN prep USING research, questions, frameworks, practice

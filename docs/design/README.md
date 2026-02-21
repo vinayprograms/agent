@@ -12,6 +12,7 @@ This documentation describes the architecture and design of the headless agent.
 | 4 | [Tool System](04-tools.md) | Built-in tools, MCP, policies |
 | 5 | [Sub-Agents](05-subagents.md) | Static and dynamic spawning |
 | 6 | [Packaging](06-packaging.md) | Signed packages, installation |
+| 7 | [Efficiency](07-efficiency.md) | Resource efficiency, output terseness |
 
 ## Related Documentation
 

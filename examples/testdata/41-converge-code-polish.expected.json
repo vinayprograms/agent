@@ -24,7 +24,7 @@
 
   "convergence": {
     "expected": true,
-    "max_iterations": 8
+    "max_iterations": 4
   },
 
   "verification": {

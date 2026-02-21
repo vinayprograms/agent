@@ -26,6 +26,7 @@
 
   "convergence": {
     "expected": true,
+    "max_iterations": 5,
     "success_indicator": "Tests pass or CONVERGED"
   },
 

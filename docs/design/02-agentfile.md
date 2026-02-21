@@ -267,6 +267,25 @@ NAME high-security-workflow
 
 See [Security Modes](../security/07-security-modes.md).
 
+## Efficiency
+
+Agents should be frugal with tool calls, web searches, and output length. See [Efficiency Guidelines](07-efficiency.md) for:
+
+- Minimal tool usage
+- Web search discipline (0-5 searches typical)
+- Concise, actionable output
+- CONVERGE iteration targets
+
+**In goal descriptions**, be specific to constrain scope:
+
+```
+# Vague (invites runaway)
+GOAL analyze "Analyze the codebase"
+
+# Specific (constrains effort)  
+GOAL analyze "Find SQL injection vulnerabilities in handler files"
+```
+
 ---
 
 Next: [LLM Integration](03-llm.md)

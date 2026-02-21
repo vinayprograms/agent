@@ -5,9 +5,9 @@ NAME dep-audit
 INPUT manifest_file
 INPUT ecosystem DEFAULT "auto-detect"
 
-GOAL parse "Read $manifest_file. Identify all dependencies, versions, and $ecosystem if auto-detect."
-GOAL analyze "For each dependency: check for outdated versions, known vulnerabilities, and maintenance status."
-GOAL recommend "Recommend: updates, replacements for unmaintained packages, and removal of unused deps."
-GOAL report "Generate a dependency health report with action items sorted by priority. Save to dep-audit-output.md."
+GOAL parse "Read $manifest_file. List dependencies with versions. Detect $ecosystem if needed."
+GOAL analyze "Check dependencies for known issues using existing knowledge. Max 1-2 web searches only for specific CVE lookups if critical."
+GOAL recommend "Prioritized recommendations: critical vulnerabilities first, then outdated, then maintenance concerns. Top 5-10 items."
+GOAL report "Concise health report with prioritized action items. Save to dep-audit-output.md."
 
 RUN audit USING parse, analyze, recommend, report

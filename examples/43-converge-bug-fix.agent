@@ -25,7 +25,7 @@ Use the edit tool for precise, surgical fixes."""
 
 CONVERGE fix_bugs """Run tests with: $test_command
 If tests pass, output CONVERGED.
-If tests fail, analyze the failures and apply fixes.
-$focus_area""" -> fix_summary USING diagnostician, fixer WITHIN 10
+If tests fail, identify the root cause and apply a targeted fix. One issue per iteration.
+$focus_area""" -> fix_summary USING diagnostician, fixer WITHIN 5
 
 RUN main USING fix_bugs

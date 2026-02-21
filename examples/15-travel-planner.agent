@@ -7,9 +7,9 @@ INPUT duration DEFAULT "7 days"
 INPUT interests DEFAULT "culture, food, nature"
 INPUT budget DEFAULT "moderate"
 
-GOAL research "Research $destination: attractions, neighborhoods, local customs, best times to visit, and hidden gems matching $interests."
-GOAL logistics "Plan logistics: suggested areas to stay, transportation options, and $budget budget breakdown."
-GOAL itinerary "Create a day-by-day $duration itinerary balancing $interests with practical considerations like travel time."
-GOAL tips "Add practical tips: packing list, local phrases, safety notes, and booking recommendations. Save the complete travel plan to travel-plan-output.md."
+GOAL research "Research $destination focusing on $interests. List top 5-7 attractions and 2-3 neighborhoods. Use existing knowledge; max 1 web search for current info."
+GOAL logistics "Plan logistics for $budget budget: 1-2 area recommendations, transport overview. Keep brief."
+GOAL itinerary "Create $duration day-by-day itinerary. 2-3 activities per day max. Focus on $interests."
+GOAL tips "Add essential tips only: 3-5 key items. Save complete plan to travel-plan-output.md."
 
 RUN plan USING research, logistics, itinerary, tips
