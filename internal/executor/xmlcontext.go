@@ -98,10 +98,11 @@ func (b *XMLContextBuilder) SetCorrection(correction string) {
 }
 
 // Build generates the XML-structured prompt.
+// All data content is escaped to prevent injection attacks.
 func (b *XMLContextBuilder) Build() string {
 	var buf strings.Builder
 
-	buf.WriteString(fmt.Sprintf("<workflow name=%q>\n", b.workflowName))
+	buf.WriteString(fmt.Sprintf("<workflow name=%q>\n", escapeXML(b.workflowName)))
 
 	// Build context section if there are prior goals, iterations, or convergence iterations
 	if len(b.priorGoals) > 0 || len(b.iterations) > 0 || len(b.convergenceIterations) > 0 {
@@ -109,7 +110,7 @@ func (b *XMLContextBuilder) Build() string {
 
 		// Add prior goals (non-loop goals)
 		for _, goal := range b.priorGoals {
-			buf.WriteString(fmt.Sprintf("  <goal id=%q>\n", goal.ID))
+			buf.WriteString(fmt.Sprintf("  <goal id=%q>\n", escapeXML(goal.ID)))
 			escaped := escapeXML(goal.Output)
 			buf.WriteString(escaped)
 			if !strings.HasSuffix(escaped, "\n") {
@@ -122,7 +123,7 @@ func (b *XMLContextBuilder) Build() string {
 		for _, iter := range b.iterations {
 			buf.WriteString(fmt.Sprintf("  <iteration n=\"%d\">\n", iter.N))
 			for _, goal := range iter.Goals {
-				buf.WriteString(fmt.Sprintf("    <goal id=%q>\n", goal.ID))
+				buf.WriteString(fmt.Sprintf("    <goal id=%q>\n", escapeXML(goal.ID)))
 				escaped := escapeXML(goal.Output)
 				buf.WriteString(escaped)
 				if !strings.HasSuffix(escaped, "\n") {
@@ -151,16 +152,17 @@ func (b *XMLContextBuilder) Build() string {
 		buf.WriteString("</context>\n")
 	}
 
-	// Build current goal
+	// Build current goal (all fields escaped)
 	buf.WriteString("\n")
 	if b.currentGoal.loopName != "" {
 		buf.WriteString(fmt.Sprintf("<current-goal id=%q loop=%q iteration=\"%d\">\n",
-			b.currentGoal.id, b.currentGoal.loopName, b.currentGoal.loopIter))
+			escapeXML(b.currentGoal.id), escapeXML(b.currentGoal.loopName), b.currentGoal.loopIter))
 	} else {
-		buf.WriteString(fmt.Sprintf("<current-goal id=%q>\n", b.currentGoal.id))
+		buf.WriteString(fmt.Sprintf("<current-goal id=%q>\n", escapeXML(b.currentGoal.id)))
 	}
-	buf.WriteString(b.currentGoal.description)
-	if !strings.HasSuffix(b.currentGoal.description, "\n") {
+	descEscaped := escapeXML(b.currentGoal.description)
+	buf.WriteString(descEscaped)
+	if !strings.HasSuffix(descEscaped, "\n") {
 		buf.WriteString("\n")
 	}
 	buf.WriteString("</current-goal>\n")
@@ -191,12 +193,14 @@ func (b *XMLContextBuilder) Build() string {
 }
 
 // BuildTaskContext builds XML context for a dynamic sub-agent task.
+// All data content is escaped to prevent injection attacks.
 func BuildTaskContext(role, parentGoal, task string) string {
 	var buf strings.Builder
 
-	buf.WriteString(fmt.Sprintf("<task role=%q parent-goal=%q>\n", role, parentGoal))
-	buf.WriteString(task)
-	if !strings.HasSuffix(task, "\n") {
+	buf.WriteString(fmt.Sprintf("<task role=%q parent-goal=%q>\n", escapeXML(role), escapeXML(parentGoal)))
+	taskEscaped := escapeXML(task)
+	buf.WriteString(taskEscaped)
+	if !strings.HasSuffix(taskEscaped, "\n") {
 		buf.WriteString("\n")
 	}
 	buf.WriteString("</task>")
@@ -205,21 +209,22 @@ func BuildTaskContext(role, parentGoal, task string) string {
 }
 
 // BuildTaskContextWithCorrection builds XML context for a sub-agent task with supervisor correction.
+// All data content is escaped to prevent injection attacks.
 func BuildTaskContextWithCorrection(role, parentGoal, task, correction string) string {
 	var buf strings.Builder
 
-	buf.WriteString(fmt.Sprintf("<task role=%q parent-goal=%q>\n", role, parentGoal))
-	buf.WriteString(task)
-	if !strings.HasSuffix(task, "\n") {
+	buf.WriteString(fmt.Sprintf("<task role=%q parent-goal=%q>\n", escapeXML(role), escapeXML(parentGoal)))
+	taskEscaped := escapeXML(task)
+	buf.WriteString(taskEscaped)
+	if !strings.HasSuffix(taskEscaped, "\n") {
 		buf.WriteString("\n")
 	}
 	buf.WriteString("</task>\n")
 
-	// Escape correction to prevent injection from supervisor LLM
 	buf.WriteString("\n<correction source=\"supervisor\">\n")
-	escaped := escapeXML(correction)
-	buf.WriteString(escaped)
-	if !strings.HasSuffix(escaped, "\n") {
+	corrEscaped := escapeXML(correction)
+	buf.WriteString(corrEscaped)
+	if !strings.HasSuffix(corrEscaped, "\n") {
 		buf.WriteString("\n")
 	}
 	buf.WriteString("</correction>")
@@ -236,16 +241,17 @@ func (b *XMLContextBuilder) AddPriorGoalWithAgent(id, agentLabel, output string)
 
 // BuildTaskContextWithPriorGoals builds XML context for a sub-agent task including prior goal outputs.
 // This ensures sub-agents have access to the workflow context, not just the raw task.
+// All data content is escaped to prevent injection attacks.
 func BuildTaskContextWithPriorGoals(role, parentGoal, task string, priorGoals []GoalOutput) string {
 	var buf strings.Builder
 
-	buf.WriteString(fmt.Sprintf("<task role=%q parent-goal=%q>\n", role, parentGoal))
+	buf.WriteString(fmt.Sprintf("<task role=%q parent-goal=%q>\n", escapeXML(role), escapeXML(parentGoal)))
 
-	// Include prior goal outputs as context (escaped to prevent injection)
+	// Include prior goal outputs as context (all escaped)
 	if len(priorGoals) > 0 {
 		buf.WriteString("<context>\n")
 		for _, goal := range priorGoals {
-			buf.WriteString(fmt.Sprintf("<goal id=%q>\n", goal.ID))
+			buf.WriteString(fmt.Sprintf("<goal id=%q>\n", escapeXML(goal.ID)))
 			escaped := escapeXML(goal.Output)
 			buf.WriteString(escaped)
 			if !strings.HasSuffix(escaped, "\n") {
@@ -257,8 +263,9 @@ func BuildTaskContextWithPriorGoals(role, parentGoal, task string, priorGoals []
 	}
 
 	buf.WriteString("<objective>\n")
-	buf.WriteString(task)
-	if !strings.HasSuffix(task, "\n") {
+	taskEscaped := escapeXML(task)
+	buf.WriteString(taskEscaped)
+	if !strings.HasSuffix(taskEscaped, "\n") {
 		buf.WriteString("\n")
 	}
 	buf.WriteString("</objective>\n")
