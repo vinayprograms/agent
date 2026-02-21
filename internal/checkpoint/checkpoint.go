@@ -23,7 +23,7 @@ const (
 // PreCheckpoint is created during the COMMIT phase before execution.
 type PreCheckpoint struct {
 	StepID          string            `json:"step_id"`
-	StepType        string            `json:"step_type"` // GOAL, AGENT, RUN, LOOP
+	StepType        string            `json:"step_type"` // GOAL, AGENT, RUN
 	Instruction     string            `json:"instruction"`
 	Interpretation  string            `json:"interpretation"`
 	ScopeIn         []string          `json:"scope_in,omitempty"`

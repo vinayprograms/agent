@@ -83,15 +83,8 @@ func printWorkflowInfo(wf *agentfile.Workflow) {
 }
 
 func printStep(step agentfile.Step) {
-	switch step.Type {
-	case agentfile.StepRUN:
+	if step.Type == agentfile.StepRUN {
 		fmt.Printf("  RUN %s: %s\n", step.Name, strings.Join(step.UsingGoals, ", "))
-	case agentfile.StepLOOP:
-		limit := "∞"
-		if step.WithinLimit != nil {
-			limit = fmt.Sprintf("%d", *step.WithinLimit)
-		}
-		fmt.Printf("  LOOP %s: %s (max %s)\n", step.Name, strings.Join(step.UsingGoals, ", "), limit)
 	}
 }
 

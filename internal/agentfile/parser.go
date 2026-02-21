@@ -107,12 +107,6 @@ func (p *Parser) Parse() (*Workflow, error) {
 				return nil, err
 			}
 			wf.Steps = append(wf.Steps, *step)
-		case TokenLOOP:
-			step, err := p.parseLoopStatement()
-			if err != nil {
-				return nil, err
-			}
-			wf.Steps = append(wf.Steps, *step)
 		default:
 			return nil, fmt.Errorf("line %d: unexpected token %s", p.curToken.Line, p.curToken.Type)
 		}
@@ -406,66 +400,6 @@ func (p *Parser) parseRunStatement() (*Step, error) {
 		return nil, err
 	}
 	step.UsingGoals = goals
-
-	// Check for optional supervision modifiers
-	if p.curToken.Type == TokenSUPERVISED {
-		step.Supervision = SupervisionEnabled
-		p.nextToken()
-		if p.curToken.Type == TokenHUMAN {
-			step.HumanOnly = true
-			p.nextToken()
-		}
-	} else if p.curToken.Type == TokenUNSUPERVISED {
-		step.Supervision = SupervisionDisabled
-		p.nextToken()
-	}
-
-	p.skipNewline()
-	return step, nil
-}
-
-// parseLoopStatement parses: LOOP <identifier> USING <identifier_list> WITHIN (<number> | <variable>) [SUPERVISED [HUMAN] | UNSUPERVISED]
-func (p *Parser) parseLoopStatement() (*Step, error) {
-	line := p.curToken.Line
-	p.nextToken() // consume LOOP
-
-	if !p.isIdentifier() {
-		return nil, fmt.Errorf("line %d: expected identifier after LOOP, got %s", line, p.curToken.Type)
-	}
-
-	step := &Step{
-		Type: StepLOOP,
-		Name: p.curToken.Literal,
-		Line: line,
-	}
-	p.nextToken()
-
-	if p.curToken.Type != TokenUSING {
-		return nil, fmt.Errorf("line %d: expected USING after LOOP name, got %s", line, p.curToken.Type)
-	}
-
-	goals, err := p.parseIdentifierList()
-	if err != nil {
-		return nil, err
-	}
-	step.UsingGoals = goals
-
-	if p.curToken.Type != TokenWITHIN {
-		return nil, fmt.Errorf("line %d: expected WITHIN after USING list, got %s", line, p.curToken.Type)
-	}
-	p.nextToken() // consume WITHIN
-
-	// Either number or variable
-	if p.curToken.Type == TokenNumber {
-		val, _ := strconv.Atoi(p.curToken.Literal)
-		step.WithinLimit = &val
-		p.nextToken()
-	} else if p.curToken.Type == TokenVar {
-		step.WithinVar = p.curToken.Literal
-		p.nextToken()
-	} else {
-		return nil, fmt.Errorf("line %d: expected number or variable after WITHIN, got %s", line, p.curToken.Type)
-	}
 
 	// Check for optional supervision modifiers
 	if p.curToken.Type == TokenSUPERVISED {

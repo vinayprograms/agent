@@ -16,7 +16,6 @@ func TestLexer_Keywords(t *testing.T) {
 		{"AGENT", TokenAGENT},
 		{"GOAL", TokenGOAL},
 		{"RUN", TokenRUN},
-		{"LOOP", TokenLOOP},
 		{"FROM", TokenFROM},
 		{"USING", TokenUSING},
 		{"WITHIN", TokenWITHIN},

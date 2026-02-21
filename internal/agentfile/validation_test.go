@@ -26,7 +26,7 @@ GOAL analyze "test" USING undefined_agent`
 	}
 }
 
-// R1.3.2: Verify all goals referenced in RUN/LOOP are defined
+// R1.3.2: Verify all goals referenced in RUN steps are defined
 func TestValidation_UndefinedGoal(t *testing.T) {
 	input := `NAME test
 GOAL analyze "test"
@@ -84,7 +84,7 @@ RUN setup USING analyze`
 	}
 }
 
-// R1.3.7: Verify at least one RUN or LOOP step exists
+// R1.3.7: Verify at least one RUN step exists
 func TestValidation_NoSteps(t *testing.T) {
 	input := `NAME test
 GOAL analyze "test"`
@@ -99,7 +99,7 @@ GOAL analyze "test"`
 		t.Fatal("expected validation error for no steps")
 	}
 	if !strings.Contains(err.Error(), "step") || !strings.Contains(err.Error(), "RUN") {
-		t.Errorf("error should mention RUN/LOOP step: %v", err)
+		t.Errorf("error should mention RUN step: %v", err)
 	}
 }
 
@@ -110,8 +110,7 @@ INPUT feature_request
 AGENT creative FROM agents/creative.md
 GOAL analyze "test" USING creative
 GOAL run_tests "run tests"
-RUN setup USING analyze
-LOOP impl USING run_tests WITHIN 10`
+RUN setup USING analyze, run_tests`
 
 	wf, err := ParseString(input)
 	if err != nil {

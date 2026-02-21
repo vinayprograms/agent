@@ -67,11 +67,9 @@ func TestCLI_Inspect(t *testing.T) {
 	// Create a valid Agentfile
 	agentfile := `NAME test-workflow
 INPUT topic
-INPUT max DEFAULT 10
 GOAL analyze "Analyze $topic"
 GOAL summarize "Summarize results"
-RUN step1 USING analyze
-LOOP step2 USING summarize WITHIN $max
+RUN step1 USING analyze, summarize
 `
 	agentfilePath := filepath.Join(tmpDir, "Agentfile")
 	if err := os.WriteFile(agentfilePath, []byte(agentfile), 0644); err != nil {
@@ -97,9 +95,6 @@ LOOP step2 USING summarize WITHIN $max
 	}
 	if !strings.Contains(outStr, "RUN") {
 		t.Error("expected RUN step")
-	}
-	if !strings.Contains(outStr, "LOOP") {
-		t.Error("expected LOOP step")
 	}
 }
 

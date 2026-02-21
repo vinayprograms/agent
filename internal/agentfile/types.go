@@ -42,20 +42,17 @@ func (s SupervisionMode) String() string {
 	}
 }
 
-// StepType indicates whether a step is RUN or LOOP.
+// StepType indicates the step type (currently only RUN).
 type StepType int
 
 const (
 	StepRUN StepType = iota
-	StepLOOP
 )
 
 func (s StepType) String() string {
 	switch s {
 	case StepRUN:
 		return "RUN"
-	case StepLOOP:
-		return "LOOP"
 	default:
 		return "UNKNOWN"
 	}

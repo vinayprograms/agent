@@ -190,59 +190,6 @@ RUN setup USING analyze, build`
 	}
 }
 
-// R1.2.7: Parse LOOP statement with USING and WITHIN
-func TestParser_LoopStatementLiteral(t *testing.T) {
-	input := `NAME test
-GOAL run_tests "Run tests"
-LOOP implementation USING run_tests WITHIN 10`
-
-	p := NewParser(NewLexer(input))
-	wf, err := p.Parse()
-	if err != nil {
-		t.Fatalf("parser error: %v", err)
-	}
-
-	if len(wf.Steps) != 1 {
-		t.Fatalf("expected 1 step, got %d", len(wf.Steps))
-	}
-
-	step := wf.Steps[0]
-	if step.Type != StepLOOP {
-		t.Errorf("step type wrong. expected=LOOP, got=%s", step.Type)
-	}
-	if step.Name != "implementation" {
-		t.Errorf("step name wrong. expected=%q, got=%q", "implementation", step.Name)
-	}
-	if step.WithinLimit == nil {
-		t.Fatalf("expected within limit to be set")
-	}
-	if *step.WithinLimit != 10 {
-		t.Errorf("within limit wrong. expected=10, got=%d", *step.WithinLimit)
-	}
-}
-
-// R1.2.8: Support variable references in WITHIN clause
-func TestParser_LoopStatementVariable(t *testing.T) {
-	input := `NAME test
-INPUT max_iterations DEFAULT 10
-GOAL run_tests "Run tests"
-LOOP implementation USING run_tests WITHIN $max_iterations`
-
-	p := NewParser(NewLexer(input))
-	wf, err := p.Parse()
-	if err != nil {
-		t.Fatalf("parser error: %v", err)
-	}
-
-	step := wf.Steps[0]
-	if step.WithinVar != "max_iterations" {
-		t.Errorf("within var wrong. expected=%q, got=%q", "max_iterations", step.WithinVar)
-	}
-	if step.WithinLimit != nil {
-		t.Errorf("within limit should be nil when using variable")
-	}
-}
-
 // R1.2.9: Produce AST with all node types
 func TestParser_CompleteAgentfile(t *testing.T) {
 	input := `# Agentfile: Test-Driven Feature Implementation
@@ -250,7 +197,6 @@ func TestParser_CompleteAgentfile(t *testing.T) {
 NAME implement-feature
 
 INPUT feature_request
-INPUT max_iterations DEFAULT 10
 
 AGENT creative FROM agents/creative.md
 AGENT devils_advocate FROM agents/devils_advocate.md
@@ -259,8 +205,7 @@ GOAL analyze FROM goals/analyze.md USING creative, devils_advocate
 GOAL system_tests FROM goals/system_tests.md
 GOAL run_tests "Run all tests and capture any failures"
 
-RUN setup USING analyze, system_tests
-LOOP implementation USING run_tests WITHIN $max_iterations`
+RUN setup USING analyze, system_tests, run_tests`
 
 	p := NewParser(NewLexer(input))
 	wf, err := p.Parse()
@@ -271,8 +216,8 @@ LOOP implementation USING run_tests WITHIN $max_iterations`
 	if wf.Name != "implement-feature" {
 		t.Errorf("name wrong: %s", wf.Name)
 	}
-	if len(wf.Inputs) != 2 {
-		t.Errorf("expected 2 inputs, got %d", len(wf.Inputs))
+	if len(wf.Inputs) != 1 {
+		t.Errorf("expected 1 input, got %d", len(wf.Inputs))
 	}
 	if len(wf.Agents) != 2 {
 		t.Errorf("expected 2 agents, got %d", len(wf.Agents))
@@ -280,8 +225,8 @@ LOOP implementation USING run_tests WITHIN $max_iterations`
 	if len(wf.Goals) != 3 {
 		t.Errorf("expected 3 goals, got %d", len(wf.Goals))
 	}
-	if len(wf.Steps) != 2 {
-		t.Errorf("expected 2 steps, got %d", len(wf.Steps))
+	if len(wf.Steps) != 1 {
+		t.Errorf("expected 1 step, got %d", len(wf.Steps))
 	}
 }
 
@@ -305,11 +250,6 @@ GOAL analyze`,
 RUN setup`,
 			expectedError: "line 2",
 		},
-		{
-			input:         `NAME test
-LOOP impl USING test`,
-			expectedError: "line 2", // missing WITHIN
-		},
 	}
 
 	for i, tt := range tests {
@@ -325,7 +265,7 @@ LOOP impl USING test`,
 	}
 }
 
-// Test multiple RUN and LOOP in order
+// Test multiple RUN steps in order
 func TestParser_MultipleSteps(t *testing.T) {
 	input := `NAME test
 GOAL a "Goal A"
@@ -333,7 +273,7 @@ GOAL b "Goal B"
 GOAL c "Goal C"
 RUN first USING a
 RUN second USING b
-LOOP third USING c WITHIN 5`
+RUN third USING c`
 
 	p := NewParser(NewLexer(input))
 	wf, err := p.Parse()
@@ -351,7 +291,7 @@ LOOP third USING c WITHIN 5`
 	if wf.Steps[1].Name != "second" || wf.Steps[1].Type != StepRUN {
 		t.Errorf("step[1] wrong")
 	}
-	if wf.Steps[2].Name != "third" || wf.Steps[2].Type != StepLOOP {
+	if wf.Steps[2].Name != "third" || wf.Steps[2].Type != StepRUN {
 		t.Errorf("step[2] wrong")
 	}
 }
@@ -723,29 +663,6 @@ RUN main USING analyze SUPERVISED`
 	step := wf.Steps[0]
 	if step.Supervision != SupervisionEnabled {
 		t.Error("expected step to be supervised")
-	}
-}
-
-// Test LOOP with SUPERVISED HUMAN
-func TestParser_LoopSupervisedHuman(t *testing.T) {
-	input := `NAME test
-GOAL refine "Refine"
-LOOP refine_loop USING refine WITHIN 10 SUPERVISED HUMAN`
-
-	wf, err := ParseString(input)
-	if err != nil {
-		t.Fatalf("ParseString failed: %v", err)
-	}
-
-	step := wf.Steps[0]
-	if step.Type != StepLOOP {
-		t.Error("expected LOOP step")
-	}
-	if step.Supervision != SupervisionEnabled {
-		t.Error("expected step to be supervised")
-	}
-	if !step.HumanOnly {
-		t.Error("expected step HumanOnly to be true")
 	}
 }
 

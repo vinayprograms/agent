@@ -3,7 +3,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -106,7 +105,7 @@ func TestExecutor_MissingRequiredInput(t *testing.T) {
 	}
 }
 
-// R2.2.1: Execute RUN/LOOP steps in file order
+// R2.2.1: Execute RUN steps in file order
 func TestExecutor_StepOrder(t *testing.T) {
 	var executionOrder []string
 	
@@ -176,81 +175,6 @@ func TestExecutor_VariableInterpolation(t *testing.T) {
 	}
 	if !strings.Contains(req.Messages[1].Content, "5 items") {
 		t.Error("expected interpolated count")
-	}
-}
-
-// R2.3.2: Detect implicit convergence (no tool calls made)
-func TestExecutor_LoopConvergence_NoToolCalls(t *testing.T) {
-	wf := &agentfile.Workflow{
-		Name: "test",
-		Steps: []agentfile.Step{
-			{Type: agentfile.StepLOOP, UsingGoals: []string{"refine"}, WithinLimit: intPtr(10)},
-		},
-		Goals: []agentfile.Goal{
-			{Name: "refine", Outcome: "Refine the code"},
-		},
-	}
-
-	provider := llm.NewMockProvider()
-	provider.SetResponse("Code is already perfect") // No tool calls
-
-	exec := NewExecutor(wf, provider, nil, nil)
-	result, _ := exec.Run(context.Background(), nil)
-
-	if result.Iterations["refine"] > 1 {
-		t.Errorf("expected convergence after 1 iteration, got %d", result.Iterations["refine"])
-	}
-}
-
-// R2.3.5: Exit loop when WITHIN iteration limit reached
-func TestExecutor_LoopMaxIterations(t *testing.T) {
-	wf := &agentfile.Workflow{
-		Name: "test",
-		Steps: []agentfile.Step{
-			{Type: agentfile.StepLOOP, UsingGoals: []string{"iterate"}, WithinLimit: intPtr(3)},
-		},
-		Goals: []agentfile.Goal{
-			{Name: "iterate", Outcome: "Keep iterating"},
-		},
-	}
-
-	// Use ChatFunc to always return tool calls, simulating never-converging behavior
-	callCount := 0
-	provider := llm.NewMockProvider()
-	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-		callCount++
-		// Check if this is a response after tool results
-		hasToolResult := false
-		for _, msg := range req.Messages {
-			if msg.Role == "tool" {
-				hasToolResult = true
-				break
-			}
-		}
-		
-		if hasToolResult {
-			// After tool result, complete this goal iteration with unique output
-			return &llm.ChatResponse{Content: fmt.Sprintf("Iteration result %d", callCount)}, nil
-		}
-		
-		// First call in goal: return tool call
-		return &llm.ChatResponse{
-			ToolCalls: []llm.ToolCallResponse{
-				{ID: fmt.Sprintf("tc-%d", callCount), Name: "ls", Args: map[string]interface{}{"path": "."}},
-			},
-		}, nil
-	}
-
-	pol := policy.New()
-	tmpDir := t.TempDir()
-	pol.Workspace = tmpDir
-	reg := tools.NewRegistry(pol)
-
-	exec := NewExecutor(wf, provider, reg, pol)
-	result, _ := exec.Run(context.Background(), nil)
-
-	if result.Iterations["iterate"] != 3 {
-		t.Errorf("expected 3 iterations, got %d", result.Iterations["iterate"])
 	}
 }
 

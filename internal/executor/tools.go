@@ -404,5 +404,3 @@ func (e *Executor) executeMCPTool(ctx context.Context, tc llm.ToolCallResponse) 
 
 	return output.String(), nil
 }
-
-// interpolate replaces $variables in text.

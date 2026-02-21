@@ -172,9 +172,9 @@ func Validate(wf *Workflow) error {
 		errs = append(errs, "NAME is required")
 	}
 
-	// R1.3.7: Verify at least one RUN or LOOP step exists
+	// R1.3.7: Verify at least one RUN step exists
 	if len(wf.Steps) == 0 {
-		errs = append(errs, "at least one RUN or LOOP step is required")
+		errs = append(errs, "at least one RUN step is required")
 	}
 
 	// Build lookup maps
@@ -198,7 +198,7 @@ func Validate(wf *Workflow) error {
 		}
 	}
 
-	// R1.3.2: Verify all goals referenced in RUN/LOOP are defined
+	// R1.3.2: Verify all goals referenced in RUN steps are defined
 	for _, step := range wf.Steps {
 		for _, goalName := range step.UsingGoals {
 			if !definedGoals[goalName] {

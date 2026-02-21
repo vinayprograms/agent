@@ -259,50 +259,6 @@ RUN main USING review
 	}
 }
 
-// TestLoopConvergence tests that loops converge correctly.
-func TestLoopConvergence(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	agentfileContent := `NAME loop-test
-GOAL refine "Refine until perfect"
-LOOP main USING refine WITHIN 5
-`
-	agentfilePath := filepath.Join(tmpDir, "Agentfile")
-	if err := os.WriteFile(agentfilePath, []byte(agentfileContent), 0644); err != nil {
-		t.Fatalf("failed to write Agentfile: %v", err)
-	}
-
-	wf, err := agentfile.LoadFile(agentfilePath)
-	if err != nil {
-		t.Fatalf("LoadFile() error = %v", err)
-	}
-
-	// Converge after 3 iterations (same output)
-	callCount := 0
-	provider := llm.NewMockProvider()
-	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-		callCount++
-		if callCount < 3 {
-			return &llm.ChatResponse{Content: "Iteration " + string(rune('0'+callCount))}, nil
-		}
-		return &llm.ChatResponse{Content: "Perfect"}, nil
-	}
-
-	exec := executor.NewExecutor(wf, provider, nil, nil)
-	result, err := exec.Run(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	if result.Status != executor.StatusComplete {
-		t.Errorf("expected Complete, got %s", result.Status)
-	}
-	// Should have converged before max iterations
-	if result.Iterations["refine"] > 5 {
-		t.Errorf("expected at most 5 iterations, got %d", result.Iterations["refine"])
-	}
-}
-
 // TestMultiAgentToolAccess tests that AGENT entries have tool access.
 func TestMultiAgentToolAccess(t *testing.T) {
 	tmpDir := t.TempDir()

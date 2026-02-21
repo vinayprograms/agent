@@ -492,14 +492,6 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 				e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
 				return result, err
 			}
-		} else if step.Type == agentfile.StepLOOP {
-			if err := e.executeLoopStep(ctx, step, result); err != nil {
-				result.Status = StatusFailed
-				result.Error = err.Error()
-				e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
-				e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
-				return result, err
-			}
 		}
 	}
 
@@ -550,47 +542,6 @@ func (e *Executor) executeRunStep(ctx context.Context, step agentfile.Step, resu
 type GoalResult struct {
 	Output        string
 	ToolCallsMade bool
-}
-
-// executeLoopStep executes a LOOP step.
-func (e *Executor) executeLoopStep(ctx context.Context, step agentfile.Step, result *Result) error {
-	maxIterations := 10 // default
-	if step.WithinLimit != nil {
-		maxIterations = *step.WithinLimit
-	}
-
-	for _, goalName := range step.UsingGoals {
-		goal := e.findGoal(goalName)
-		if goal == nil {
-			return fmt.Errorf("goal not found: %s", goalName)
-		}
-
-		iterations := 0
-		var lastOutput string
-		for i := 0; i < maxIterations; i++ {
-			iterations++
-
-			gr, err := e.executeGoalWithTracking(ctx, goal)
-			if err != nil {
-				return err
-			}
-
-			e.outputs[goalName] = gr.Output
-
-			// Convergence: same output as last iteration
-			if gr.Output == lastOutput {
-				break
-			}
-			lastOutput = gr.Output
-
-			// Convergence: no tool calls made = nothing more to do
-			if !gr.ToolCallsMade {
-				break
-			}
-		}
-		result.Iterations[goalName] = iterations
-	}
-	return nil
 }
 
 // executeGoal executes a single goal (wrapper for backwards compatibility).

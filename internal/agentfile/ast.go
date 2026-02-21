@@ -63,24 +63,17 @@ type Goal struct {
 
 func (g *Goal) node() {}
 
-// Step represents a RUN or LOOP step.
+// Step represents a RUN step.
 type Step struct {
 	Type        StepType
 	Name        string
 	UsingGoals  []string        // goal names to execute
-	WithinLimit *int            // max iterations for LOOP (nil if variable reference)
-	WithinVar   string          // variable name for LOOP limit (if not literal)
 	Supervision SupervisionMode // inherit/supervised/unsupervised
 	HumanOnly   bool            // requires human approval (SUPERVISED HUMAN)
 	Line        int
 }
 
 func (s *Step) node() {}
-
-// IsLoop returns true if this is a LOOP step.
-func (s *Step) IsLoop() bool {
-	return s.Type == StepLOOP
-}
 
 // IsSupervised returns true if this step should be supervised.
 // Checks step-level override first, then falls back to workflow default.
