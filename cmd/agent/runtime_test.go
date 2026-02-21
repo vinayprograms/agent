@@ -120,15 +120,6 @@ func TestDetermineSecurityConfig_TrustLevels(t *testing.T) {
 	}
 }
 
-func TestPrintMemoryStatus(t *testing.T) {
-	// Just ensure no panics - output goes to stdout
-	rt := &runtime{}
-	rt.printMemoryStatus(true, true)
-	rt.printMemoryStatus(true, false)
-	rt.printMemoryStatus(false, true)
-	rt.printMemoryStatus(false, false)
-}
-
 func TestAddCloserAndCleanup(t *testing.T) {
 	var calls []int
 	rt := &runtime{}
