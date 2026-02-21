@@ -12,11 +12,11 @@ AGENT executor FROM agents/security-auditor.md REQUIRES "reasoning-heavy"
 GOAL clone "Clone repository from $repo_url (branch: $branch) to workspace"
 GOAL scan "Scan codebase for security issues using available tools" USING executor
 GOAL plan "Create remediation plan for identified issues" USING planner
-GOAL patch "Generate patches for critical issues"
-GOAL verify "Verify patches don't break existing functionality"
 GOAL report "Generate comprehensive security audit report"
+
+CONVERGE fix "Generate patches for critical issues and verify they don't break functionality. Output CONVERGED when all issues are resolved or no more improvements possible." WITHIN 5
 
 RUN setup USING clone
 RUN analysis USING scan, plan
-LOOP fix USING patch, verify WITHIN 5
+RUN remediation USING fix
 RUN final USING report

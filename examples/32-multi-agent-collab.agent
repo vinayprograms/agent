@@ -14,9 +14,8 @@ AGENT editor FROM agents/editor.md REQUIRES "fast"
 GOAL initial-research "Research $topic thoroughly" USING researcher
 GOAL first-critique "Critique the research for gaps" USING critic
 
-# Phase 2: Refinement
-GOAL expand "Expand on weak areas identified" USING researcher
-GOAL second-critique "Re-evaluate the expanded research" USING critic
+# Phase 2: Refinement (iterative)
+CONVERGE refine "Expand on weak areas and re-evaluate until critique yields no major gaps. Output CONVERGED when research is comprehensive." USING researcher, critic WITHIN 2
 
 # Phase 3: Parallel review
 GOAL final-review "Final parallel review" USING researcher, critic, editor
@@ -25,6 +24,6 @@ GOAL final-review "Final parallel review" USING researcher, critic, editor
 GOAL polish "Polish and format the final output" USING editor
 
 RUN research USING initial-research, first-critique
-LOOP refine USING expand, second-critique WITHIN 2
+RUN refinement USING refine
 RUN review USING final-review
 RUN finish USING polish

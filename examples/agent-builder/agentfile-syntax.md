@@ -27,10 +27,10 @@ RUN main USING step1, step2
 | DEFAULT | Default value for INPUT |
 | AGENT | Define sub-agent from prompt file or inline |
 | GOAL | Define a step with description |
+| CONVERGE | Define convergence goal (iterative refinement) |
 | RUN | Execute goals sequentially |
-| LOOP | Execute goals repeatedly |
 | USING | Specify which goals/agents to use |
-| WITHIN | Set iteration limit for LOOP |
+| WITHIN | Set iteration limit for CONVERGE |
 | REQUIRES | Capability profile requirement |
 | SUPERVISED | Enable execution supervision |
 | UNSUPERVISED | Disable supervision |

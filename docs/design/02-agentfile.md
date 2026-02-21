@@ -14,10 +14,9 @@ Flat, declarative workflow definition. One instruction per line, no indentation,
 | GOAL | Define goal with description |
 | CONVERGE | Define convergence goal (iterative refinement) |
 | RUN | Execute goals sequentially |
-| LOOP | Execute goals repeatedly within a limit |
 | FROM | Load content from path |
 | USING | Specify which agents/goals to use |
-| WITHIN | Set iteration limit for LOOP/CONVERGE |
+| WITHIN | Set iteration limit for CONVERGE |
 | DEFAULT | Default value for INPUT |
 | REQUIRES | Capability profile requirement |
 | SUPERVISED | Enable execution supervision |
@@ -45,8 +44,6 @@ GOAL name "Description" -> output1, output2
 GOAL name "Description" USING agent1, agent2
 
 RUN step_name USING goal1, goal2
-LOOP step_name USING goal1 WITHIN 5
-LOOP step_name USING goal1 WITHIN $max_iter
 
 CONVERGE refine "Refine until clean" WITHIN 10
 CONVERGE polish "Polish the output" -> result WITHIN $max_iter

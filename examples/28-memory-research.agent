@@ -9,10 +9,8 @@ INPUT depth DEFAULT "comprehensive"
 AGENT researcher FROM agents/creative-writer.md
 AGENT critic FROM agents/devils-advocate.md REQUIRES "reasoning-heavy"
 
-GOAL research "Research $topic thoroughly, storing key findings in memory for later reference"
-GOAL critique "Review the research findings critically" USING critic
-GOAL refine "Refine the research based on critique, updating memory with improved findings"
 GOAL finalize "Produce final research report from memory. Save the report to research-report-output.md."
 
-LOOP iteration USING research, critique, refine WITHIN 3
-RUN main USING finalize
+CONVERGE iteration "Research $topic thoroughly, storing key findings in memory. Then critically review and refine based on feedback. Output CONVERGED when research is comprehensive and critique yields no major issues." USING researcher, critic WITHIN 3
+
+RUN main USING iteration, finalize

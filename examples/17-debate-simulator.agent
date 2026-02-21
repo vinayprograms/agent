@@ -9,9 +9,10 @@ AGENT pro FROM agents/optimist.md REQUIRES "fast"
 AGENT con FROM agents/devils-advocate.md REQUIRES "fast"
 
 GOAL opening "Present the debate topic: $topic. Frame the key question and stakes."
-GOAL argue "Present arguments for and against $topic." USING pro, con
-GOAL rebut "Respond to opposing arguments with counterpoints." USING pro, con
 GOAL conclude "Summarize both sides and identify the strongest arguments and key tensions. Save the debate transcript to debate-output.md."
 
-LOOP debate_rounds USING argue, rebut WITHIN $rounds
+CONVERGE debate_rounds "Present arguments for and against $topic, then respond to opposing arguments with counterpoints. Continue until arguments are exhausted or positions are well-established. Output CONVERGED when the debate has reached a natural conclusion." USING pro, con WITHIN $rounds
+
+RUN setup USING opening
+RUN debate USING debate_rounds
 RUN wrap_up USING conclude
