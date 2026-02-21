@@ -284,6 +284,18 @@ func (rt *runtime) createExecutor() {
 	rt.exec = executor.NewExecutorWithFactory(rt.wf, factory, rt.registry, rt.pol)
 	rt.exec.SetDebug(rt.debug)
 	rt.exec.SetTimeouts(rt.cfg.Timeouts.MCP, rt.cfg.Timeouts.WebSearch, rt.cfg.Timeouts.WebFetch)
+
+	// Set HTTP client timeout to max of configured timeouts (context handles per-request)
+	maxTimeout := rt.cfg.Timeouts.MCP
+	if rt.cfg.Timeouts.WebSearch > maxTimeout {
+		maxTimeout = rt.cfg.Timeouts.WebSearch
+	}
+	if rt.cfg.Timeouts.WebFetch > maxTimeout {
+		maxTimeout = rt.cfg.Timeouts.WebFetch
+	}
+	if maxTimeout > 0 {
+		tools.SetHTTPTimeout(time.Duration(maxTimeout) * time.Second)
+	}
 }
 
 // profileProviderFactory creates providers based on capability profiles.
