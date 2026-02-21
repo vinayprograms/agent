@@ -1,0 +1,20 @@
+{
+  "validation_type": "code_improvement",
+  "description": "Polish code until clean and idiomatic",
+  "convergence": {
+    "should_converge": true,
+    "max_iterations": 8
+  },
+  "code_checks": {
+    "properly_formatted": true,
+    "meaningful_names": "Functions and parameters should have descriptive names",
+    "idiomatic": "Should follow Go conventions"
+  },
+  "tool_usage": {
+    "required": ["read", "edit"]
+  },
+  "post_validation": {
+    "command": "gofmt -d testdata/unpolished.go | wc -l",
+    "expected_output": "0"
+  }
+}

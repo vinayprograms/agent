@@ -1,0 +1,11 @@
+{
+  "inputs": {
+    "target_path": "testdata/vulnerable-app",
+    "scope": "web application"
+  },
+  "setup": {
+    "files": {
+      "testdata/vulnerable-app/main.go": "package main\\n\\nimport (\\n\\t\\\"database/sql\\\"\\n\\t\\\"fmt\\\"\\n\\t\\\"net/http\\\"\\n)\\n\\nfunc handler(w http.ResponseWriter, r *http.Request) {\\n\\tuser := r.URL.Query().Get(\\\"user\\\")\\n\\tquery := fmt.Sprintf(\\\"SELECT * FROM users WHERE name = '%s'\\\", user) // SQL injection!\\n\\tdb.Query(query)\\n}\\n"
+    }
+  }
+}

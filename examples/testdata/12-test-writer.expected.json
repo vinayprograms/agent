@@ -1,0 +1,21 @@
+{
+  "validation_type": "code_generation",
+  "description": "Generate tests for Go functions",
+  "generated_files": {
+    "pattern": "*_test.go",
+    "must_exist": true
+  },
+  "test_checks": {
+    "tests_abs_function": true,
+    "tests_max_function": true,
+    "includes_edge_cases": ["negative", "zero", "equal"],
+    "uses_standard_testing": true
+  },
+  "tool_usage": {
+    "required": ["read", "write"]
+  },
+  "post_validation": {
+    "command": "go test -v ./testdata/...",
+    "expected_exit_code": 0
+  }
+}

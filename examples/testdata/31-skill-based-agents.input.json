@@ -1,0 +1,14 @@
+{
+  "inputs": {
+    "code_path": "testdata/skill-test",
+    "language": "go"
+  },
+  "setup": {
+    "files": {
+      "testdata/skill-test/main.go": "package main\\n\\nfunc main() {\\n\\t// TODO: implement\\n}\\n"
+    }
+  },
+  "requirements": {
+    "skills": ["code-review", "testing", "git-workflow"]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "inputs": {
+    "requirements_file": "testdata/requirements.txt",
+    "database": "postgresql",
+    "style": "normalized"
+  },
+  "setup": {
+    "files": {
+      "testdata/requirements.txt": "E-commerce system requirements:\\n- Users can register with email and password\\n- Users can have multiple addresses\\n- Products have name, description, price, and stock\\n- Orders contain multiple products\\n- Orders track status and timestamps\\n"
+    }
+  }
+}

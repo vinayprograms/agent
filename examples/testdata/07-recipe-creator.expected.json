@@ -1,0 +1,21 @@
+{
+  "validation_type": "file_output",
+  "description": "Recipe using specified ingredients",
+  "output_files": {
+    "recipe-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 500,
+      "format": "markdown"
+    }
+  },
+  "content_checks": {
+    "ingredients_used": ["chicken", "garlic", "lemon", "olive oil", "rosemary"],
+    "has_ingredients_list": true,
+    "has_step_by_step_instructions": true,
+    "has_timing": true,
+    "respects_dietary": "Should not include gluten-containing ingredients like wheat flour, soy sauce, etc."
+  },
+  "structure_checks": {
+    "required_sections": ["Ingredients", "Instructions"]
+  }
+}

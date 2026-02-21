@@ -1,0 +1,20 @@
+{
+  "validation_type": "output_content",
+  "description": "Business email translated to Spanish",
+  "translation_checks": {
+    "language": "Spanish",
+    "preserves_formality": "Should use formal Spanish (usted form)",
+    "preserves_structure": "Should maintain email format",
+    "cultural_adaptation": "Greeting and closing should be culturally appropriate"
+  },
+  "tool_usage": {
+    "required": ["read"]
+  },
+  "benchmarks": {
+    "key_phrases": {
+      "Thank you": "Gracias / Le agradezco",
+      "Best regards": "Atentamente / Cordialmente"
+    }
+  },
+  "notes": "Output should be in console/response, no file output specified in original example - consider adding write step"
+}

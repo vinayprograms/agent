@@ -1,0 +1,11 @@
+{
+  "inputs": {
+    "code_path": "testdata/review-target",
+    "language": "go"
+  },
+  "setup": {
+    "files": {
+      "testdata/review-target/handler.go": "package api\\n\\nimport \\\"net/http\\\"\\n\\nfunc Handle(w http.ResponseWriter, r *http.Request) {\\n\\tpassword := r.URL.Query().Get(\\\"password\\\") // Security issue\\n\\tw.Write([]byte(password))\\n}\\n"
+    }
+  }
+}

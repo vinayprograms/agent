@@ -1,0 +1,14 @@
+{
+  "validation_type": "output_content",
+  "description": "Code review with security and style findings",
+  "review_checks": {
+    "security_issues_found": ["password in URL", "sensitive data exposure"],
+    "style_issues_found": true,
+    "recommendations_provided": true
+  },
+  "multi_agent_checks": {
+    "reviewer_used": true,
+    "helper_used": true,
+    "findings_synthesized": true
+  }
+}

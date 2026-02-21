@@ -1,0 +1,6 @@
+{
+  "inputs": {
+    "query": "How do I implement a binary search in Go?",
+    "context": "I need to search a sorted array of integers"
+  }
+}

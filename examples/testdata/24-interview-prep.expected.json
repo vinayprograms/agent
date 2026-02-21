@@ -1,0 +1,23 @@
+{
+  "validation_type": "file_output",
+  "description": "Interview preparation guide",
+  "output_files": {
+    "interview-prep-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 2000,
+      "format": "markdown"
+    }
+  },
+  "content_checks": {
+    "has_technical_questions": true,
+    "has_behavioral_questions": true,
+    "has_system_design": true,
+    "has_answer_frameworks": true,
+    "question_count": "Should have at least 15 questions as specified"
+  },
+  "benchmarks": {
+    "question_relevance": "Questions should be appropriate for senior SWE at FAANG (system design, leadership, scalability)",
+    "framework_quality": "Should include STAR method for behavioral questions",
+    "level_appropriate": "Should include senior-level topics: architecture decisions, mentoring, cross-team collaboration"
+  }
+}

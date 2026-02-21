@@ -1,0 +1,7 @@
+{
+  "inputs": {
+    "initial_content": "Write a product description for a smart water bottle that tracks hydration",
+    "quality_threshold": "high",
+    "output_file": "improved-content.md"
+  }
+}

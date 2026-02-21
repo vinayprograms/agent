@@ -1,0 +1,10 @@
+{
+  "inputs": {
+    "notes_file": "testdata/meeting-notes.txt"
+  },
+  "setup": {
+    "files": {
+      "testdata/meeting-notes.txt": "Team Sync - March 15\\n\\nAttendees: Alice, Bob, Carol\\n\\nDiscussion:\\n- Alice proposed new CI pipeline, team agreed to proceed\\n- Bob raised concern about test coverage, needs 80% before release\\n- Carol will update documentation by Friday\\n\\nQuestions:\\n- Should we migrate to new cloud provider?\\n- Timeline for v2.0 release?\\n"
+    }
+  }
+}

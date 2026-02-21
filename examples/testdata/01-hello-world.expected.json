@@ -1,0 +1,11 @@
+{
+  "validation_type": "output_content",
+  "description": "Simple greeting with one fact about the topic",
+  "checks": {
+    "output_contains": ["quantum", "computing"],
+    "output_excludes": [],
+    "min_length": 50,
+    "max_length": 500
+  },
+  "notes": "This is a minimal example - just verify the agent responded with relevant content about the topic"
+}

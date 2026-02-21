@@ -1,0 +1,6 @@
+{
+  "inputs": {
+    "repo_path": ".",
+    "period": "7 days"
+  }
+}

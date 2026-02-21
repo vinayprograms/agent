@@ -1,0 +1,12 @@
+{
+  "inputs": {
+    "resume_file": "testdata/sample-resume.md",
+    "job_description_file": "testdata/job-posting.md"
+  },
+  "setup": {
+    "files": {
+      "testdata/sample-resume.md": "# John Doe\\n\\n## Experience\\n- Software Engineer at TechCorp (2020-2023)\\n  - Built REST APIs using Python\\n  - Managed PostgreSQL databases\\n\\n## Skills\\n- Python, JavaScript, SQL\\n- Docker, AWS\\n",
+      "testdata/job-posting.md": "# Senior Backend Engineer\\n\\n## Requirements\\n- 3+ years backend development\\n- Python or Go experience\\n- Cloud platform experience (AWS/GCP)\\n- Database design skills\\n\\n## Nice to have\\n- Kubernetes experience\\n- System design skills\\n"
+    }
+  }
+}

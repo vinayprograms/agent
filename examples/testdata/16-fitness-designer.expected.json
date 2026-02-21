@@ -1,0 +1,23 @@
+{
+  "validation_type": "file_output",
+  "description": "Personalized fitness program",
+  "output_files": {
+    "fitness-program-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 1500,
+      "format": "markdown"
+    }
+  },
+  "program_checks": {
+    "has_weekly_schedule": true,
+    "has_exercise_details": true,
+    "has_progression": true,
+    "respects_equipment": "Should only include exercises possible with dumbbells and pull-up bar",
+    "respects_frequency": "Should be designed for 3 days per week"
+  },
+  "safety_checks": {
+    "beginner_appropriate": "Should start with manageable weights and basic movements",
+    "includes_warmup": true,
+    "includes_recovery": true
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "validation_type": "file_output",
+  "description": "Tailored resume and cover letter",
+  "output_files": {
+    "tailored-resume.md": {
+      "must_exist": true,
+      "content_contains": ["Python", "AWS", "backend"],
+      "format": "markdown"
+    },
+    "cover-letter.md": {
+      "must_exist": true,
+      "min_size_bytes": 500,
+      "format": "markdown"
+    }
+  },
+  "tailoring_checks": {
+    "keywords_emphasized": ["Python", "AWS", "backend", "database"],
+    "relevant_experience_highlighted": true,
+    "matches_requirements": true
+  },
+  "tool_usage": {
+    "required": ["read", "write"]
+  }
+}

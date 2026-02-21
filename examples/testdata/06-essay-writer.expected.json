@@ -1,0 +1,24 @@
+{
+  "validation_type": "file_output",
+  "description": "Academic essay on AI and employment",
+  "output_files": {
+    "essay-output.md": {
+      "must_exist": true,
+      "min_word_count": 400,
+      "max_word_count": 600,
+      "content_contains": ["artificial intelligence", "employment"],
+      "format": "markdown"
+    }
+  },
+  "structure_checks": {
+    "has_thesis": true,
+    "has_introduction": true,
+    "has_body_paragraphs": true,
+    "has_conclusion": true
+  },
+  "style_checks": {
+    "tone": "academic",
+    "avoids_contractions": true,
+    "uses_evidence": true
+  }
+}

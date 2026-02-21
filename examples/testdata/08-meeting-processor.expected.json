@@ -1,0 +1,19 @@
+{
+  "validation_type": "file_output",
+  "description": "Processed meeting notes with extracted action items",
+  "output_files": {
+    "testdata/meeting-notes-processed.txt": {
+      "must_exist": true,
+      "content_contains": ["Summary", "Decision", "Action"],
+      "format": "text"
+    }
+  },
+  "extraction_checks": {
+    "decisions": ["CI pipeline", "agreed"],
+    "action_items": ["Carol", "documentation", "Friday"],
+    "questions": ["cloud provider", "v2.0"]
+  },
+  "tool_usage": {
+    "required": ["read", "write"]
+  }
+}

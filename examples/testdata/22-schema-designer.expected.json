@@ -1,0 +1,23 @@
+{
+  "validation_type": "file_output",
+  "description": "PostgreSQL schema from requirements",
+  "output_files": {
+    "schema-output.sql": {
+      "must_exist": true,
+      "format": "sql",
+      "syntax_valid": true
+    }
+  },
+  "schema_checks": {
+    "tables_created": ["users", "addresses", "products", "orders", "order_items"],
+    "has_primary_keys": true,
+    "has_foreign_keys": true,
+    "normalized": "Should be at least 3NF - no redundant data"
+  },
+  "tool_usage": {
+    "required": ["read", "write"]
+  },
+  "post_validation": {
+    "description": "Optionally validate SQL syntax with psql --dry-run or similar"
+  }
+}

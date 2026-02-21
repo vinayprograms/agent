@@ -1,0 +1,6 @@
+{
+  "inputs": {
+    "problem_description": "Create a workflow that analyzes Python code for type hints, suggests improvements, and generates type stubs",
+    "output_file": "generated.agent"
+  }
+}

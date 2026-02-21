@@ -1,0 +1,24 @@
+{
+  "validation_type": "file_output",
+  "description": "Research report using MCP memory for context",
+  "output_files": {
+    "research-report-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 1500,
+      "format": "markdown"
+    }
+  },
+  "convergence": {
+    "should_converge": true,
+    "max_iterations": 3
+  },
+  "benchmarks": {
+    "topic_coverage": "Should cover: WASM basics, browser support, use cases (gaming, serverless), WASI",
+    "accuracy": "Technical details should be accurate (stack-based VM, sandboxed, language support)",
+    "depth": "Should go beyond surface-level overview given 'comprehensive' depth setting"
+  },
+  "mcp_checks": {
+    "memory_server_required": true,
+    "uses_memory_for_context": true
+  }
+}

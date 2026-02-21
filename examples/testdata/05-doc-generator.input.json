@@ -1,0 +1,12 @@
+{
+  "inputs": {
+    "source_dir": "./testdata/sample-project",
+    "output_file": "DOCUMENTATION.md"
+  },
+  "setup": {
+    "description": "Create sample source files to document",
+    "files": {
+      "testdata/sample-project/calculator.go": "package calculator\\n\\n// Add returns the sum of two integers.\\nfunc Add(a, b int) int {\\n\\treturn a + b\\n}\\n\\n// Multiply returns the product of two integers.\\nfunc Multiply(a, b int) int {\\n\\treturn a * b\\n}\\n"
+    }
+  }
+}

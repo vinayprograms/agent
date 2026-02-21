@@ -1,0 +1,8 @@
+{
+  "inputs": {
+    "from_tag": "v1.0.0",
+    "to_tag": "HEAD",
+    "format": "keepachangelog"
+  },
+  "notes": "Requires a git repository with tags. For testing, create sample commits and tags first."
+}

@@ -1,0 +1,21 @@
+{
+  "validation_type": "file_output",
+  "description": "Git repository analysis",
+  "output_files": {
+    "git-analysis-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 500,
+      "format": "markdown"
+    }
+  },
+  "analysis_checks": {
+    "has_commit_stats": true,
+    "has_contributor_info": true,
+    "has_hotspots": true,
+    "has_insights": true
+  },
+  "tool_usage": {
+    "required": ["bash"],
+    "bash_commands_include": ["git log", "git shortlog"]
+  }
+}

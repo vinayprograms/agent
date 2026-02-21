@@ -1,0 +1,12 @@
+{
+  "inputs": {
+    "spec_file": "testdata/api-spec.yaml",
+    "language": "go",
+    "framework": "gin"
+  },
+  "setup": {
+    "files": {
+      "testdata/api-spec.yaml": "openapi: 3.0.0\\ninfo:\\n  title: Todo API\\n  version: 1.0.0\\npaths:\\n  /todos:\\n    get:\\n      summary: List todos\\n      responses:\\n        '200':\\n          description: Success\\n    post:\\n      summary: Create todo\\n      responses:\\n        '201':\\n          description: Created\\n"
+    }
+  }
+}

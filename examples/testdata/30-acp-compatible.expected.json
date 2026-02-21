@@ -1,0 +1,18 @@
+{
+  "validation_type": "output_content",
+  "description": "ACP-formatted response with code suggestion",
+  "response_checks": {
+    "answers_query": true,
+    "includes_code": true,
+    "code_language": "go",
+    "explains_solution": true
+  },
+  "format_checks": {
+    "acp_compatible": "Response should be formatted for editor display",
+    "has_code_blocks": true
+  },
+  "code_quality": {
+    "correct_algorithm": "Should implement binary search correctly",
+    "handles_edge_cases": "Should handle empty array, single element"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "inputs": {
+    "test_command": "go test ./...",
+    "max_attempts": "3"
+  },
+  "setup": {
+    "description": "Create a Go project with a failing test",
+    "files": {
+      "testdata/buggy/main.go": "package main\\n\\nfunc Add(a, b int) int {\\n\\treturn a - b // BUG: should be a + b\\n}\\n",
+      "testdata/buggy/main_test.go": "package main\\n\\nimport \\\"testing\\\"\\n\\nfunc TestAdd(t *testing.T) {\\n\\tif Add(2, 3) != 5 {\\n\\t\\tt.Error(\\\"Add(2,3) should equal 5\\\")\\n\\t}\\n}\\n"
+    },
+    "workdir": "testdata/buggy"
+  }
+}

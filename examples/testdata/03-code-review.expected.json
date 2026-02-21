@@ -1,0 +1,21 @@
+{
+  "validation_type": "file_output",
+  "description": "Code review identifying issues in sample Go code",
+  "output_files": {
+    "code-review-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 500,
+      "required_sections": ["Issues Found", "Suggestions"],
+      "content_contains": ["unused"],
+      "format": "markdown"
+    }
+  },
+  "tool_usage": {
+    "required": ["glob", "read"],
+    "optional": ["grep"]
+  },
+  "checks": {
+    "identifies_issues": ["unused variable", "y"],
+    "provides_actionable_suggestions": true
+  }
+}

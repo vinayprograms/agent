@@ -1,0 +1,15 @@
+{
+  "validation_type": "output_content",
+  "description": "Parallel specialist review",
+  "parallel_checks": {
+    "specialists_run_in_parallel": ["security", "performance", "style", "docs", "tests", "deps"],
+    "results_synthesized": true,
+    "prioritized_recommendations": true
+  },
+  "content_checks": {
+    "security_findings": true,
+    "performance_findings": "Should note the time.Sleep as potential issue",
+    "style_findings": true,
+    "documentation_review": true
+  }
+}

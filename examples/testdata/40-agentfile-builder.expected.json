@@ -1,0 +1,21 @@
+{
+  "validation_type": "file_output",
+  "description": "Generated Agentfile from problem description",
+  "output_files": {
+    "generated.agent": {
+      "must_exist": true,
+      "format": "agentfile",
+      "syntax_valid": true
+    }
+  },
+  "agentfile_checks": {
+    "has_name": true,
+    "has_goals": true,
+    "has_run_steps": true,
+    "relevant_to_problem": "Should address Python type hints analysis"
+  },
+  "post_validation": {
+    "command": "go run ./cmd/agent inspect generated.agent",
+    "expected_exit_code": 0
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "validation_type": "output_content",
+  "description": "Analysis using skill-based agents",
+  "skill_checks": {
+    "reviewer_skill_used": true,
+    "tester_skill_used": true,
+    "git_skill_used": true
+  },
+  "output_checks": {
+    "code_analyzed": true,
+    "tests_suggested": true,
+    "commit_prepared": true
+  },
+  "notes": "Requires skills.paths configured with code-review, testing, and git-workflow skills"
+}

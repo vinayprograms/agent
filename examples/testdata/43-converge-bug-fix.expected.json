@@ -1,0 +1,19 @@
+{
+  "validation_type": "test_pass",
+  "description": "Fix division by zero bug",
+  "convergence": {
+    "should_converge": true,
+    "success_indicator": "Tests pass or CONVERGED"
+  },
+  "bug_fix_checks": {
+    "identifies_issue": "Division by zero",
+    "implements_fix": "Should add zero check or return error"
+  },
+  "tool_usage": {
+    "required": ["bash", "edit"]
+  },
+  "post_validation": {
+    "command": "cd testdata/buggy-converge && go test ./...",
+    "expected_exit_code": 0
+  }
+}

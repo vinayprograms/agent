@@ -1,0 +1,22 @@
+{
+  "validation_type": "file_output",
+  "description": "Dependency audit report",
+  "output_files": {
+    "dep-audit-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 500,
+      "format": "markdown"
+    }
+  },
+  "audit_checks": {
+    "lists_dependencies": ["lodash", "express", "moment"],
+    "checks_versions": true,
+    "identifies_issues": true
+  },
+  "benchmarks": {
+    "outdated_detection": "Should identify that these versions are outdated",
+    "vulnerability_awareness": "Should mention known vulnerabilities in older lodash versions",
+    "maintenance_status": "Should note that moment.js is in maintenance mode",
+    "recommendations": "Should suggest updates or alternatives"
+  }
+}

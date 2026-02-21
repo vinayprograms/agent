@@ -1,0 +1,20 @@
+{
+  "validation_type": "file_output",
+  "description": "Changelog in keepachangelog format",
+  "output_files": {
+    "CHANGELOG.md": {
+      "must_exist": true,
+      "format": "markdown"
+    }
+  },
+  "format_checks": {
+    "keepachangelog_compliant": true,
+    "has_categories": ["Added", "Changed", "Fixed"],
+    "has_version_header": true,
+    "has_date": true
+  },
+  "tool_usage": {
+    "required": ["bash", "write"],
+    "bash_commands_include": ["git log"]
+  }
+}

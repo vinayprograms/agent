@@ -1,0 +1,12 @@
+{
+  "inputs": {
+    "source_file": "testdata/to-test.go",
+    "test_framework": "testing",
+    "coverage": "comprehensive"
+  },
+  "setup": {
+    "files": {
+      "testdata/to-test.go": "package utils\\n\\n// Abs returns the absolute value of x.\\nfunc Abs(x int) int {\\n\\tif x < 0 {\\n\\t\\treturn -x\\n\\t}\\n\\treturn x\\n}\\n\\n// Max returns the larger of two integers.\\nfunc Max(a, b int) int {\\n\\tif a > b {\\n\\t\\treturn a\\n\\t}\\n\\treturn b\\n}\\n"
+    }
+  }
+}

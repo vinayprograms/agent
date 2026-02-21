@@ -1,0 +1,23 @@
+{
+  "validation_type": "file_output",
+  "description": "Security audit identifying vulnerabilities",
+  "output_files": {
+    "security-audit-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 800,
+      "required_sections": ["Executive Summary", "Findings", "Remediation"],
+      "format": "markdown"
+    }
+  },
+  "vulnerability_detection": {
+    "must_identify": ["SQL injection"],
+    "severity_classification": true,
+    "remediation_provided": true
+  },
+  "tool_usage": {
+    "required": ["glob", "read"]
+  },
+  "multi_agent_checks": {
+    "reasoning_heavy_profile": "Should use reasoning-heavy model for security analysis"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "validation_type": "output_content",
+  "description": "Security audit pipeline with cloning, scanning, and remediation",
+  "pipeline_checks": {
+    "clone_step": "Should clone the repository",
+    "scan_step": "Should scan for security issues",
+    "plan_step": "Should create remediation plan",
+    "report_step": "Should generate report"
+  },
+  "convergence": {
+    "should_converge": true,
+    "max_iterations": 5,
+    "success_indicator": "All critical issues resolved or no more improvements"
+  },
+  "tool_usage": {
+    "required": ["bash"],
+    "likely": ["read", "edit", "write"]
+  }
+}

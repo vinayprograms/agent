@@ -1,0 +1,22 @@
+{
+  "validation_type": "file_output",
+  "description": "Decision analysis from multiple perspectives",
+  "output_files": {
+    "decision-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 1000,
+      "required_sections": ["Pros", "Cons", "Recommendation"],
+      "format": "markdown"
+    }
+  },
+  "analysis_checks": {
+    "pros_identified": true,
+    "cons_identified": true,
+    "recommendation_provided": true,
+    "mitigations_suggested": true
+  },
+  "multi_agent_checks": {
+    "optimist_perspective": "Should include positive aspects and opportunities",
+    "critic_perspective": "Should include risks and challenges"
+  }
+}

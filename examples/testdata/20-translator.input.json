@@ -1,0 +1,12 @@
+{
+  "inputs": {
+    "source_file": "testdata/english-text.txt",
+    "target_language": "Spanish",
+    "context": "business email"
+  },
+  "setup": {
+    "files": {
+      "testdata/english-text.txt": "Dear Mr. Johnson,\\n\\nThank you for your interest in our services. We would be happy to schedule a meeting to discuss your requirements.\\n\\nPlease let me know your availability next week.\\n\\nBest regards,\\nSarah"
+    }
+  }
+}

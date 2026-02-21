@@ -1,0 +1,18 @@
+{
+  "validation_type": "file_output",
+  "description": "Comprehensive research report on microservices",
+  "output_files": {
+    "research-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 2000,
+      "required_sections": ["Introduction", "Key Facts", "Current Developments", "Analysis", "Conclusion"],
+      "content_contains": ["microservices", "architecture"],
+      "format": "markdown"
+    }
+  },
+  "benchmarks": {
+    "accuracy": "Content should accurately describe microservices concepts: service decomposition, API communication, independent deployment",
+    "coverage": "Should cover: benefits (scalability, flexibility), challenges (complexity, distributed systems), patterns (API gateway, service mesh)",
+    "currency": "Should mention modern practices: containers, Kubernetes, observability"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "inputs": {
+    "project_path": "testdata/mixed-project"
+  },
+  "setup": {
+    "files": {
+      "testdata/mixed-project/main.go": "package main\\n\\nimport \\\"fmt\\\"\\n\\nfunc main() {\\n\\tfmt.Println(\\\"Hello\\\")\\n}\\n"
+    }
+  },
+  "requirements": {
+    "skills": ["code-review", "testing"],
+    "agents": ["optimist.md", "security-auditor.md", "editor.md"]
+  }
+}

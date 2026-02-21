@@ -1,0 +1,21 @@
+{
+  "validation_type": "code_improvement",
+  "description": "Refactor code for readability",
+  "convergence": {
+    "should_converge": true,
+    "max_iterations": 2
+  },
+  "readability_checks": {
+    "proper_formatting": true,
+    "meaningful_names": "Function and parameter names should be descriptive",
+    "reduced_nesting": "Should reduce nested if statements if possible"
+  },
+  "tool_usage": {
+    "required": ["read", "edit"]
+  },
+  "post_validation": {
+    "command": "gofmt -d testdata/messy-code.go | wc -l",
+    "expected_output": "0",
+    "description": "Code should be properly formatted after refactoring"
+  }
+}

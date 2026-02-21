@@ -1,0 +1,12 @@
+{
+  "validation_type": "output_content",
+  "description": "Analysis using mixed agent sources",
+  "agent_checks": {
+    "markdown_agents_used": ["project-lead", "security", "helper"],
+    "skill_agents_used": ["code-reviewer", "tester"]
+  },
+  "phase_checks": {
+    "analysis_phase": "Plan, review, and security scan completed",
+    "action_phase": "Test plan and quick fixes applied"
+  }
+}

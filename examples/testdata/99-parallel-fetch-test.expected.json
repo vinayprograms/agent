@@ -1,0 +1,14 @@
+{
+  "validation_type": "test_execution",
+  "description": "Test parallel sub-agent context isolation",
+  "test_checks": {
+    "spawns_multiple_agents": true,
+    "each_agent_fetches_different_url": true,
+    "results_collected": true,
+    "no_context_bleed": "Each sub-agent should only see its own fetched content"
+  },
+  "tool_usage": {
+    "required": ["spawn_agent", "web_fetch"]
+  },
+  "network_required": true
+}

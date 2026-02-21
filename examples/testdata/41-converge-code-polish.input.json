@@ -1,0 +1,11 @@
+{
+  "inputs": {
+    "file_path": "testdata/unpolished.go",
+    "style": "clean, readable, idiomatic Go"
+  },
+  "setup": {
+    "files": {
+      "testdata/unpolished.go": "package main\\n\\nfunc f(a int,b int) int {\\nreturn a+b\\n}\\nfunc g(x int) int {\\nif x>0 {return x}\\nreturn -x\\n}\\n"
+    }
+  }
+}

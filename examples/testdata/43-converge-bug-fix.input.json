@@ -1,0 +1,13 @@
+{
+  "inputs": {
+    "test_command": "go test ./...",
+    "focus_area": "testdata/buggy-converge"
+  },
+  "setup": {
+    "files": {
+      "testdata/buggy-converge/calc.go": "package calc\\n\\nfunc Divide(a, b int) int {\\n\\treturn a / b // BUG: no zero check\\n}\\n",
+      "testdata/buggy-converge/calc_test.go": "package calc\\n\\nimport \\\"testing\\\"\\n\\nfunc TestDivide(t *testing.T) {\\n\\tif Divide(10, 2) != 5 {\\n\\t\\tt.Error(\\\"10/2 should be 5\\\")\\n\\t}\\n}\\n\\nfunc TestDivideByZero(t *testing.T) {\\n\\tdefer func() { recover() }()\\n\\tDivide(10, 0) // Should handle gracefully\\n\\tt.Error(\\\"Should have panicked or returned error\\\")\\n}\\n"
+    },
+    "workdir": "testdata/buggy-converge"
+  }
+}

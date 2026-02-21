@@ -1,0 +1,26 @@
+{
+  "validation_type": "file_output",
+  "description": "Structured debate transcript",
+  "output_files": {
+    "debate-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 1000,
+      "format": "markdown"
+    }
+  },
+  "debate_checks": {
+    "has_pro_arguments": true,
+    "has_con_arguments": true,
+    "has_rebuttals": true,
+    "has_summary": true
+  },
+  "convergence": {
+    "should_converge": true,
+    "max_iterations": 2
+  },
+  "multi_agent_checks": {
+    "pro_agent_used": true,
+    "con_agent_used": true,
+    "balanced_representation": "Both sides should have roughly equal coverage"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "validation_type": "file_output",
+  "description": "Science fiction short story about first contact",
+  "output_files": {
+    "story-output.md": {
+      "must_exist": true,
+      "min_word_count": 500,
+      "format": "markdown"
+    }
+  },
+  "narrative_checks": {
+    "has_beginning": true,
+    "has_middle": true,
+    "has_ending": true,
+    "genre_appropriate": "Should include sci-fi elements: space, technology, alien life",
+    "theme_present": "Should explore first contact scenario"
+  },
+  "multi_agent_checks": {
+    "writer_agent_used": true,
+    "editor_agent_used": true,
+    "revision_occurred": true
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "validation_type": "file_output",
+  "description": "Detailed Kyoto travel itinerary",
+  "output_files": {
+    "travel-plan-output.md": {
+      "must_exist": true,
+      "min_size_bytes": 2000,
+      "format": "markdown"
+    }
+  },
+  "structure_checks": {
+    "has_day_by_day": true,
+    "has_logistics": true,
+    "has_practical_tips": true
+  },
+  "benchmarks": {
+    "location_accuracy": "Mentioned locations should be real places in Kyoto (e.g., Fushimi Inari, Kinkaku-ji, Gion)",
+    "interest_alignment": "Should emphasize temples, traditional culture, and local food as specified",
+    "logistics_feasibility": "Travel times between locations should be realistic",
+    "budget_appropriate": "Recommendations should fit 'moderate' budget (not luxury ryokans, but not hostels)"
+  }
+}

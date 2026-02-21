@@ -1,0 +1,6 @@
+{
+  "inputs": {
+    "decision": "Should we migrate from a monolithic architecture to microservices?",
+    "context": "technology startup with 20 engineers"
+  }
+}

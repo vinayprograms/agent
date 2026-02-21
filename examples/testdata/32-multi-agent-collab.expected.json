@@ -1,0 +1,19 @@
+{
+  "validation_type": "output_content",
+  "description": "Multi-agent collaborative research",
+  "collaboration_checks": {
+    "researcher_contributes": true,
+    "critic_provides_feedback": true,
+    "editor_polishes": true,
+    "multiple_phases": true
+  },
+  "convergence": {
+    "should_converge": true,
+    "max_iterations": 2
+  },
+  "content_checks": {
+    "topic_covered": "Should explain ZK proofs: ZK-SNARKs, ZK-STARKs, privacy, scalability",
+    "critique_addressed": "Final output should address initial critique points",
+    "polished": "Should be well-formatted and coherent"
+  }
+}

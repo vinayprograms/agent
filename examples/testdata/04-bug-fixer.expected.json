@@ -1,0 +1,23 @@
+{
+  "validation_type": "test_pass",
+  "description": "Fix the bug so tests pass",
+  "convergence": {
+    "should_converge": true,
+    "max_iterations": 3,
+    "success_indicator": "CONVERGED or all tests pass"
+  },
+  "tool_usage": {
+    "required": ["bash", "edit"],
+    "bash_commands": ["go test"]
+  },
+  "post_validation": {
+    "command": "cd testdata/buggy && go test ./...",
+    "expected_exit_code": 0
+  },
+  "file_changes": {
+    "testdata/buggy/main.go": {
+      "should_contain": ["a + b"],
+      "should_not_contain": ["a - b"]
+    }
+  }
+}

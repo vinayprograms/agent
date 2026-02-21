@@ -1,0 +1,12 @@
+{
+  "inputs": {
+    "path": "./testdata/sample-code",
+    "language": "go"
+  },
+  "setup": {
+    "description": "Create sample Go code with intentional issues",
+    "files": {
+      "testdata/sample-code/main.go": "package main\\n\\nimport \\\"fmt\\\"\\n\\nfunc main() {\\n\\tvar x int\\n\\tfmt.Println(x)\\n\\t// TODO: unused variable y\\n\\ty := 5\\n}\\n"
+    }
+  }
+}

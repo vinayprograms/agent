@@ -1,0 +1,26 @@
+{
+  "validation_type": "file_output",
+  "description": "Iteratively improved content",
+  "output_files": {
+    "improved-content.md": {
+      "must_exist": true,
+      "min_size_bytes": 300,
+      "format": "markdown"
+    }
+  },
+  "convergence": {
+    "should_converge": true,
+    "max_iterations": 5
+  },
+  "quality_checks": {
+    "product_described": true,
+    "features_highlighted": ["hydration tracking", "smart"],
+    "compelling_copy": true,
+    "polished": true
+  },
+  "multi_agent_checks": {
+    "creator_used": true,
+    "critic_used": true,
+    "improver_used": true
+  }
+}

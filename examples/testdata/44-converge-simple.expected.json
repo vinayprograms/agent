@@ -1,0 +1,18 @@
+{
+  "validation_type": "output_content",
+  "description": "Self-refining summarization",
+  "convergence": {
+    "should_converge": true,
+    "max_iterations": 5
+  },
+  "summary_checks": {
+    "max_word_count": 50,
+    "captures_key_points": ["AI", "industries", "automation", "impact"],
+    "coherent": true,
+    "concise": true
+  },
+  "output_variable": {
+    "name": "summary",
+    "should_be_set": true
+  }
+}

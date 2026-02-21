@@ -1,0 +1,12 @@
+{
+  "inputs": {
+    "path": "testdata/messy-code.go",
+    "focus": "readability",
+    "max_passes": "2"
+  },
+  "setup": {
+    "files": {
+      "testdata/messy-code.go": "package main\\n\\nfunc f(x int,y int,z int) int {\\nif x>0 {\\nif y>0 {\\nreturn x+y+z\\n} else {\\nreturn x+z\\n}\\n} else {\\nreturn z\\n}\\n}\\n"
+    }
+  }
+}

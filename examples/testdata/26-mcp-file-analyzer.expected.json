@@ -1,0 +1,14 @@
+{
+  "validation_type": "output_content",
+  "description": "Analysis of Go files via MCP filesystem server",
+  "analysis_checks": {
+    "files_discovered": ["main.go", "utils.go"],
+    "patterns_identified": true,
+    "report_generated": true
+  },
+  "mcp_checks": {
+    "uses_mcp_tools": true,
+    "filesystem_server_required": true
+  },
+  "notes": "This example requires MCP filesystem server configured. Skip if not available."
+}

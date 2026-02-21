@@ -1,0 +1,19 @@
+{
+  "validation_type": "file_output",
+  "description": "Generate documentation from source code",
+  "output_files": {
+    "DOCUMENTATION.md": {
+      "must_exist": true,
+      "min_size_bytes": 300,
+      "content_contains": ["Add", "Multiply", "calculator"],
+      "format": "markdown"
+    }
+  },
+  "tool_usage": {
+    "required": ["glob", "read", "write"]
+  },
+  "checks": {
+    "documents_functions": ["Add", "Multiply"],
+    "includes_descriptions": true
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "inputs": {
+    "topic": "WebAssembly and its applications",
+    "depth": "comprehensive"
+  },
+  "requirements": {
+    "mcp_servers": ["memory"]
+  }
+}

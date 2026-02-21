@@ -1,0 +1,15 @@
+{
+  "inputs": {
+    "directory": "./testdata/go-files",
+    "pattern": "*.go"
+  },
+  "setup": {
+    "files": {
+      "testdata/go-files/main.go": "package main\\n\\nfunc main() {\\n\\tprintln(\\\"Hello\\\")\\n}\\n",
+      "testdata/go-files/utils.go": "package main\\n\\nfunc add(a, b int) int {\\n\\treturn a + b\\n}\\n"
+    }
+  },
+  "requirements": {
+    "mcp_servers": ["filesystem"]
+  }
+}

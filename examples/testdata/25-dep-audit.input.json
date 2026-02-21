@@ -1,0 +1,11 @@
+{
+  "inputs": {
+    "manifest_file": "testdata/package.json",
+    "ecosystem": "npm"
+  },
+  "setup": {
+    "files": {
+      "testdata/package.json": "{\\n  \\\"name\\\": \\\"test-app\\\",\\n  \\\"dependencies\\\": {\\n    \\\"lodash\\\": \\\"4.17.20\\\",\\n    \\\"express\\\": \\\"4.17.1\\\",\\n    \\\"moment\\\": \\\"2.29.1\\\"\\n  }\\n}\\n"
+    }
+  }
+}

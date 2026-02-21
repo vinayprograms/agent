@@ -1,0 +1,6 @@
+{
+  "inputs": {
+    "urls": "https://example.com,https://httpbin.org/html"
+  },
+  "notes": "This is a test example for parallel fetch. Requires network access."
+}

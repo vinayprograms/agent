@@ -1,0 +1,24 @@
+{
+  "validation_type": "output_content",
+  "description": "Refined essay through iterative improvement",
+  "convergence": {
+    "should_converge": true,
+    "max_iterations": 6
+  },
+  "content_checks": {
+    "topic_addressed": "Should discuss future of remote work",
+    "tone_appropriate": "Professional tone for business leaders",
+    "audience_appropriate": "Content relevant to business decision-makers"
+  },
+  "quality_checks": {
+    "clear_structure": true,
+    "logical_flow": true,
+    "evidence_based": true,
+    "polished_prose": true
+  },
+  "multi_agent_checks": {
+    "writer_drafts": true,
+    "critic_reviews": true,
+    "revision_occurs": true
+  }
+}

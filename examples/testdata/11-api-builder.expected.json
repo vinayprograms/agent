@@ -1,0 +1,21 @@
+{
+  "validation_type": "code_generation",
+  "description": "Generate REST API from OpenAPI spec",
+  "generated_files": {
+    "pattern": "*.go",
+    "min_files": 1
+  },
+  "code_checks": {
+    "compiles": true,
+    "imports_gin": true,
+    "has_handlers": ["GET /todos", "POST /todos"],
+    "has_routes": true
+  },
+  "tool_usage": {
+    "required": ["read", "write"]
+  },
+  "post_validation": {
+    "command": "go build ./...",
+    "expected_exit_code": 0
+  }
+}

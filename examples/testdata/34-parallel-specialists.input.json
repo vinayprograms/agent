@@ -1,0 +1,11 @@
+{
+  "inputs": {
+    "codebase_path": "testdata/parallel-review",
+    "language": "go"
+  },
+  "setup": {
+    "files": {
+      "testdata/parallel-review/main.go": "package main\\n\\nimport (\\n\\t\\\"fmt\\\"\\n\\t\\\"time\\\"\\n)\\n\\nfunc slowFunc() {\\n\\ttime.Sleep(time.Second)\\n\\tfmt.Println(\\\"Done\\\")\\n}\\n"
+    }
+  }
+}
