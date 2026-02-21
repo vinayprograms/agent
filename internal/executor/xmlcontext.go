@@ -3,8 +3,15 @@ package executor
 
 import (
 	"fmt"
+	"html"
 	"strings"
 )
+
+// escapeXML escapes content for safe inclusion in XML elements.
+// Prevents injection attacks where LLM output could contain </goal> or similar.
+func escapeXML(s string) string {
+	return html.EscapeString(s)
+}
 
 // GoalOutput represents a completed goal's output for context building.
 type GoalOutput struct {
@@ -103,8 +110,9 @@ func (b *XMLContextBuilder) Build() string {
 		// Add prior goals (non-loop goals)
 		for _, goal := range b.priorGoals {
 			buf.WriteString(fmt.Sprintf("  <goal id=%q>\n", goal.ID))
-			buf.WriteString(goal.Output)
-			if !strings.HasSuffix(goal.Output, "\n") {
+			escaped := escapeXML(goal.Output)
+			buf.WriteString(escaped)
+			if !strings.HasSuffix(escaped, "\n") {
 				buf.WriteString("\n")
 			}
 			buf.WriteString("  </goal>\n\n")
@@ -115,8 +123,9 @@ func (b *XMLContextBuilder) Build() string {
 			buf.WriteString(fmt.Sprintf("  <iteration n=\"%d\">\n", iter.N))
 			for _, goal := range iter.Goals {
 				buf.WriteString(fmt.Sprintf("    <goal id=%q>\n", goal.ID))
-				buf.WriteString(goal.Output)
-				if !strings.HasSuffix(goal.Output, "\n") {
+				escaped := escapeXML(goal.Output)
+				buf.WriteString(escaped)
+				if !strings.HasSuffix(escaped, "\n") {
 					buf.WriteString("\n")
 				}
 				buf.WriteString("    </goal>\n")
@@ -129,8 +138,9 @@ func (b *XMLContextBuilder) Build() string {
 			buf.WriteString("  <convergence-history>\n")
 			for _, iter := range b.convergenceIterations {
 				buf.WriteString(fmt.Sprintf("    <iteration n=\"%d\">\n", iter.N))
-				buf.WriteString(iter.Output)
-				if !strings.HasSuffix(iter.Output, "\n") {
+				escaped := escapeXML(iter.Output)
+				buf.WriteString(escaped)
+				if !strings.HasSuffix(escaped, "\n") {
 					buf.WriteString("\n")
 				}
 				buf.WriteString("    </iteration>\n")
@@ -164,11 +174,12 @@ func (b *XMLContextBuilder) Build() string {
 		buf.WriteString("</convergence-instruction>\n")
 	}
 
-	// Add correction if present
+	// Add correction if present (escape to prevent injection from supervisor LLM)
 	if b.correction != "" {
 		buf.WriteString("\n<correction source=\"supervisor\">\n")
-		buf.WriteString(b.correction)
-		if !strings.HasSuffix(b.correction, "\n") {
+		escaped := escapeXML(b.correction)
+		buf.WriteString(escaped)
+		if !strings.HasSuffix(escaped, "\n") {
 			buf.WriteString("\n")
 		}
 		buf.WriteString("</correction>\n")
@@ -204,9 +215,11 @@ func BuildTaskContextWithCorrection(role, parentGoal, task, correction string) s
 	}
 	buf.WriteString("</task>\n")
 
+	// Escape correction to prevent injection from supervisor LLM
 	buf.WriteString("\n<correction source=\"supervisor\">\n")
-	buf.WriteString(correction)
-	if !strings.HasSuffix(correction, "\n") {
+	escaped := escapeXML(correction)
+	buf.WriteString(escaped)
+	if !strings.HasSuffix(escaped, "\n") {
 		buf.WriteString("\n")
 	}
 	buf.WriteString("</correction>")
@@ -228,13 +241,14 @@ func BuildTaskContextWithPriorGoals(role, parentGoal, task string, priorGoals []
 
 	buf.WriteString(fmt.Sprintf("<task role=%q parent-goal=%q>\n", role, parentGoal))
 
-	// Include prior goal outputs as context
+	// Include prior goal outputs as context (escaped to prevent injection)
 	if len(priorGoals) > 0 {
 		buf.WriteString("<context>\n")
 		for _, goal := range priorGoals {
 			buf.WriteString(fmt.Sprintf("<goal id=%q>\n", goal.ID))
-			buf.WriteString(goal.Output)
-			if !strings.HasSuffix(goal.Output, "\n") {
+			escaped := escapeXML(goal.Output)
+			buf.WriteString(escaped)
+			if !strings.HasSuffix(escaped, "\n") {
 				buf.WriteString("\n")
 			}
 			buf.WriteString("</goal>\n")
