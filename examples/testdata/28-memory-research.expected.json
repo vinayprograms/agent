@@ -1,24 +1,38 @@
 {
-  "validation_type": "file_output",
-  "description": "Research report using MCP memory for context",
-  "output_files": {
-    "research-report-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 1500,
-      "format": "markdown"
-    }
+  "intent": "Research WebAssembly with MCP memory for context retention",
+
+  "success_criteria": {
+    "primary": "Comprehensive report on WebAssembly",
+    "secondary": "Demonstrates memory usage for context across iterations"
   },
+
+  "content_requirements": {
+    "must_cover": [
+      "What WebAssembly is (portable binary format)",
+      "How it works (stack-based VM, sandboxed)",
+      "Browser support and runtime environments",
+      "Use cases (gaming, serverless, plugins)",
+      "WASI for server-side applications",
+      "Language support (Rust, C++, Go, AssemblyScript)"
+    ]
+  },
+
+  "quality_rubric": {
+    "accuracy": "Technical details are correct",
+    "depth": "Comprehensive as specified, not surface-level",
+    "organization": "Well-structured, easy to navigate",
+    "currentness": "Reflects modern WASM ecosystem (2022+)"
+  },
+
   "convergence": {
-    "should_converge": true,
+    "expected": true,
     "max_iterations": 3
   },
-  "benchmarks": {
-    "topic_coverage": "Should cover: WASM basics, browser support, use cases (gaming, serverless), WASI",
-    "accuracy": "Technical details should be accurate (stack-based VM, sandboxed, language support)",
-    "depth": "Should go beyond surface-level overview given 'comprehensive' depth setting"
+
+  "mcp_requirements": {
+    "server": "memory",
+    "demonstrates": "Context retention across iterations"
   },
-  "mcp_checks": {
-    "memory_server_required": true,
-    "uses_memory_for_context": true
-  }
+
+  "output_file": "research-report-output.md"
 }

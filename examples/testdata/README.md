@@ -20,7 +20,7 @@ For each example `XX-name.agent`, there are two test files:
   "setup": {
     "description": "Optional setup instructions",
     "files": {
-      "path/to/file": "content"
+      "path/to/file": "file content"
     },
     "workdir": "optional working directory"
   },
@@ -35,55 +35,66 @@ For each example `XX-name.agent`, there are two test files:
 
 ## Expected File Format
 
+Expected files specify **what success looks like**, not just file existence:
+
 ```json
 {
-  "validation_type": "file_output|output_content|code_generation|test_pass|code_improvement",
-  "description": "What this example should produce",
-  
-  "output_files": {
-    "filename.md": {
-      "must_exist": true,
-      "min_size_bytes": 500,
-      "content_contains": ["required", "strings"],
-      "required_sections": ["Section1", "Section2"],
-      "format": "markdown|sql|json|text"
-    }
+  "intent": "What the example is trying to accomplish",
+
+  "success_criteria": {
+    "primary": "The main thing that must be true for success",
+    "secondary": "Additional success indicators"
   },
-  
+
+  "content_requirements": {
+    "must_include": ["required content or topics"],
+    "must_avoid": ["things that indicate failure"],
+    "must_demonstrate": ["behaviors or qualities"]
+  },
+
+  "quality_rubric": {
+    "accuracy": "How to judge correctness",
+    "completeness": "How to judge coverage",
+    "actionability": "How to judge usefulness"
+  },
+
   "convergence": {
-    "should_converge": true,
+    "expected": true,
     "max_iterations": 5,
     "success_indicator": "CONVERGED or specific condition"
   },
-  
-  "tool_usage": {
-    "required": ["tool1", "tool2"],
-    "optional": ["tool3"]
+
+  "verification": {
+    "command": "post-run command to verify",
+    "expected_exit_code": 0
   },
-  
-  "benchmarks": {
-    "accuracy": "Description of accuracy requirements",
-    "coverage": "What topics should be covered"
-  },
-  
-  "post_validation": {
-    "command": "command to run after",
-    "expected_exit_code": 0,
-    "expected_output": "optional expected output"
-  }
+
+  "output_file": "expected output filename (if applicable)"
 }
 ```
 
-## Validation Types
+## Validation Philosophy
 
-| Type | Description | Key Checks |
-|------|-------------|------------|
-| `file_output` | Example writes to specific files | File existence, content, structure |
-| `output_content` | Example produces console output | Content checks, format |
-| `code_generation` | Example generates code | Compiles, syntax valid |
-| `test_pass` | Example should make tests pass | Exit code 0 |
-| `code_improvement` | Example improves existing code | Before/after comparison |
-| `test_execution` | Example is a test itself | Specific test assertions |
+**Don't just check existence — validate intent fulfillment.**
+
+### Quantitative Checks (Programmatic)
+- Required patterns/keywords present
+- Code compiles, tests pass
+- Word count in range
+- Required sections exist
+- Post-run commands succeed
+
+### Qualitative Checks (LLM-Judged)
+- Does output address the stated intent?
+- Is reasoning sound?
+- Are recommendations actionable?
+- Does it stay on-topic or deviate?
+- Appropriate tone/audience fit?
+
+### Semantic Checks
+- Covers expected topics
+- No obvious hallucinations
+- Logical structure/flow
 
 ## Running Tests
 
@@ -92,13 +103,19 @@ For each example `XX-name.agent`, there are two test files:
 agent run examples/01-hello-world.agent \
   --input-file examples/testdata/01-hello-world.input.json
 
-# Validate output against expected
-# (Use a validation agent or script)
+# Validation is done by a separate testing agent that:
+# 1. Runs the example with input.json
+# 2. Compares output against expected.json criteria
+# 3. Reports pass/fail with specific assertions
 ```
 
 ## Adding New Test Data
 
-1. Create `XX-name.input.json` with required inputs
-2. Create `XX-name.expected.json` with validation criteria
-3. Add any setup files needed in the `setup.files` section
-4. Document special requirements in `requirements` or `notes`
+1. Create `XX-name.input.json` with required inputs and any setup
+2. Create `XX-name.expected.json` with:
+   - Clear intent statement
+   - Success criteria (primary and secondary)
+   - Content requirements (must include/avoid)
+   - Quality rubric for subjective aspects
+   - Verification commands if applicable
+3. Focus on **what success looks like**, not just file existence

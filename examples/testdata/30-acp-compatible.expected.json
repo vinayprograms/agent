@@ -1,18 +1,32 @@
 {
-  "validation_type": "output_content",
-  "description": "ACP-formatted response with code suggestion",
-  "response_checks": {
-    "answers_query": true,
-    "includes_code": true,
-    "code_language": "go",
-    "explains_solution": true
+  "intent": "Answer a coding question with ACP-compatible response format",
+
+  "success_criteria": {
+    "primary": "Provides correct binary search implementation in Go",
+    "secondary": "Response is formatted for editor integration"
   },
-  "format_checks": {
-    "acp_compatible": "Response should be formatted for editor display",
-    "has_code_blocks": true
+
+  "content_requirements": {
+    "must_include": [
+      "Working binary search code",
+      "Clear explanation of the algorithm",
+      "Time complexity (O(log n))"
+    ],
+    "code_correctness": {
+      "algorithm": "Binary search with proper midpoint calculation",
+      "edge_cases": "Handles empty array, single element, not found",
+      "no_off_by_one": "Loop bounds and comparisons are correct"
+    }
   },
-  "code_quality": {
-    "correct_algorithm": "Should implement binary search correctly",
-    "handles_edge_cases": "Should handle empty array, single element"
+
+  "quality_rubric": {
+    "correctness": "Code would work if copied and run",
+    "clarity": "Explanation helps understanding, not just 'here's code'",
+    "completeness": "Handles edge cases mentioned in context"
+  },
+
+  "format_requirements": {
+    "has_code_blocks": true,
+    "code_language_specified": "go"
   }
 }

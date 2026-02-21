@@ -1,19 +1,32 @@
 {
-  "validation_type": "file_output",
-  "description": "Generate documentation from source code",
-  "output_files": {
-    "DOCUMENTATION.md": {
-      "must_exist": true,
-      "min_size_bytes": 300,
-      "content_contains": ["Add", "Multiply", "calculator"],
-      "format": "markdown"
-    }
+  "intent": "Generate documentation from source code",
+
+  "success_criteria": {
+    "primary": "Documents all public functions in the source file",
+    "secondary": "Documentation is accurate and useful"
   },
+
+  "content_requirements": {
+    "must_document": [
+      "Add function: returns sum of two integers",
+      "Multiply function: returns product of two integers"
+    ],
+    "documentation_should_include": [
+      "Function name and signature",
+      "What the function does",
+      "Parameters and return values"
+    ]
+  },
+
+  "quality_rubric": {
+    "completeness": "All public functions are documented",
+    "accuracy": "Descriptions match actual behavior",
+    "usefulness": "A developer could use the function based on the docs"
+  },
+
   "tool_usage": {
     "required": ["glob", "read", "write"]
   },
-  "checks": {
-    "documents_functions": ["Add", "Multiply"],
-    "includes_descriptions": true
-  }
+
+  "output_file": "DOCUMENTATION.md"
 }

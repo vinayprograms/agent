@@ -1,23 +1,42 @@
 {
-  "validation_type": "file_output",
-  "description": "Security audit identifying vulnerabilities",
-  "output_files": {
-    "security-audit-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 800,
-      "required_sections": ["Executive Summary", "Findings", "Remediation"],
-      "format": "markdown"
-    }
+  "intent": "Identify security vulnerabilities in code and provide actionable remediation guidance",
+
+  "success_criteria": {
+    "primary": "Identifies the SQL injection vulnerability in the sample code",
+    "secondary": "Provides correct remediation (parameterized queries, not string escaping)"
   },
-  "vulnerability_detection": {
-    "must_identify": ["SQL injection"],
-    "severity_classification": true,
-    "remediation_provided": true
+
+  "content_requirements": {
+    "must_identify": [
+      "SQL injection via string interpolation in query",
+      "User input flowing directly into database query"
+    ],
+    "must_explain": [
+      "Why this is dangerous (data exfiltration, auth bypass, data destruction)",
+      "How an attacker would exploit it"
+    ],
+    "must_recommend": [
+      "Use parameterized queries / prepared statements",
+      "Input validation as defense-in-depth (not primary fix)"
+    ],
+    "must_avoid": [
+      "Recommending string escaping as the fix (insufficient)",
+      "Missing the vulnerability entirely",
+      "False positives that distract from the real issue"
+    ]
   },
-  "tool_usage": {
-    "required": ["glob", "read"]
+
+  "quality_rubric": {
+    "accuracy": "Correctly identifies vulnerability type and location",
+    "severity_assessment": "Rates this as High/Critical (it's a classic SQLi)",
+    "remediation_quality": "Fix is correct, specific, and implementable",
+    "explanation_clarity": "Developer understands both the risk and the solution"
   },
-  "multi_agent_checks": {
-    "reasoning_heavy_profile": "Should use reasoning-heavy model for security analysis"
-  }
+
+  "structure": {
+    "required_sections": ["Executive Summary", "Findings", "Remediation"],
+    "format": "markdown"
+  },
+
+  "output_file": "security-audit-output.md"
 }

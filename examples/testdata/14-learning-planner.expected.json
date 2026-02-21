@@ -1,22 +1,37 @@
 {
-  "validation_type": "file_output",
-  "description": "Personalized Rust learning plan",
-  "output_files": {
-    "learning-plan-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 1500,
-      "format": "markdown"
-    }
+  "intent": "Create a personalized Rust learning plan for an intermediate programmer",
+
+  "success_criteria": {
+    "primary": "Plan is actionable and fits the time constraint (5 hrs/week, 2 months)",
+    "secondary": "Resources and progression are appropriate for intermediate level"
   },
-  "structure_checks": {
-    "has_weekly_breakdown": true,
-    "has_milestones": true,
-    "has_resources": true,
-    "has_practice_exercises": true
+
+  "content_requirements": {
+    "must_include": [
+      "Weekly breakdown of topics",
+      "Specific resources (books, courses, exercises)",
+      "Practice exercises or projects",
+      "Milestones to track progress"
+    ],
+    "resources_should_be_real": [
+      "The Rust Programming Language book",
+      "Rustlings exercises",
+      "Exercism Rust track",
+      "Real Rust projects to study"
+    ],
+    "progression_logic": [
+      "Ownership and borrowing before lifetimes",
+      "Traits before generics",
+      "Error handling before async"
+    ]
   },
-  "benchmarks": {
-    "resource_validity": "Recommended resources should be real (e.g., 'The Rust Programming Language' book, Rustlings, Exercism)",
-    "progression_logic": "Topics should progress logically: ownership -> borrowing -> lifetimes -> traits -> async",
-    "time_realistic": "Weekly tasks should fit within 5 hours"
-  }
+
+  "quality_rubric": {
+    "feasibility": "40 hours total (5hr * 8 weeks) is realistically allocated",
+    "intermediate_appropriate": "Skips basics, assumes programming knowledge",
+    "resource_validity": "Named resources actually exist and are relevant",
+    "actionability": "Learner knows exactly what to do each week"
+  },
+
+  "output_file": "learning-plan-output.md"
 }

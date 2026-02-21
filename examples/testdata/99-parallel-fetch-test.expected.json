@@ -1,14 +1,32 @@
 {
-  "validation_type": "test_execution",
-  "description": "Test parallel sub-agent context isolation",
-  "test_checks": {
-    "spawns_multiple_agents": true,
-    "each_agent_fetches_different_url": true,
-    "results_collected": true,
-    "no_context_bleed": "Each sub-agent should only see its own fetched content"
+  "intent": "Test parallel sub-agent spawning with context isolation",
+
+  "success_criteria": {
+    "primary": "Multiple sub-agents fetch different URLs successfully",
+    "secondary": "No context bleeding between sub-agents"
   },
+
+  "test_requirements": {
+    "spawns_multiple": "At least 2 sub-agents spawned",
+    "different_targets": "Each sub-agent fetches a different URL",
+    "results_collected": "Main agent receives results from all sub-agents"
+  },
+
+  "isolation_checks": {
+    "no_context_bleed": "Sub-agent A's fetched content not visible to sub-agent B",
+    "independent_execution": "Sub-agents run independently, not sequentially"
+  },
+
+  "quality_rubric": {
+    "correctness": "Each sub-agent fetches its assigned URL",
+    "isolation": "Context properly isolated",
+    "collection": "Results properly aggregated"
+  },
+
   "tool_usage": {
-    "required": ["spawn_agent", "web_fetch"]
+    "required": ["spawn_agent"],
+    "sub_agents_use": ["web_fetch"]
   },
+
   "network_required": true
 }

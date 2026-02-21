@@ -1,20 +1,34 @@
 {
-  "validation_type": "file_output",
-  "description": "Changelog in keepachangelog format",
-  "output_files": {
-    "CHANGELOG.md": {
-      "must_exist": true,
-      "format": "markdown"
-    }
+  "intent": "Generate a changelog from git history in keepachangelog format",
+
+  "success_criteria": {
+    "primary": "Changelog accurately reflects commits since the tag",
+    "secondary": "Format follows keepachangelog.com specification"
   },
-  "format_checks": {
-    "keepachangelog_compliant": true,
-    "has_categories": ["Added", "Changed", "Fixed"],
-    "has_version_header": true,
-    "has_date": true
+
+  "content_requirements": {
+    "format_compliance": {
+      "version_header": "## [version] - YYYY-MM-DD",
+      "categories": ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"],
+      "use_only_relevant": "Don't include empty categories"
+    },
+    "content_source": [
+      "Entries derived from actual commit messages",
+      "Grouped by type of change"
+    ]
   },
+
+  "quality_rubric": {
+    "accuracy": "Entries match actual commits in the range",
+    "categorization": "Changes in correct category (fix vs feature)",
+    "readability": "Entries are human-readable, not raw commit hashes",
+    "completeness": "All significant changes included"
+  },
+
   "tool_usage": {
     "required": ["bash", "write"],
-    "bash_commands_include": ["git log"]
-  }
+    "commands_include": ["git log"]
+  },
+
+  "output_file": "CHANGELOG.md"
 }

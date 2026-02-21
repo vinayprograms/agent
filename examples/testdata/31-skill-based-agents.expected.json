@@ -1,15 +1,25 @@
 {
-  "validation_type": "output_content",
-  "description": "Analysis using skill-based agents",
-  "skill_checks": {
-    "reviewer_skill_used": true,
-    "tester_skill_used": true,
-    "git_skill_used": true
+  "intent": "Analyze code using skill-based agent specialization",
+
+  "success_criteria": {
+    "primary": "Each skill-based agent contributes relevant analysis",
+    "secondary": "Combined output is coherent and actionable"
   },
-  "output_checks": {
-    "code_analyzed": true,
-    "tests_suggested": true,
-    "commit_prepared": true
+
+  "skill_contributions": {
+    "code_review_skill": "Identifies code issues and improvements",
+    "testing_skill": "Suggests test cases or coverage gaps",
+    "git_workflow_skill": "Prepares commit or documents changes"
   },
-  "notes": "Requires skills.paths configured with code-review, testing, and git-workflow skills"
+
+  "quality_rubric": {
+    "specialization": "Each agent focuses on its domain",
+    "synthesis": "Final output integrates all perspectives",
+    "actionability": "Developer can act on recommendations"
+  },
+
+  "requirements": {
+    "skills_must_exist": ["code-review", "testing", "git-workflow"],
+    "skip_if_missing": "Skip test if required skills not configured"
+  }
 }

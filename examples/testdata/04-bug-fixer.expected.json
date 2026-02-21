@@ -1,21 +1,44 @@
 {
-  "validation_type": "test_pass",
-  "description": "Fix the bug so tests pass",
+  "intent": "Identify and fix a bug causing test failures, iterating until tests pass",
+
+  "success_criteria": {
+    "primary": "All tests pass after the fix",
+    "secondary": "Fix is minimal and correct — doesn't break other functionality"
+  },
+
+  "behavioral_requirements": {
+    "must_do": [
+      "Run tests to identify failure",
+      "Locate the buggy code",
+      "Apply a targeted fix",
+      "Re-run tests to verify"
+    ],
+    "must_avoid": [
+      "Deleting or commenting out failing tests",
+      "Overly broad changes that touch unrelated code",
+      "Introducing new bugs while fixing the original"
+    ]
+  },
+
+  "quality_rubric": {
+    "correctness": "The fix addresses the root cause, not just the symptom",
+    "minimality": "Change is surgical — only what's needed to fix the bug",
+    "safety": "Doesn't introduce regressions or undefined behavior"
+  },
+
   "convergence": {
-    "should_converge": true,
-    "max_iterations": 3,
-    "success_indicator": "CONVERGED or all tests pass"
+    "expected": true,
+    "success_indicator": "Tests pass or agent reports CONVERGED",
+    "max_iterations": 3
   },
-  "tool_usage": {
-    "required": ["bash", "edit"],
-    "bash_commands": ["go test"]
-  },
-  "post_validation": {
-    "command": "cd testdata/buggy && go test ./...",
+
+  "verification": {
+    "command": "go test ./...",
     "expected_exit_code": 0
   },
+
   "file_changes": {
-    "testdata/buggy/main.go": {
+    "main.go": {
       "should_contain": ["a + b"],
       "should_not_contain": ["a - b"]
     }

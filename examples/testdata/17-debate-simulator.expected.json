@@ -1,26 +1,35 @@
 {
-  "validation_type": "file_output",
-  "description": "Structured debate transcript",
-  "output_files": {
-    "debate-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 1000,
-      "format": "markdown"
-    }
+  "intent": "Simulate a structured debate on Universal Basic Income",
+
+  "success_criteria": {
+    "primary": "Both pro and con positions are represented substantively",
+    "secondary": "Arguments engage with each other (not parallel monologues)"
   },
-  "debate_checks": {
-    "has_pro_arguments": true,
-    "has_con_arguments": true,
-    "has_rebuttals": true,
-    "has_summary": true
+
+  "content_requirements": {
+    "must_include": {
+      "pro_arguments": ["economic security", "automation response", "poverty reduction"],
+      "con_arguments": ["cost/funding", "work incentives", "inflation risk"],
+      "rebuttals": "Each side responds to the other's points"
+    },
+    "debate_structure": [
+      "Opening statements from both sides",
+      "At least one exchange of rebuttals",
+      "Summary or closing"
+    ]
   },
+
+  "quality_rubric": {
+    "balance": "Neither side is a strawman; both have strong arguments",
+    "engagement": "Rebuttals address specific points, not generic dismissals",
+    "evidence": "Claims reference real-world examples or studies where appropriate",
+    "intellectual_honesty": "Acknowledges valid points from opposing side"
+  },
+
   "convergence": {
-    "should_converge": true,
+    "expected": true,
     "max_iterations": 2
   },
-  "multi_agent_checks": {
-    "pro_agent_used": true,
-    "con_agent_used": true,
-    "balanced_representation": "Both sides should have roughly equal coverage"
-  }
+
+  "output_file": "debate-output.md"
 }

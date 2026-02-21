@@ -1,11 +1,30 @@
 {
-  "validation_type": "output_content",
-  "description": "Simple greeting with one fact about the topic",
-  "checks": {
-    "output_contains": ["quantum", "computing"],
-    "output_excludes": [],
-    "min_length": 50,
-    "max_length": 500
+  "intent": "Greet user and share one interesting fact about the given topic",
+
+  "success_criteria": {
+    "primary": "Response is relevant to the topic (quantum computing)",
+    "secondary": "Includes at least one specific, accurate fact"
   },
-  "notes": "This is a minimal example - just verify the agent responded with relevant content about the topic"
+
+  "content_requirements": {
+    "must_include": [
+      "Greeting or acknowledgment",
+      "At least one specific fact about quantum computing"
+    ],
+    "fact_should_be": [
+      "Accurate (qubits, superposition, entanglement, etc.)",
+      "Specific (not just 'quantum computing is powerful')",
+      "Interesting or non-obvious for general audience"
+    ]
+  },
+
+  "quality_rubric": {
+    "relevance": "Fact is clearly about quantum computing, not classical computing",
+    "accuracy": "Fact is technically correct",
+    "engagement": "Response feels personable, not robotic"
+  },
+
+  "constraints": {
+    "length": "Brief — this is a hello world example, not a research paper"
+  }
 }

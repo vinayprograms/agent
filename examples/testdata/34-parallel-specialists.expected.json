@@ -1,15 +1,29 @@
 {
-  "validation_type": "output_content",
-  "description": "Parallel specialist review",
-  "parallel_checks": {
-    "specialists_run_in_parallel": ["security", "performance", "style", "docs", "tests", "deps"],
-    "results_synthesized": true,
-    "prioritized_recommendations": true
+  "intent": "Run multiple specialist agents in parallel for comprehensive code review",
+
+  "success_criteria": {
+    "primary": "All specialists contribute their domain analysis",
+    "secondary": "Results are synthesized with prioritization"
   },
-  "content_checks": {
-    "security_findings": true,
-    "performance_findings": "Should note the time.Sleep as potential issue",
-    "style_findings": true,
-    "documentation_review": true
+
+  "specialist_requirements": {
+    "security": "Identifies security concerns",
+    "performance": "Identifies performance issues (e.g., time.Sleep)",
+    "style": "Code style and conventions",
+    "documentation": "Documentation gaps or improvements",
+    "testing": "Test coverage and quality",
+    "dependencies": "Dependency health"
+  },
+
+  "quality_rubric": {
+    "parallelism": "Specialists run concurrently, not sequentially",
+    "domain_focus": "Each specialist stays in their lane",
+    "synthesis": "Final output prioritizes findings by importance",
+    "actionability": "Clear next steps from combined analysis"
+  },
+
+  "content_requirements": {
+    "performance_finding": "Should note the time.Sleep as potential issue",
+    "prioritization": "Security > performance > style in ranking"
   }
 }

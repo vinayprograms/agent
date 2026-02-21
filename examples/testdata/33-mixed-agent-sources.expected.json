@@ -1,12 +1,29 @@
 {
-  "validation_type": "output_content",
-  "description": "Analysis using mixed agent sources",
-  "agent_checks": {
-    "markdown_agents_used": ["project-lead", "security", "helper"],
-    "skill_agents_used": ["code-reviewer", "tester"]
+  "intent": "Analyze project using agents from multiple sources (markdown + skills)",
+
+  "success_criteria": {
+    "primary": "Both markdown-defined and skill-based agents contribute",
+    "secondary": "Output synthesizes multiple perspectives"
   },
-  "phase_checks": {
-    "analysis_phase": "Plan, review, and security scan completed",
-    "action_phase": "Test plan and quick fixes applied"
+
+  "agent_sources": {
+    "markdown_agents": ["project-lead", "security-auditor", "editor"],
+    "skill_agents": ["code-reviewer", "tester"]
+  },
+
+  "phase_requirements": {
+    "analysis": "Plan, review, and security assessment",
+    "action": "Test planning and quick fixes"
+  },
+
+  "quality_rubric": {
+    "integration": "Different agent types work together seamlessly",
+    "coverage": "Multiple perspectives on the code",
+    "coherence": "Final output is unified, not fragmented"
+  },
+
+  "requirements": {
+    "skills_needed": ["code-review", "testing"],
+    "agent_files_needed": ["optimist.md", "security-auditor.md", "editor.md"]
   }
 }

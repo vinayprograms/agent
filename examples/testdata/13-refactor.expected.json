@@ -1,21 +1,39 @@
 {
-  "validation_type": "code_improvement",
-  "description": "Refactor code for readability",
+  "intent": "Improve code readability through iterative refactoring",
+
+  "success_criteria": {
+    "primary": "Code is more readable than before — intent is clearer",
+    "secondary": "Behavior is preserved — no functional changes"
+  },
+
+  "behavioral_requirements": {
+    "must_do": [
+      "Identify readability issues (formatting, naming, structure)",
+      "Apply improvements incrementally",
+      "Preserve original behavior"
+    ],
+    "must_avoid": [
+      "Changing functionality while refactoring",
+      "Over-engineering simple code",
+      "Leaving code worse than found"
+    ]
+  },
+
+  "quality_rubric": {
+    "formatting": "Proper indentation, spacing, line breaks",
+    "naming": "Variables/functions have meaningful names (not f, x, y)",
+    "structure": "Reduced nesting, clearer control flow",
+    "idiomatic": "Follows language conventions (Go: gofmt-compliant)"
+  },
+
   "convergence": {
-    "should_converge": true,
+    "expected": true,
     "max_iterations": 2
   },
-  "readability_checks": {
-    "proper_formatting": true,
-    "meaningful_names": "Function and parameter names should be descriptive",
-    "reduced_nesting": "Should reduce nested if statements if possible"
-  },
-  "tool_usage": {
-    "required": ["read", "edit"]
-  },
-  "post_validation": {
+
+  "verification": {
     "command": "gofmt -d testdata/messy-code.go | wc -l",
     "expected_output": "0",
-    "description": "Code should be properly formatted after refactoring"
+    "description": "gofmt should find no issues after refactoring"
   }
 }

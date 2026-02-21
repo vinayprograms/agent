@@ -1,14 +1,30 @@
 {
-  "validation_type": "output_content",
-  "description": "Analysis of Go files via MCP filesystem server",
-  "analysis_checks": {
-    "files_discovered": ["main.go", "utils.go"],
-    "patterns_identified": true,
-    "report_generated": true
+  "intent": "Analyze files using MCP filesystem server tools",
+
+  "success_criteria": {
+    "primary": "Discovers and analyzes the Go files in the directory",
+    "secondary": "Demonstrates MCP tool integration"
   },
-  "mcp_checks": {
-    "uses_mcp_tools": true,
-    "filesystem_server_required": true
+
+  "content_requirements": {
+    "must_discover": ["main.go", "utils.go"],
+    "analysis_should_include": [
+      "Package structure",
+      "Functions defined",
+      "Patterns or observations"
+    ]
   },
-  "notes": "This example requires MCP filesystem server configured. Skip if not available."
+
+  "quality_rubric": {
+    "completeness": "All matching files found and analyzed",
+    "accuracy": "Analysis reflects actual file content",
+    "insight": "Beyond just listing — identifies patterns"
+  },
+
+  "mcp_requirements": {
+    "server": "filesystem",
+    "demonstrates": "MCP tool usage for file operations"
+  },
+
+  "notes": "Skip if MCP filesystem server not configured"
 }

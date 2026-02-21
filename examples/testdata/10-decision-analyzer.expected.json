@@ -1,22 +1,42 @@
 {
-  "validation_type": "file_output",
-  "description": "Decision analysis from multiple perspectives",
-  "output_files": {
-    "decision-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 1000,
-      "required_sections": ["Pros", "Cons", "Recommendation"],
-      "format": "markdown"
-    }
+  "intent": "Analyze monolith-to-microservices decision from multiple perspectives",
+
+  "success_criteria": {
+    "primary": "Reader understands key tradeoffs and can make informed decision",
+    "secondary": "Analysis reflects the specific context (20-engineer startup)"
   },
-  "analysis_checks": {
-    "pros_identified": true,
-    "cons_identified": true,
-    "recommendation_provided": true,
-    "mitigations_suggested": true
+
+  "content_requirements": {
+    "must_cover_pros": [
+      "Independent scaling of services",
+      "Technology flexibility per service",
+      "Faster deployment of individual components",
+      "Team autonomy and parallel development"
+    ],
+    "must_cover_cons": [
+      "Operational complexity (monitoring, debugging distributed systems)",
+      "Network latency and failure modes",
+      "Data consistency challenges",
+      "Team size may be insufficient for proper microservices"
+    ],
+    "context_awareness": [
+      "20 engineers is borderline small for microservices",
+      "Startup context: speed matters, over-engineering is risky"
+    ]
   },
-  "multi_agent_checks": {
-    "optimist_perspective": "Should include positive aspects and opportunities",
-    "critic_perspective": "Should include risks and challenges"
-  }
+
+  "quality_rubric": {
+    "balance": "Neither blindly pro nor anti microservices",
+    "context_sensitivity": "Recommendation accounts for team size and startup stage",
+    "actionability": "Provides concrete next steps, not just abstract advice",
+    "risk_awareness": "Identifies key risks and mitigations",
+    "intellectual_honesty": "Acknowledges uncertainty where appropriate"
+  },
+
+  "structure": {
+    "required_sections": ["Pros", "Cons", "Recommendation"],
+    "format": "markdown"
+  },
+
+  "output_file": "decision-output.md"
 }

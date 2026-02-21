@@ -1,19 +1,32 @@
 {
-  "validation_type": "file_output",
-  "description": "Processed meeting notes with extracted action items",
-  "output_files": {
-    "testdata/meeting-notes-processed.txt": {
-      "must_exist": true,
-      "content_contains": ["Summary", "Decision", "Action"],
-      "format": "text"
-    }
+  "intent": "Extract decisions, action items, and open questions from meeting notes",
+
+  "success_criteria": {
+    "primary": "All key information is extracted and categorized correctly",
+    "secondary": "Output is structured and scannable"
   },
-  "extraction_checks": {
-    "decisions": ["CI pipeline", "agreed"],
-    "action_items": ["Carol", "documentation", "Friday"],
-    "questions": ["cloud provider", "v2.0"]
+
+  "content_requirements": {
+    "must_extract": {
+      "decisions": ["CI pipeline approved", "80% coverage required before release"],
+      "action_items": ["Carol: update documentation by Friday"],
+      "open_questions": ["Cloud provider migration?", "v2.0 release timeline?"]
+    },
+    "must_preserve": [
+      "Ownership of action items (who is responsible)",
+      "Deadlines when mentioned"
+    ]
   },
+
+  "quality_rubric": {
+    "completeness": "No decisions or action items missed",
+    "accuracy": "Items categorized correctly (decision vs action vs question)",
+    "clarity": "Output is immediately useful without re-reading original notes"
+  },
+
   "tool_usage": {
     "required": ["read", "write"]
-  }
+  },
+
+  "output_file": "testdata/meeting-notes-processed.txt"
 }

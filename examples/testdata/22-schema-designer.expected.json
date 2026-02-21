@@ -1,23 +1,37 @@
 {
-  "validation_type": "file_output",
-  "description": "PostgreSQL schema from requirements",
-  "output_files": {
-    "schema-output.sql": {
-      "must_exist": true,
-      "format": "sql",
-      "syntax_valid": true
-    }
+  "intent": "Design a normalized PostgreSQL schema for an e-commerce system",
+
+  "success_criteria": {
+    "primary": "Schema covers all requirements and is properly normalized",
+    "secondary": "SQL is valid and would execute in PostgreSQL"
   },
-  "schema_checks": {
-    "tables_created": ["users", "addresses", "products", "orders", "order_items"],
-    "has_primary_keys": true,
-    "has_foreign_keys": true,
-    "normalized": "Should be at least 3NF - no redundant data"
+
+  "content_requirements": {
+    "must_create_tables": {
+      "users": ["email", "password_hash", "timestamps"],
+      "addresses": ["user_id FK", "street", "city", "country"],
+      "products": ["name", "description", "price", "stock"],
+      "orders": ["user_id FK", "status", "timestamps"],
+      "order_items": ["order_id FK", "product_id FK", "quantity", "price_at_purchase"]
+    },
+    "must_include": [
+      "Primary keys on all tables",
+      "Foreign keys for relationships",
+      "Appropriate data types"
+    ]
   },
-  "tool_usage": {
-    "required": ["read", "write"]
+
+  "quality_rubric": {
+    "normalization": "At least 3NF — no redundant data storage",
+    "referential_integrity": "Foreign keys properly constrain relationships",
+    "data_types": "Appropriate types (money for prices, not float)",
+    "completeness": "All requirements addressed"
   },
-  "post_validation": {
-    "description": "Optionally validate SQL syntax with psql --dry-run or similar"
-  }
+
+  "verification": {
+    "syntax_valid": true,
+    "description": "SQL should parse without errors"
+  },
+
+  "output_file": "schema-output.sql"
 }

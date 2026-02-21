@@ -1,16 +1,31 @@
 {
-  "validation_type": "output_content",
-  "description": "Self-refining summarization",
+  "intent": "Summarize content to under 50 words through self-refinement",
+
+  "success_criteria": {
+    "primary": "Summary is under 50 words",
+    "secondary": "Summary captures key points of original"
+  },
+
+  "input_content": "Paragraph about AI transforming industries (healthcare, finance, ML, NLP, computer vision)",
+
+  "content_requirements": {
+    "must_capture": ["AI", "transformation/impact", "industries"],
+    "word_limit": 50,
+    "must_be": "Coherent summary, not keyword soup"
+  },
+
+  "quality_rubric": {
+    "conciseness": "Meets word limit without sacrificing clarity",
+    "coverage": "Key themes preserved despite brevity",
+    "coherence": "Reads as complete thought, not truncated"
+  },
+
   "convergence": {
-    "should_converge": true,
-    "max_iterations": 5
+    "expected": true,
+    "max_iterations": 5,
+    "success_indicator": "Under 50 words and captures key points"
   },
-  "summary_checks": {
-    "max_word_count": 50,
-    "captures_key_points": ["AI", "industries", "automation", "impact"],
-    "coherent": true,
-    "concise": true
-  },
+
   "output_variable": {
     "name": "summary",
     "should_be_set": true

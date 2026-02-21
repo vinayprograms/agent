@@ -1,14 +1,31 @@
 {
-  "validation_type": "output_content",
-  "description": "Code review with security and style findings",
-  "review_checks": {
-    "security_issues_found": ["password in URL", "sensitive data exposure"],
-    "style_issues_found": true,
-    "recommendations_provided": true
+  "intent": "Code review combining security and style analysis",
+
+  "success_criteria": {
+    "primary": "Identifies the critical security issue (password in URL)",
+    "secondary": "Provides both security and style feedback"
   },
-  "multi_agent_checks": {
-    "reviewer_used": true,
-    "helper_used": true,
-    "findings_synthesized": true
+
+  "content_requirements": {
+    "must_identify": {
+      "security_critical": "Password passed via URL query parameter",
+      "security_impact": "Passwords visible in logs, browser history, referrer headers"
+    },
+    "must_recommend": [
+      "Use POST body for sensitive data",
+      "Never log or echo passwords"
+    ]
+  },
+
+  "quality_rubric": {
+    "security_awareness": "Recognizes this as a serious issue, not minor",
+    "explanation_quality": "Explains why this is dangerous",
+    "remediation_clarity": "Fix is specific and implementable",
+    "multi_perspective": "Combines security and code quality views"
+  },
+
+  "multi_agent_check": {
+    "reviewer_agent": true,
+    "helper_agent": true
   }
 }

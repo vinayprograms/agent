@@ -1,26 +1,35 @@
 {
-  "validation_type": "file_output",
-  "description": "Iteratively improved content",
-  "output_files": {
-    "improved-content.md": {
-      "must_exist": true,
-      "min_size_bytes": 300,
-      "format": "markdown"
-    }
+  "intent": "Iteratively improve content through creator-critic-improver loop",
+
+  "success_criteria": {
+    "primary": "Final content is measurably better than initial",
+    "secondary": "Iteration shows clear improvement trajectory"
   },
+
+  "content_requirements": {
+    "task": "Write product description for smart water bottle",
+    "must_highlight": ["hydration tracking", "smart features", "health benefits"],
+    "tone": "Compelling marketing copy, not technical spec"
+  },
+
+  "iteration_requirements": {
+    "creator": "Generates initial content",
+    "critic": "Identifies weaknesses and improvement opportunities",
+    "improver": "Addresses critique points specifically"
+  },
+
+  "quality_rubric": {
+    "improvement_visible": "Later versions clearly better than early ones",
+    "critique_addressed": "Specific feedback is incorporated",
+    "polish": "Final version is publication-ready",
+    "focus": "Stays on task, doesn't drift"
+  },
+
   "convergence": {
-    "should_converge": true,
-    "max_iterations": 5
+    "expected": true,
+    "max_iterations": 5,
+    "success_indicator": "Quality threshold met or no more improvements"
   },
-  "quality_checks": {
-    "product_described": true,
-    "features_highlighted": ["hydration tracking", "smart"],
-    "compelling_copy": true,
-    "polished": true
-  },
-  "multi_agent_checks": {
-    "creator_used": true,
-    "critic_used": true,
-    "improver_used": true
-  }
+
+  "output_file": "improved-content.md"
 }

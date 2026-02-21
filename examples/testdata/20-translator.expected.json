@@ -1,20 +1,33 @@
 {
-  "validation_type": "output_content",
-  "description": "Business email translated to Spanish",
-  "translation_checks": {
-    "language": "Spanish",
-    "preserves_formality": "Should use formal Spanish (usted form)",
-    "preserves_structure": "Should maintain email format",
-    "cultural_adaptation": "Greeting and closing should be culturally appropriate"
+  "intent": "Translate a business email from English to Spanish",
+
+  "success_criteria": {
+    "primary": "Translation is accurate and natural-sounding Spanish",
+    "secondary": "Formality level is preserved (formal business context)"
   },
-  "tool_usage": {
-    "required": ["read"]
-  },
-  "benchmarks": {
-    "key_phrases": {
-      "Thank you": "Gracias / Le agradezco",
-      "Best regards": "Atentamente / Cordialmente"
+
+  "content_requirements": {
+    "must_preserve": [
+      "All information from original email",
+      "Formal register (usted, not tú)",
+      "Professional tone"
+    ],
+    "cultural_adaptation": {
+      "greeting": "Appropriate Spanish business greeting (Estimado/a)",
+      "closing": "Appropriate Spanish business closing (Atentamente, Cordialmente)"
     }
   },
-  "notes": "Output should be in console/response, no file output specified in original example - consider adding write step"
+
+  "quality_rubric": {
+    "accuracy": "No mistranslations or omissions",
+    "naturalness": "Reads like native Spanish, not machine translation",
+    "register": "Maintains formal business tone throughout",
+    "cultural_fit": "Conventions match Spanish business correspondence"
+  },
+
+  "key_phrases": {
+    "Thank you for your interest": "Gracias por su interés / Le agradezco su interés",
+    "Best regards": "Atentamente / Cordialmente",
+    "schedule a meeting": "programar una reunión / concertar una cita"
+  }
 }

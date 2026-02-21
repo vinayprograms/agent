@@ -1,22 +1,35 @@
 {
-  "validation_type": "file_output",
-  "description": "Dependency audit report",
-  "output_files": {
-    "dep-audit-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 500,
-      "format": "markdown"
-    }
+  "intent": "Audit npm dependencies for security issues, outdatedness, and maintenance status",
+
+  "success_criteria": {
+    "primary": "Identifies actionable issues with the specified dependencies",
+    "secondary": "Provides specific, correct recommendations"
   },
-  "audit_checks": {
-    "lists_dependencies": ["lodash", "express", "moment"],
-    "checks_versions": true,
-    "identifies_issues": true
+
+  "content_requirements": {
+    "must_identify": {
+      "lodash_4.17.20": "Known prototype pollution vulnerabilities in versions < 4.17.21",
+      "express_4.17.1": "Outdated but functional; security patches in newer versions",
+      "moment_2.29.1": "In maintenance mode; recommend alternatives (date-fns, dayjs, Luxon)"
+    },
+    "must_provide": [
+      "Current version vs latest version comparison",
+      "Severity assessment for any known vulnerabilities",
+      "Concrete upgrade recommendations"
+    ],
+    "must_avoid": [
+      "Generic 'keep dependencies updated' without specifics",
+      "False alarms about non-issues",
+      "Missing the lodash vulnerability (it's well-documented)"
+    ]
   },
-  "benchmarks": {
-    "outdated_detection": "Should identify that these versions are outdated",
-    "vulnerability_awareness": "Should mention known vulnerabilities in older lodash versions",
-    "maintenance_status": "Should note that moment.js is in maintenance mode",
-    "recommendations": "Should suggest updates or alternatives"
-  }
+
+  "quality_rubric": {
+    "accuracy": "Vulnerability information is factually correct",
+    "specificity": "Names specific CVEs or vulnerability types",
+    "actionability": "Clear steps to remediate (npm update X, or replace Y with Z)",
+    "prioritization": "Security issues ranked above mere outdatedness"
+  },
+
+  "output_file": "dep-audit-output.md"
 }

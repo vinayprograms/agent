@@ -1,24 +1,33 @@
 {
-  "validation_type": "file_output",
-  "description": "Tailored resume and cover letter",
-  "output_files": {
-    "tailored-resume.md": {
-      "must_exist": true,
-      "content_contains": ["Python", "AWS", "backend"],
-      "format": "markdown"
+  "intent": "Tailor resume and write cover letter for a specific job posting",
+
+  "success_criteria": {
+    "primary": "Resume emphasizes skills and experience matching job requirements",
+    "secondary": "Cover letter makes a compelling case for the candidate"
+  },
+
+  "content_requirements": {
+    "resume_tailoring": {
+      "emphasize": ["Python", "AWS", "backend development", "database experience"],
+      "align_with": "Senior Backend Engineer requirements",
+      "preserve": "Factual accuracy — don't invent experience"
     },
-    "cover-letter.md": {
-      "must_exist": true,
-      "min_size_bytes": 500,
-      "format": "markdown"
+    "cover_letter": {
+      "must_include": [
+        "Why candidate is interested in the role",
+        "How experience matches requirements",
+        "Specific examples demonstrating qualifications"
+      ],
+      "tone": "Professional, confident, not desperate"
     }
   },
-  "tailoring_checks": {
-    "keywords_emphasized": ["Python", "AWS", "backend", "database"],
-    "relevant_experience_highlighted": true,
-    "matches_requirements": true
+
+  "quality_rubric": {
+    "relevance": "Highlighted skills match job posting",
+    "honesty": "No fabricated experience or skills",
+    "persuasiveness": "Cover letter builds a clear case",
+    "professionalism": "Both documents are polished and error-free"
   },
-  "tool_usage": {
-    "required": ["read", "write"]
-  }
+
+  "output_files": ["tailored-resume.md", "cover-letter.md"]
 }

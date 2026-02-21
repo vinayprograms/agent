@@ -1,19 +1,34 @@
 {
-  "validation_type": "output_content",
-  "description": "Multi-agent collaborative research",
-  "collaboration_checks": {
-    "researcher_contributes": true,
-    "critic_provides_feedback": true,
-    "editor_polishes": true,
-    "multiple_phases": true
+  "intent": "Collaborative research through researcher-critic-editor pipeline",
+
+  "success_criteria": {
+    "primary": "Final output is better than initial draft",
+    "secondary": "Each agent contributes meaningfully to improvement"
   },
+
+  "content_requirements": {
+    "topic": "Zero-knowledge proofs in blockchain",
+    "must_cover": [
+      "What ZK proofs are (prove knowledge without revealing)",
+      "ZK-SNARKs vs ZK-STARKs",
+      "Applications: privacy, scalability (rollups)"
+    ]
+  },
+
+  "collaboration_requirements": {
+    "researcher": "Creates initial comprehensive draft",
+    "critic": "Identifies gaps, errors, or weak arguments",
+    "editor": "Polishes language and structure"
+  },
+
+  "quality_rubric": {
+    "accuracy": "Technical content is correct",
+    "improvement": "Final version addresses critique points",
+    "coherence": "Reads as unified piece, not patchwork"
+  },
+
   "convergence": {
-    "should_converge": true,
+    "expected": true,
     "max_iterations": 2
-  },
-  "content_checks": {
-    "topic_covered": "Should explain ZK proofs: ZK-SNARKs, ZK-STARKs, privacy, scalability",
-    "critique_addressed": "Final output should address initial critique points",
-    "polished": "Should be well-formatted and coherent"
   }
 }

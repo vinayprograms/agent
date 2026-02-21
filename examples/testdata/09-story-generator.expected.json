@@ -1,23 +1,40 @@
 {
-  "validation_type": "file_output",
-  "description": "Science fiction short story about first contact",
-  "output_files": {
-    "story-output.md": {
-      "must_exist": true,
-      "min_word_count": 500,
-      "format": "markdown"
-    }
+  "intent": "Generate a science fiction short story about first contact with alien life",
+
+  "success_criteria": {
+    "primary": "Story is a complete narrative with beginning, middle, and end",
+    "secondary": "Story explores the first contact theme meaningfully"
   },
-  "narrative_checks": {
-    "has_beginning": true,
-    "has_middle": true,
-    "has_ending": true,
-    "genre_appropriate": "Should include sci-fi elements: space, technology, alien life",
-    "theme_present": "Should explore first contact scenario"
+
+  "content_requirements": {
+    "narrative_elements": {
+      "setting": "Should establish a sci-fi setting (space, future Earth, etc.)",
+      "conflict": "First contact should involve tension, mystery, or transformation",
+      "resolution": "Story should have an ending, not just trail off"
+    },
+    "genre_markers": [
+      "Science fiction elements (technology, space, alien life)",
+      "First contact as central theme, not incidental"
+    ]
   },
-  "multi_agent_checks": {
-    "writer_agent_used": true,
-    "editor_agent_used": true,
-    "revision_occurred": true
-  }
+
+  "quality_rubric": {
+    "engagement": "Reader wants to know what happens next",
+    "coherence": "Plot makes sense, no unexplained jumps",
+    "characterization": "At least one character feels real, not cardboard",
+    "theme_depth": "First contact raises questions or emotions, not just 'aliens arrived'",
+    "prose_quality": "Writing is competent, no jarring errors"
+  },
+
+  "multi_agent_check": {
+    "writer_creates_draft": true,
+    "editor_refines": true
+  },
+
+  "constraints": {
+    "min_word_count": 500,
+    "format": "prose narrative, not outline or summary"
+  },
+
+  "output_file": "story-output.md"
 }

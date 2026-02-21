@@ -1,22 +1,42 @@
 {
-  "validation_type": "file_output",
-  "description": "Detailed Kyoto travel itinerary",
-  "output_files": {
-    "travel-plan-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 2000,
-      "format": "markdown"
-    }
+  "intent": "Create a practical 5-day Kyoto itinerary focused on temples, culture, and food",
+
+  "success_criteria": {
+    "primary": "Itinerary is followable — a tourist could actually use it",
+    "secondary": "Recommendations align with stated interests and budget"
   },
-  "structure_checks": {
+
+  "content_requirements": {
+    "must_include": [
+      "Day-by-day breakdown with specific locations",
+      "At least 3 temple/shrine visits (this is Kyoto)",
+      "Food recommendations (local, not chain restaurants)",
+      "Practical logistics (how to get between places)"
+    ],
+    "locations_should_be_real": [
+      "Fushimi Inari, Kinkaku-ji, Gion, Arashiyama are expected",
+      "Restaurant/food recommendations should be plausible (not invented names)"
+    ],
+    "must_avoid": [
+      "Impossible schedules (e.g., 5 temples + 3 museums in one day)",
+      "Ignoring stated interests (no temples, only shopping)",
+      "Luxury-only recommendations for 'moderate' budget"
+    ]
+  },
+
+  "quality_rubric": {
+    "feasibility": "Travel times between locations are realistic",
+    "interest_alignment": "Emphasizes temples, culture, food as requested",
+    "budget_fit": "Moderate budget = mid-range hotels, local restaurants, not hostels or luxury ryokans",
+    "local_knowledge": "Shows awareness of Kyoto specifics (temple hours, seasonal considerations)",
+    "practical_tips": "Includes helpful logistics (transport passes, booking advice)"
+  },
+
+  "structure": {
     "has_day_by_day": true,
-    "has_logistics": true,
-    "has_practical_tips": true
+    "has_practical_section": true,
+    "format": "markdown"
   },
-  "benchmarks": {
-    "location_accuracy": "Mentioned locations should be real places in Kyoto (e.g., Fushimi Inari, Kinkaku-ji, Gion)",
-    "interest_alignment": "Should emphasize temples, traditional culture, and local food as specified",
-    "logistics_feasibility": "Travel times between locations should be realistic",
-    "budget_appropriate": "Recommendations should fit 'moderate' budget (not luxury ryokans, but not hostels)"
-  }
+
+  "output_file": "travel-plan-output.md"
 }

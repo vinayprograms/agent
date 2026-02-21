@@ -1,21 +1,34 @@
 {
-  "validation_type": "file_output",
-  "description": "Git repository analysis",
-  "output_files": {
-    "git-analysis-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 500,
-      "format": "markdown"
-    }
+  "intent": "Analyze recent git activity and identify patterns",
+
+  "success_criteria": {
+    "primary": "Provides accurate statistics from the repository",
+    "secondary": "Identifies meaningful patterns or insights"
   },
-  "analysis_checks": {
-    "has_commit_stats": true,
-    "has_contributor_info": true,
-    "has_hotspots": true,
-    "has_insights": true
+
+  "content_requirements": {
+    "must_include": [
+      "Commit count for the period",
+      "Contributors and their activity",
+      "Files or areas with most changes (hotspots)"
+    ],
+    "insights_should_cover": [
+      "Activity patterns (busy periods, quiet periods)",
+      "Code churn areas (frequently modified files)",
+      "Any anomalies or notable observations"
+    ]
   },
+
+  "quality_rubric": {
+    "accuracy": "Statistics match actual git log output",
+    "insight": "Goes beyond raw numbers to observations",
+    "actionability": "Findings could inform development decisions"
+  },
+
   "tool_usage": {
     "required": ["bash"],
-    "bash_commands_include": ["git log", "git shortlog"]
-  }
+    "commands_include": ["git log", "git shortlog"]
+  },
+
+  "output_file": "git-analysis-output.md"
 }

@@ -1,21 +1,35 @@
 {
-  "validation_type": "file_output",
-  "description": "Code review identifying issues in sample Go code",
-  "output_files": {
-    "code-review-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 500,
-      "required_sections": ["Issues Found", "Suggestions"],
-      "content_contains": ["unused"],
-      "format": "markdown"
-    }
+  "intent": "Review Go code and identify issues with actionable suggestions",
+
+  "success_criteria": {
+    "primary": "Identifies the unused variable issue in the sample code",
+    "secondary": "Provides clear fix recommendation"
   },
+
+  "content_requirements": {
+    "must_identify": [
+      "Unused variable 'y' on line with 'y := 5'",
+      "Go compiler will fail on this (unused variables are errors)"
+    ],
+    "must_provide": [
+      "Clear explanation of why this is an issue",
+      "Specific fix: remove the line, use the variable, or use blank identifier"
+    ],
+    "should_also_note": [
+      "Variable x is used but initialized to zero (may be intentional)"
+    ]
+  },
+
+  "quality_rubric": {
+    "accuracy": "Correctly identifies the issue type and location",
+    "actionability": "Reviewer could fix based on this feedback",
+    "tone": "Constructive, not dismissive"
+  },
+
   "tool_usage": {
-    "required": ["glob", "read"],
+    "expected": ["glob", "read"],
     "optional": ["grep"]
   },
-  "checks": {
-    "identifies_issues": ["unused variable", "y"],
-    "provides_actionable_suggestions": true
-  }
+
+  "output_file": "code-review-output.md"
 }

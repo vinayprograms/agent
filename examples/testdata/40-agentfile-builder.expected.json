@@ -1,21 +1,32 @@
 {
-  "validation_type": "file_output",
-  "description": "Generated Agentfile from problem description",
-  "output_files": {
-    "generated.agent": {
-      "must_exist": true,
-      "format": "agentfile",
-      "syntax_valid": true
-    }
+  "intent": "Generate a valid Agentfile from a problem description",
+
+  "success_criteria": {
+    "primary": "Generated Agentfile parses without errors",
+    "secondary": "Workflow addresses the described problem"
   },
-  "agentfile_checks": {
-    "has_name": true,
-    "has_goals": true,
-    "has_run_steps": true,
-    "relevant_to_problem": "Should address Python type hints analysis"
+
+  "content_requirements": {
+    "problem": "Python type hints analysis, suggestions, and stub generation",
+    "agentfile_must_have": [
+      "NAME declaration",
+      "At least one INPUT for target code",
+      "Goals that address analysis, suggestions, and generation",
+      "RUN steps to execute goals"
+    ]
   },
-  "post_validation": {
+
+  "quality_rubric": {
+    "validity": "Agentfile parses with `agent inspect`",
+    "relevance": "Goals actually address type hints problem",
+    "completeness": "Covers analysis, suggestions, and stub generation",
+    "structure": "Proper goal sequencing (analyze before suggest)"
+  },
+
+  "verification": {
     "command": "go run ./cmd/agent inspect generated.agent",
     "expected_exit_code": 0
-  }
+  },
+
+  "output_file": "generated.agent"
 }

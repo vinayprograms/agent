@@ -1,18 +1,39 @@
 {
-  "validation_type": "file_output",
-  "description": "Comprehensive research report on microservices",
-  "output_files": {
-    "research-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 2000,
-      "required_sections": ["Introduction", "Key Facts", "Current Developments", "Analysis", "Conclusion"],
-      "content_contains": ["microservices", "architecture"],
-      "format": "markdown"
-    }
+  "intent": "Produce a comprehensive research report on microservices architecture",
+  
+  "success_criteria": {
+    "primary": "Reader learns what microservices are, why they matter, and current best practices",
+    "secondary": "Report is well-organized and cites specific technologies/patterns"
   },
-  "benchmarks": {
-    "accuracy": "Content should accurately describe microservices concepts: service decomposition, API communication, independent deployment",
-    "coverage": "Should cover: benefits (scalability, flexibility), challenges (complexity, distributed systems), patterns (API gateway, service mesh)",
-    "currency": "Should mention modern practices: containers, Kubernetes, observability"
-  }
+
+  "content_requirements": {
+    "must_cover": [
+      "Definition of microservices vs monoliths",
+      "Benefits: independent deployment, scaling, technology diversity",
+      "Challenges: distributed systems complexity, data consistency, operational overhead",
+      "Common patterns: API gateway, service mesh, event-driven communication",
+      "Container orchestration (Kubernetes mentioned or implied)"
+    ],
+    "must_avoid": [
+      "Outdated practices (e.g., SOAP as primary recommendation)",
+      "Vague generalities without concrete examples",
+      "One-sided advocacy without acknowledging tradeoffs"
+    ]
+  },
+
+  "quality_rubric": {
+    "accuracy": "Technical claims should be factually correct (e.g., service mesh does X, not Y)",
+    "depth": "Goes beyond Wikipedia-level overview; includes practical considerations",
+    "balance": "Presents both benefits and challenges honestly",
+    "actionability": "Reader could use this to inform an architecture decision",
+    "currency": "References modern practices (2020+), not legacy approaches"
+  },
+
+  "structure": {
+    "required_sections": ["Introduction", "Key Concepts", "Benefits", "Challenges", "Conclusion"],
+    "format": "markdown",
+    "min_word_count": 500
+  },
+
+  "output_file": "research-output.md"
 }

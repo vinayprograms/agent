@@ -1,21 +1,36 @@
 {
-  "validation_type": "code_generation",
-  "description": "Generate tests for Go functions",
-  "generated_files": {
-    "pattern": "*_test.go",
-    "must_exist": true
+  "intent": "Generate comprehensive unit tests for Go utility functions",
+
+  "success_criteria": {
+    "primary": "Tests cover all functions and pass when run",
+    "secondary": "Tests include edge cases, not just happy path"
   },
-  "test_checks": {
-    "tests_abs_function": true,
-    "tests_max_function": true,
-    "includes_edge_cases": ["negative", "zero", "equal"],
-    "uses_standard_testing": true
+
+  "content_requirements": {
+    "must_test": {
+      "Abs": ["positive input", "negative input", "zero"],
+      "Max": ["a > b", "b > a", "a == b"]
+    },
+    "test_quality": [
+      "Uses standard testing package",
+      "Clear test names describing the case",
+      "Assertions check expected behavior"
+    ]
   },
-  "tool_usage": {
-    "required": ["read", "write"]
+
+  "quality_rubric": {
+    "coverage": "All public functions have tests",
+    "edge_cases": "Tests include boundary conditions (zero, equal values)",
+    "readability": "Tests are understandable without reading implementation",
+    "independence": "Each test can run independently"
   },
-  "post_validation": {
+
+  "verification": {
     "command": "go test -v ./testdata/...",
     "expected_exit_code": 0
+  },
+
+  "tool_usage": {
+    "required": ["read", "write"]
   }
 }

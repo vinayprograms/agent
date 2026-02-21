@@ -1,21 +1,35 @@
 {
-  "validation_type": "file_output",
-  "description": "Recipe using specified ingredients",
-  "output_files": {
-    "recipe-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 500,
-      "format": "markdown"
+  "intent": "Create a Mediterranean recipe using the specified ingredients",
+
+  "success_criteria": {
+    "primary": "Recipe uses all or most of the provided ingredients",
+    "secondary": "Recipe is gluten-free as specified"
+  },
+
+  "content_requirements": {
+    "must_use_ingredients": ["chicken breast", "garlic", "lemon", "olive oil", "rosemary"],
+    "must_include": [
+      "Clear ingredients list with quantities",
+      "Step-by-step cooking instructions",
+      "Cooking times and temperatures"
+    ],
+    "must_respect_dietary": {
+      "gluten_free": true,
+      "avoid": ["wheat flour", "breadcrumbs", "soy sauce", "regular pasta"]
     }
   },
-  "content_checks": {
-    "ingredients_used": ["chicken", "garlic", "lemon", "olive oil", "rosemary"],
-    "has_ingredients_list": true,
-    "has_step_by_step_instructions": true,
-    "has_timing": true,
-    "respects_dietary": "Should not include gluten-containing ingredients like wheat flour, soy sauce, etc."
+
+  "quality_rubric": {
+    "feasibility": "Recipe is actually cookable by a home cook",
+    "cuisine_fit": "Feels Mediterranean (not Asian fusion or Tex-Mex)",
+    "flavor_logic": "Ingredient combinations make culinary sense",
+    "completeness": "No missing steps or assumed knowledge"
   },
-  "structure_checks": {
-    "required_sections": ["Ingredients", "Instructions"]
-  }
+
+  "structure": {
+    "required_sections": ["Ingredients", "Instructions"],
+    "optional_sections": ["Prep Time", "Cook Time", "Servings", "Notes"]
+  },
+
+  "output_file": "recipe-output.md"
 }

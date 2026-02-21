@@ -1,21 +1,36 @@
 {
-  "validation_type": "code_generation",
-  "description": "Generate REST API from OpenAPI spec",
-  "generated_files": {
-    "pattern": "*.go",
-    "min_files": 1
+  "intent": "Generate REST API handlers from OpenAPI specification",
+
+  "success_criteria": {
+    "primary": "Generated code compiles and implements specified endpoints",
+    "secondary": "Code is idiomatic Go using the Gin framework"
   },
-  "code_checks": {
-    "compiles": true,
-    "imports_gin": true,
-    "has_handlers": ["GET /todos", "POST /todos"],
-    "has_routes": true
+
+  "content_requirements": {
+    "must_implement": [
+      "GET /todos - List todos handler",
+      "POST /todos - Create todo handler"
+    ],
+    "code_should_include": [
+      "Gin router setup",
+      "Handler functions for each endpoint",
+      "Proper HTTP status codes (200, 201)"
+    ]
   },
-  "tool_usage": {
-    "required": ["read", "write"]
+
+  "quality_rubric": {
+    "correctness": "Code compiles without errors",
+    "completeness": "All endpoints from spec are implemented",
+    "idiomatic": "Follows Go and Gin conventions",
+    "structure": "Code is organized sensibly (not all in one function)"
   },
-  "post_validation": {
+
+  "verification": {
     "command": "go build ./...",
     "expected_exit_code": 0
+  },
+
+  "tool_usage": {
+    "required": ["read", "write"]
   }
 }

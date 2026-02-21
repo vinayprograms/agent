@@ -1,19 +1,33 @@
 {
-  "validation_type": "code_improvement",
-  "description": "Polish code until clean and idiomatic",
+  "intent": "Polish code until it meets clean, readable, idiomatic standards",
+
+  "success_criteria": {
+    "primary": "Code is dramatically more readable than input",
+    "secondary": "Behavior is preserved through transformations"
+  },
+
+  "input_state": {
+    "problems": ["No spacing", "Single-letter names", "Compressed formatting"]
+  },
+
+  "expected_improvements": {
+    "formatting": "Proper indentation and line breaks",
+    "naming": "Descriptive function and parameter names",
+    "style": "Idiomatic Go conventions followed"
+  },
+
+  "quality_rubric": {
+    "readability": "Code intent is immediately clear",
+    "idiomatic": "Follows Go conventions (gofmt compliant)",
+    "preservation": "Functions still do the same thing"
+  },
+
   "convergence": {
-    "should_converge": true,
+    "expected": true,
     "max_iterations": 8
   },
-  "code_checks": {
-    "properly_formatted": true,
-    "meaningful_names": "Functions and parameters should have descriptive names",
-    "idiomatic": "Should follow Go conventions"
-  },
-  "tool_usage": {
-    "required": ["read", "edit"]
-  },
-  "post_validation": {
+
+  "verification": {
     "command": "gofmt -d testdata/unpolished.go | wc -l",
     "expected_output": "0"
   }

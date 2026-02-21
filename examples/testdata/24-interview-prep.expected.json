@@ -1,23 +1,35 @@
 {
-  "validation_type": "file_output",
-  "description": "Interview preparation guide",
-  "output_files": {
-    "interview-prep-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 2000,
-      "format": "markdown"
-    }
+  "intent": "Prepare interview guide for Senior SWE role at a FAANG company",
+
+  "success_criteria": {
+    "primary": "Questions are realistic for the role and company type",
+    "secondary": "Answer frameworks are actionable and useful"
   },
-  "content_checks": {
-    "has_technical_questions": true,
-    "has_behavioral_questions": true,
-    "has_system_design": true,
-    "has_answer_frameworks": true,
-    "question_count": "Should have at least 15 questions as specified"
+
+  "content_requirements": {
+    "must_include": {
+      "technical_questions": ["system design", "coding", "architecture"],
+      "behavioral_questions": ["leadership", "conflict", "failure recovery"],
+      "question_count": "At least 15 total as specified"
+    },
+    "senior_level_appropriate": [
+      "System design at scale",
+      "Technical leadership scenarios",
+      "Cross-team collaboration",
+      "Mentoring and growing others"
+    ],
+    "answer_guidance": [
+      "STAR framework for behavioral",
+      "Structure for system design (requirements → high-level → deep dive)"
+    ]
   },
-  "benchmarks": {
-    "question_relevance": "Questions should be appropriate for senior SWE at FAANG (system design, leadership, scalability)",
-    "framework_quality": "Should include STAR method for behavioral questions",
-    "level_appropriate": "Should include senior-level topics: architecture decisions, mentoring, cross-team collaboration"
-  }
+
+  "quality_rubric": {
+    "realism": "Questions match what FAANG actually asks",
+    "level_appropriate": "Senior topics, not junior or staff",
+    "actionability": "Candidate knows how to prepare based on this",
+    "completeness": "Covers major interview areas"
+  },
+
+  "output_file": "interview-prep-output.md"
 }

@@ -1,23 +1,35 @@
 {
-  "validation_type": "file_output",
-  "description": "Personalized fitness program",
-  "output_files": {
-    "fitness-program-output.md": {
-      "must_exist": true,
-      "min_size_bytes": 1500,
-      "format": "markdown"
-    }
+  "intent": "Design a beginner strength training program with limited equipment",
+
+  "success_criteria": {
+    "primary": "Program is safe and achievable for a beginner",
+    "secondary": "Only uses available equipment (dumbbells, pull-up bar)"
   },
-  "program_checks": {
-    "has_weekly_schedule": true,
-    "has_exercise_details": true,
-    "has_progression": true,
-    "respects_equipment": "Should only include exercises possible with dumbbells and pull-up bar",
-    "respects_frequency": "Should be designed for 3 days per week"
+
+  "content_requirements": {
+    "must_include": [
+      "3-day weekly schedule",
+      "Specific exercises with sets and reps",
+      "Progression plan (how to advance)"
+    ],
+    "equipment_constraint": {
+      "allowed": ["dumbbells", "pull-up bar", "bodyweight"],
+      "not_allowed": ["barbell", "machines", "cables", "equipment not mentioned"]
+    },
+    "safety_requirements": [
+      "Warm-up guidance",
+      "Recovery time between sessions",
+      "Form cues or warnings for complex movements"
+    ]
   },
-  "safety_checks": {
-    "beginner_appropriate": "Should start with manageable weights and basic movements",
-    "includes_warmup": true,
-    "includes_recovery": true
-  }
+
+  "quality_rubric": {
+    "safety": "No advanced movements inappropriate for beginners",
+    "balance": "Works all major muscle groups, not just 'bro splits'",
+    "progressive_overload": "Clear path to increase difficulty over time",
+    "sustainability": "3 days/week is manageable, not burnout-inducing",
+    "specificity": "Addresses strength/muscle goal, not cardio or flexibility"
+  },
+
+  "output_file": "fitness-program-output.md"
 }

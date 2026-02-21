@@ -1,18 +1,35 @@
 {
-  "validation_type": "test_pass",
-  "description": "Fix division by zero bug",
+  "intent": "Fix a division by zero bug through iterative debugging",
+
+  "success_criteria": {
+    "primary": "Tests pass after the fix",
+    "secondary": "Fix handles the zero case correctly"
+  },
+
+  "bug_details": {
+    "issue": "Divide function doesn't check for zero divisor",
+    "symptom": "Panic on Divide(10, 0)",
+    "test": "TestDivideByZero expects graceful handling"
+  },
+
+  "acceptable_fixes": [
+    "Return error for zero divisor",
+    "Return special value (0, math.MaxInt) with documentation",
+    "Panic with clear message (if test expectation matches)"
+  ],
+
+  "quality_rubric": {
+    "correctness": "Zero case is handled, tests pass",
+    "clarity": "Fix is obvious to future readers",
+    "safety": "No silent failures or undefined behavior"
+  },
+
   "convergence": {
-    "should_converge": true,
+    "expected": true,
     "success_indicator": "Tests pass or CONVERGED"
   },
-  "bug_fix_checks": {
-    "identifies_issue": "Division by zero",
-    "implements_fix": "Should add zero check or return error"
-  },
-  "tool_usage": {
-    "required": ["bash", "edit"]
-  },
-  "post_validation": {
+
+  "verification": {
     "command": "cd testdata/buggy-converge && go test ./...",
     "expected_exit_code": 0
   }
