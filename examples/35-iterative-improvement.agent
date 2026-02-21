@@ -1,25 +1,38 @@
-NAME iterative-improvement
+# 35 - Iterative Improvement
+# Example showing iterative improvement with multiple agents
+# Each iteration: create -> critique -> improve until quality threshold met
 
-# Example showing iterative improvement with multiple agents in a loop
-# Each iteration: create -> critique -> improve
+NAME iterative-improvement
 
 INPUT initial_content
 INPUT quality_threshold DEFAULT "high"
+INPUT output_file DEFAULT "improved-content.md"
 
-AGENT creator FROM agents/creative-writer.md
-AGENT critic FROM agents/devils-advocate.md REQUIRES "reasoning-heavy"
-AGENT improver FROM agents/editor.md
+AGENT creator """You are a skilled content creator. Create and refine content that is:
+- Clear and well-structured
+- Engaging and appropriate for the audience
+- Free of errors"""
 
-GOAL create "Create or improve content based on feedback"
-GOAL critique "Critically evaluate the current content for $quality_threshold quality" USING critic
-GOAL improve "Implement improvements based on critique" USING creator, improver
+AGENT critic """You are a demanding critic. Evaluate content for:
+- Clarity and conciseness
+- Argument strength
+- Engagement and flow
+Provide specific, actionable feedback. If content meets $quality_threshold quality, say so clearly."""
 
-# Initial creation
+AGENT improver """You are an expert editor. Implement improvements based on feedback.
+Make targeted changes while preserving what works well."""
+
+GOAL create "Create initial content based on: $initial_content" -> draft USING creator
+
+CONVERGE refine """Review the current content critically for $quality_threshold quality.
+If it meets the quality threshold, output CONVERGED.
+Otherwise:
+1. Identify specific weaknesses
+2. Implement targeted improvements
+3. Continue until quality threshold is met""" -> refined_content USING critic, improver WITHIN 5
+
+GOAL finalize "Apply final polish and formatting to the refined content. Save to $output_file." USING improver
+
 RUN init USING create
-
-# Iterative improvement loop
-LOOP refine USING critique, improve WITHIN 5
-
-# Final polish
-GOAL finalize "Final polish and formatting" USING improver
+RUN improve USING refine
 RUN finish USING finalize

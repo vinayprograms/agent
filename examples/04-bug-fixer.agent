@@ -1,12 +1,28 @@
 # 04 - Bug Fixer
 # Iteratively fix bugs until tests pass
+# Uses CONVERGE to automatically stop when tests are green
 
 NAME bug-fixer
 INPUT test_command DEFAULT "go test ./..."
 INPUT max_attempts DEFAULT 5
 
-GOAL diagnose "Run $test_command using bash. Analyze any failures and identify root causes."
-GOAL fix "Apply fixes to the code using the edit tool. Make minimal, targeted changes."
-GOAL verify "Run $test_command again. If tests pass, declare success. If not, explain remaining issues."
+AGENT diagnostician """You are a debugging expert. When tests fail:
+1. Analyze error messages and stack traces
+2. Identify root causes, not just symptoms
+3. Consider edge cases and race conditions
+Be systematic and thorough."""
 
-LOOP fix_cycle USING diagnose, fix, verify WITHIN $max_attempts
+AGENT fixer """You are a careful bug fixer. When fixing bugs:
+1. Make minimal, targeted changes
+2. Preserve existing behavior for passing cases
+3. Use the edit tool for precise fixes"""
+
+CONVERGE fix_cycle """Run $test_command using bash. If tests pass, output CONVERGED.
+If tests fail:
+1. Analyze the failures and identify root causes
+2. Apply fixes using the edit tool
+3. Re-run tests to verify
+
+Continue until all tests pass or no further progress can be made.""" -> fix_result USING diagnostician, fixer WITHIN $max_attempts
+
+RUN main USING fix_cycle

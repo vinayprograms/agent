@@ -1,13 +1,29 @@
 # 13 - Refactoring Assistant
 # Iteratively improve code quality
+# Uses CONVERGE to stop when code meets quality standards
 
 NAME refactor
 INPUT path
 INPUT focus DEFAULT "readability"
 INPUT max_passes DEFAULT 3
 
-GOAL assess "Read code at $path. Assess current state focusing on $focus. Identify specific improvement opportunities."
-GOAL improve "Apply one focused improvement using edit tool. Make atomic, reversible changes."
-GOAL validate "Run any existing tests. Verify the change improved $focus without breaking functionality."
+AGENT reviewer """You are a code quality expert. Assess code for:
+- Readability and clarity
+- Naming conventions
+- Code organization
+- DRY violations
+Provide specific, actionable feedback."""
 
-LOOP refactor_cycle USING assess, improve, validate WITHIN $max_passes
+AGENT refactorer """You are a refactoring expert. Apply improvements:
+- Make atomic, reversible changes
+- Preserve all existing functionality
+- Use the edit tool for precise modifications"""
+
+CONVERGE refactor_cycle """Read code at $path and assess for $focus improvements.
+1. Identify specific improvement opportunities
+2. Apply one focused improvement using edit tool
+3. Run any existing tests to verify no regressions
+4. If code now meets $focus standards, output CONVERGED
+Continue refining until quality standards are met.""" -> refactored_code USING reviewer, refactorer WITHIN $max_passes
+
+RUN main USING refactor_cycle
