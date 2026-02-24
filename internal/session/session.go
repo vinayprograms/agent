@@ -42,8 +42,6 @@ const (
 	// Workflow events
 	EventWorkflowStart = "workflow_start"
 	EventWorkflowEnd   = "workflow_end"
-	EventStepStart     = "step_start"
-	EventStepEnd       = "step_end"
 
 	// Supervision events (four-phase execution)
 	EventPhaseCommit    = "phase_commit"    // COMMIT phase - agent declares intent

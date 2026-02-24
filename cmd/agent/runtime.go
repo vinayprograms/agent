@@ -532,6 +532,14 @@ func (rt *runtime) setupCallbacks() {
 		fmt.Fprintf(os.Stderr, "  → MCP Tool: %s/%s\n", server, tool)
 		rt.telem.LogEvent("mcp_tool_call", map[string]interface{}{"server": server, "tool": tool, "args": args})
 	}
+	rt.exec.OnSkillLoaded = func(name string) {
+		fmt.Fprintf(os.Stderr, "  → Skill loaded: %s\n", name)
+		rt.telem.LogEvent("skill_loaded", map[string]interface{}{"skill": name})
+	}
+	rt.exec.OnSupervisionEvent = func(stepID, phase string, data interface{}) {
+		fmt.Fprintf(os.Stderr, "  ⊙ Supervision [%s]: %s\n", stepID, phase)
+		rt.telem.LogEvent("supervision_"+phase, map[string]interface{}{"step": stepID})
+	}
 	rt.exec.OnLLMError = func(err error) {
 		fmt.Fprintf(os.Stderr, "  ✗ LLM error: %v\n", err)
 		rt.telem.LogEvent("llm_error", map[string]interface{}{"error": err.Error()})
@@ -554,6 +562,14 @@ func (rt *runtime) run(ctx context.Context) int {
 	rt.sess.Status = string(result.Status)
 	rt.sess.Outputs = result.Outputs
 	rt.sessionMgr.Update(rt.sess)
+
+	// Report convergence failures if any
+	if failures := rt.exec.GetConvergenceFailures(); len(failures) > 0 {
+		fmt.Fprintf(os.Stderr, "\n⚠ Convergence warnings:\n")
+		for goal, iterations := range failures {
+			fmt.Fprintf(os.Stderr, "  • Goal %q did not converge (used all %d iterations)\n", goal, iterations)
+		}
+	}
 
 	fmt.Fprintf(os.Stderr, "\n✓ Workflow complete\n\n")
 

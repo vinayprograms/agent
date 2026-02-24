@@ -98,7 +98,7 @@ func TestSystem_ValidateInvalidAgentfile(t *testing.T) {
 		{
 			name:     "no steps",
 			content:  "NAME test\nGOAL analyze \"Analyze\"\n",
-			errMatch: "at least one RUN or LOOP",
+			errMatch: "at least one RUN step is required",
 		},
 	}
 
@@ -127,9 +127,8 @@ func TestSystem_InspectCommand(t *testing.T) {
 INPUT topic
 INPUT max DEFAULT 10
 GOAL analyze "Analyze $topic"
-GOAL summarize "Summarize"
-RUN step1 USING analyze
-LOOP step2 USING summarize WITHIN $max
+CONVERGE summarize "Summarize until done. Output CONVERGED when complete." WITHIN $max
+RUN step1 USING analyze, summarize
 `
 	path := filepath.Join(tmpDir, "Agentfile")
 	os.WriteFile(path, []byte(agentfile), 0644)
@@ -167,9 +166,6 @@ LOOP step2 USING summarize WITHIN $max
 	// Check steps
 	if !strings.Contains(outStr, "RUN") {
 		t.Error("expected RUN step")
-	}
-	if !strings.Contains(outStr, "LOOP") {
-		t.Error("expected LOOP step")
 	}
 }
 

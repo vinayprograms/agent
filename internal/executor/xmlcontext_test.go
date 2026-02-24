@@ -97,47 +97,6 @@ func TestXMLContextBuilder_WithCorrection(t *testing.T) {
 	}
 }
 
-func TestXMLContextBuilder_LoopIteration(t *testing.T) {
-	b := NewXMLContextBuilder("iterative-improvement")
-	b.AddPriorGoal("draft", "Initial draft content...")
-
-	// Add first iteration
-	b.AddIteration(1, []GoalOutput{
-		{ID: "critique", Output: "Issues found: weak opening"},
-		{ID: "improve", Output: "Improved version..."},
-	})
-
-	b.SetCurrentGoalInLoop("critique", "Review and identify remaining issues.", "refine", 2)
-
-	result := b.Build()
-
-	// Check iteration structure
-	if !strings.Contains(result, `<iteration n="1">`) {
-		t.Error("expected iteration tag")
-	}
-	if !strings.Contains(result, `loop="refine" iteration="2"`) {
-		t.Error("expected loop attributes on current goal")
-	}
-}
-
-func TestXMLContextBuilder_ParallelAgents(t *testing.T) {
-	b := NewXMLContextBuilder("decision-analyzer")
-	b.AddPriorGoal("frame", "Decision: Migrate to Kubernetes...")
-	b.AddPriorGoalWithAgent("evaluate", "optimist", "## Opportunities\nK8s will allow scaling...")
-	b.AddPriorGoalWithAgent("evaluate", "critic", "## Concerns\nComplexity overhead...")
-	b.SetCurrentGoal("synthesize", "Synthesize into a recommendation.")
-
-	result := b.Build()
-
-	// Check labeled goal IDs
-	if !strings.Contains(result, `<goal id="evaluate[optimist]">`) {
-		t.Error("expected optimist-labeled goal")
-	}
-	if !strings.Contains(result, `<goal id="evaluate[critic]">`) {
-		t.Error("expected critic-labeled goal")
-	}
-}
-
 func TestBuildTaskContext(t *testing.T) {
 	result := BuildTaskContext(
 		"quantum-historian",
