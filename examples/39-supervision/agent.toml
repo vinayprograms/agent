@@ -1,0 +1,35 @@
+# Agent Configuration for Testing
+
+[agent]
+id = "test-agent"
+workspace = "."
+
+[llm]
+model = "claude-sonnet-4-6"
+max_tokens = 4096
+
+[small_llm]
+model = "claude-haiku-4-5"
+max_tokens = 1000
+
+[profiles.reasoning-heavy]
+model = ""
+
+[profiles.fast]
+model = "claude-haiku-4-5"
+
+[profiles.code-generation]
+model = "claude-sonnet-4-6"
+
+[profiles.creative]
+model = "claude-sonnet-4-6"
+max_tokens = 4096
+
+[skills]
+paths = ["./skills"]
+
+[storage]
+path = "./storage"
+
+[telemetry]
+enabled = false

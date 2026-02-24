@@ -528,6 +528,10 @@ func (rt *runtime) setupCallbacks() {
 		}
 		rt.telem.LogEvent("tool_error", map[string]interface{}{"tool": name, "error": err.Error(), "agent": agentRole})
 	}
+	rt.exec.OnMCPToolCall = func(server, tool string, args map[string]interface{}, result interface{}) {
+		fmt.Fprintf(os.Stderr, "  → MCP Tool: %s/%s\n", server, tool)
+		rt.telem.LogEvent("mcp_tool_call", map[string]interface{}{"server": server, "tool": tool, "args": args})
+	}
 	rt.exec.OnLLMError = func(err error) {
 		fmt.Fprintf(os.Stderr, "  ✗ LLM error: %v\n", err)
 		rt.telem.LogEvent("llm_error", map[string]interface{}{"error": err.Error()})

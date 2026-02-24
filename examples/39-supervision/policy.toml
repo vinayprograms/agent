@@ -1,0 +1,60 @@
+# Policy for Testing
+
+default_deny = false
+
+[read]
+enabled = true
+allow = ["**"]
+
+[write]
+enabled = true
+allow = ["**"]
+
+[edit]
+enabled = true
+allow = ["**"]
+
+[glob]
+enabled = true
+allow = ["**"]
+
+[grep]
+enabled = true
+allow = ["**"]
+
+[ls]
+enabled = true
+allow = ["**"]
+
+[bash]
+enabled = true
+allowlist = [
+  "ls *", "pwd", "cat *", "head *", "tail *", "wc *",
+  "git *",
+  "go *",
+  "npm *",
+  "make *",
+  "gofmt *",
+  "echo *",
+  "mkdir *",
+  "cp *",
+  "mv *",
+]
+
+[web_fetch]
+enabled = true
+allow_domains = ["*"]
+rate_limit = 10
+
+[web_search]
+enabled = true
+rate_limit = 5
+
+[spawn_agent]
+enabled = true
+
+[memory_read]
+enabled = true
+
+[memory_write]
+enabled = true
