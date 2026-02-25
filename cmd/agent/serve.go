@@ -7,29 +7,23 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
-	"github.com/vinayprograms/agent/internal/config"
-	"github.com/vinayprograms/agent/internal/executor"
 	"github.com/vinayprograms/agentkit/credentials"
-	"github.com/vinayprograms/agentkit/llm"
-	"github.com/vinayprograms/agentkit/policy"
 	"github.com/vinayprograms/agentkit/registry"
 	"github.com/vinayprograms/agentkit/tasks"
-	"github.com/vinayprograms/agentkit/tools"
 )
 
 // serviceAgent holds the state for a running service agent.
 type serviceAgent struct {
-	cfg        *config.Config
-	pol        *policy.Policy
-	creds      *credentials.Credentials
-	workflow   *agentfile.Workflow
+	// Reuse workflow loading infrastructure
+	wf    *workflow
+	creds *credentials.Credentials
+
+	// Extracted from workflow
 	capability registry.CapabilitySchema
-	workspace  string
 
 	// Runtime state
 	status       string // "idle", "busy", "draining"
@@ -43,100 +37,73 @@ type serviceAgent struct {
 
 // Run executes the serve command.
 func (cmd *ServeCmd) Run() error {
-	// Load config
-	cfg, err := loadServeConfig(cmd.Config)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+	// Create workflow struct (reuses existing loading infrastructure)
+	wf := &workflow{
+		agentfilePath: cmd.File,
+		configPath:    cmd.Config,
+		policyPath:    cmd.Policy,
+		workspacePath: cmd.Workspace,
+		inputs:        make(map[string]string), // Will be set per-task
+		debug:         false,
 	}
 
-	// Apply command-line overrides
-	if cmd.HTTP != "" {
-		cfg.Service.HTTPAddr = cmd.HTTP
-	}
-	if cmd.Bus != "" {
-		cfg.Service.BusURL = cmd.Bus
-	}
-	if cmd.QueueGroup != "" {
-		cfg.Service.QueueGroup = cmd.QueueGroup
-	}
-	if cmd.Capability != "" {
-		cfg.Service.Capability = cmd.Capability
-	}
-
-	// Set workspace
-	workspace := cmd.Workspace
-	if workspace == "" {
-		workspace = cfg.Agent.Workspace
-	}
-	if workspace == "" {
-		workspace, _ = os.Getwd()
-	}
-
-	// Load and parse Agentfile
-	wf, err := loadAgentfile(cmd.File)
-	if err != nil {
+	// Load config, policy, and agentfile
+	if err := wf.load(); err != nil {
 		return err
 	}
 
+	// Apply command-line overrides for service config
+	if cmd.HTTP != "" {
+		wf.cfg.Service.HTTPAddr = cmd.HTTP
+	}
+	if cmd.Bus != "" {
+		wf.cfg.Service.BusURL = cmd.Bus
+	}
+	if cmd.QueueGroup != "" {
+		wf.cfg.Service.QueueGroup = cmd.QueueGroup
+	}
+	if cmd.Capability != "" {
+		wf.cfg.Service.Capability = cmd.Capability
+	}
+
 	// Determine capability name
-	capabilityName := cfg.Service.Capability
+	capabilityName := wf.cfg.Service.Capability
 	if capabilityName == "" {
-		capabilityName = wf.Name
+		capabilityName = wf.wf.Name
 	}
 
 	// Extract capability schema from Agentfile
-	capability := extractCapabilitySchema(wf, capabilityName)
+	capability := extractCapabilitySchema(wf.wf, capabilityName)
 
 	// Parse drain timeout
 	drainTimeout := 30 * time.Second
-	if cfg.Service.DrainTimeout != "" {
-		if d, err := time.ParseDuration(cfg.Service.DrainTimeout); err == nil {
+	if wf.cfg.Service.DrainTimeout != "" {
+		if d, err := time.ParseDuration(wf.cfg.Service.DrainTimeout); err == nil {
 			drainTimeout = d
 		}
 	}
 
-	// Load credentials
+	// Load credentials (same as run mode)
 	creds, _, err := credentials.Load()
 	if err != nil {
 		// Credentials are optional, continue with nil
 		creds = nil
 	}
 
-	// Load policy (use default if not specified)
-	var pol *policy.Policy
-	if cmd.Policy != "" {
-		pol, err = policy.LoadFile(cmd.Policy)
-		if err != nil {
-			return fmt.Errorf("loading policy: %w", err)
-		}
-	} else {
-		// Try to load from same directory as Agentfile
-		policyPath := filepath.Join(filepath.Dir(cmd.File), "policy.toml")
-		if _, statErr := os.Stat(policyPath); statErr == nil {
-			pol, err = policy.LoadFile(policyPath)
-			if err != nil {
-				return fmt.Errorf("loading policy: %w", err)
-			}
-		}
-	}
-
 	// Create service agent
 	agent := &serviceAgent{
-		cfg:          cfg,
-		pol:          pol,
+		wf:           wf,
 		creds:        creds,
-		workflow:     wf,
 		capability:   capability,
-		workspace:    workspace,
 		status:       "idle",
 		taskDone:     make(chan struct{}),
 		drainTimeout: drainTimeout,
 	}
 
 	// Determine mode and run
-	if cfg.Service.BusURL != "" {
+	if wf.cfg.Service.BusURL != "" {
 		return agent.runBusMode()
-	} else if cfg.Service.HTTPAddr != "" {
+	} else if wf.cfg.Service.HTTPAddr != "" {
 		return agent.runHTTPMode()
 	} else {
 		return fmt.Errorf("no transport configured: specify --http or --bus, or set [service].http_addr or [service].bus_url in config")
@@ -200,7 +167,7 @@ func (a *serviceAgent) runHTTPMode() error {
 	})
 
 	a.httpServer = &http.Server{
-		Addr:    a.cfg.Service.HTTPAddr,
+		Addr:    a.wf.cfg.Service.HTTPAddr,
 		Handler: mux,
 	}
 
@@ -218,7 +185,7 @@ func (a *serviceAgent) runHTTPMode() error {
 	}()
 
 	fmt.Fprintf(os.Stderr, "Service agent running: %s\n", a.capability.Name)
-	fmt.Fprintf(os.Stderr, "HTTP server listening on %s\n", a.cfg.Service.HTTPAddr)
+	fmt.Fprintf(os.Stderr, "HTTP server listening on %s\n", a.wf.cfg.Service.HTTPAddr)
 	fmt.Fprintf(os.Stderr, "Endpoints:\n")
 	fmt.Fprintf(os.Stderr, "  GET  /health     - Health check\n")
 	fmt.Fprintf(os.Stderr, "  GET  /capability - Capability schema\n")
@@ -251,105 +218,55 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage)
 		}
 	}()
 
-	result := tasks.NewTaskResult(task.TaskID, a.cfg.Agent.ID, tasks.ResultSuccess)
+	result := tasks.NewTaskResult(task.TaskID, a.wf.cfg.Agent.ID, tasks.ResultSuccess)
 	result.CorrelationID = task.CorrelationID
 	result.Attempt = task.Attempt
 
-	// Create LLM provider
-	provider, err := a.createProvider()
-	if err != nil {
+	// Create a fresh workflow copy with this task's inputs
+	taskWf := &workflow{
+		agentfilePath: a.wf.agentfilePath,
+		configPath:    a.wf.configPath,
+		policyPath:    a.wf.policyPath,
+		workspacePath: a.wf.workspacePath,
+		inputs:        task.Inputs,
+		debug:         a.wf.debug,
+		wf:            a.wf.wf,
+		cfg:           a.wf.cfg,
+		pol:           a.wf.pol,
+		baseDir:       a.wf.baseDir,
+	}
+
+	// Create runtime (reuses all the setup from run mode)
+	rt := newRuntime(taskWf, a.creds)
+
+	// Setup runtime (creates provider, registry, executor, etc.)
+	if err := rt.setup(); err != nil {
 		result.Status = tasks.ResultFailed
-		result.Error = fmt.Sprintf("failed to create LLM provider: %v", err)
+		result.Error = fmt.Sprintf("runtime setup failed: %v", err)
 		result.DurationMs = time.Since(start).Milliseconds()
 		return result
 	}
 
-	// Create tool registry
-	toolRegistry := a.createToolRegistry()
-
-	// Create executor
-	exec := executor.NewExecutor(a.workflow, provider, toolRegistry, a.pol)
-
-	// Set workspace
-	if a.workspace != "" {
-		// The executor uses config workspace, which is set via the runtime
-		// For service mode, we'd need to inject this differently
-		// For now, use the default from config
-	}
+	// Ensure cleanup
+	defer rt.cleanup()
 
 	// Execute workflow
-	execResult, err := exec.Run(ctx, task.Inputs)
-	if err != nil {
-		result.Status = tasks.ResultFailed
-		result.Error = err.Error()
-	} else if execResult.Status != executor.StatusComplete {
+	exitCode := rt.run(ctx)
+	if exitCode != 0 {
 		result.Status = tasks.ResultFailed
 		result.Error = "workflow execution failed"
-		if len(execResult.Outputs) > 0 {
-			result.Outputs = execResult.Outputs
+		// Try to get outputs even on failure
+		if rt.sess != nil {
+			result.Outputs = rt.sess.Outputs
 		}
 	} else {
-		result.Outputs = execResult.Outputs
+		if rt.sess != nil {
+			result.Outputs = rt.sess.Outputs
+		}
 	}
 
 	result.DurationMs = time.Since(start).Milliseconds()
 	return result
-}
-
-// createProvider creates an LLM provider from config.
-func (a *serviceAgent) createProvider() (llm.Provider, error) {
-	cfg := a.cfg.LLM
-
-	// Infer provider from model if not specified
-	provider := cfg.Provider
-	if provider == "" {
-		provider = llm.InferProviderFromModel(cfg.Model)
-	}
-	if provider == "" && cfg.Model == "" {
-		return nil, fmt.Errorf("LLM model not configured")
-	}
-
-	// Get credential (handles Claude CLI, OAuth, API keys, env vars)
-	var cred credentials.Credential
-	if a.creds != nil {
-		cred = a.creds.GetCredential(provider)
-	}
-
-	// If no credential from file, try env var
-	if cred.Key == "" && cfg.APIKeyEnv != "" {
-		cred.Key = os.Getenv(cfg.APIKeyEnv)
-	}
-	if cred.Key == "" {
-		// Try default env var
-		cred.Key = os.Getenv(config.DefaultAPIKeyEnv(provider))
-	}
-
-	if cred.Key == "" {
-		return nil, fmt.Errorf("no API key found for provider %s", provider)
-	}
-
-	// Create provider config
-	providerCfg := llm.ProviderConfig{
-		Provider:     provider,
-		Model:        cfg.Model,
-		APIKey:       cred.Key,
-		IsOAuthToken: cred.IsOAuthToken,
-		MaxTokens:    cfg.MaxTokens,
-		BaseURL:      cfg.BaseURL,
-	}
-
-	return llm.NewProvider(providerCfg)
-}
-
-// createToolRegistry creates a tool registry with standard tools.
-func (a *serviceAgent) createToolRegistry() *tools.Registry {
-	// Create registry with policy (builtins registered automatically)
-	reg := tools.NewRegistry(a.pol)
-
-	// Set workspace for file tools via the policy's workspace
-	// The registry uses policy.AllowedDirs for file access control
-
-	return reg
 }
 
 // initiateShutdown handles graceful shutdown.
@@ -408,34 +325,3 @@ func extractCapabilitySchema(wf *agentfile.Workflow, name string) registry.Capab
 
 	return schema
 }
-
-// loadServeConfig loads configuration for serve mode.
-func loadServeConfig(path string) (*config.Config, error) {
-	if path != "" {
-		return config.LoadFile(path)
-	}
-	return config.LoadDefault()
-}
-
-// loadAgentfile loads and parses an Agentfile.
-func loadAgentfile(path string) (*agentfile.Workflow, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", path, err)
-	}
-
-	wf, err := agentfile.ParseString(string(data))
-	if err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
-	}
-
-	if err := agentfile.Validate(wf); err != nil {
-		return nil, fmt.Errorf("validating %s: %w", path, err)
-	}
-
-	return wf, nil
-}
-
-// Note: Service mode currently supports basic executor functionality.
-// Advanced features like MCP servers, memory, and telemetry require
-// additional setup that mirrors the full runtime initialization.
