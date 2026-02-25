@@ -22,6 +22,7 @@ type Config struct {
 	Skills    SkillsConfig          `toml:"skills"`     // Agent Skills
 	Security  SecurityConfig        `toml:"security"`   // Security framework
 	Timeouts  TimeoutsConfig        `toml:"timeouts"`   // Network operation timeouts
+	Service   ServiceConfig         `toml:"service"`    // Service agent settings (for `agent serve`)
 }
 
 // AgentConfig contains agent identification settings.
@@ -102,6 +103,32 @@ type TimeoutsConfig struct {
 	MCP       int `toml:"mcp"`        // MCP tool call timeout in seconds (default 60)
 	WebSearch int `toml:"web_search"` // web_search timeout in seconds (default 30)
 	WebFetch  int `toml:"web_fetch"`  // web_fetch timeout in seconds (default 60)
+}
+
+// ServiceConfig contains settings for service agent mode (`agent serve`).
+type ServiceConfig struct {
+	// BusURL is the message bus URL for swarm mode (e.g., "nats://localhost:4222").
+	// If empty, agent runs in local HTTP mode.
+	BusURL string `toml:"bus_url"`
+
+	// HTTPAddr is the HTTP server address for local mode (e.g., ":8080").
+	// Only used if BusURL is empty.
+	HTTPAddr string `toml:"http_addr"`
+
+	// QueueGroup for load balancing across multiple instances.
+	// Defaults to capability name if not set.
+	QueueGroup string `toml:"queue_group"`
+
+	// HeartbeatInterval between heartbeat messages.
+	// Default: "5s"
+	HeartbeatInterval string `toml:"heartbeat_interval"`
+
+	// DrainTimeout is how long to wait for current task during shutdown.
+	// Default: "30s"
+	DrainTimeout string `toml:"drain_timeout"`
+
+	// Capability override. If empty, uses Agentfile NAME.
+	Capability string `toml:"capability"`
 }
 
 // New creates a new config with defaults.

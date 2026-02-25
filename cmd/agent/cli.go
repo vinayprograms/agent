@@ -5,7 +5,8 @@ import "github.com/alecthomas/kong"
 
 // CLI defines the command-line interface.
 type CLI struct {
-	Run      RunCmd      `cmd:"" help:"Run a workflow"`
+	Run      RunCmd      `cmd:"" help:"Run a workflow (one-shot, ephemeral)"`
+	Serve    ServeCmd    `cmd:"" help:"Run as a service agent (long-running)"`
 	Validate ValidateCmd `cmd:"" help:"Validate Agentfile syntax"`
 	Inspect  InspectCmd  `cmd:"" help:"Show workflow or package structure"`
 	Pack     PackCmd     `cmd:"" help:"Create a signed agent package"`
@@ -26,6 +27,22 @@ type RunCmd struct {
 	Workspace string            `help:"Workspace directory"`
 	Goal      string            `help:"Inline goal description (skips Agentfile)"`
 	Debug     bool              `help:"Enable verbose logging (prompts, responses, tool outputs)"`
+}
+
+// ServeCmd runs the agent as a long-running service.
+type ServeCmd struct {
+	File      string `arg:"" default:"Agentfile" help:"Agentfile path"`
+	Config    string `help:"Config file path"`
+	Policy    string `help:"Policy file path"`
+	Workspace string `help:"Workspace directory"`
+
+	// Transport options (mutually exclusive, or use config)
+	HTTP string `help:"Run HTTP server on this address (e.g., :8080)"`
+	Bus  string `help:"Message bus URL (e.g., nats://localhost:4222)"`
+
+	// Service options
+	QueueGroup string `help:"Queue group name for load balancing"`
+	Capability string `help:"Capability name (default: Agentfile NAME)"`
 }
 
 // ValidateCmd validates an Agentfile.
