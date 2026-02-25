@@ -26,9 +26,12 @@ type serviceAgent struct {
 	wf    *workflow
 	creds *credentials.Credentials
 
-	// Agent identity
+	// Agent identity (uses session ID)
 	agentID    string
 	capability registry.CapabilitySchema
+
+	// Service-level session (shared across all tasks)
+	serviceRuntime *runtime
 
 	// Runtime state
 	status       string // "idle", "busy", "draining"
@@ -101,23 +104,33 @@ func (cmd *ServeCmd) Run() error {
 		creds = nil
 	}
 
-	// Determine agent ID
+	// Create service-level runtime (one session for entire service lifetime)
+	serviceRt := newRuntime(wf, creds)
+	if err := serviceRt.setup(); err != nil {
+		return fmt.Errorf("setting up service runtime: %w", err)
+	}
+
+	// Agent ID uses session ID (or config if specified)
 	agentID := wf.cfg.Agent.ID
 	if agentID == "" {
-		// Auto-generate: <capability>-<random-suffix>
-		agentID = fmt.Sprintf("%s-%s", capabilityName, generateShortID())
+		// Auto-generate: <capability>-<session-id>
+		agentID = fmt.Sprintf("%s-%s", capabilityName, serviceRt.sess.ID)
 	}
 
 	// Create service agent
 	agent := &serviceAgent{
-		wf:           wf,
-		creds:        creds,
-		agentID:      agentID,
-		capability:   capability,
-		status:       "idle",
-		taskDone:     make(chan struct{}),
-		drainTimeout: drainTimeout,
+		wf:             wf,
+		creds:          creds,
+		agentID:        agentID,
+		capability:     capability,
+		serviceRuntime: serviceRt,
+		status:         "idle",
+		taskDone:       make(chan struct{}),
+		drainTimeout:   drainTimeout,
 	}
+
+	// Ensure cleanup on exit
+	defer serviceRt.cleanup()
 
 	// Determine mode and run
 	if wf.cfg.Service.BusURL != "" {
@@ -400,47 +413,18 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage)
 	result.CorrelationID = task.CorrelationID
 	result.Attempt = task.Attempt
 
-	// Create a fresh workflow copy with this task's inputs
-	taskWf := &workflow{
-		agentfilePath: a.wf.agentfilePath,
-		configPath:    a.wf.configPath,
-		policyPath:    a.wf.policyPath,
-		workspacePath: a.wf.workspacePath,
-		inputs:        task.Inputs,
-		debug:         a.wf.debug,
-		wf:            a.wf.wf,
-		cfg:           a.wf.cfg,
-		pol:           a.wf.pol,
-		baseDir:       a.wf.baseDir,
-	}
-
-	// Create runtime (reuses all the setup from run mode)
-	rt := newRuntime(taskWf, a.creds)
-
-	// Setup runtime (creates provider, registry, executor, etc.)
-	if err := rt.setup(); err != nil {
+	// Execute workflow using service runtime's executor
+	// All tasks share the same session, provider, tools, etc.
+	execResult, err := a.serviceRuntime.exec.Run(ctx, task.Inputs)
+	if err != nil {
 		result.Status = tasks.ResultFailed
-		result.Error = fmt.Sprintf("runtime setup failed: %v", err)
-		result.DurationMs = time.Since(start).Milliseconds()
-		return result
-	}
-
-	// Ensure cleanup
-	defer rt.cleanup()
-
-	// Execute workflow
-	exitCode := rt.run(ctx)
-	if exitCode != 0 {
+		result.Error = err.Error()
+	} else if execResult.Status != "complete" {
 		result.Status = tasks.ResultFailed
-		result.Error = "workflow execution failed"
-		// Try to get outputs even on failure
-		if rt.sess != nil {
-			result.Outputs = rt.sess.Outputs
-		}
+		result.Error = fmt.Sprintf("workflow status: %s", execResult.Status)
+		result.Outputs = execResult.Outputs
 	} else {
-		if rt.sess != nil {
-			result.Outputs = rt.sess.Outputs
-		}
+		result.Outputs = execResult.Outputs
 	}
 
 	result.DurationMs = time.Since(start).Milliseconds()
