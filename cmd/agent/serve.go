@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,7 +26,8 @@ type serviceAgent struct {
 	wf    *workflow
 	creds *credentials.Credentials
 
-	// Extracted from workflow
+	// Agent identity
+	agentID    string
 	capability registry.CapabilitySchema
 
 	// Runtime state
@@ -98,10 +101,18 @@ func (cmd *ServeCmd) Run() error {
 		creds = nil
 	}
 
+	// Determine agent ID
+	agentID := wf.cfg.Agent.ID
+	if agentID == "" {
+		// Auto-generate: <capability>-<random-suffix>
+		agentID = fmt.Sprintf("%s-%s", capabilityName, generateShortID())
+	}
+
 	// Create service agent
 	agent := &serviceAgent{
 		wf:           wf,
 		creds:        creds,
+		agentID:      agentID,
 		capability:   capability,
 		status:       "idle",
 		taskDone:     make(chan struct{}),
@@ -192,7 +203,7 @@ func (a *serviceAgent) runHTTPMode() error {
 		a.initiateShutdown(ctx)
 	}()
 
-	fmt.Fprintf(os.Stderr, "Service agent running: %s\n", a.capability.Name)
+	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s)\n", a.capability.Name, a.agentID)
 	fmt.Fprintf(os.Stderr, "HTTP server listening on %s\n", a.wf.cfg.Service.HTTPAddr)
 	fmt.Fprintf(os.Stderr, "Endpoints:\n")
 	fmt.Fprintf(os.Stderr, "  GET  /health     - Health check\n")
@@ -214,7 +225,7 @@ func (a *serviceAgent) runBusMode() error {
 	// Connect to NATS
 	cfg := bus.NATSConfig{
 		URL:  a.wf.cfg.Service.BusURL,
-		Name: fmt.Sprintf("agent-%s-%s", a.capability.Name, a.wf.cfg.Agent.ID),
+		Name: fmt.Sprintf("agent-%s", a.agentID),
 	}
 	natsBus, err := bus.NewNATSBus(cfg)
 	if err != nil {
@@ -234,7 +245,7 @@ func (a *serviceAgent) runBusMode() error {
 	// Start heartbeat sender
 	hbSender, err := heartbeat.NewBusSender(heartbeat.SenderConfig{
 		Bus:           natsBus,
-		AgentID:       a.wf.cfg.Agent.ID,
+		AgentID:       a.agentID,
 		Interval:      heartbeatInterval,
 		InitialStatus: "idle",
 	})
@@ -268,7 +279,7 @@ func (a *serviceAgent) runBusMode() error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
-	fmt.Fprintf(os.Stderr, "Service agent running: %s\n", a.capability.Name)
+	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s)\n", a.capability.Name, a.agentID)
 	fmt.Fprintf(os.Stderr, "Connected to bus: %s\n", a.wf.cfg.Service.BusURL)
 	fmt.Fprintf(os.Stderr, "Listening on: %s (queue: %s)\n", taskSubject, a.queueGroup)
 	fmt.Fprintf(os.Stderr, "Heartbeat interval: %s\n", heartbeatInterval)
@@ -385,7 +396,7 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage)
 		}
 	}()
 
-	result := tasks.NewTaskResult(task.TaskID, a.wf.cfg.Agent.ID, tasks.ResultSuccess)
+	result := tasks.NewTaskResult(task.TaskID, a.agentID, tasks.ResultSuccess)
 	result.CorrelationID = task.CorrelationID
 	result.Attempt = task.Attempt
 
@@ -491,4 +502,14 @@ func extractCapabilitySchema(wf *agentfile.Workflow, name string) registry.Capab
 	}
 
 	return schema
+}
+
+// generateShortID generates a short random ID (8 hex chars).
+func generateShortID() string {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp if crypto/rand fails
+		return fmt.Sprintf("%08x", time.Now().UnixNano()&0xFFFFFFFF)
+	}
+	return hex.EncodeToString(b)
 }
