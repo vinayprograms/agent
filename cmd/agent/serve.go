@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agentkit/bus"
 	"github.com/vinayprograms/agentkit/credentials"
+	"github.com/vinayprograms/agentkit/heartbeat"
 	"github.com/vinayprograms/agentkit/registry"
 	"github.com/vinayprograms/agentkit/tasks"
 )
@@ -33,6 +35,12 @@ type serviceAgent struct {
 
 	// HTTP server (for local mode)
 	httpServer *http.Server
+
+	// Bus mode components
+	bus         bus.MessageBus
+	heartbeat   *heartbeat.BusSender
+	taskSub     bus.Subscription
+	queueGroup  string
 }
 
 // Run executes the serve command.
@@ -200,8 +208,167 @@ func (a *serviceAgent) runHTTPMode() error {
 
 // runBusMode runs the agent connected to a message bus (swarm mode).
 func (a *serviceAgent) runBusMode() error {
-	// TODO: Implement NATS bus mode
-	return fmt.Errorf("bus mode not yet implemented (coming soon)")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Connect to NATS
+	cfg := bus.NATSConfig{
+		URL:  a.wf.cfg.Service.BusURL,
+		Name: fmt.Sprintf("agent-%s-%s", a.capability.Name, a.wf.cfg.Agent.ID),
+	}
+	natsBus, err := bus.NewNATSBus(cfg)
+	if err != nil {
+		return fmt.Errorf("connecting to bus: %w", err)
+	}
+	a.bus = natsBus
+	defer natsBus.Close()
+
+	// Parse heartbeat interval
+	heartbeatInterval := 5 * time.Second
+	if a.wf.cfg.Service.HeartbeatInterval != "" {
+		if d, err := time.ParseDuration(a.wf.cfg.Service.HeartbeatInterval); err == nil {
+			heartbeatInterval = d
+		}
+	}
+
+	// Start heartbeat sender
+	hbSender, err := heartbeat.NewBusSender(heartbeat.SenderConfig{
+		Bus:           natsBus,
+		AgentID:       a.wf.cfg.Agent.ID,
+		Interval:      heartbeatInterval,
+		InitialStatus: "idle",
+	})
+	if err != nil {
+		return fmt.Errorf("creating heartbeat sender: %w", err)
+	}
+	a.heartbeat = hbSender
+	hbSender.SetMetadata("capability", a.capability.Name)
+	hbSender.SetMetadata("version", version)
+	if err := hbSender.Start(ctx); err != nil {
+		return fmt.Errorf("starting heartbeat: %w", err)
+	}
+	defer hbSender.Stop()
+
+	// Determine queue group
+	a.queueGroup = a.wf.cfg.Service.QueueGroup
+	if a.queueGroup == "" {
+		a.queueGroup = a.capability.Name + "-workers"
+	}
+
+	// Subscribe to task queue
+	taskSubject := fmt.Sprintf("tasks.%s", a.capability.Name)
+	sub, err := natsBus.QueueSubscribe(taskSubject, a.queueGroup)
+	if err != nil {
+		return fmt.Errorf("subscribing to %s: %w", taskSubject, err)
+	}
+	a.taskSub = sub
+	defer sub.Unsubscribe()
+
+	// Handle shutdown signals
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	fmt.Fprintf(os.Stderr, "Service agent running: %s\n", a.capability.Name)
+	fmt.Fprintf(os.Stderr, "Connected to bus: %s\n", a.wf.cfg.Service.BusURL)
+	fmt.Fprintf(os.Stderr, "Listening on: %s (queue: %s)\n", taskSubject, a.queueGroup)
+	fmt.Fprintf(os.Stderr, "Heartbeat interval: %s\n", heartbeatInterval)
+
+	// Main loop
+	for {
+		select {
+		case <-sigCh:
+			fmt.Fprintf(os.Stderr, "\nReceived shutdown signal, draining...\n")
+			a.initiateBusShutdown(ctx)
+			return nil
+
+		case msg, ok := <-sub.Messages():
+			if !ok {
+				// Subscription closed
+				return nil
+			}
+			a.handleBusTask(ctx, msg)
+		}
+	}
+}
+
+// handleBusTask processes a task received from the bus.
+func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
+	// Parse task message
+	task, err := tasks.UnmarshalTaskMessage(msg.Data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Invalid task message: %v\n", err)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "  → Task received: %s\n", task.TaskID)
+
+	// Update heartbeat status
+	if a.heartbeat != nil {
+		a.heartbeat.SetStatus("busy")
+		a.heartbeat.SetLoad(1.0)
+	}
+
+	// Execute task
+	result := a.executeTask(ctx, task)
+
+	// Update heartbeat status
+	if a.heartbeat != nil {
+		a.heartbeat.SetStatus("idle")
+		a.heartbeat.SetLoad(0.0)
+	}
+
+	// Publish result
+	resultData, err := result.Marshal()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Failed to marshal result: %v\n", err)
+		return
+	}
+
+	// Determine result subject
+	resultSubject := task.ReplyTo
+	if resultSubject == "" {
+		resultSubject = fmt.Sprintf("results.%s", task.TaskID)
+	}
+
+	if err := a.bus.Publish(resultSubject, resultData); err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Failed to publish result: %v\n", err)
+		return
+	}
+
+	statusIcon := "✓"
+	if result.Status == tasks.ResultFailed {
+		statusIcon = "✗"
+	}
+	fmt.Fprintf(os.Stderr, "  %s Task complete: %s (%s, %dms)\n",
+		statusIcon, task.TaskID, result.Status, result.DurationMs)
+}
+
+// initiateBusShutdown handles graceful shutdown in bus mode.
+func (a *serviceAgent) initiateBusShutdown(ctx context.Context) {
+	a.status = "draining"
+
+	// Update heartbeat to draining
+	if a.heartbeat != nil {
+		a.heartbeat.SetStatus("draining")
+	}
+
+	// Unsubscribe to stop receiving new tasks
+	if a.taskSub != nil {
+		a.taskSub.Unsubscribe()
+	}
+
+	// Wait for current task to complete (with timeout)
+	if a.currentTask != nil {
+		fmt.Fprintf(os.Stderr, "Waiting for current task to complete (timeout: %s)...\n", a.drainTimeout)
+		select {
+		case <-a.taskDone:
+			fmt.Fprintf(os.Stderr, "Task completed, shutting down.\n")
+		case <-time.After(a.drainTimeout):
+			fmt.Fprintf(os.Stderr, "Drain timeout reached, forcing shutdown.\n")
+		}
+	}
+
+	// Heartbeat and bus will be closed by deferred calls in runBusMode
 }
 
 // executeTask runs a single task through the workflow.
