@@ -7,20 +7,29 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/config"
+	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agentkit/credentials"
+	"github.com/vinayprograms/agentkit/llm"
+	"github.com/vinayprograms/agentkit/policy"
 	"github.com/vinayprograms/agentkit/registry"
 	"github.com/vinayprograms/agentkit/tasks"
+	"github.com/vinayprograms/agentkit/tools"
 )
 
 // serviceAgent holds the state for a running service agent.
 type serviceAgent struct {
 	cfg        *config.Config
+	pol        *policy.Policy
+	creds      *credentials.Credentials
 	workflow   *agentfile.Workflow
 	capability registry.CapabilitySchema
+	workspace  string
 
 	// Runtime state
 	status       string // "idle", "busy", "draining"
@@ -86,11 +95,39 @@ func (cmd *ServeCmd) Run() error {
 		}
 	}
 
+	// Load credentials
+	creds, _, err := credentials.Load()
+	if err != nil {
+		// Credentials are optional, continue with nil
+		creds = nil
+	}
+
+	// Load policy (use default if not specified)
+	var pol *policy.Policy
+	if cmd.Policy != "" {
+		pol, err = policy.LoadFile(cmd.Policy)
+		if err != nil {
+			return fmt.Errorf("loading policy: %w", err)
+		}
+	} else {
+		// Try to load from same directory as Agentfile
+		policyPath := filepath.Join(filepath.Dir(cmd.File), "policy.toml")
+		if _, statErr := os.Stat(policyPath); statErr == nil {
+			pol, err = policy.LoadFile(policyPath)
+			if err != nil {
+				return fmt.Errorf("loading policy: %w", err)
+			}
+		}
+	}
+
 	// Create service agent
 	agent := &serviceAgent{
 		cfg:          cfg,
+		pol:          pol,
+		creds:        creds,
 		workflow:     wf,
 		capability:   capability,
+		workspace:    workspace,
 		status:       "idle",
 		taskDone:     make(chan struct{}),
 		drainTimeout: drainTimeout,
@@ -218,13 +255,89 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage)
 	result.CorrelationID = task.CorrelationID
 	result.Attempt = task.Attempt
 
-	// For now, return a placeholder - full implementation needs executor setup
-	// TODO: Wire up executor with LLM provider, tools, etc.
-	result.Status = tasks.ResultFailed
-	result.Error = "service agent execution not yet implemented - infrastructure in place, executor integration pending"
-	result.DurationMs = time.Since(start).Milliseconds()
+	// Create LLM provider
+	provider, err := a.createProvider()
+	if err != nil {
+		result.Status = tasks.ResultFailed
+		result.Error = fmt.Sprintf("failed to create LLM provider: %v", err)
+		result.DurationMs = time.Since(start).Milliseconds()
+		return result
+	}
 
+	// Create tool registry
+	toolRegistry := a.createToolRegistry()
+
+	// Create executor
+	exec := executor.NewExecutor(a.workflow, provider, toolRegistry, a.pol)
+
+	// Set workspace
+	if a.workspace != "" {
+		// The executor uses config workspace, which is set via the runtime
+		// For service mode, we'd need to inject this differently
+		// For now, use the default from config
+	}
+
+	// Execute workflow
+	execResult, err := exec.Run(ctx, task.Inputs)
+	if err != nil {
+		result.Status = tasks.ResultFailed
+		result.Error = err.Error()
+	} else if execResult.Status != executor.StatusComplete {
+		result.Status = tasks.ResultFailed
+		result.Error = "workflow execution failed"
+		if len(execResult.Outputs) > 0 {
+			result.Outputs = execResult.Outputs
+		}
+	} else {
+		result.Outputs = execResult.Outputs
+	}
+
+	result.DurationMs = time.Since(start).Milliseconds()
 	return result
+}
+
+// createProvider creates an LLM provider from config.
+func (a *serviceAgent) createProvider() (llm.Provider, error) {
+	cfg := a.cfg.LLM
+
+	// Get API key
+	apiKey := ""
+	if a.creds != nil {
+		apiKey = a.creds.GetAPIKey(cfg.Provider)
+	}
+	if apiKey == "" && cfg.APIKeyEnv != "" {
+		apiKey = os.Getenv(cfg.APIKeyEnv)
+	}
+	if apiKey == "" {
+		// Try default env var
+		apiKey = os.Getenv(config.DefaultAPIKeyEnv(cfg.Provider))
+	}
+
+	if apiKey == "" {
+		return nil, fmt.Errorf("no API key found for provider %s", cfg.Provider)
+	}
+
+	// Create provider config
+	providerCfg := llm.ProviderConfig{
+		Provider:  cfg.Provider,
+		Model:     cfg.Model,
+		APIKey:    apiKey,
+		MaxTokens: cfg.MaxTokens,
+		BaseURL:   cfg.BaseURL,
+	}
+
+	return llm.NewProvider(providerCfg)
+}
+
+// createToolRegistry creates a tool registry with standard tools.
+func (a *serviceAgent) createToolRegistry() *tools.Registry {
+	// Create registry with policy (builtins registered automatically)
+	reg := tools.NewRegistry(a.pol)
+
+	// Set workspace for file tools via the policy's workspace
+	// The registry uses policy.AllowedDirs for file access control
+
+	return reg
 }
 
 // initiateShutdown handles graceful shutdown.
@@ -311,10 +424,6 @@ func loadAgentfile(path string) (*agentfile.Workflow, error) {
 	return wf, nil
 }
 
-// TODO: Implement executor integration for service mode
-// This requires wiring up:
-// - LLM provider creation
-// - Tool registry setup
-// - Policy loading
-// - Session management
-// For now, the HTTP endpoints work but task execution returns a stub error.
+// Note: Service mode currently supports basic executor functionality.
+// Advanced features like MCP servers, memory, and telemetry require
+// additional setup that mirrors the full runtime initialization.
