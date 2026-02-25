@@ -300,30 +300,42 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage)
 func (a *serviceAgent) createProvider() (llm.Provider, error) {
 	cfg := a.cfg.LLM
 
-	// Get API key
-	apiKey := ""
-	if a.creds != nil {
-		apiKey = a.creds.GetAPIKey(cfg.Provider)
+	// Infer provider from model if not specified
+	provider := cfg.Provider
+	if provider == "" {
+		provider = llm.InferProviderFromModel(cfg.Model)
 	}
-	if apiKey == "" && cfg.APIKeyEnv != "" {
-		apiKey = os.Getenv(cfg.APIKeyEnv)
-	}
-	if apiKey == "" {
-		// Try default env var
-		apiKey = os.Getenv(config.DefaultAPIKeyEnv(cfg.Provider))
+	if provider == "" && cfg.Model == "" {
+		return nil, fmt.Errorf("LLM model not configured")
 	}
 
-	if apiKey == "" {
-		return nil, fmt.Errorf("no API key found for provider %s", cfg.Provider)
+	// Get credential (handles Claude CLI, OAuth, API keys, env vars)
+	var cred credentials.Credential
+	if a.creds != nil {
+		cred = a.creds.GetCredential(provider)
+	}
+
+	// If no credential from file, try env var
+	if cred.Key == "" && cfg.APIKeyEnv != "" {
+		cred.Key = os.Getenv(cfg.APIKeyEnv)
+	}
+	if cred.Key == "" {
+		// Try default env var
+		cred.Key = os.Getenv(config.DefaultAPIKeyEnv(provider))
+	}
+
+	if cred.Key == "" {
+		return nil, fmt.Errorf("no API key found for provider %s", provider)
 	}
 
 	// Create provider config
 	providerCfg := llm.ProviderConfig{
-		Provider:  cfg.Provider,
-		Model:     cfg.Model,
-		APIKey:    apiKey,
-		MaxTokens: cfg.MaxTokens,
-		BaseURL:   cfg.BaseURL,
+		Provider:     provider,
+		Model:        cfg.Model,
+		APIKey:       cred.Key,
+		IsOAuthToken: cred.IsOAuthToken,
+		MaxTokens:    cfg.MaxTokens,
+		BaseURL:      cfg.BaseURL,
 	}
 
 	return llm.NewProvider(providerCfg)
