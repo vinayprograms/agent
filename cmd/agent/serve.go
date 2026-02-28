@@ -279,8 +279,8 @@ func (a *serviceAgent) runBusMode() error {
 		a.queueGroup = a.capability.Name + "-workers"
 	}
 
-	// Subscribe to task queue
-	taskSubject := fmt.Sprintf("tasks.%s", a.capability.Name)
+	// Subscribe to task queue: work.<capability>.* (any task_id)
+	taskSubject := fmt.Sprintf("work.%s.*", a.capability.Name)
 	sub, err := natsBus.QueueSubscribe(taskSubject, a.queueGroup)
 	if err != nil {
 		return fmt.Errorf("subscribing to %s: %w", taskSubject, err)
@@ -348,10 +348,10 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 		return
 	}
 
-	// Determine result subject
+	// Determine result subject: done.<capability>.<task_id>
 	resultSubject := task.ReplyTo
 	if resultSubject == "" {
-		resultSubject = fmt.Sprintf("results.%s", task.TaskID)
+		resultSubject = fmt.Sprintf("done.%s.%s", a.capability.Name, task.TaskID)
 	}
 
 	if err := a.bus.Publish(resultSubject, resultData); err != nil {

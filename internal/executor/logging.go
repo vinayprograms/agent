@@ -162,14 +162,14 @@ func (e *Executor) logLLMCall(ctx context.Context, eventType string, messages []
 		TokensOut: resp.OutputTokens,
 	}
 
-	// Only log content in debug mode (PII protection)
+	// Content only logged in debug mode (PII/data protection)
 	var content string
 	if e.debug {
+		content = resp.Content
 		var promptParts []string
 		for _, msg := range messages {
 			promptParts = append(promptParts, fmt.Sprintf("[%s] %s", msg.Role, truncateForLog(msg.Content, 500)))
 		}
-		content = truncateForLog(resp.Content, 1000)
 		meta.Prompt = truncateForLog(fmt.Sprintf("%v", promptParts), 2000)
 		meta.Response = truncateForLog(resp.Content, 2000)
 		meta.Thinking = truncateForLog(resp.Thinking, 2000)
