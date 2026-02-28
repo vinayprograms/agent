@@ -127,8 +127,12 @@ type ServiceConfig struct {
 	// Default: "30s"
 	DrainTimeout string `toml:"drain_timeout"`
 
-	// Capability override. If empty, uses Agentfile NAME.
+	// Capability override. If empty, capabilities are inferred from Agentfile.
 	Capability string `toml:"capability"`
+
+	// Capabilities lists additional capability tags to merge with inferred ones.
+	// Uses dot-separated hierarchy (e.g., "code.golang", "test.unit").
+	Capabilities []string `toml:"capabilities"`
 }
 
 // New creates a new config with defaults.

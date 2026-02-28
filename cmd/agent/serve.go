@@ -16,7 +16,9 @@ import (
 	"github.com/vinayprograms/agentkit/bus"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/heartbeat"
+	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/registry"
+	"github.com/vinayprograms/agentkit/resume"
 	"github.com/vinayprograms/agentkit/tasks"
 )
 
@@ -29,6 +31,7 @@ type serviceAgent struct {
 	// Agent identity (uses session ID)
 	agentID    string
 	capability registry.CapabilitySchema
+	agentResume *resume.Resume
 
 	// Service-level session (shared across all tasks)
 	serviceRuntime *runtime
@@ -43,10 +46,12 @@ type serviceAgent struct {
 	httpServer *http.Server
 
 	// Bus mode components
-	bus         bus.MessageBus
-	heartbeat   *heartbeat.BusSender
-	taskSub     bus.Subscription
-	queueGroup  string
+	bus          bus.MessageBus
+	heartbeat    *heartbeat.BusSender
+	reg          registry.Registry
+	taskSubs     []bus.Subscription // work.<cap>.* subscriptions
+	discussSub   bus.Subscription   // discuss.* subscription
+	queueGroup   string
 }
 
 // Run executes the serve command.
@@ -247,6 +252,16 @@ func (a *serviceAgent) runBusMode() error {
 	a.bus = natsBus
 	defer natsBus.Close()
 
+	// Generate resume from Agentfile (infer capabilities)
+	if err := a.generateResume(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  Resume generation failed: %v (using fallback capability)\n", err)
+	}
+
+	// Register with NATS KV registry
+	if err := a.registerWithRegistry(natsBus); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  Registry registration failed: %v\n", err)
+	}
+
 	// Parse heartbeat interval
 	heartbeatInterval := 5 * time.Second
 	if a.wf.cfg.Service.HeartbeatInterval != "" {
@@ -268,6 +283,16 @@ func (a *serviceAgent) runBusMode() error {
 	a.heartbeat = hbSender
 	hbSender.SetMetadata("capability", a.capability.Name)
 	hbSender.SetMetadata("version", version)
+
+	// Add registry TTL touch to heartbeat callback
+	if a.reg != nil {
+		hbSender.SetCallback(func() {
+			if err := a.reg.Touch(a.agentID); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠️  Registry touch failed: %v\n", err)
+			}
+		})
+	}
+
 	if err := hbSender.Start(ctx); err != nil {
 		return fmt.Errorf("starting heartbeat: %w", err)
 	}
@@ -279,14 +304,31 @@ func (a *serviceAgent) runBusMode() error {
 		a.queueGroup = a.capability.Name + "-workers"
 	}
 
-	// Subscribe to task queue: work.<capability>.* (any task_id)
-	taskSubject := fmt.Sprintf("work.%s.*", a.capability.Name)
-	sub, err := natsBus.QueueSubscribe(taskSubject, a.queueGroup)
-	if err != nil {
-		return fmt.Errorf("subscribing to %s: %w", taskSubject, err)
+	// Subscribe to work topics for each capability (queue sub — one agent gets each task)
+	capabilities := a.getCapabilities()
+	for _, cap := range capabilities {
+		subject := fmt.Sprintf("work.%s.*", cap)
+		sub, err := natsBus.QueueSubscribe(subject, a.queueGroup)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Failed to subscribe to %s: %v\n", subject, err)
+			continue
+		}
+		a.taskSubs = append(a.taskSubs, sub)
 	}
-	a.taskSub = sub
-	defer sub.Unsubscribe()
+	defer func() {
+		for _, sub := range a.taskSubs {
+			sub.Unsubscribe()
+		}
+	}()
+
+	// Subscribe to discuss.* (regular sub — all agents see all messages)
+	discussSub, err := natsBus.Subscribe("discuss.*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  Failed to subscribe to discuss.*: %v\n", err)
+	} else {
+		a.discussSub = discussSub
+		defer discussSub.Unsubscribe()
+	}
 
 	// Handle shutdown signals
 	sigCh := make(chan os.Signal, 1)
@@ -294,25 +336,194 @@ func (a *serviceAgent) runBusMode() error {
 
 	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s)\n", a.capability.Name, a.agentID)
 	fmt.Fprintf(os.Stderr, "Connected to bus: %s\n", a.wf.cfg.Service.BusURL)
-	fmt.Fprintf(os.Stderr, "Listening on: %s (queue: %s)\n", taskSubject, a.queueGroup)
+	for _, cap := range capabilities {
+		fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (queue: %s)\n", cap, a.queueGroup)
+	}
+	fmt.Fprintf(os.Stderr, "Listening on: discuss.* (collaborative)\n")
 	fmt.Fprintf(os.Stderr, "Heartbeat interval: %s\n", heartbeatInterval)
 
-	// Main loop
+	// Main loop — multiplex work and discuss channels
+	a.runMainLoop(ctx, sigCh)
+	return nil
+}
+
+// runMainLoop multiplexes work and discuss subscriptions.
+func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
+	// Merge all work subscription channels
+	workCh := make(chan *bus.Message, 16)
+	for _, sub := range a.taskSubs {
+		go func(s bus.Subscription) {
+			for msg := range s.Messages() {
+				workCh <- msg
+			}
+		}(sub)
+	}
+
+	// Discuss channel
+	var discussCh <-chan *bus.Message
+	if a.discussSub != nil {
+		discussCh = a.discussSub.Messages()
+	}
+
 	for {
 		select {
 		case <-sigCh:
 			fmt.Fprintf(os.Stderr, "\nReceived shutdown signal, draining...\n")
 			a.initiateBusShutdown(ctx)
-			return nil
+			return
 
-		case msg, ok := <-sub.Messages():
+		case msg, ok := <-workCh:
 			if !ok {
-				// Subscription closed
-				return nil
+				return
 			}
 			a.handleBusTask(ctx, msg)
+
+		case msg, ok := <-discussCh:
+			if !ok {
+				discussCh = nil
+				continue
+			}
+			a.handleDiscussMessage(ctx, msg)
 		}
 	}
+}
+
+// generateResume infers capabilities from the Agentfile via small LLM.
+func (a *serviceAgent) generateResume(ctx context.Context) error {
+	// Build AgentfileInfo from parsed workflow
+	af := resume.AgentfileInfo{
+		Name: a.wf.wf.Name,
+	}
+	for _, goal := range a.wf.wf.Goals {
+		af.Goals = append(af.Goals, resume.GoalInfo{
+			Name:        goal.Name,
+			Description: goal.Outcome,
+			Outputs:     goal.Outputs,
+		})
+	}
+	for _, input := range a.wf.wf.Inputs {
+		af.Inputs = append(af.Inputs, resume.InputInfo{
+			Name:    input.Name,
+			Default: input.Default,
+		})
+	}
+
+	// Collect tool names from executor
+	var tools []string
+	// Tools are available from the workflow config, not the executor directly
+	// For now, leave empty — the LLM infers capabilities from goals primarily
+
+	// Use small LLM for inference if available
+	var resumeLLM resume.LLM
+	if a.serviceRuntime != nil && a.serviceRuntime.smallLLM != nil {
+		resumeLLM = &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
+	}
+
+	if resumeLLM != nil {
+		r, err := resume.GenerateFromAgentfile(ctx, a.agentID, af, tools, resumeLLM)
+		if err != nil {
+			return err
+		}
+		a.agentResume = r
+		fmt.Fprintf(os.Stderr, "📋 Resume: %s — %s\n", r.Name, r.Description)
+		fmt.Fprintf(os.Stderr, "   Capabilities: %v\n", r.Capabilities)
+	}
+
+	return nil
+}
+
+// registerWithRegistry registers the agent's resume with NATS KV.
+func (a *serviceAgent) registerWithRegistry(natsBus *bus.NATSBus) error {
+	conn := natsBus.Conn()
+	if conn == nil {
+		return fmt.Errorf("no NATS connection")
+	}
+
+	regCfg := registry.DefaultNATSRegistryConfig()
+	natsReg, err := registry.NewNATSRegistry(conn, regCfg)
+	if err != nil {
+		return fmt.Errorf("creating registry: %w", err)
+	}
+	a.reg = natsReg
+
+	// Build agent info for registry
+	info := registry.AgentInfo{
+		ID:           a.agentID,
+		Name:         a.capability.Name,
+		Capabilities: a.getCapabilities(),
+		Status:       registry.StatusIdle,
+		Load:         0,
+		Metadata:     map[string]string{"version": version},
+	}
+
+	// Attach embedding if resume has one
+	if a.agentResume != nil && len(a.agentResume.Embedding) > 0 {
+		info.Embedding = a.agentResume.Embedding
+	}
+
+	if err := natsReg.Register(info); err != nil {
+		return fmt.Errorf("registering agent: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "📝 Registered with NATS KV registry\n")
+	return nil
+}
+
+// getCapabilities returns the merged list of inferred + configured capabilities.
+func (a *serviceAgent) getCapabilities() []string {
+	seen := make(map[string]bool)
+	var caps []string
+
+	// Inferred capabilities from resume
+	if a.agentResume != nil {
+		for _, c := range a.agentResume.Capabilities {
+			if !seen[c] {
+				seen[c] = true
+				caps = append(caps, c)
+			}
+		}
+	}
+
+	// Extra capabilities from config
+	for _, c := range a.wf.cfg.Service.Capabilities {
+		if !seen[c] {
+			seen[c] = true
+			caps = append(caps, c)
+		}
+	}
+
+	// Fallback: use capability name if nothing inferred
+	if len(caps) == 0 {
+		caps = []string{a.capability.Name}
+	}
+
+	return caps
+}
+
+// handleDiscussMessage processes a message from the discuss.* topic.
+func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Message) {
+	// Parse the message
+	task, err := tasks.UnmarshalTaskMessage(msg.Data)
+	if err != nil {
+		return // Skip malformed
+	}
+
+	// Filter own messages — don't react to our own broadcasts
+	if task.SubmittedBy == a.agentID {
+		return
+	}
+
+	// Check if task metadata has agent_id matching ours
+	if task.Metadata != nil && task.Metadata["agent_id"] == a.agentID {
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "  💬 Discussion message: %s\n", task.TaskID)
+
+	// TODO: Embedding pre-filter — skip if low similarity to our resume
+	// TODO: Small LLM triage — decide: comment / execute / wait
+	// For now, execute the task as if it were a work item (MVP behavior)
+	a.handleBusTask(ctx, msg)
 }
 
 // handleBusTask processes a task received from the bus.
@@ -376,9 +587,21 @@ func (a *serviceAgent) initiateBusShutdown(ctx context.Context) {
 		a.heartbeat.SetStatus("draining")
 	}
 
+	// Deregister from NATS KV registry
+	if a.reg != nil {
+		if err := a.reg.Deregister(a.agentID); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Registry deregister failed: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "📝 Deregistered from registry\n")
+		}
+	}
+
 	// Unsubscribe to stop receiving new tasks
-	if a.taskSub != nil {
-		a.taskSub.Unsubscribe()
+	for _, sub := range a.taskSubs {
+		sub.Unsubscribe()
+	}
+	if a.discussSub != nil {
+		a.discussSub.Unsubscribe()
 	}
 
 	// Wait for current task to complete (with timeout)
@@ -496,4 +719,22 @@ func generateShortID() string {
 		return fmt.Sprintf("%08x", time.Now().UnixNano()&0xFFFFFFFF)
 	}
 	return hex.EncodeToString(b)
+}
+
+// smallLLMAdapter adapts agentkit's llm.Provider to resume.LLM interface.
+type smallLLMAdapter struct {
+	provider llm.Provider
+}
+
+func (a *smallLLMAdapter) Complete(ctx context.Context, prompt string) (string, error) {
+	resp, err := a.provider.Chat(ctx, llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens: 1024,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
 }
