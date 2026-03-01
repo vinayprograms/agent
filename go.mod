@@ -11,7 +11,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/joho/godotenv v1.5.1
 	github.com/muesli/reflow v0.3.0
-	github.com/vinayprograms/agentkit v0.1.1-0.20260228231512-7ce3e17cbfef
+	github.com/vinayprograms/agentkit v0.1.1-0.20260301013701-362e2e4b3267
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/trace v1.40.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -77,7 +77,7 @@ require (
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
-	github.com/nats-io/nats.go v1.48.0 // indirect
+	github.com/nats-io/nats.go v1.49.0 // indirect
 	github.com/nats-io/nkeys v0.4.12 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/openai/openai-go v1.12.0 // indirect
