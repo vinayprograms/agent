@@ -32,6 +32,8 @@ type CLI struct {
 	Down         DownCmd         `cmd:"" help:"Stop swarm agents"`
 	Restart      RestartCmd      `cmd:"" help:"Restart swarm agents"`
 	UI           UICmd           `cmd:"" help:"Interactive TUI dashboard"`
+	Replay       ReplayCmd       `cmd:"" help:"Replay task execution"`
+	Chain        ChainCmd        `cmd:"" help:"Chain tasks through multiple agents"`
 }
 
 type StatusCmd struct{}
@@ -62,6 +64,13 @@ type RestartCmd struct {
 	Agents []string `arg:"" optional:"" help:"Specific agents to restart (default: all)"`
 }
 type UICmd struct{}
+type ReplayCmd struct {
+	TaskID string `arg:"" help:"Task ID to replay"`
+	Web    bool   `name:"web" short:"w" help:"Generate HTML and open in browser"`
+}
+type ChainCmd struct {
+	Spec string `arg:"" help:"Chain spec: <cap1> \"<task>\" -> <cap2> -> ..."`
+}
 
 func main() {
 	cli := &CLI{}
@@ -574,6 +583,137 @@ func (u *UICmd) Run(a *app) error {
 	p := tea.NewProgram(newTUIModel(a.natsURL), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
+}
+
+func (r *ReplayCmd) Run(a *app) error {
+	if r.Web {
+		return replayWeb(r.TaskID)
+	}
+	return replayTask(r.TaskID)
+}
+
+func (c *ChainCmd) Run(a *app) error {
+	// Parse chain spec: <cap1> "task" -> <cap2> -> <cap3>
+	// Split on " -> " to get stages
+	parts := strings.Split(c.Spec, " -> ")
+	if len(parts) < 2 {
+		return fmt.Errorf("chain requires at least 2 stages: <cap1> \"<task>\" -> <cap2>")
+	}
+
+	// First stage: capability + task
+	first := parts[0]
+	// Parse: capability "task"
+	firstParts := strings.Fields(first)
+	if len(firstParts) < 2 {
+		return fmt.Errorf("first stage must be: <capability> \"<task>\"")
+	}
+	capability := firstParts[0]
+	task := strings.Join(firstParts[1:], " ")
+	task = strings.Trim(task, "\"")
+
+	nc, err := a.connect()
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	db, err := a.db()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	prevOutput := task
+	for i, stage := range parts {
+		var cap string
+		if i == 0 {
+			cap = capability
+		} else {
+			cap = strings.TrimSpace(stage)
+		}
+
+		fmt.Printf("Stage %d: %s\n", i+1, cap)
+
+		taskID := fmt.Sprintf("t-%s", uuid.New().String()[:8])
+		inputs := map[string]string{"task": prevOutput}
+
+		tm := tasks.TaskMessage{
+			TaskID:     taskID,
+			Capability: cap,
+			Inputs:     inputs,
+			Attempt:    1,
+		}
+
+		data, err := tm.Marshal()
+		if err != nil {
+			return fmt.Errorf("marshal task: %w", err)
+		}
+
+		subject := fmt.Sprintf("work.%s.%s", cap, taskID)
+		if err := nc.Publish(subject, data); err != nil {
+			return fmt.Errorf("publish: %w", err)
+		}
+
+		if err := db.InsertTask(&tm, "pending"); err != nil {
+			return err
+		}
+
+		// Wait for result
+		sub, err := nc.SubscribeSync(fmt.Sprintf("done.%s.%s", cap, taskID))
+		if err != nil {
+			return fmt.Errorf("subscribe: %w", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		msg, err := sub.NextMsgWithContext(ctx)
+		cancel()
+		sub.Unsubscribe()
+
+		if err != nil {
+			return fmt.Errorf("timeout waiting for stage %d: %w", i+1, err)
+		}
+
+		var result tasks.TaskResult
+		if err := json.Unmarshal(msg.Data, &result); err != nil {
+			return fmt.Errorf("parse result: %w", err)
+		}
+
+		if result.Status == tasks.ResultFailed {
+			return fmt.Errorf("stage %d failed: %s", i+1, result.Error)
+		}
+
+		// Convert outputs to string for next stage
+		if result.Outputs != nil {
+			switch v := result.Outputs.(type) {
+			case string:
+				prevOutput = v
+			case map[string]interface{}:
+				if t, ok := v["task"].(string); ok {
+					prevOutput = t
+				} else {
+					b, _ := json.Marshal(v)
+					prevOutput = string(b)
+				}
+			default:
+				b, _ := json.Marshal(v)
+				prevOutput = string(b)
+			}
+		}
+
+		fmt.Printf("  ✓ %s: %s\n", taskID, truncate(prevOutput, 60))
+	}
+
+	fmt.Println("\nChain complete.")
+	fmt.Println("Final output:")
+	fmt.Println(prevOutput)
+	return nil
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
 
 // taskDB provides SQLite persistence for task history.
