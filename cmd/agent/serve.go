@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -53,6 +54,7 @@ type serviceAgent struct {
 	taskSubs     []bus.Subscription // work.<cap>.* subscriptions
 	discussSub   bus.Subscription   // discuss.* subscription
 	queueGroup   string
+	embedder     embedding.Embedder // for discuss pre-filter
 }
 
 // Run executes the serve command.
@@ -468,6 +470,9 @@ func (a *serviceAgent) embedResume(ctx context.Context) error {
 		return fmt.Errorf("embedding resume: %w", err)
 	}
 
+	// Store embedder for discuss pre-filter
+	a.embedder = embedder
+
 	fmt.Fprintf(os.Stderr, "🧮 Resume embedded (%d dimensions)\n", len(a.agentResume.Embedding))
 	return nil
 }
@@ -540,30 +545,158 @@ func (a *serviceAgent) getCapabilities() []string {
 	return caps
 }
 
+// Minimum cosine similarity for a discuss message to pass embedding pre-filter.
+const discussSimilarityThreshold = 0.3
+
 // handleDiscussMessage processes a message from the discuss.* topic.
+// Round 1: Embedding pre-filter (fast, cheap — skip irrelevant messages).
+// Round 2: Small LLM triage (decide: execute, comment, or skip).
 func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Message) {
-	// Parse the message
 	task, err := tasks.UnmarshalTaskMessage(msg.Data)
 	if err != nil {
-		return // Skip malformed
-	}
-
-	// Filter own messages — don't react to our own broadcasts
-	if task.SubmittedBy == a.agentID {
 		return
 	}
 
-	// Check if task metadata has agent_id matching ours
+	// Filter own messages
+	if task.SubmittedBy == a.agentID {
+		return
+	}
 	if task.Metadata != nil && task.Metadata["agent_id"] == a.agentID {
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "  💬 Discussion message: %s\n", task.TaskID)
+	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
 
-	// TODO: Embedding pre-filter — skip if low similarity to our resume
-	// TODO: Small LLM triage — decide: comment / execute / wait
-	// For now, execute the task as if it were a work item (MVP behavior)
-	a.handleBusTask(ctx, msg)
+	// --- Round 1: Embedding pre-filter ---
+	if !a.discussEmbeddingFilter(ctx, task) {
+		return
+	}
+
+	// --- Round 2: Small LLM triage ---
+	decision := a.discussLLMTriage(ctx, task)
+	switch decision {
+	case "EXECUTE":
+		fmt.Fprintf(os.Stderr, "  💬 Decision: EXECUTE — taking task %s\n", task.TaskID)
+		a.handleBusTask(ctx, msg)
+	case "COMMENT":
+		fmt.Fprintf(os.Stderr, "  💬 Decision: COMMENT — contributing to %s\n", task.TaskID)
+		a.publishDiscussComment(ctx, task)
+	default:
+		fmt.Fprintf(os.Stderr, "  💬 Decision: SKIP — not relevant to %s\n", a.capability.Name)
+	}
+}
+
+// discussEmbeddingFilter checks if a discuss message is semantically relevant
+// to this agent's resume. Returns true if relevant (or if embedding is unavailable).
+func (a *serviceAgent) discussEmbeddingFilter(ctx context.Context, task *tasks.TaskMessage) bool {
+	// Skip filter if no embedder or no resume embedding
+	if a.embedder == nil || a.agentResume == nil || len(a.agentResume.Embedding) == 0 {
+		return true // Can't filter — pass through to round 2
+	}
+
+	// Build task text for embedding
+	taskText := buildTaskText(task)
+
+	// Embed the task
+	taskVec, err := a.embedder.Embed(ctx, taskText)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠️  Embedding failed: %v (passing to round 2)\n", err)
+		return true // Fail open to round 2
+	}
+
+	score := resume.CosineSimilarity(a.agentResume.Embedding, taskVec)
+	fmt.Fprintf(os.Stderr, "  🧮 Similarity: %.3f (threshold: %.3f)\n", score, discussSimilarityThreshold)
+
+	if score < discussSimilarityThreshold {
+		fmt.Fprintf(os.Stderr, "  💬 Filtered: low relevance to %s\n", a.capability.Name)
+		return false
+	}
+	return true
+}
+
+// discussLLMTriage asks the small LLM whether this agent should execute,
+// comment on, or skip a discuss message.
+func (a *serviceAgent) discussLLMTriage(ctx context.Context, task *tasks.TaskMessage) string {
+	if a.serviceRuntime == nil || a.serviceRuntime.smallLLM == nil {
+		return "EXECUTE" // No LLM available — default to execute
+	}
+
+	taskText := buildTaskText(task)
+
+	// Build resume summary
+	resumeSummary := a.capability.Name
+	if a.agentResume != nil {
+		resumeSummary = a.agentResume.ToText()
+	}
+
+	prompt := fmt.Sprintf(`You are deciding whether an agent should act on a collaborative task.
+
+AGENT PROFILE:
+%s
+
+TASK:
+%s
+
+Decide the agent's action. Reply with exactly one word:
+- EXECUTE — this task matches the agent's capabilities and the agent should do the work
+- COMMENT — the agent has relevant expertise to contribute insights but should not do the full task
+- SKIP — this task is outside the agent's expertise
+
+Your answer:`, resumeSummary, taskText)
+
+	llm := &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
+	resp, err := llm.Complete(ctx, prompt)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠️  Triage LLM failed: %v (defaulting to SKIP)\n", err)
+		return "SKIP" // Fail closed — don't execute on LLM error
+	}
+
+	// Parse response — first word only
+	decision := strings.ToUpper(strings.TrimSpace(strings.SplitN(resp, "\n", 2)[0]))
+	switch decision {
+	case "EXECUTE", "COMMENT", "SKIP":
+		return decision
+	default:
+		fmt.Fprintf(os.Stderr, "  ⚠️  Unclear triage response: %q (defaulting to SKIP)\n", resp)
+		return "SKIP"
+	}
+}
+
+// publishDiscussComment runs the agent on the task but publishes the result
+// as a comment on the discuss topic (not as a done.* result).
+func (a *serviceAgent) publishDiscussComment(ctx context.Context, task *tasks.TaskMessage) {
+	result := a.executeTask(ctx, task)
+
+	resultData, err := result.Marshal()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Failed to marshal comment: %v\n", err)
+		return
+	}
+
+	// Publish comment back to the discuss topic
+	replyTo := task.ReplyTo
+	if replyTo == "" {
+		replyTo = fmt.Sprintf("discuss.%s", task.TaskID)
+	}
+
+	if err := a.bus.Publish(replyTo, resultData); err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Failed to publish comment: %v\n", err)
+	}
+}
+
+// buildTaskText extracts a readable text representation from a task message.
+func buildTaskText(task *tasks.TaskMessage) string {
+	parts := []string{}
+	if task.Capability != "" {
+		parts = append(parts, "Capability: "+task.Capability)
+	}
+	for k, v := range task.Inputs {
+		parts = append(parts, k+": "+v)
+	}
+	if len(parts) == 0 {
+		return task.TaskID
+	}
+	return strings.Join(parts, "\n")
 }
 
 // handleBusTask processes a task received from the bus.
