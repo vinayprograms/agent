@@ -31,12 +31,9 @@ swarm detects failed/abandoned tasks and resubmits:
 - Exponential backoff between retries
 - Dead letter queue for permanently failed tasks
 
-### Rewind
+## Explicitly Out of Scope: Rewind
 
-Roll back to a previous checkpoint within a multi-goal workflow:
-- Requires goal-level checkpointing (already exists in supervision system)
-- swarm could trigger rewind to specific goal
-- Complex interaction with side effects from tools
+Rewinding a single agent mid-execution is not viable in a swarm context. Other agents may have already consumed the rewound agent's output, creating cascading inconsistency. The correct failure recovery is retry from scratch (idempotent resubmission).
 
 ## Priority
 
