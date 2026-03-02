@@ -1,15 +1,21 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
-	"github.com/vinayprograms/agentkit/registry"
+	"github.com/vinayprograms/agentkit/tasks"
 )
 
 type CLI struct {
@@ -18,11 +24,28 @@ type CLI struct {
 	Status       StatusCmd       `cmd:"" help:"Show swarm status"`
 	Agents       AgentsCmd       `cmd:"" help:"List registered agents"`
 	Capabilities CapabilitiesCmd `cmd:"" help:"List capabilities in swarm"`
+	Submit       SubmitCmd       `cmd:"" help:"Submit a task to an agent"`
+	Result       ResultCmd       `cmd:"" help:"Get result for a task"`
+	History      HistoryCmd      `cmd:"" help:"Show recent tasks"`
 }
 
 type StatusCmd struct{}
 type AgentsCmd struct{}
 type CapabilitiesCmd struct{}
+type SubmitCmd struct {
+	Capability string `arg:"" help:"Capability to route task to"`
+	Task       string `arg:"" help:"Task description or JSON" json:"-"`
+	File       string `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
+}
+type ResultCmd struct {
+	TaskID string `arg:"" help:"Task ID to fetch result for"`
+	Wait   bool   `name:"wait" short:"w" help:"Wait for result if not ready"`
+}
+type HistoryCmd struct {
+	Capability string `name:"capability" short:"c" help:"Filter by capability"`
+	Status     string `name:"status" short:"s" help:"Filter by status (pending, running, success, failed)"`
+	Limit      int    `name:"limit" short:"l" help:"Max results" default:"20"`
+}
 
 func main() {
 	cli := &CLI{}
@@ -31,119 +54,514 @@ func main() {
 		kong.Description("Personal swarm controller"),
 	)
 
-	err := ctx.Run(&runContext{natsURL: cli.NATSURL})
+	home, _ := os.UserHomeDir()
+	app := &app{
+		natsURL:   cli.NATSURL,
+		configDir: filepath.Join(home, ".config", "swarm"),
+		dataDir:   filepath.Join(home, ".local", "share", "swarm"),
+	}
+
+	err := ctx.Run(app)
 	ctx.FatalIfErrorf(err)
 }
 
-type runContext struct {
-	natsURL string
+type app struct {
+	natsURL   string
+	configDir string
+	dataDir   string
 }
 
-func (c *runContext) withRegistry(fn func(reg registry.Registry) error) error {
-	nc, err := nats.Connect(c.natsURL)
+func (a *app) connect() (*nats.Conn, error) {
+	nc, err := nats.Connect(a.natsURL)
 	if err != nil {
-		return fmt.Errorf("connect nats: %w", err)
+		return nil, fmt.Errorf("connect nats: %w", err)
+	}
+	return nc, nil
+}
+
+func (a *app) db() (*taskDB, error) {
+	if err := os.MkdirAll(a.dataDir, 0755); err != nil {
+		return nil, err
+	}
+	return openTaskDB(filepath.Join(a.dataDir, "swarm.db"))
+}
+
+func (s *StatusCmd) Run(a *app) error {
+	nc, err := a.connect()
+	if err != nil {
+		return err
 	}
 	defer nc.Close()
 
-	reg, err := registry.NewNATSRegistry(nc, registry.DefaultNATSRegistryConfig())
+	// Check NATS status
+	fmt.Printf("NATS: %s\n", a.natsURL)
+	if !nc.IsConnected() {
+		fmt.Println("Status: disconnected")
+		return nil
+	}
+	fmt.Println("Status: connected")
+
+	// Get task stats
+	db, err := a.db()
 	if err != nil {
-		return fmt.Errorf("create registry: %w", err)
+		return err
 	}
-	defer reg.Close()
+	defer db.Close()
 
-	return fn(reg)
-}
-
-func (s *StatusCmd) Run(rc *runContext) error {
-	return rc.withRegistry(func(reg registry.Registry) error {
-		agents, err := reg.List(nil)
-		if err != nil {
-			return err
-		}
-
-		var idle, busy, running, stopping int
-		capSet := map[string]struct{}{}
-		now := time.Now()
-		for _, a := range agents {
-			switch a.Status {
-			case registry.StatusIdle:
-				idle++
-			case registry.StatusBusy:
-				busy++
-			case registry.StatusRunning:
-				running++
-			case registry.StatusStopping:
-				stopping++
-			}
-			for _, cap := range a.Capabilities {
-				capSet[cap] = struct{}{}
-			}
-			_ = now.Sub(a.LastSeen)
-		}
-
-		fmt.Printf("NATS: %s\n", rc.natsURL)
-		fmt.Printf("Agents: %d (idle=%d busy=%d running=%d stopping=%d)\n", len(agents), idle, busy, running, stopping)
-		fmt.Printf("Capabilities: %d\n", len(capSet))
-		return nil
-	})
-}
-
-func (a *AgentsCmd) Run(rc *runContext) error {
-	return rc.withRegistry(func(reg registry.Registry) error {
-		agents, err := reg.List(nil)
-		if err != nil {
-			return err
-		}
-		sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
-
-		if len(agents) == 0 {
-			fmt.Println("No agents registered")
-			return nil
-		}
-
-		for _, ag := range agents {
-			caps := strings.Join(ag.Capabilities, ",")
-			age := time.Since(ag.LastSeen).Round(time.Second)
-			fmt.Printf("%s\t%s\tload=%.2f\tlast_seen=%s\tcaps=%s\n", ag.ID, ag.Status, ag.Load, age, caps)
-		}
-		return nil
-	})
-}
-
-func (c *CapabilitiesCmd) Run(rc *runContext) error {
-	return rc.withRegistry(func(reg registry.Registry) error {
-		agents, err := reg.List(nil)
-		if err != nil {
-			return err
-		}
-
-		counts := map[string]int{}
-		for _, ag := range agents {
-			for _, cap := range ag.Capabilities {
-				counts[cap]++
-			}
-		}
-
-		if len(counts) == 0 {
-			fmt.Println("No capabilities found")
-			return nil
-		}
-
-		caps := make([]string, 0, len(counts))
-		for cap := range counts {
-			caps = append(caps, cap)
-		}
-		sort.Strings(caps)
-		for _, cap := range caps {
-			fmt.Printf("%s\t(%d agents)\n", cap, counts[cap])
-		}
-		return nil
-	})
-}
-
-func init() {
-	if os.Getenv("SWARM_DEBUG") != "" {
-		fmt.Fprintln(os.Stderr, "swarm debug enabled")
+	stats, err := db.Stats()
+	if err != nil {
+		return err
 	}
+
+	fmt.Printf("Tasks: %d total (%d success, %d failed, %d pending, %d running)\n",
+		stats.Total, stats.Success, stats.Failed, stats.Pending, stats.Running)
+	return nil
+}
+
+func (a *AgentsCmd) Run(app *app) error {
+	nc, err := app.connect()
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	// Subscribe to heartbeats briefly
+	sub, err := nc.SubscribeSync("heartbeat.>")
+	if err != nil {
+		return fmt.Errorf("subscribe: %w", err)
+	}
+	defer sub.Unsubscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	type agentInfo struct {
+		id     string
+		status string
+		load   float64
+		caps   []string
+	}
+	agents := map[string]*agentInfo{}
+
+	for {
+		msg, err := sub.NextMsgWithContext(ctx)
+		if err != nil {
+			break
+		}
+		var hb struct {
+			AgentID      string   `json:"agent_id"`
+			Status       string   `json:"status"`
+			Load         float64  `json:"load"`
+			Capabilities []string `json:"capabilities"`
+		}
+		if err := json.Unmarshal(msg.Data, &hb); err != nil {
+			continue
+		}
+		agents[hb.AgentID] = &agentInfo{
+			id:     hb.AgentID,
+			status: hb.Status,
+			load:   hb.Load,
+			caps:   hb.Capabilities,
+		}
+	}
+
+	if len(agents) == 0 {
+		fmt.Println("No agents discovered (wait 2s for heartbeats)")
+		return nil
+	}
+
+	ids := make([]string, 0, len(agents))
+	for id := range agents {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	for _, id := range ids {
+		ag := agents[id]
+		caps := strings.Join(ag.caps, ",")
+		fmt.Printf("%s\t%s\tload=%.2f\tcaps=%s\n", id, ag.status, ag.load, caps)
+	}
+	return nil
+}
+
+func (c *CapabilitiesCmd) Run(a *app) error {
+	nc, err := a.connect()
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	sub, err := nc.SubscribeSync("heartbeat.>")
+	if err != nil {
+		return err
+	}
+	defer sub.Unsubscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	capSet := map[string]int{}
+	for {
+		msg, err := sub.NextMsgWithContext(ctx)
+		if err != nil {
+			break
+		}
+		var hb struct {
+			Capabilities []string `json:"capabilities"`
+		}
+		if err := json.Unmarshal(msg.Data, &hb); err != nil {
+			continue
+		}
+		for _, cap := range hb.Capabilities {
+			capSet[cap]++
+		}
+	}
+
+	if len(capSet) == 0 {
+		fmt.Println("No capabilities discovered")
+		return nil
+	}
+
+	caps := make([]string, 0, len(capSet))
+	for cap := range capSet {
+		caps = append(caps, cap)
+	}
+	sort.Strings(caps)
+	for _, cap := range caps {
+		fmt.Printf("%s\t(%d agents)\n", cap, capSet[cap])
+	}
+	return nil
+}
+
+func (s *SubmitCmd) Run(a *app) error {
+	nc, err := a.connect()
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	taskID := fmt.Sprintf("t-%s", uuid.New().String()[:8])
+
+	inputs := map[string]string{}
+	if s.File != "" {
+		data, err := os.ReadFile(s.File)
+		if err != nil {
+			return fmt.Errorf("read file: %w", err)
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("parse json: %w", err)
+		}
+		// Convert to string map
+		for k, v := range raw {
+			switch val := v.(type) {
+			case string:
+				inputs[k] = val
+			default:
+				b, _ := json.Marshal(val)
+				inputs[k] = string(b)
+			}
+		}
+	} else if s.Task != "" {
+		// Try parse as JSON, else use as "task" field
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(s.Task), &raw); err != nil {
+			inputs["task"] = s.Task
+		} else {
+			for k, v := range raw {
+				switch val := v.(type) {
+				case string:
+					inputs[k] = val
+				default:
+					b, _ := json.Marshal(val)
+					inputs[k] = string(b)
+				}
+			}
+		}
+	}
+
+	task := tasks.TaskMessage{
+		TaskID:     taskID,
+		Capability: s.Capability,
+		Inputs:     inputs,
+		Attempt:    1,
+	}
+
+	data, err := task.Marshal()
+	if err != nil {
+		return fmt.Errorf("marshal task: %w", err)
+	}
+
+	subject := fmt.Sprintf("work.%s.%s", s.Capability, taskID)
+	if err := nc.Publish(subject, data); err != nil {
+		return fmt.Errorf("publish: %w", err)
+	}
+
+	// Record in DB
+	db, err := a.db()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if err := db.InsertTask(&task, "pending"); err != nil {
+		return err
+	}
+
+	fmt.Println(taskID)
+	return nil
+}
+
+func (r *ResultCmd) Run(a *app) error {
+	nc, err := a.connect()
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	db, err := a.db()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Check DB first
+	res, err := db.GetResult(r.TaskID)
+	if err == nil && res != nil {
+		return printResult(res)
+	}
+
+	if !r.Wait {
+		return fmt.Errorf("task %s not found or not complete (use --wait)", r.TaskID)
+	}
+
+	// Wait for result on done.* subject
+	sub, err := nc.SubscribeSync(fmt.Sprintf("done.*.%s", r.TaskID))
+	if err != nil {
+		return err
+	}
+	defer sub.Unsubscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	msg, err := sub.NextMsgWithContext(ctx)
+	if err != nil {
+		return fmt.Errorf("timeout waiting for result: %w", err)
+	}
+
+	var result tasks.TaskResult
+	if err := json.Unmarshal(msg.Data, &result); err != nil {
+		return fmt.Errorf("parse result: %w", err)
+	}
+
+	// Save to DB
+	if err := db.UpdateResult(&result); err != nil {
+		return err
+	}
+
+	return printResult(&result)
+}
+
+func printResult(r *tasks.TaskResult) error {
+	output := struct {
+		TaskID     string      `json:"task_id"`
+		Status     string      `json:"status"`
+		Outputs    interface{} `json:"outputs,omitempty"`
+		Error      string      `json:"error,omitempty"`
+		DurationMs int64       `json:"duration_ms"`
+	}{
+		TaskID:     r.TaskID,
+		Status:     string(r.Status),
+		Outputs:    r.Outputs,
+		Error:      r.Error,
+		DurationMs: r.DurationMs,
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(output)
+}
+
+func (h *HistoryCmd) Run(a *app) error {
+	db, err := a.db()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	tasks, err := db.ListTasks(h.Capability, h.Status, h.Limit)
+	if err != nil {
+		return err
+	}
+
+	if len(tasks) == 0 {
+		fmt.Println("No tasks found")
+		return nil
+	}
+
+	for _, t := range tasks {
+		fmt.Printf("%s\t%s\t%s\t%s\n", t.TaskID, t.Capability, t.Status, t.CreatedAt.Format("2006-01-02 15:04"))
+	}
+	return nil
+}
+
+// taskDB provides SQLite persistence for task history.
+type taskDB struct {
+	dbPath string
+}
+
+type taskRecord struct {
+	TaskID     string
+	Capability string
+	Status     string
+	CreatedAt  time.Time
+	DurationMs int64
+}
+
+type taskStats struct {
+	Total   int
+	Success int
+	Failed  int
+	Pending int
+	Running int
+}
+
+func openTaskDB(path string) (*taskDB, error) {
+	// Use modernc.org/sqlite (CGO-free) if available, else skip persistence
+	// For now, use a simple JSON file approach
+	return &taskDB{dbPath: path}, nil
+}
+
+func (d *taskDB) Close() error { return nil }
+
+func (d *taskDB) InsertTask(task *tasks.TaskMessage, status string) error {
+	// Simple JSON append for now - will migrate to SQLite
+	records := d.loadRecords()
+	records = append(records, taskRecord{
+		TaskID:     task.TaskID,
+		Capability: task.Capability,
+		Status:     status,
+		CreatedAt:  time.Now(),
+	})
+	return d.saveRecords(records)
+}
+
+func (d *taskDB) UpdateResult(result *tasks.TaskResult) error {
+	records := d.loadRecords()
+	for i, r := range records {
+		if r.TaskID == result.TaskID {
+			records[i].Status = string(result.Status)
+			records[i].DurationMs = result.DurationMs
+			break
+		}
+	}
+	return d.saveRecords(records)
+}
+
+func (d *taskDB) GetResult(taskID string) (*tasks.TaskResult, error) {
+	// Check result files
+	resultDir := filepath.Join(filepath.Dir(d.dbPath), "tasks")
+	data, err := os.ReadFile(filepath.Join(resultDir, taskID+".json"))
+	if err != nil {
+		return nil, err
+	}
+	var res tasks.TaskResult
+	if err := json.Unmarshal(data, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (d *taskDB) ListTasks(capability, status string, limit int) ([]taskRecord, error) {
+	records := d.loadRecords()
+
+	// Filter
+	filtered := make([]taskRecord, 0)
+	for _, r := range records {
+		if capability != "" && r.Capability != capability {
+			continue
+		}
+		if status != "" && r.Status != status {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+
+	// Sort by created desc
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
+
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered, nil
+}
+
+func (d *taskDB) Stats() (taskStats, error) {
+	records := d.loadRecords()
+	var s taskStats
+	for _, r := range records {
+		s.Total++
+		switch r.Status {
+		case "success":
+			s.Success++
+		case "failed":
+			s.Failed++
+		case "pending":
+			s.Pending++
+		case "running":
+			s.Running++
+		}
+	}
+	return s, nil
+}
+
+func (d *taskDB) loadRecords() []taskRecord {
+	recordsPath := filepath.Join(filepath.Dir(d.dbPath), "tasks.json")
+	data, err := os.ReadFile(recordsPath)
+	if err != nil {
+		return nil
+	}
+	var records []taskRecord
+	json.Unmarshal(data, &records)
+	return records
+}
+
+func (d *taskDB) saveRecords(records []taskRecord) error {
+	dir := filepath.Dir(d.dbPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	recordsPath := filepath.Join(dir, "tasks.json")
+	data, err := json.MarshalIndent(records, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(recordsPath, data, 0644)
+}
+
+// getUserHome returns the current user's home directory.
+func getUserHome() string {
+	if u, err := user.Current(); err == nil {
+		return u.HomeDir
+	}
+	return os.Getenv("HOME")
+}
+
+// execCmd runs a shell command.
+func execCmd(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// expandPath expands ~ to home directory.
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(getUserHome(), path[2:])
+	}
+	return path
 }
