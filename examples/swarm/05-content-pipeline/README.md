@@ -12,7 +12,7 @@ Publishing workflow: draft → edit → fact-check. Tests multi-input agents and
 
 ```bash
 swarm up
-swarm chain write '{"topic": "why Rust is eating C++", "style": "casual explainer"}' | edit | fact-check
+swarm chain write '{"topic": "why Rust is eating C++", "style": "casual explainer"}' -> edit -> fact-check
 swarm down
 ```
 

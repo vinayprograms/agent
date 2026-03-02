@@ -12,7 +12,7 @@ Three-stage incident response pipeline. Simulates an on-call workflow from alert
 
 ```bash
 swarm up
-swarm chain triage "API latency spiked to 30s, 502 errors at 40%, started 10 min ago after deploy v2.3.1" | investigate | remediate
+swarm chain triage "API latency spiked to 30s, 502 errors at 40%, started 10 min ago after deploy v2.3.1" -> investigate -> remediate
 swarm down
 ```
 

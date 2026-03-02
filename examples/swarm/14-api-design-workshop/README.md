@@ -12,7 +12,7 @@ Full API lifecycle: design the spec, implement it, test it. Three agents with di
 
 ```bash
 swarm up
-swarm chain design-api "A bookmarks API: CRUD for bookmarks with tags, search by tag, bulk import/export" | implement-api | test-api
+swarm chain design-api "A bookmarks API: CRUD for bookmarks with tags, search by tag, bulk import/export" -> implement-api -> test-api
 swarm down
 ```
 

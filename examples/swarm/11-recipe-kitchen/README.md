@@ -12,7 +12,7 @@ Three specialized agents forming a complete recipe-to-table pipeline. A fun, non
 
 ```bash
 swarm up
-swarm chain cook "a modern take on eggs benedict for brunch" | analyze-nutrition | plate
+swarm chain cook "a modern take on eggs benedict for brunch" -> analyze-nutrition -> plate
 swarm down
 ```
 

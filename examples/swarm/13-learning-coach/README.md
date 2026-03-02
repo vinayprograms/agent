@@ -11,7 +11,7 @@ Two agents forming a teach-then-test loop. Teacher creates a lesson, quizzer gen
 
 ```bash
 swarm up
-swarm chain teach '{"task": "Dijkstra shortest path algorithm", "level": "intermediate"}' | quiz
+swarm chain teach '{"task": "Dijkstra shortest path algorithm", "level": "intermediate"}' -> quiz
 swarm down
 ```
 

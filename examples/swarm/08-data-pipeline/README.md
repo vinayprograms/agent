@@ -12,7 +12,7 @@ Classic ETL (Extract-Transform-Load) pattern with three specialized agents.
 
 ```bash
 swarm up
-swarm chain extract "CSV with columns: name,email,signup_date,plan in mixed formats" | transform | load
+swarm chain extract "CSV with columns: name,email,signup_date,plan in mixed formats" -> transform -> load
 swarm down
 ```
 

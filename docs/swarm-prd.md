@@ -146,7 +146,7 @@ swarm history --status failed        # Filter by status
 ### Task Chaining (Simple Linear Pipes)
 
 ```
-swarm chain <cap1> "<task>" | <cap2> | <cap3>
+swarm chain <cap1> "<task>" -> <cap2> -> <cap3>
 ```
 
 Output of each stage becomes input for the next. Linear only — no branching, no conditionals. For anything more complex, use Hive.

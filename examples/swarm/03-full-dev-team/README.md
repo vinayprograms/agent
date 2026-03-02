@@ -12,7 +12,7 @@ Three-agent pipeline mimicking a dev workflow: implement, test, document.
 
 ```bash
 swarm up
-swarm chain code "an HTTP rate limiter with token bucket algorithm" | test | document
+swarm chain code "an HTTP rate limiter with token bucket algorithm" -> test -> document
 swarm down
 ```
 
