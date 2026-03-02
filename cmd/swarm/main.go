@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/vinayprograms/agentkit/tasks"
@@ -30,6 +31,7 @@ type CLI struct {
 	Up           UpCmd           `cmd:"" help:"Start swarm from swarm.yaml"`
 	Down         DownCmd         `cmd:"" help:"Stop swarm agents"`
 	Restart      RestartCmd      `cmd:"" help:"Restart swarm agents"`
+	UI           UICmd           `cmd:"" help:"Interactive TUI dashboard"`
 }
 
 type StatusCmd struct{}
@@ -59,6 +61,7 @@ type DownCmd struct {
 type RestartCmd struct {
 	Agents []string `arg:"" optional:"" help:"Specific agents to restart (default: all)"`
 }
+type UICmd struct{}
 
 func main() {
 	cli := &CLI{}
@@ -565,6 +568,12 @@ func (r *RestartCmd) Run(a *app) error {
 	// For now, just warn that this requires a manifest
 	fmt.Println("Restart requires a manifest file. Use: swarm down && swarm up")
 	return nil
+}
+
+func (u *UICmd) Run(a *app) error {
+	p := tea.NewProgram(newTUIModel(a.natsURL), tea.WithAltScreen())
+	_, err := p.Run()
+	return err
 }
 
 // taskDB provides SQLite persistence for task history.
