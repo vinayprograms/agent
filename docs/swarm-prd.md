@@ -77,6 +77,9 @@ Manifests use YAML. The manifest is a deployment descriptor ("what to run"), not
 nats:
   url: nats://localhost:4222
 
+storage:
+  root: ~/.local/share/swarm     # Unified storage root for all agent sessions
+
 agents:
   - name: coder
     agentfile: ./agents/coder.agent
@@ -96,15 +99,20 @@ agents:
     capability: documenter
 ```
 
-### Fields
+### Top-Level Fields
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Display name for the agent instance |
-| `agentfile` | Yes | Path to Agentfile |
-| `config` | No | Path to agent.toml (uses agent defaults if omitted) |
-| `policy` | No | Path to policy.toml |
-| `capability` | No | Capability name override (defaults to Agentfile NAME) |
+- `nats.url` — NATS server URL (required)
+- `storage.root` — Unified storage root for session logs (default: `~/.local/share/swarm`)
+
+### Agent Fields
+
+- `name` — Display name for the agent instance (required)
+- `agentfile` — Path to Agentfile (required)
+- `config` — Path to agent.toml (uses agent defaults if omitted)
+- `policy` — Path to policy.toml
+- `capability` — Capability name override (defaults to Agentfile NAME)
+
+All string values support `${ENV_VAR}` expansion.
 
 ## 8. CLI Commands
 
@@ -231,18 +239,23 @@ File location: `/tmp/swarm-replay-<task_id>.html`
 
 ```
 ~/.local/share/swarm/
+├── <swarm-session>/              # Per swarm-up session
+│   ├── coder/
+│   │   └── sessions/             # Agent session logs (JSONL)
+│   ├── tester/
+│   │   └── sessions/
+│   └── documenter/
+│       └── sessions/
 ├── tasks/
-│   └── <task_id>.json           # TaskMessage + TaskResult pairs
-├── sessions/
-│   └── <date>/
-│       └── <task_id>.jsonl      # Session logs (fetched from agents if debug mode)
+│   └── <task_id>.json            # TaskMessage + TaskResult pairs
 ├── agents/
-│   └── <agent_id>.json          # Latest heartbeat snapshot
-└── swarm.db                     # SQLite index for fast querying
+│   └── <agent_id>.json           # Latest heartbeat snapshot
+└── swarm.db                      # SQLite index for fast querying
 ```
 
-- **SQLite** for indexing: task status, capability, timestamps, tags, duration
-- **Filesystem** for raw data: task payloads, session logs, agent state
+- **Agent sessions**: Written directly by agents into `<swarm-session>/<agent>/sessions/` (swarm overrides each agent's storage path at spawn time)
+- **SQLite**: Indexes task status, capability, timestamps, tags, duration
+- **Filesystem**: Raw task payloads, agent state snapshots
 - SQLite enables `swarm history --capability coder --status failed --since 2026-03-01` without scanning files
 
 ## 12. Configuration
@@ -312,10 +325,58 @@ Minimal. NATS URL is the only required field.
 - Output → input mapping between stages
 - Error handling / short-circuit on failure
 
-## 15. Open Questions
+## 15. Resolved Design Decisions
 
-1. **Session log access**: How does `swarm` fetch session logs from agents? Agents store logs locally. Options: (a) shared filesystem, (b) NATS request to agent, (c) agents publish logs to NATS subject
-2. **Agent restart behavior**: When `swarm restart` is called, should the agent resume in-flight tasks or abandon them?
-3. **Task TTL**: How long are completed task results retained in persistence? Configurable? Auto-cleanup?
-4. **Manifest environment variables**: Support `${ENV_VAR}` expansion in swarm.yaml paths?
-5. **Multiple swarm files**: Support `swarm up -f production.yaml`? Or always `swarm.yaml` in cwd?
+### Session Log Access
+
+Shared filesystem. swarm configures a unified storage root via the manifest, and overrides each agent's `[storage].path` at spawn time:
+
+```
+<storage_root>/<swarm-session>/<agent-name>/sessions/
+```
+
+Example with `storage_root: ~/.local/share/swarm`:
+```
+~/.local/share/swarm/abc123/coder/sessions/
+~/.local/share/swarm/abc123/tester/sessions/
+~/.local/share/swarm/abc123/documenter/sessions/
+```
+
+This puts all logs in a single tree so the TUI and web replay can source everything from one place. swarm generates a per-session directory on `swarm up` and passes the appropriate storage path to each agent process.
+
+### Agent Restart Behavior
+
+Simple restart: `swarm restart` = graceful drain (honor drain_timeout) → kill → start fresh. No resume, no rewind, no idempotency handling. Advanced restart scenarios (rewind, resume, idempotent resubmission) are filed under `docs/ideas/swarm-task-resilience.md`.
+
+### Task Retention
+
+Sane defaults, no configuration required for normal use:
+- Completed tasks: 30 days
+- Failed tasks: indefinite (always want to debug failures)
+- `swarm gc` command for manual cleanup
+- Auto-cleanup runs on `swarm up`
+
+Future: configurable via `[retention]` in config.toml if needed.
+
+### Manifest Environment Variables
+
+Supported. `${ENV_VAR}` expansion in all string values in swarm.yaml.
+
+```yaml
+agents:
+  - name: coder
+    agentfile: ${AGENTS_DIR}/coder.agent
+```
+
+No default value syntax (`${VAR:-default}`) in v1.
+
+### Multiple Swarm Files
+
+Supported via `-f` flag:
+
+```
+swarm up                         # looks for swarm.yaml in cwd
+swarm up -f dev.yaml             # explicit file
+```
+
+No implicit merging of multiple files.
