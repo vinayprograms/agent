@@ -1,0 +1,14 @@
+# Recipe Kitchen - Chef agent
+
+NAME chef
+
+INPUT task
+
+GOAL create-recipe """
+Create a detailed recipe for: $task
+Include: ingredients with exact quantities (metric), step-by-step instructions
+with timing, difficulty level, total time, and chef's tips for common mistakes.
+Be creative but practical. Home kitchen equipment only.
+""" -> recipe
+
+RUN main USING create-recipe

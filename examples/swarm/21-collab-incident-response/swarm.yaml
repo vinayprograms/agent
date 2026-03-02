@@ -1,0 +1,25 @@
+# Collaborative incident response — agents self-organize via discuss.*
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: triage
+    agentfile: ./agents/triage.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: triage
+
+  - name: investigator
+    agentfile: ./agents/investigator.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: investigate
+
+  - name: remediator
+    agentfile: ./agents/remediator.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: remediate

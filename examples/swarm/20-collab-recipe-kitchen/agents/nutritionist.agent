@@ -1,0 +1,16 @@
+# Recipe Kitchen - Nutritionist agent
+
+NAME nutritionist
+
+INPUT task
+
+GOAL analyze """
+Analyze the recipe for nutritional content per serving:
+- Macros: calories, protein, carbs, fat, fiber
+- Key micronutrients: sodium, iron, calcium, vitamins
+- Dietary flags: gluten-free, dairy-free, vegan, keto-friendly
+- Health notes: allergens, high-sodium warnings
+Suggest modifications for common dietary restrictions.
+""" -> nutrition_report
+
+RUN main USING analyze

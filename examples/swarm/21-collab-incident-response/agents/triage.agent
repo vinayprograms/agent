@@ -1,0 +1,17 @@
+# Incident Response - Triage agent
+
+NAME triage
+
+INPUT task
+
+GOAL triage """
+Perform initial incident triage:
+- Severity: P0 (outage), P1 (degraded), P2 (minor), P3 (cosmetic)
+- Affected systems and blast radius
+- User impact estimate
+- Initial hypothesis (top 3 probable causes)
+- Recommended immediate actions (first 5 minutes)
+Be decisive. Triage is about speed, not certainty.
+""" -> assessment
+
+RUN main USING triage

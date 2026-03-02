@@ -1,0 +1,13 @@
+# Code & Test - Tester agent
+
+NAME tester
+
+INPUT task
+
+GOAL test """
+Write comprehensive Go tests for: $task
+Include table-driven tests, edge cases, and error conditions.
+Output ONLY the test code, no explanations.
+""" -> test_code
+
+RUN main USING test

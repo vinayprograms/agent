@@ -1,0 +1,15 @@
+# API Design Workshop - Implementer agent
+
+NAME implementer
+
+INPUT task
+
+GOAL implement """
+Implement the API in Go using net/http (no frameworks).
+Include: router setup with middleware chain, handler functions (one per endpoint),
+request validation, error response helpers, graceful shutdown.
+No database — use in-memory store with sync.RWMutex.
+Output ONLY the code.
+""" -> server_code
+
+RUN main USING implement

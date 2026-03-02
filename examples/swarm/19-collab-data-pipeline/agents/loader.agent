@@ -1,0 +1,14 @@
+# Data Pipeline - Loader agent
+
+NAME loader
+
+INPUT task
+
+GOAL load """
+Generate SQL INSERT/UPSERT statements for the provided data.
+Match data fields to target schema columns.
+Handle type conversions, NULL defaults, and constraint violations.
+Output: SQL statements + load summary (records processed, skipped, errors).
+""" -> load_report
+
+RUN main USING load

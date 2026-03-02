@@ -1,0 +1,14 @@
+# Content Pipeline - Writer agent
+
+NAME writer
+
+INPUT topic
+INPUT style DEFAULT "technical blog"
+
+GOAL write """
+Write a compelling article on $topic in $style style.
+Include a strong opening hook, clear structure, and actionable takeaways.
+Target length: 800-1200 words.
+""" -> draft
+
+RUN main USING write

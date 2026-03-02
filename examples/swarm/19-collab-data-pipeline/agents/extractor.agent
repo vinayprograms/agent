@@ -1,0 +1,14 @@
+# Data Pipeline - Extractor agent
+
+NAME extractor
+
+INPUT task
+
+GOAL extract """
+Parse and extract structured data from the provided input.
+Handle messy formats: inconsistent delimiters, missing fields, encoding issues.
+Output clean JSON array of extracted records.
+Include a metadata header: record_count, fields_extracted, issues_found.
+""" -> raw_data
+
+RUN main USING extract

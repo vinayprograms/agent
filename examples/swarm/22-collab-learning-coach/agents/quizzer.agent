@@ -1,0 +1,17 @@
+# Learning Coach - Quizzer agent
+
+NAME quizzer
+
+INPUT task
+
+GOAL quiz """
+Generate an assessment based on the lesson:
+- 3 multiple choice questions (test recall)
+- 2 short answer questions (test understanding)
+- 1 application question (test transfer)
+- 1 "trick" question that tests common misconceptions
+Include answer key with explanations.
+Questions must be answerable ONLY from the lesson content.
+""" -> assessment
+
+RUN main USING quiz

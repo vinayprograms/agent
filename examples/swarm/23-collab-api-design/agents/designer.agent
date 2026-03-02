@@ -1,0 +1,16 @@
+# API Design Workshop - Designer agent
+
+NAME api-designer
+
+INPUT task
+
+GOAL design """
+Design a RESTful API specification for: $task
+Include: resource naming, endpoints with HTTP methods/paths/schemas,
+status codes for success and error, authentication approach,
+pagination strategy, rate limiting headers.
+Output as OpenAPI 3.0 YAML.
+Prioritize consistency and developer ergonomics over cleverness.
+""" -> api_spec
+
+RUN main USING design

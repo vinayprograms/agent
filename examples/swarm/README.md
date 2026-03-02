@@ -33,3 +33,20 @@ Each example contains:
 | 13 | Learning Coach | 2 | Iterative | Teacher generates, Quizzer tests |
 | 14 | API Design Workshop | 3 | Linear chain | Spec → Implement → Test |
 | 15 | Debate Arena | 2 | Adversarial | Proposer vs Opposer |
+| 16 | Collab: Code & Test | 2 | Collaborative | Self-organizing via discuss.* |
+| 17 | Collab: Full Dev Team | 3 | Collaborative | Three agents, one task |
+| 18 | Collab: Content Pipeline | 3 | Collaborative | Write + edit + fact-check |
+| 19 | Collab: Data Pipeline | 3 | Collaborative | ETL — tests sequential limits |
+| 20 | Collab: Recipe Kitchen | 3 | Collaborative | Independent domain experts |
+| 21 | Collab: Incident Response | 3 | Collaborative | Parallel incident handling |
+| 22 | Collab: Learning Coach | 2 | Collaborative | Lesson + quiz independently |
+| 23 | Collab: API Design | 3 | Collaborative | Tests contract-driven limits |
+
+### Collaboration vs Chaining
+
+Examples 16–23 mirror 02, 03, 05, 08, 11, 12, 13, 14 but use `discuss` mode
+instead of explicit chains. Run both and compare:
+
+- **Chain wins:** Sequential dependencies (ETL, API spec-driven, lesson→quiz)
+- **Collaboration wins:** Independent experts (recipe kitchen, incident response)
+- **Mixed results:** Dev team, content pipeline (depends on task specificity)

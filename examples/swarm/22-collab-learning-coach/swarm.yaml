@@ -1,0 +1,19 @@
+# Collaborative learning coach — agents self-organize via discuss.*
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: teacher
+    agentfile: ./agents/teacher.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: teach
+
+  - name: quizzer
+    agentfile: ./agents/quizzer.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: quiz

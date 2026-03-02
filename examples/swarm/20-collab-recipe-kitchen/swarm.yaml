@@ -1,0 +1,25 @@
+# Collaborative recipe kitchen — agents self-organize via discuss.*
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: chef
+    agentfile: ./agents/chef.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: cook
+
+  - name: nutritionist
+    agentfile: ./agents/nutritionist.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: analyze-nutrition
+
+  - name: plater
+    agentfile: ./agents/plater.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: plate
