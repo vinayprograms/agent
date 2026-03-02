@@ -15,6 +15,7 @@ import (
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agentkit/bus"
 	"github.com/vinayprograms/agentkit/credentials"
+	"github.com/vinayprograms/agentkit/embedding"
 	"github.com/vinayprograms/agentkit/heartbeat"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/registry"
@@ -427,8 +428,47 @@ func (a *serviceAgent) generateResume(ctx context.Context) error {
 		a.agentResume = r
 		fmt.Fprintf(os.Stderr, "📋 Resume: %s — %s\n", r.Name, r.Description)
 		fmt.Fprintf(os.Stderr, "   Capabilities: %v\n", r.Capabilities)
+
+		// Embed the resume if embedding provider is configured
+		if err := a.embedResume(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Resume embedding failed: %v\n", err)
+		}
 	}
 
+	return nil
+}
+
+// embedResume generates and attaches an embedding vector to the agent's resume.
+func (a *serviceAgent) embedResume(ctx context.Context) error {
+	cfg := a.wf.cfg.Embedding
+	if cfg.Provider == "" || cfg.Provider == "none" {
+		return nil
+	}
+
+	// Resolve API key from credentials if not in config
+	apiKey := cfg.APIKey
+	if apiKey == "" && a.creds != nil {
+		apiKey = a.creds.GetAPIKey(cfg.Provider)
+	}
+
+	embedder, err := embedding.New(embedding.Config{
+		Provider: cfg.Provider,
+		Model:    cfg.Model,
+		APIKey:   apiKey,
+		BaseURL:  cfg.BaseURL,
+	})
+	if err != nil {
+		return fmt.Errorf("creating embedder: %w", err)
+	}
+	if embedder == nil {
+		return nil
+	}
+
+	if err := resume.EmbedResume(ctx, a.agentResume, embedder); err != nil {
+		return fmt.Errorf("embedding resume: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "🧮 Resume embedded (%d dimensions)\n", len(a.agentResume.Embedding))
 	return nil
 }
 

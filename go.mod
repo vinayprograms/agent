@@ -11,7 +11,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/joho/godotenv v1.5.1
 	github.com/muesli/reflow v0.3.0
-	github.com/vinayprograms/agentkit v0.1.1-0.20260301013701-362e2e4b3267
+	github.com/vinayprograms/agentkit v0.1.1-0.20260302121928-d60255e8eaf7
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/trace v1.40.0
 	gopkg.in/yaml.v3 v3.0.1

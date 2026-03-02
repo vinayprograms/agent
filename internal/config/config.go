@@ -22,6 +22,7 @@ type Config struct {
 	Skills    SkillsConfig          `toml:"skills"`     // Agent Skills
 	Security  SecurityConfig        `toml:"security"`   // Security framework
 	Timeouts  TimeoutsConfig        `toml:"timeouts"`   // Network operation timeouts
+	Embedding EmbeddingConfig        `toml:"embedding"`  // Embedding provider for resume vectors
 	Service   ServiceConfig         `toml:"service"`    // Service agent settings (for `agent serve`)
 }
 
@@ -71,6 +72,18 @@ type TelemetryConfig struct {
 // StorageConfig contains storage settings.
 type StorageConfig struct {
 	Path string `toml:"path"` // Base directory for persistent data (BM25 memory)
+}
+
+// EmbeddingConfig holds embedding provider settings for resume vectors.
+type EmbeddingConfig struct {
+	// Provider name: "openai", "google", "openai-compat", "none"
+	Provider string `toml:"provider"`
+	// Model name (e.g., "text-embedding-3-small", "text-embedding-004")
+	Model string `toml:"model"`
+	// APIKey for the embedding provider (or use credentials.toml)
+	APIKey string `toml:"api_key"`
+	// BaseURL for OpenAI-compatible endpoints (Ollama, LiteLLM, etc.)
+	BaseURL string `toml:"base_url"`
 }
 
 // MCPConfig contains MCP tool server configuration.
