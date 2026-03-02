@@ -27,6 +27,9 @@ type CLI struct {
 	Submit       SubmitCmd       `cmd:"" help:"Submit a task to an agent"`
 	Result       ResultCmd       `cmd:"" help:"Get result for a task"`
 	History      HistoryCmd      `cmd:"" help:"Show recent tasks"`
+	Up           UpCmd           `cmd:"" help:"Start swarm from swarm.yaml"`
+	Down         DownCmd         `cmd:"" help:"Stop swarm agents"`
+	Restart      RestartCmd      `cmd:"" help:"Restart swarm agents"`
 }
 
 type StatusCmd struct{}
@@ -45,6 +48,16 @@ type HistoryCmd struct {
 	Capability string `name:"capability" short:"c" help:"Filter by capability"`
 	Status     string `name:"status" short:"s" help:"Filter by status (pending, running, success, failed)"`
 	Limit      int    `name:"limit" short:"l" help:"Max results" default:"20"`
+}
+type UpCmd struct {
+	File   string   `name:"file" short:"f" help:"Manifest file" type:"existingfile"`
+	Agents []string `arg:"" optional:"" help:"Specific agents to start (default: all)"`
+}
+type DownCmd struct {
+	Agents []string `arg:"" optional:"" help:"Specific agents to stop (default: all)"`
+}
+type RestartCmd struct {
+	Agents []string `arg:"" optional:"" help:"Specific agents to restart (default: all)"`
 }
 
 func main() {
@@ -403,6 +416,154 @@ func (h *HistoryCmd) Run(a *app) error {
 	for _, t := range tasks {
 		fmt.Printf("%s\t%s\t%s\t%s\n", t.TaskID, t.Capability, t.Status, t.CreatedAt.Format("2006-01-02 15:04"))
 	}
+	return nil
+}
+
+func (u *UpCmd) Run(a *app) error {
+	manifestPath := u.File
+	if manifestPath == "" {
+		var err error
+		manifestPath, err = findManifest()
+		if err != nil {
+			return err
+		}
+	}
+
+	m, err := loadManifest(manifestPath)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Starting swarm from %s\n", manifestPath)
+	fmt.Printf("NATS: %s\n", m.NATS.URL)
+	fmt.Printf("Storage: %s\n", m.Storage.Root)
+
+	// Filter agents if specified
+	agents := m.Agents
+	if len(u.Agents) > 0 {
+		agentSet := map[string]struct{}{}
+		for _, name := range u.Agents {
+			agentSet[name] = struct{}{}
+		}
+		filtered := make([]AgentSpec, 0)
+		for _, ag := range agents {
+			if _, ok := agentSet[ag.Name]; ok {
+				filtered = append(filtered, ag)
+			}
+		}
+		agents = filtered
+	}
+
+	// Start each agent
+	for _, ag := range agents {
+		fmt.Printf("  → %s (%s)\n", ag.Name, ag.Capability)
+		args := []string{"serve", "--bus", m.NATS.URL}
+		if ag.Agentfile != "" {
+			args = append(args, "-f", ag.Agentfile)
+		}
+		if ag.Config != "" {
+			args = append(args, "--config", ag.Config)
+		}
+		if ag.Policy != "" {
+			args = append(args, "--policy", ag.Policy)
+		}
+		if ag.Capability != "" {
+			args = append(args, "--capability", ag.Capability)
+		}
+
+		cmd := exec.Command("agent", args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			fmt.Printf("  ✗ Failed to start %s: %v\n", ag.Name, err)
+			continue
+		}
+		fmt.Printf("  ✓ Started %s (pid %d)\n", ag.Name, cmd.Process.Pid)
+	}
+
+	fmt.Println("Swarm started. Use 'swarm agents' to verify.")
+	return nil
+}
+
+func (d *DownCmd) Run(a *app) error {
+	// Graceful shutdown via NATS signal
+	nc, err := a.connect()
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	// Get list of agents from heartbeats
+	sub, err := nc.SubscribeSync("heartbeat.>")
+	if err != nil {
+		return err
+	}
+	defer sub.Unsubscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	type agentInfo struct {
+		id   string
+		name string
+	}
+	agents := []agentInfo{}
+
+	for {
+		msg, err := sub.NextMsgWithContext(ctx)
+		if err != nil {
+			break
+		}
+		var hb struct {
+			AgentID string `json:"agent_id"`
+			Name    string `json:"name"`
+		}
+		if err := json.Unmarshal(msg.Data, &hb); err != nil {
+			continue
+		}
+		agents = append(agents, agentInfo{id: hb.AgentID, name: hb.Name})
+	}
+
+	if len(agents) == 0 {
+		fmt.Println("No agents discovered")
+		return nil
+	}
+
+	// Filter if specific agents requested
+	targets := agents
+	if len(d.Agents) > 0 {
+		agentSet := map[string]struct{}{}
+		for _, name := range d.Agents {
+			agentSet[name] = struct{}{}
+		}
+		filtered := make([]agentInfo, 0)
+		for _, ag := range agents {
+			if _, ok := agentSet[ag.name]; ok {
+				filtered = append(filtered, ag)
+			}
+		}
+		targets = filtered
+	}
+
+	// Send shutdown signal
+	for _, ag := range targets {
+		fmt.Printf("  → Stopping %s\n", ag.name)
+		// Publish to control.<agent_id>.shutdown
+		if err := nc.Publish(fmt.Sprintf("control.%s.shutdown", ag.id), []byte{}); err != nil {
+			fmt.Printf("  ✗ Failed to signal %s: %v\n", ag.name, err)
+			continue
+		}
+		fmt.Printf("  ✓ Shutdown signal sent to %s\n", ag.name)
+	}
+
+	fmt.Println("Shutdown signals sent. Agents will drain and exit.")
+	return nil
+}
+
+func (r *RestartCmd) Run(a *app) error {
+	// Restart = down + up
+	// For now, just warn that this requires a manifest
+	fmt.Println("Restart requires a manifest file. Use: swarm down && swarm up")
 	return nil
 }
 

@@ -34,3 +34,4 @@ sessions/
 *.pem
 /agent
 replay
+swarm
