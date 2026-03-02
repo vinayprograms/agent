@@ -1,15 +1,18 @@
+# Debate Arena - Opposer agent
+
 NAME opposer
 
 INPUT task
-  Motion to argue AGAINST
 
-GOAL argue -> argument
-  Construct a compelling argument AGAINST the motion.
-  Structure:
-  1. Opening statement (clear counter-thesis)
-  2. Three main counter-arguments with evidence/examples
-  3. Rebuttal of the most likely pro-arguments
-  4. Closing statement
-  
-  Use logic, data, and concrete examples. No straw men.
-  Steel-man the opposing view before dismantling it.
+GOAL argue """
+Construct a compelling argument AGAINST: $task
+Structure:
+1. Opening statement (clear counter-thesis)
+2. Three main counter-arguments with evidence/examples
+3. Rebuttal of the most likely pro-arguments
+4. Closing statement
+Use logic, data, and concrete examples. No straw men.
+Steel-man the opposing view before dismantling it.
+""" -> argument
+
+RUN main USING argue

@@ -1,15 +1,17 @@
+# Learning Coach - Teacher agent
+
 NAME teacher
 
 INPUT task
-  Topic to teach and learner's current level (beginner/intermediate/advanced)
 
-GOAL teach -> lesson
-  Create a focused lesson on the topic:
-  - Start with WHY this matters (motivation)
-  - Core concept explanation with analogy
-  - 2-3 worked examples, increasing difficulty
-  - Common misconceptions to avoid
-  - "Now you try" exercise (unsolved)
-  
-  Adapt complexity to the learner's level.
-  Use the Feynman technique: if you can't explain it simply, you don't understand it.
+GOAL teach """
+Create a focused lesson on: $task
+- Start with WHY this matters (motivation)
+- Core concept explanation with analogy
+- 2-3 worked examples, increasing difficulty
+- Common misconceptions to avoid
+- "Now you try" exercise (unsolved)
+Use the Feynman technique: explain it simply or you don't understand it.
+""" -> lesson
+
+RUN main USING teach

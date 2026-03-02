@@ -1,13 +1,16 @@
+# Content Pipeline - Editor agent
+
 NAME editor
 
 INPUT task
-  Text to edit and improve
 
-GOAL edit -> edited_text
-  Edit the provided text for:
-  1. Clarity — remove jargon, simplify complex sentences
-  2. Flow — improve transitions, logical progression
-  3. Conciseness — cut filler, tighten prose
-  4. Voice — consistent tone throughout
-  
-  Return the edited text with tracked changes noted in [EDIT: reason] markers.
+GOAL edit """
+Edit the provided text for:
+1. Clarity — remove jargon, simplify complex sentences
+2. Flow — improve transitions, logical progression
+3. Conciseness — cut filler, tighten prose
+4. Voice — consistent tone throughout
+Return the edited text with tracked changes noted in [EDIT: reason] markers.
+""" -> edited_text
+
+RUN main USING edit

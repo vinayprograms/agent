@@ -1,10 +1,9 @@
+# Translation Bureau - Japanese translator
+
 NAME translator-ja
 
 INPUT task
-  English text to translate to Japanese
 
-GOAL translate -> translation
-  Translate the text into natural Japanese.
-  Use appropriate politeness level (default: desu/masu form).
-  Preserve technical terms in katakana where conventional.
-  Output ONLY the translated text.
+GOAL translate "Translate the text into natural Japanese. Use desu/masu politeness level. Preserve technical terms in katakana where conventional. Output ONLY the translated text." -> translation
+
+RUN main USING translate

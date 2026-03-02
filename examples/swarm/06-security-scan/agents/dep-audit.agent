@@ -1,15 +1,15 @@
+# Security Scan - Dependency Auditor agent
+
 NAME dep-auditor
 
 INPUT task
-  Dependency manifest to audit (go.mod, package.json, requirements.txt, etc.)
 
-GOAL audit -> vulnerabilities
-  Audit dependencies for known vulnerabilities and supply chain risks.
-  Check for:
-  - Known CVEs in direct and transitive dependencies
-  - Unmaintained packages (no updates in 2+ years)
-  - License compatibility issues
-  - Typosquatting risk (similar package names)
-  - Excessive dependency depth
-  
-  Output findings with severity, affected package, and upgrade path.
+GOAL audit """
+Audit dependencies for known vulnerabilities and supply chain risks.
+Check for: known CVEs in direct and transitive deps, unmaintained packages
+(no updates in 2+ years), license compatibility issues, typosquatting risk,
+excessive dependency depth.
+Output findings with severity, affected package, and upgrade path.
+""" -> vulnerabilities
+
+RUN main USING audit

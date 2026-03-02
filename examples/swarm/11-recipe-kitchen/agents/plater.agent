@@ -1,14 +1,17 @@
+# Recipe Kitchen - Plater agent
+
 NAME plater
 
 INPUT task
-  Recipe and nutritional info to create a presentation guide
 
-GOAL plate -> presentation
-  Create a plating and presentation guide:
-  - Plate selection (size, color, material)
-  - Component placement (describe spatial layout)
-  - Garnish suggestions
-  - Color contrast and height variation
-  - Photography angle recommendations
-  
-  Think restaurant-quality presentation for home cooks.
+GOAL plate """
+Create a plating and presentation guide:
+- Plate selection (size, color, material)
+- Component placement (describe spatial layout)
+- Garnish suggestions
+- Color contrast and height variation
+- Photography angle recommendations
+Think restaurant-quality presentation for home cooks.
+""" -> presentation
+
+RUN main USING plate

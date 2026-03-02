@@ -1,10 +1,13 @@
+# Full Dev Team - Tester agent
+
 NAME tester
 
 INPUT task
-  Description of what to test
 
-GOAL write-tests -> test_code
-  Write comprehensive Go tests.
-  Include: unit tests (table-driven), edge cases, error paths, boundary conditions.
-  Aim for near-100% coverage.
-  Output ONLY the test code.
+GOAL write-tests """
+Write comprehensive Go tests for: $task
+Include: unit tests (table-driven), edge cases, error paths, boundary conditions.
+Aim for near-100% coverage. Output ONLY the test code.
+""" -> test_code
+
+RUN main USING write-tests

@@ -1,15 +1,18 @@
+# Debate Arena - Proposer agent
+
 NAME proposer
 
 INPUT task
-  Motion to argue FOR
 
-GOAL argue -> argument
-  Construct a compelling argument IN FAVOR of the motion.
-  Structure:
-  1. Opening statement (clear thesis)
-  2. Three main arguments with evidence/examples
-  3. Preemptive rebuttal (anticipate the strongest counter-argument)
-  4. Closing statement
-  
-  Use logic, data, and concrete examples. No straw men.
-  Acknowledge complexity — the strongest arguments are nuanced.
+GOAL argue """
+Construct a compelling argument IN FAVOR of: $task
+Structure:
+1. Opening statement (clear thesis)
+2. Three main arguments with evidence/examples
+3. Preemptive rebuttal (anticipate the strongest counter-argument)
+4. Closing statement
+Use logic, data, and concrete examples. No straw men.
+Acknowledge complexity — the strongest arguments are nuanced.
+""" -> argument
+
+RUN main USING argue

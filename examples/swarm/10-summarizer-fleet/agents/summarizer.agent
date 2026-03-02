@@ -1,15 +1,15 @@
+# Summarizer Fleet - Summarizer agent
+
 NAME summarizer
 
 INPUT task
-  Text to summarize
+INPUT length DEFAULT "paragraph"
 
-INPUT length
-  Target summary length (one-sentence, paragraph, page)
-  DEFAULT paragraph
+GOAL summarize """
+Summarize the provided text to $length length.
+Preserve key facts, conclusions, and action items.
+Maintain the original tone. Keep significant numbers/data.
+Output ONLY the summary.
+""" -> summary
 
-GOAL summarize -> summary
-  Summarize the provided text to $length length.
-  Preserve key facts, conclusions, and action items.
-  Maintain the original tone.
-  If the text contains data/numbers, keep the most significant ones.
-  Output ONLY the summary.
+RUN main USING summarize

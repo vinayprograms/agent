@@ -1,10 +1,13 @@
+# Full Dev Team - Coder agent
+
 NAME coder
 
 INPUT task
-  Description of what to build
 
-GOAL implement -> source_code
-  Write clean, production-quality Go code.
-  Follow SOLID principles. Functions under 50 lines.
-  Include error handling, no shortcuts.
-  Output ONLY the code.
+GOAL implement """
+Write clean, production-quality Go code for: $task
+Follow SOLID principles. Functions under 50 lines.
+Include error handling, no shortcuts. Output ONLY the code.
+""" -> source_code
+
+RUN main USING implement

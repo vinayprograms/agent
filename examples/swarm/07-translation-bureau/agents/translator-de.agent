@@ -1,10 +1,9 @@
+# Translation Bureau - German translator
+
 NAME translator-de
 
 INPUT task
-  English text to translate to German
 
-GOAL translate -> translation
-  Translate the text into natural, idiomatic German.
-  Preserve tone, intent, and cultural nuance.
-  Use appropriate formality level (default: professional/Sie).
-  Output ONLY the translated text.
+GOAL translate "Translate the text into natural, idiomatic German. Preserve tone and cultural nuance. Use professional/Sie formality. Output ONLY the translated text." -> translation
+
+RUN main USING translate

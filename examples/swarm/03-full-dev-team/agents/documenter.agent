@@ -1,10 +1,14 @@
+# Full Dev Team - Documenter agent
+
 NAME documenter
 
 INPUT task
-  Description of what to document
 
-GOAL write-docs -> documentation
-  Write clear, developer-facing documentation.
-  Include: overview, API reference, usage examples, error handling guide.
-  Write for a new engineer with zero prior knowledge.
-  Use markdown format. Output ONLY the documentation.
+GOAL write-docs """
+Write clear, developer-facing documentation for: $task
+Include: overview, API reference, usage examples, error handling guide.
+Write for a new engineer with zero prior knowledge. Markdown format.
+Output ONLY the documentation.
+""" -> documentation
+
+RUN main USING write-docs

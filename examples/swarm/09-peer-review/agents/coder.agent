@@ -1,10 +1,13 @@
+# Peer Review - Coder agent
+
 NAME coder
 
 INPUT task
-  What to implement
 
-GOAL implement -> code
-  Write clean Go code for the task.
-  Follow idiomatic Go conventions, SOLID principles.
-  Include error handling and doc comments.
-  Output ONLY the code.
+GOAL implement """
+Write clean Go code for: $task
+Follow idiomatic Go conventions, SOLID principles.
+Include error handling and doc comments. Output ONLY the code.
+""" -> code
+
+RUN main USING implement

@@ -1,9 +1,13 @@
+# Code & Test - Coder agent
+
 NAME coder
 
 INPUT task
-  Description of what to code
 
-GOAL code -> source_code
-  Write clean, idiomatic Go code for the given task.
-  Include proper error handling and comments.
-  Output ONLY the code, no explanations.
+GOAL code """
+Write clean, idiomatic Go code for: $task
+Include proper error handling and comments.
+Output ONLY the code, no explanations.
+""" -> source_code
+
+RUN main USING code
