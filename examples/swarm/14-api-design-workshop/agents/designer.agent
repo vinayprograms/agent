@@ -1,0 +1,16 @@
+NAME api-designer
+
+INPUT task
+  API requirements and domain description
+
+GOAL design -> api_spec
+  Design a RESTful API specification:
+  - Resource identification and naming
+  - Endpoints with HTTP methods, paths, request/response schemas
+  - Status codes for success and error cases
+  - Authentication approach
+  - Pagination strategy
+  - Rate limiting headers
+  
+  Output as OpenAPI 3.0 YAML.
+  Prioritize consistency and developer ergonomics over cleverness.

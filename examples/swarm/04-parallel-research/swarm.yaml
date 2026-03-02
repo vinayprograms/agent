@@ -1,0 +1,25 @@
+# Three researchers with same capability — tasks load-balanced across them
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: researcher-1
+    agentfile: ./agents/researcher.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: research
+
+  - name: researcher-2
+    agentfile: ./agents/researcher.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: research
+
+  - name: researcher-3
+    agentfile: ./agents/researcher.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: research

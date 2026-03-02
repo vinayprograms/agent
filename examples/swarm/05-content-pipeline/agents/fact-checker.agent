@@ -1,0 +1,13 @@
+NAME fact-checker
+
+INPUT task
+  Text to fact-check
+
+GOAL verify -> report
+  Review the text for factual accuracy.
+  For each claim:
+  - Mark as VERIFIED, UNVERIFIED, or INCORRECT
+  - Provide basis for the judgment
+  - Suggest corrections for incorrect claims
+  
+  Output a structured fact-check report, then the corrected text.

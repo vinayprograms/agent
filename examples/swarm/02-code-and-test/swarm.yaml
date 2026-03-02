@@ -1,0 +1,19 @@
+# Two-agent pipeline: write code then test it
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: coder
+    agentfile: ./agents/coder.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: code
+
+  - name: tester
+    agentfile: ./agents/tester.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: test

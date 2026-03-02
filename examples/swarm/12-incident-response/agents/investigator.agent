@@ -1,0 +1,14 @@
+NAME investigator
+
+INPUT task
+  Triage assessment and available evidence to investigate
+
+GOAL investigate -> root_cause
+  Conduct root cause analysis:
+  - Timeline reconstruction (what happened when)
+  - Evidence analysis (logs, metrics, traces)
+  - Hypothesis testing (which initial hypotheses hold up)
+  - Root cause identification with confidence level
+  - Contributing factors and systemic issues
+  
+  Use the 5 Whys framework. Distinguish correlation from causation.

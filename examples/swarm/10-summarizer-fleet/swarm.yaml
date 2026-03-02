@@ -1,0 +1,25 @@
+# Scaled single capability: 3 identical summarizers for throughput
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: summarizer-1
+    agentfile: ./agents/summarizer.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: summarize
+
+  - name: summarizer-2
+    agentfile: ./agents/summarizer.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: summarize
+
+  - name: summarizer-3
+    agentfile: ./agents/summarizer.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: summarize

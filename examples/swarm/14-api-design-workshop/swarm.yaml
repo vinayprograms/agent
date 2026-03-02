@@ -1,0 +1,25 @@
+# API design workshop: spec → implement → test
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: api-designer
+    agentfile: ./agents/designer.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: design-api
+
+  - name: implementer
+    agentfile: ./agents/implementer.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: implement-api
+
+  - name: api-tester
+    agentfile: ./agents/api-tester.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: test-api

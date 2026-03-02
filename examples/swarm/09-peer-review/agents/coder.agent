@@ -1,0 +1,10 @@
+NAME coder
+
+INPUT task
+  What to implement
+
+GOAL implement -> code
+  Write clean Go code for the task.
+  Follow idiomatic Go conventions, SOLID principles.
+  Include error handling and doc comments.
+  Output ONLY the code.

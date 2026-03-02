@@ -1,0 +1,19 @@
+# Debate arena: proposer argues for, opposer argues against
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: proposer
+    agentfile: ./agents/proposer.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: propose
+
+  - name: opposer
+    agentfile: ./agents/opposer.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: oppose

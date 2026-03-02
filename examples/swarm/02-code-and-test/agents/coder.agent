@@ -1,0 +1,9 @@
+NAME coder
+
+INPUT task
+  Description of what to code
+
+GOAL code -> source_code
+  Write clean, idiomatic Go code for the given task.
+  Include proper error handling and comments.
+  Output ONLY the code, no explanations.

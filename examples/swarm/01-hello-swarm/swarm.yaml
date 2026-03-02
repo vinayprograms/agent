@@ -1,0 +1,13 @@
+# Minimal swarm — single agent to verify setup
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: greeter
+    agentfile: ./agents/greeter.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: greet

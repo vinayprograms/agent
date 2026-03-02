@@ -1,0 +1,14 @@
+NAME transformer
+
+INPUT task
+  JSON data and transformation rules to apply
+
+GOAL transform -> transformed_data
+  Apply transformations to the input data:
+  - Normalize field names (snake_case)
+  - Standardize date formats (ISO 8601)
+  - Deduplicate records
+  - Validate against schema constraints
+  - Enrich with computed fields where specified
+  
+  Output transformed JSON with a changelog of modifications made.

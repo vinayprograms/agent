@@ -1,0 +1,13 @@
+NAME writer
+
+INPUT topic
+  Topic to write about
+
+INPUT style
+  Writing style (e.g., technical blog, casual explainer, academic)
+  DEFAULT technical blog
+
+GOAL write -> draft
+  Write a compelling article on $topic in $style style.
+  Include a strong opening hook, clear structure, and actionable takeaways.
+  Target length: 800-1200 words.

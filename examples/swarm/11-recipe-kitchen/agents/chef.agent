@@ -1,0 +1,13 @@
+NAME chef
+
+INPUT task
+  Dish to create or dietary constraints and preferences
+
+GOAL create-recipe -> recipe
+  Create a detailed recipe including:
+  - Ingredients with exact quantities (metric)
+  - Step-by-step instructions with timing
+  - Difficulty level and total time
+  - Chef's tips for common mistakes
+  
+  Be creative but practical. Home kitchen equipment only.

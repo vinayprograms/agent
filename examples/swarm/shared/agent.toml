@@ -1,0 +1,17 @@
+# Shared agent config for swarm examples
+# Each swarm.yaml references this file
+
+[llm]
+model = "claude-sonnet-4-20250514"
+max_tokens = 8192
+
+[small_llm]
+model = "claude-3-5-haiku-latest"
+
+[storage]
+# Overridden by swarm at runtime to unified storage root
+path = ""
+
+[security]
+mode = "default"
+user_trust = "untrusted"

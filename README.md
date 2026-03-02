@@ -690,7 +690,7 @@ Research mode:
 - Maintains full audit trail
 - Still blocks actions outside declared scope
 
-See `examples/security-research/` for security research workflow examples.
+See `examples/agent/security-research/` for security research workflow examples.
 
 ### High-Risk Tools
 
@@ -700,7 +700,7 @@ These tools receive extra scrutiny when untrusted content is in context:
 - `web_fetch` - External HTTP requests
 - `spawn_agent` - Sub-agent creation
 
-See `examples/security/` for example configurations and `docs/security/` for detailed documentation.
+See `examples/agent/security/` for example configurations and `docs/security/` for detailed documentation.
 
 ## Agentfile Syntax
 
@@ -1164,7 +1164,7 @@ denylist = ["rm -rf *", "sudo *", "curl * | bash"]
 
 ## Examples
 
-See the `examples/` directory for 38 example workflows covering:
+See the `examples/agent/` directory for 44+ single-agent workflows and `examples/swarm/` for 15 multi-agent swarm examples covering:
 - Programming (code review, testing, refactoring, security audits)
 - Writing (essays, stories, translations)
 - Planning (travel, fitness, learning paths)
@@ -1353,7 +1353,7 @@ This workflow:
 - Requires human approval before deployment
 - Fails at startup if no human connection available
 
-See `examples/39-supervision/` for more examples.
+See `examples/agent/39-supervision/` for more examples.
 
 ### XML Context Format
 

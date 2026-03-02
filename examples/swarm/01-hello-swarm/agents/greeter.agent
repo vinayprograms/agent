@@ -1,0 +1,8 @@
+NAME greeter
+
+INPUT topic
+  The topic to greet about
+
+GOAL greet -> greeting
+  Say hello and share one interesting, little-known fact about $topic.
+  Keep it to 2-3 sentences.

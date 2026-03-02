@@ -1,0 +1,16 @@
+NAME implementer
+
+INPUT task
+  API specification to implement
+
+GOAL implement -> server_code
+  Implement the API in Go using net/http (no frameworks).
+  Include:
+  - Router setup with middleware chain
+  - Handler functions (one per endpoint)
+  - Request validation
+  - Error response helpers
+  - Graceful shutdown
+  
+  No database — use in-memory store with sync.RWMutex.
+  Output ONLY the code.

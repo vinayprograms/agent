@@ -1,0 +1,10 @@
+NAME documenter
+
+INPUT task
+  Description of what to document
+
+GOAL write-docs -> documentation
+  Write clear, developer-facing documentation.
+  Include: overview, API reference, usage examples, error handling guide.
+  Write for a new engineer with zero prior knowledge.
+  Use markdown format. Output ONLY the documentation.

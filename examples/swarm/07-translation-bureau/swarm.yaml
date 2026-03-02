@@ -1,0 +1,31 @@
+# Translation bureau: same text translated into multiple languages in parallel
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: translator-es
+    agentfile: ./agents/translator-es.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: translate-es
+
+  - name: translator-de
+    agentfile: ./agents/translator-de.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: translate-de
+
+  - name: translator-ja
+    agentfile: ./agents/translator-ja.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: translate-ja
+
+  - name: translator-fr
+    agentfile: ./agents/translator-fr.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: translate-fr

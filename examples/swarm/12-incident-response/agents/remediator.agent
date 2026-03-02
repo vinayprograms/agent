@@ -1,0 +1,15 @@
+NAME remediator
+
+INPUT task
+  Root cause analysis to create remediation plan
+
+GOAL remediate -> plan
+  Create a remediation plan:
+  - Immediate fix (stop the bleeding)
+  - Short-term fix (proper patch, 1-7 days)
+  - Long-term fix (architectural, 1-3 months)
+  - Verification steps for each fix
+  - Rollback plan if fix makes things worse
+  - Post-incident review action items
+  
+  Include specific commands, code changes, or config updates where possible.

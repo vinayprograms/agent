@@ -1,0 +1,25 @@
+# Content production pipeline: write → edit → fact-check
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: writer
+    agentfile: ./agents/writer.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: write
+
+  - name: editor
+    agentfile: ./agents/editor.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: edit
+
+  - name: fact-checker
+    agentfile: ./agents/fact-checker.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: fact-check

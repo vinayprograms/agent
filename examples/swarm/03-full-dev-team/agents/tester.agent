@@ -1,0 +1,10 @@
+NAME tester
+
+INPUT task
+  Description of what to test
+
+GOAL write-tests -> test_code
+  Write comprehensive Go tests.
+  Include: unit tests (table-driven), edge cases, error paths, boundary conditions.
+  Aim for near-100% coverage.
+  Output ONLY the test code.

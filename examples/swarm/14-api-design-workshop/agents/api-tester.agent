@@ -1,0 +1,15 @@
+NAME api-tester
+
+INPUT task
+  API specification and implementation to test
+
+GOAL test -> test_suite
+  Write an integration test suite for the API:
+  - Happy path for each endpoint
+  - Error cases (bad input, not found, conflict)
+  - Edge cases (empty body, large payload, concurrent requests)
+  - Auth tests (missing token, expired, wrong role)
+  - Pagination boundary tests
+  
+  Use Go's net/http/httptest. Tests should be runnable with `go test`.
+  Output ONLY the test code.

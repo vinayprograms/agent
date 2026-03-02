@@ -1,0 +1,19 @@
+# Peer review: coder writes, reviewer critiques
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: coder
+    agentfile: ./agents/coder.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: code
+
+  - name: reviewer
+    agentfile: ./agents/reviewer.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: review

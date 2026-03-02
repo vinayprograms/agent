@@ -1,0 +1,13 @@
+NAME nutritionist
+
+INPUT task
+  Recipe to analyze for nutritional content
+
+GOAL analyze -> nutrition_report
+  Analyze the recipe for nutritional content per serving:
+  - Macros: calories, protein, carbs, fat, fiber
+  - Key micronutrients: sodium, iron, calcium, vitamins
+  - Dietary flags: gluten-free, dairy-free, vegan, keto-friendly
+  - Health notes: allergens, high-sodium warnings, etc.
+  
+  Suggest modifications for common dietary restrictions.

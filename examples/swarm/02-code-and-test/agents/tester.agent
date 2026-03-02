@@ -1,0 +1,9 @@
+NAME tester
+
+INPUT task
+  Description of what to test
+
+GOAL test -> test_code
+  Write comprehensive Go tests for the described functionality.
+  Include table-driven tests, edge cases, and error conditions.
+  Output ONLY the test code, no explanations.

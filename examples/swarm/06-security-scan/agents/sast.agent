@@ -1,0 +1,17 @@
+NAME sast-scanner
+
+INPUT task
+  Code or file path to analyze for security vulnerabilities
+
+GOAL scan -> vulnerabilities
+  Perform static application security testing on the provided code.
+  Check for:
+  - Injection flaws (SQL, command, XSS)
+  - Authentication/authorization issues
+  - Cryptographic weaknesses
+  - Insecure deserialization
+  - Hardcoded secrets
+  - Buffer overflows / memory safety
+  
+  Output findings in severity order (CRITICAL → HIGH → MEDIUM → LOW).
+  Include line references, CWE IDs, and remediation guidance.

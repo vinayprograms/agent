@@ -1,0 +1,15 @@
+NAME researcher
+
+INPUT topic
+  Research topic to investigate
+
+GOAL research -> findings
+  Research the given topic thoroughly.
+  Provide:
+  1. Key concepts and definitions
+  2. Current state of the art
+  3. Open problems or controversies
+  4. Practical applications
+  5. Recommended resources for further reading
+
+  Be specific and cite concrete examples. No vague generalities.

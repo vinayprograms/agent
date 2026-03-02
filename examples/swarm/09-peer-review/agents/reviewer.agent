@@ -1,0 +1,20 @@
+NAME reviewer
+
+INPUT task
+  Code to review
+
+GOAL review -> feedback
+  Perform a thorough code review. Evaluate:
+  1. Correctness — does it do what it claims?
+  2. Design — is the abstraction level right?
+  3. Readability — can a stranger understand it?
+  4. Performance — any obvious bottlenecks?
+  5. Security — any vulnerabilities?
+  6. Testing — is it testable? What's missing?
+  
+  For each issue:
+  - Severity: MUST_FIX, SHOULD_FIX, NITPICK
+  - Location: function/line reference
+  - Suggestion: concrete fix, not vague advice
+  
+  End with an overall verdict: APPROVE, REQUEST_CHANGES, or NEEDS_DISCUSSION.

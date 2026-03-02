@@ -1,0 +1,19 @@
+# Security scanning swarm: parallel SAST + dependency audit
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: sast-scanner
+    agentfile: ./agents/sast.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: sast
+
+  - name: dep-auditor
+    agentfile: ./agents/dep-audit.agent
+    config: ../shared/agent.toml
+    policy: ../shared/policy.toml
+    capability: dep-audit

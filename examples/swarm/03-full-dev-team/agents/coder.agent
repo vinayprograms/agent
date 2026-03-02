@@ -1,0 +1,10 @@
+NAME coder
+
+INPUT task
+  Description of what to build
+
+GOAL implement -> source_code
+  Write clean, production-quality Go code.
+  Follow SOLID principles. Functions under 50 lines.
+  Include error handling, no shortcuts.
+  Output ONLY the code.

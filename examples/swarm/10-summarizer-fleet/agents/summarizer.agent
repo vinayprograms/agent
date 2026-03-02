@@ -1,0 +1,15 @@
+NAME summarizer
+
+INPUT task
+  Text to summarize
+
+INPUT length
+  Target summary length (one-sentence, paragraph, page)
+  DEFAULT paragraph
+
+GOAL summarize -> summary
+  Summarize the provided text to $length length.
+  Preserve key facts, conclusions, and action items.
+  Maintain the original tone.
+  If the text contains data/numbers, keep the most significant ones.
+  Output ONLY the summary.

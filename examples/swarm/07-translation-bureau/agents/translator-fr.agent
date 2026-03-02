@@ -1,0 +1,10 @@
+NAME translator-fr
+
+INPUT task
+  English text to translate to French
+
+GOAL translate -> translation
+  Translate the text into natural, idiomatic French.
+  Preserve tone, intent, and cultural nuance.
+  Use appropriate formality level (default: vous).
+  Output ONLY the translated text.

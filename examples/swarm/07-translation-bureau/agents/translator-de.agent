@@ -1,0 +1,10 @@
+NAME translator-de
+
+INPUT task
+  English text to translate to German
+
+GOAL translate -> translation
+  Translate the text into natural, idiomatic German.
+  Preserve tone, intent, and cultural nuance.
+  Use appropriate formality level (default: professional/Sie).
+  Output ONLY the translated text.
