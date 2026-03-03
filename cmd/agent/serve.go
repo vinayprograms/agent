@@ -527,6 +527,12 @@ func (a *serviceAgent) getCapabilities() []string {
 	seen := make(map[string]bool)
 	var caps []string
 
+	// Always include the explicit capability name (from --capability or NAME)
+	if a.capability.Name != "" {
+		seen[a.capability.Name] = true
+		caps = append(caps, a.capability.Name)
+	}
+
 	// Inferred capabilities from resume
 	if a.agentResume != nil {
 		for _, c := range a.agentResume.Capabilities {
@@ -543,11 +549,6 @@ func (a *serviceAgent) getCapabilities() []string {
 			seen[c] = true
 			caps = append(caps, c)
 		}
-	}
-
-	// Fallback: use capability name if nothing inferred
-	if len(caps) == 0 {
-		caps = []string{a.capability.Name}
 	}
 
 	return caps
