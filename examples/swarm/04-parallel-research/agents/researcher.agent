@@ -2,10 +2,10 @@
 
 NAME researcher
 
-INPUT task
+INPUT topic
 
 GOAL research """
-Research $task thoroughly. Provide:
+Research $topic thoroughly. Provide:
 1. Key concepts and definitions
 2. Current state of the art
 3. Open problems or controversies

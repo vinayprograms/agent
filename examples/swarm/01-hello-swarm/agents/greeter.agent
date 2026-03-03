@@ -2,8 +2,8 @@
 
 NAME greeter
 
-INPUT task
+INPUT topic
 
-GOAL greet "Say hello and share one interesting, little-known fact about $task. Keep it to 2-3 sentences." -> greeting
+GOAL greet "Say hello and share one interesting, little-known fact about $topic. Keep it to 2-3 sentences." -> greeting
 
 RUN main USING greet
