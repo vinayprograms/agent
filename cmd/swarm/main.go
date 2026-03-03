@@ -46,13 +46,11 @@ type SubmitCmd struct {
 	File       string   `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
 	Task       string   `arg:"" optional:"" help:"Task description (used as 'task' input if no --input specified)"`
 	NoWait     bool     `name:"nowait" help:"Don't wait for result (fire-and-forget)"`
-	Timeout    int      `name:"timeout" short:"t" help:"Timeout in seconds (default: 60)" default:"60"`
 }
 type DiscussCmd struct {
-	Inputs  []string `name:"input" short:"i" sep:"none" help:"Input as name=value (can repeat)"`
-	File    string   `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
-	Task    string   `arg:"" optional:"" help:"Task description"`
-	Timeout int      `name:"timeout" short:"t" help:"Timeout in seconds (default: 120)" default:"120"`
+	Inputs []string `name:"input" short:"i" sep:"none" help:"Input as name=value (can repeat)"`
+	File   string   `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
+	Task   string   `arg:"" optional:"" help:"Task description"`
 }
 type ResultCmd struct {
 	TaskID string `arg:"" help:"Task ID to fetch result for"`
@@ -352,16 +350,12 @@ func (s *SubmitCmd) Run(a *app) error {
 	// Subscribe to result BEFORE publishing (NATS drops messages with no subscribers)
 	// Default: wait for result. Use --nowait for fire-and-forget.
 	var resultSub *nats.Subscription
-	var resultCtx context.Context
-	var resultCancel context.CancelFunc
 	if !s.NoWait {
 		resultSub, err = nc.SubscribeSync(fmt.Sprintf("done.*.%s", taskID))
 		if err != nil {
 			return fmt.Errorf("subscribe: %w", err)
 		}
 		defer resultSub.Unsubscribe()
-		resultCtx, resultCancel = context.WithTimeout(context.Background(), time.Duration(s.Timeout)*time.Second)
-		defer resultCancel()
 	}
 
 	// Publish task
@@ -385,23 +379,11 @@ func (s *SubmitCmd) Run(a *app) error {
 
 	// Wait for result (default behavior)
 	if !s.NoWait {
-		fmt.Fprintf(os.Stderr, "Waiting for result...\n")
-		msg, err := resultSub.NextMsgWithContext(resultCtx)
+		result, err := waitForResult(nc, taskID, db)
 		if err != nil {
-			return fmt.Errorf("timeout waiting for result: %w", err)
-		}
-
-		var result tasks.TaskResult
-		if err := json.Unmarshal(msg.Data, &result); err != nil {
-			return fmt.Errorf("parse result: %w", err)
-		}
-
-		// Save to DB
-		if err := db.UpdateResult(&result); err != nil {
 			return err
 		}
-
-		return printResult(&result)
+		return printResult(result)
 	}
 
 	return nil
@@ -477,18 +459,8 @@ func (d *DiscussCmd) Run(a *app) error {
 		return fmt.Errorf("marshal task: %w", err)
 	}
 
-	// Subscribe to results BEFORE publishing
-	subject := fmt.Sprintf("discuss.%s", taskID)
-	resultSub, err := nc.SubscribeSync(fmt.Sprintf("done.*.%s", taskID))
-	if err != nil {
-		return fmt.Errorf("subscribe: %w", err)
-	}
-	defer resultSub.Unsubscribe()
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(d.Timeout)*time.Second)
-	defer cancel()
-
 	// Publish to discuss.* (all agents see it, triage decides who acts)
+	subject := fmt.Sprintf("discuss.%s", taskID)
 	if err := nc.Publish(subject, data); err != nil {
 		return fmt.Errorf("publish: %w", err)
 	}
@@ -496,29 +468,19 @@ func (d *DiscussCmd) Run(a *app) error {
 	fmt.Fprintf(os.Stderr, "Published to discuss.%s — waiting for agents...\n", taskID)
 	fmt.Println(taskID)
 
-	// Wait for result
-	msg, err := resultSub.NextMsgWithContext(ctx)
-	if err != nil {
-		return fmt.Errorf("timeout waiting for result: %w", err)
-	}
-
-	var result tasks.TaskResult
-	if err := json.Unmarshal(msg.Data, &result); err != nil {
-		return fmt.Errorf("parse result: %w", err)
-	}
-
-	// Save to DB
+	// Wait for result (heartbeat-aware, no fixed timeout)
 	db, err := a.db()
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	if err := db.UpdateResult(&result); err != nil {
+	result, err := waitForResult(nc, taskID, db)
+	if err != nil {
 		return err
 	}
 
-	return printResult(&result)
+	return printResult(result)
 }
 
 func (r *ResultCmd) Run(a *app) error {
