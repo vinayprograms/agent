@@ -300,6 +300,7 @@ func (a *serviceAgent) runBusMode() error {
 	if err := hbSender.Start(ctx); err != nil {
 		return fmt.Errorf("starting heartbeat: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "📡 Heartbeat started on subject: heartbeat.%s\n", a.agentID)
 	defer hbSender.Stop()
 
 	// Determine queue group

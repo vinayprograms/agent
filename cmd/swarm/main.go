@@ -150,7 +150,7 @@ func (a *AgentsCmd) Run(app *app) error {
 	}
 	defer nc.Close()
 
-	// Subscribe to heartbeats briefly
+	fmt.Fprintf(os.Stderr, "📡 Listening for heartbeats on: heartbeat.>\n")
 	sub, err := nc.SubscribeSync("heartbeat.>")
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
