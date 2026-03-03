@@ -44,7 +44,7 @@ type SubmitCmd struct {
 	Inputs     []string `name:"input" short:"i" help:"Input as name=value (can repeat)"`
 	File       string   `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
 	Task       string   `arg:"" optional:"" help:"Task description (used as 'task' input if no --input specified)"`
-	Wait       bool     `name:"wait" short:"w" help:"Wait for result and print output"`
+	NoWait     bool     `name:"nowait" help:"Don't wait for result (fire-and-forget)"`
 	Timeout    int      `name:"timeout" short:"t" help:"Timeout in seconds (default: 60)" default:"60"`
 }
 type ResultCmd struct {
@@ -342,6 +342,22 @@ func (s *SubmitCmd) Run(a *app) error {
 		return fmt.Errorf("marshal task: %w", err)
 	}
 
+	// Subscribe to result BEFORE publishing (NATS drops messages with no subscribers)
+	// Default: wait for result. Use --nowait for fire-and-forget.
+	var resultSub *nats.Subscription
+	var resultCtx context.Context
+	var resultCancel context.CancelFunc
+	if !s.NoWait {
+		resultSub, err = nc.SubscribeSync(fmt.Sprintf("done.*.%s", taskID))
+		if err != nil {
+			return fmt.Errorf("subscribe: %w", err)
+		}
+		defer resultSub.Unsubscribe()
+		resultCtx, resultCancel = context.WithTimeout(context.Background(), time.Duration(s.Timeout)*time.Second)
+		defer resultCancel()
+	}
+
+	// Publish task
 	subject := fmt.Sprintf("work.%s.%s", s.Capability, taskID)
 	if err := nc.Publish(subject, data); err != nil {
 		return fmt.Errorf("publish: %w", err)
@@ -360,19 +376,10 @@ func (s *SubmitCmd) Run(a *app) error {
 
 	fmt.Println(taskID)
 
-	// Wait for result if requested
-	if s.Wait {
+	// Wait for result (default behavior)
+	if !s.NoWait {
 		fmt.Fprintf(os.Stderr, "Waiting for result...\n")
-		sub, err := nc.SubscribeSync(fmt.Sprintf("done.*.%s", taskID))
-		if err != nil {
-			return fmt.Errorf("subscribe: %w", err)
-		}
-		defer sub.Unsubscribe()
-
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.Timeout)*time.Second)
-		defer cancel()
-
-		msg, err := sub.NextMsgWithContext(ctx)
+		msg, err := resultSub.NextMsgWithContext(resultCtx)
 		if err != nil {
 			return fmt.Errorf("timeout waiting for result: %w", err)
 		}
