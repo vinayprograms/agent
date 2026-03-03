@@ -506,32 +506,12 @@ func (r *ResultCmd) Run(a *app) error {
 		return fmt.Errorf("task %s not found or not complete (use --wait)", r.TaskID)
 	}
 
-	// Wait for result on done.* subject
-	sub, err := nc.SubscribeSync(fmt.Sprintf("done.*.%s", r.TaskID))
+	// Wait for result (heartbeat-aware, no fixed timeout)
+	result, err := waitForResult(nc, r.TaskID, db)
 	if err != nil {
 		return err
 	}
-	defer sub.Unsubscribe()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	msg, err := sub.NextMsgWithContext(ctx)
-	if err != nil {
-		return fmt.Errorf("timeout waiting for result: %w", err)
-	}
-
-	var result tasks.TaskResult
-	if err := json.Unmarshal(msg.Data, &result); err != nil {
-		return fmt.Errorf("parse result: %w", err)
-	}
-
-	// Save to DB
-	if err := db.UpdateResult(&result); err != nil {
-		return err
-	}
-
-	return printResult(&result)
+	return printResult(result)
 }
 
 func printResult(r *tasks.TaskResult) error {
