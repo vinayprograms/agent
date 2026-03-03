@@ -40,9 +40,10 @@ type StatusCmd struct{}
 type AgentsCmd struct{}
 type CapabilitiesCmd struct{}
 type SubmitCmd struct {
-	Capability string `arg:"" help:"Capability to route task to"`
-	Task       string `arg:"" help:"Task description or JSON" json:"-"`
-	File       string `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
+	Capability string   `arg:"" help:"Capability to route task to"`
+	Inputs     []string `name:"input" short:"i" help:"Input as name=value (can repeat)"`
+	File       string   `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
+	Task       string   `arg:"" optional:"" help:"Task description (used as 'task' input if no --input specified)"`
 }
 type ResultCmd struct {
 	TaskID string `arg:"" help:"Task ID to fetch result for"`
@@ -273,6 +274,17 @@ func (s *SubmitCmd) Run(a *app) error {
 	taskID := fmt.Sprintf("t-%s", uuid.New().String()[:8])
 
 	inputs := map[string]string{}
+
+	// 1. Process --input name=value flags
+	for _, input := range s.Inputs {
+		parts := strings.SplitN(input, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid input format '%s': expected name=value", input)
+		}
+		inputs[parts[0]] = parts[1]
+	}
+
+	// 2. Process JSON file if specified
 	if s.File != "" {
 		data, err := os.ReadFile(s.File)
 		if err != nil {
@@ -282,7 +294,6 @@ func (s *SubmitCmd) Run(a *app) error {
 		if err := json.Unmarshal(data, &raw); err != nil {
 			return fmt.Errorf("parse json: %w", err)
 		}
-		// Convert to string map
 		for k, v := range raw {
 			switch val := v.(type) {
 			case string:
@@ -292,7 +303,10 @@ func (s *SubmitCmd) Run(a *app) error {
 				inputs[k] = string(b)
 			}
 		}
-	} else if s.Task != "" {
+	}
+
+	// 3. Process positional task argument (only if no inputs yet)
+	if s.Task != "" && len(inputs) == 0 {
 		// Try parse as JSON, else use as "task" field
 		var raw map[string]any
 		if err := json.Unmarshal([]byte(s.Task), &raw); err != nil {
@@ -308,6 +322,10 @@ func (s *SubmitCmd) Run(a *app) error {
 				}
 			}
 		}
+	}
+
+	if len(inputs) == 0 {
+		return fmt.Errorf("no inputs provided: use --input name=value or positional argument")
 	}
 
 	task := tasks.TaskMessage{
