@@ -2,11 +2,11 @@
 
 NAME writer
 
-INPUT topic
+INPUT task
 INPUT style DEFAULT "technical blog"
 
 GOAL write """
-Write a compelling article on $topic in $style style.
+Write a compelling article on $task in $style style.
 Include a strong opening hook, clear structure, and actionable takeaways.
 Target length: 800-1200 words.
 """ -> draft
