@@ -87,6 +87,9 @@ func (cmd *ServeCmd) Run() error {
 	if cmd.Capability != "" {
 		wf.cfg.Service.Capability = cmd.Capability
 	}
+	if cmd.Storage != "" {
+		wf.cfg.Storage.Path = cmd.Storage
+	}
 
 	// Determine capability name
 	capabilityName := wf.cfg.Service.Capability

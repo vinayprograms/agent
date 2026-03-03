@@ -35,6 +35,7 @@ type ServeCmd struct {
 	Config    string `help:"Config file path"`
 	Policy    string `help:"Policy file path"`
 	Workspace string `help:"Workspace directory"`
+	Storage   string `help:"Override storage path (isolate per-agent when needed)"`
 
 	// Transport options (mutually exclusive, or use config)
 	HTTP string `help:"Run HTTP server on this address (e.g., :8080)"`
