@@ -817,10 +817,15 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage)
 	if err != nil {
 		result.Status = tasks.ResultFailed
 		result.Error = err.Error()
+		fmt.Fprintf(os.Stderr, "  ✗ Execution error: %v\n", err)
 	} else if execResult.Status != "complete" {
 		result.Status = tasks.ResultFailed
 		result.Error = fmt.Sprintf("workflow status: %s", execResult.Status)
 		result.Outputs = execResult.Outputs
+		fmt.Fprintf(os.Stderr, "  ✗ Workflow failed with status: %s\n", execResult.Status)
+		if execResult.Error != "" {
+			fmt.Fprintf(os.Stderr, "     Error: %s\n", execResult.Error)
+		}
 	} else {
 		result.Outputs = execResult.Outputs
 	}
