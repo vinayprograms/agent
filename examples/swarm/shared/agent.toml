@@ -2,11 +2,17 @@
 # Each swarm.yaml references this file
 
 [llm]
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 max_tokens = 8192
 
 [small_llm]
-model = "claude-3-5-haiku-latest"
+model = "claude-haiku-4-5"
+max_tokens=4096
+
+[embedding]
+provider="openai-compat"
+model="qwen3-embedding:0.6b"
+base_url="http://localhost:11434/v1"
 
 [storage]
 # Overridden by swarm at runtime to unified storage root
