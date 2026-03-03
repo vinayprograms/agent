@@ -256,9 +256,12 @@ func (a *serviceAgent) runBusMode() error {
 	defer natsBus.Close()
 
 	// Generate resume from Agentfile (infer capabilities)
-	if err := a.generateResume(ctx); err != nil {
+	// Generate resume with timeout (don't block startup)
+	resumeCtx, resumeCancel := context.WithTimeout(ctx, 15*time.Second)
+	if err := a.generateResume(resumeCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  Resume generation failed: %v (using fallback capability)\n", err)
 	}
+	resumeCancel()
 
 	// Register with NATS KV registry
 	if err := a.registerWithRegistry(natsBus); err != nil {
