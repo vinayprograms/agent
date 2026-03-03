@@ -436,6 +436,21 @@ func (a *serviceAgent) generateResume(ctx context.Context) error {
 			return err
 		}
 		a.agentResume = r
+
+		// Include explicit --capability in resume (so triage LLM sees it)
+		if a.capability.Name != "" {
+			found := false
+			for _, c := range a.agentResume.Capabilities {
+				if c == a.capability.Name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				a.agentResume.Capabilities = append([]string{a.capability.Name}, a.agentResume.Capabilities...)
+			}
+		}
+
 		fmt.Fprintf(os.Stderr, "📋 Resume: %s — %s\n", r.Name, r.Description)
 		fmt.Fprintf(os.Stderr, "   Capabilities: %v\n", r.Capabilities)
 
