@@ -284,6 +284,7 @@ func (a *serviceAgent) runBusMode() error {
 		return fmt.Errorf("creating heartbeat sender: %w", err)
 	}
 	a.heartbeat = hbSender
+	hbSender.SetMetadata("name", a.capability.Name)
 	hbSender.SetMetadata("capability", a.capability.Name)
 	hbSender.SetMetadata("version", version)
 
