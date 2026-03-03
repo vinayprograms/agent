@@ -44,6 +44,8 @@ type SubmitCmd struct {
 	Inputs     []string `name:"input" short:"i" help:"Input as name=value (can repeat)"`
 	File       string   `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
 	Task       string   `arg:"" optional:"" help:"Task description (used as 'task' input if no --input specified)"`
+	Wait       bool     `name:"wait" short:"w" help:"Wait for result and print output"`
+	Timeout    int      `name:"timeout" short:"t" help:"Timeout in seconds (default: 60)" default:"60"`
 }
 type ResultCmd struct {
 	TaskID string `arg:"" help:"Task ID to fetch result for"`
@@ -357,6 +359,37 @@ func (s *SubmitCmd) Run(a *app) error {
 	}
 
 	fmt.Println(taskID)
+
+	// Wait for result if requested
+	if s.Wait {
+		fmt.Fprintf(os.Stderr, "Waiting for result...\n")
+		sub, err := nc.SubscribeSync(fmt.Sprintf("done.*.%s", taskID))
+		if err != nil {
+			return fmt.Errorf("subscribe: %w", err)
+		}
+		defer sub.Unsubscribe()
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.Timeout)*time.Second)
+		defer cancel()
+
+		msg, err := sub.NextMsgWithContext(ctx)
+		if err != nil {
+			return fmt.Errorf("timeout waiting for result: %w", err)
+		}
+
+		var result tasks.TaskResult
+		if err := json.Unmarshal(msg.Data, &result); err != nil {
+			return fmt.Errorf("parse result: %w", err)
+		}
+
+		// Save to DB
+		if err := db.UpdateResult(&result); err != nil {
+			return err
+		}
+
+		return printResult(&result)
+	}
+
 	return nil
 }
 
