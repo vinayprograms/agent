@@ -26,6 +26,7 @@ type CLI struct {
 	Agents       AgentsCmd       `cmd:"" help:"List registered agents"`
 	Capabilities CapabilitiesCmd `cmd:"" help:"List capabilities in swarm"`
 	Submit       SubmitCmd       `cmd:"" help:"Submit a task to an agent"`
+	Discuss      DiscussCmd      `cmd:"" help:"Submit a task for collaborative discussion"`
 	Result       ResultCmd       `cmd:"" help:"Get result for a task"`
 	History      HistoryCmd      `cmd:"" help:"Show recent tasks"`
 	Up           UpCmd           `cmd:"" help:"Start swarm from swarm.yaml"`
@@ -46,6 +47,12 @@ type SubmitCmd struct {
 	Task       string   `arg:"" optional:"" help:"Task description (used as 'task' input if no --input specified)"`
 	NoWait     bool     `name:"nowait" help:"Don't wait for result (fire-and-forget)"`
 	Timeout    int      `name:"timeout" short:"t" help:"Timeout in seconds (default: 60)" default:"60"`
+}
+type DiscussCmd struct {
+	Inputs  []string `name:"input" short:"i" help:"Input as name=value (can repeat)"`
+	File    string   `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
+	Task    string   `arg:"" optional:"" help:"Task description"`
+	Timeout int      `name:"timeout" short:"t" help:"Timeout in seconds (default: 120)" default:"120"`
 }
 type ResultCmd struct {
 	TaskID string `arg:"" help:"Task ID to fetch result for"`
@@ -398,6 +405,120 @@ func (s *SubmitCmd) Run(a *app) error {
 	}
 
 	return nil
+}
+
+func (d *DiscussCmd) Run(a *app) error {
+	nc, err := a.connect()
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	taskID := fmt.Sprintf("t-%s", uuid.New().String()[:8])
+
+	inputs := map[string]string{}
+	for _, input := range d.Inputs {
+		parts := strings.SplitN(input, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid input format '%s': expected name=value", input)
+		}
+		inputs[parts[0]] = parts[1]
+	}
+
+	if d.File != "" {
+		data, err := os.ReadFile(d.File)
+		if err != nil {
+			return fmt.Errorf("read file: %w", err)
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("parse json: %w", err)
+		}
+		for k, v := range raw {
+			switch val := v.(type) {
+			case string:
+				inputs[k] = val
+			default:
+				b, _ := json.Marshal(val)
+				inputs[k] = string(b)
+			}
+		}
+	}
+
+	if d.Task != "" && len(inputs) == 0 {
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(d.Task), &raw); err != nil {
+			inputs["task"] = d.Task
+		} else {
+			for k, v := range raw {
+				switch val := v.(type) {
+				case string:
+					inputs[k] = val
+				default:
+					b, _ := json.Marshal(val)
+					inputs[k] = string(b)
+				}
+			}
+		}
+	}
+
+	if len(inputs) == 0 {
+		return fmt.Errorf("no inputs provided: use --input name=value or positional argument")
+	}
+
+	task := tasks.TaskMessage{
+		TaskID:  taskID,
+		Inputs:  inputs,
+		Attempt: 1,
+	}
+
+	data, err := task.Marshal()
+	if err != nil {
+		return fmt.Errorf("marshal task: %w", err)
+	}
+
+	// Subscribe to results BEFORE publishing
+	subject := fmt.Sprintf("discuss.%s", taskID)
+	resultSub, err := nc.SubscribeSync(fmt.Sprintf("done.*.%s", taskID))
+	if err != nil {
+		return fmt.Errorf("subscribe: %w", err)
+	}
+	defer resultSub.Unsubscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(d.Timeout)*time.Second)
+	defer cancel()
+
+	// Publish to discuss.* (all agents see it, triage decides who acts)
+	if err := nc.Publish(subject, data); err != nil {
+		return fmt.Errorf("publish: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Published to discuss.%s — waiting for agents...\n", taskID)
+	fmt.Println(taskID)
+
+	// Wait for result
+	msg, err := resultSub.NextMsgWithContext(ctx)
+	if err != nil {
+		return fmt.Errorf("timeout waiting for result: %w", err)
+	}
+
+	var result tasks.TaskResult
+	if err := json.Unmarshal(msg.Data, &result); err != nil {
+		return fmt.Errorf("parse result: %w", err)
+	}
+
+	// Save to DB
+	db, err := a.db()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if err := db.UpdateResult(&result); err != nil {
+		return err
+	}
+
+	return printResult(&result)
 }
 
 func (r *ResultCmd) Run(a *app) error {
