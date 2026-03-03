@@ -629,6 +629,15 @@ func (a *serviceAgent) discussLLMTriage(ctx context.Context, task *tasks.TaskMes
 	resumeSummary := a.capability.Name
 	if a.agentResume != nil {
 		resumeSummary = a.agentResume.ToText()
+	} else {
+		// Fallback: use goals from Agentfile
+		var goals []string
+		for _, g := range a.wf.wf.Goals {
+			goals = append(goals, fmt.Sprintf("- %s: %s", g.Name, g.Outcome))
+		}
+		if len(goals) > 0 {
+			resumeSummary = fmt.Sprintf("%s\n\nGoals:\n%s", a.capability.Name, strings.Join(goals, "\n"))
+		}
 	}
 
 	prompt := fmt.Sprintf(`You are deciding whether an agent should act on a collaborative task.
@@ -649,8 +658,13 @@ Your answer:`, resumeSummary, taskText)
 	llm := &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
 	resp, err := llm.Complete(ctx, prompt)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  ⚠️  Triage LLM failed: %v (defaulting to SKIP)\n", err)
-		return "SKIP" // Fail closed — don't execute on LLM error
+		fmt.Fprintf(os.Stderr, "  ⚠️  Triage LLM failed: %v (defaulting to EXECUTE for single-capability agent)\n", err)
+		// For single-capability agents, default to EXECUTE on LLM error
+		// Multi-capability agents should be more selective
+		if len(a.agentResume.Capabilities) <= 1 {
+			return "EXECUTE"
+		}
+		return "SKIP"
 	}
 
 	// Parse response — first word only
