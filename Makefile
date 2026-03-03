@@ -4,12 +4,18 @@
 BINARY_NAME := agent
 REPLAY_BINARY := agent-replay
 MEM_BINARY := agentmem
+SWARM_BINARY := swarm
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Directories
 BIN_DIR := bin
+CMD_DIR := cmd
+
+# Auto-discover all binaries from cmd/ directory
+CMD_BINARIES := $(notdir $(wildcard $(CMD_DIR)/*))
+CMD_BINARIES := $(filter-out internal,$(CMD_BINARIES))
 
 # Build flags
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)"
@@ -32,13 +38,14 @@ GOINSTALL := CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" $(GO) install
 # =============================================================================
 
 .PHONY: build
-build: ## Build agent, agent-replay, and agentmem binaries
-	@echo "Building $(BINARY_NAME), $(REPLAY_BINARY), and $(MEM_BINARY) $(VERSION)..."
+build: ## Build all binaries (auto-discovers from cmd/)
+	@echo "Building all binaries $(VERSION)..."
 	@mkdir -p $(BIN_DIR)
-	@$(GOBUILD) -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/agent
-	@$(GOBUILD) -o $(BIN_DIR)/$(REPLAY_BINARY) ./cmd/replay
-	@$(GOBUILD) -o $(BIN_DIR)/$(MEM_BINARY) ./cmd/agentmem
-	@echo "Built: $(BIN_DIR)/$(BINARY_NAME), $(BIN_DIR)/$(REPLAY_BINARY), $(BIN_DIR)/$(MEM_BINARY)"
+	@for cmd in $(CMD_BINARIES); do \
+		echo "  Building $$cmd..."; \
+		$(GOBUILD) -o $(BIN_DIR)/$$cmd ./cmd/$$cmd; \
+	done
+	@echo "Built: $(BIN_DIR)/"
 
 .PHONY: build-agent
 build-agent: ## Build only the agent binary
@@ -47,42 +54,34 @@ build-agent: ## Build only the agent binary
 	@$(GOBUILD) -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/agent
 	@echo "Built: $(BIN_DIR)/$(BINARY_NAME)"
 
-.PHONY: build-replay
-build-replay: ## Build only the replay binary
-	@echo "Building $(REPLAY_BINARY) $(VERSION)..."
+.PHONY: build-swarm
+build-swarm: ## Build only the swarm CLI
+	@echo "Building $(SWARM_BINARY) $(VERSION)..."
 	@mkdir -p $(BIN_DIR)
-	@$(GOBUILD) -o $(BIN_DIR)/$(REPLAY_BINARY) ./cmd/replay
-	@echo "Built: $(BIN_DIR)/$(REPLAY_BINARY)"
-
-.PHONY: build-mem
-build-mem: ## Build only the agentmem binary
-	@echo "Building $(MEM_BINARY) $(VERSION)..."
-	@mkdir -p $(BIN_DIR)
-	@$(GOBUILD) -o $(BIN_DIR)/$(MEM_BINARY) ./cmd/agentmem
-	@echo "Built: $(BIN_DIR)/$(MEM_BINARY)"
+	@$(GOBUILD) -o $(BIN_DIR)/$(SWARM_BINARY) ./cmd/swarm
+	@echo "Built: $(BIN_DIR)/$(SWARM_BINARY)"
 
 .PHONY: build-static
 build-static: ## Build fully static binaries (for containers)
 	@echo "Building static binaries $(VERSION)..."
 	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-static ./cmd/agent
-	@CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-static ./cmd/replay
-	@echo "Built: $(BIN_DIR)/$(BINARY_NAME)-static, $(BIN_DIR)/$(REPLAY_BINARY)-static"
+	@for cmd in $(CMD_BINARIES); do \
+		echo "  Building $$cmd (static)..."; \
+		CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$$cmd-static ./cmd/$$cmd; \
+	done
+	@echo "Built: $(BIN_DIR)/"
 
 .PHONY: build-all
 build-all: ## Build for all platforms
 	@echo "Building for all platforms..."
 	@mkdir -p $(BIN_DIR)
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/agent
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-linux-amd64 ./cmd/replay
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/agent
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-linux-arm64 ./cmd/replay
-	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/agent
-	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-darwin-amd64 ./cmd/replay
-	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/agent
-	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-darwin-arm64 ./cmd/replay
-	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/agent
-	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$(REPLAY_BINARY)-windows-amd64.exe ./cmd/replay
+	@for cmd in $(CMD_BINARIES); do \
+		GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$$cmd-linux-amd64 ./cmd/$$cmd; \
+		GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$$cmd-linux-arm64 ./cmd/$$cmd; \
+		GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$$cmd-darwin-amd64 ./cmd/$$cmd; \
+		GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$$cmd-darwin-arm64 ./cmd/$$cmd; \
+		GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BIN_DIR)/$$cmd-windows-amd64.exe ./cmd/$$cmd; \
+	done
 	@echo "Built binaries in $(BIN_DIR)/"
 
 # =============================================================================
@@ -91,16 +90,18 @@ build-all: ## Build for all platforms
 
 .PHONY: install
 install: ## Install all binaries to GOPATH/bin using go install
-	@echo "Installing $(BINARY_NAME), $(REPLAY_BINARY), and $(MEM_BINARY) $(VERSION)..."
-	@$(GOINSTALL) ./cmd/agent
-	@$(GOINSTALL) ./cmd/replay
-	@$(GOINSTALL) ./cmd/agentmem
+	@echo "Installing all binaries $(VERSION)..."
+	@for cmd in $(CMD_BINARIES); do \
+		$(GOINSTALL) ./cmd/$$cmd; \
+	done
 	@echo "Installed to $(shell go env GOPATH)/bin"
 
 .PHONY: uninstall
 uninstall: ## Remove binaries from GOPATH/bin
 	@echo "Removing binaries from GOPATH/bin..."
-	@rm -f $(shell go env GOPATH)/bin/agent $(shell go env GOPATH)/bin/replay $(shell go env GOPATH)/bin/agentmem
+	@for cmd in $(CMD_BINARIES); do \
+		rm -f $(shell go env GOPATH)/bin/$$cmd; \
+	done
 	@echo "Uninstalled."
 
 # =============================================================================
