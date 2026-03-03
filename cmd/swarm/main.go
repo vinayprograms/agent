@@ -42,14 +42,14 @@ type AgentsCmd struct{}
 type CapabilitiesCmd struct{}
 type SubmitCmd struct {
 	Capability string   `arg:"" help:"Capability to route task to"`
-	Inputs     []string `name:"input" short:"i" help:"Input as name=value (can repeat)"`
+	Inputs     []string `name:"input" short:"i" sep:"none" help:"Input as name=value (can repeat)"`
 	File       string   `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
 	Task       string   `arg:"" optional:"" help:"Task description (used as 'task' input if no --input specified)"`
 	NoWait     bool     `name:"nowait" help:"Don't wait for result (fire-and-forget)"`
 	Timeout    int      `name:"timeout" short:"t" help:"Timeout in seconds (default: 60)" default:"60"`
 }
 type DiscussCmd struct {
-	Inputs  []string `name:"input" short:"i" help:"Input as name=value (can repeat)"`
+	Inputs  []string `name:"input" short:"i" sep:"none" help:"Input as name=value (can repeat)"`
 	File    string   `name:"file" short:"f" help:"Load inputs from JSON file" type:"existingfile"`
 	Task    string   `arg:"" optional:"" help:"Task description"`
 	Timeout int      `name:"timeout" short:"t" help:"Timeout in seconds (default: 120)" default:"120"`
