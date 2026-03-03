@@ -785,6 +785,7 @@ func (d *taskDB) InsertTask(task *tasks.TaskMessage, status string) error {
 }
 
 func (d *taskDB) UpdateResult(result *tasks.TaskResult) error {
+	// Update status in records
 	records := d.loadRecords()
 	for i, r := range records {
 		if r.TaskID == result.TaskID {
@@ -793,7 +794,25 @@ func (d *taskDB) UpdateResult(result *tasks.TaskResult) error {
 			break
 		}
 	}
-	return d.saveRecords(records)
+	if err := d.saveRecords(records); err != nil {
+		return err
+	}
+
+	// Save full result to file for replay
+	resultDir := filepath.Join(filepath.Dir(d.dbPath), "tasks")
+	if err := os.MkdirAll(resultDir, 0755); err != nil {
+		return fmt.Errorf("create result dir: %w", err)
+	}
+	resultPath := filepath.Join(resultDir, result.TaskID+".json")
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal result: %w", err)
+	}
+	if err := os.WriteFile(resultPath, data, 0644); err != nil {
+		return fmt.Errorf("write result: %w", err)
+	}
+
+	return nil
 }
 
 func (d *taskDB) GetResult(taskID string) (*tasks.TaskResult, error) {
