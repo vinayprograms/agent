@@ -31,8 +31,8 @@ type serviceAgent struct {
 	creds *credentials.Credentials
 
 	// Agent identity (uses session ID)
-	agentID    string
-	capability registry.CapabilitySchema
+	agentID     string
+	capability  registry.CapabilitySchema
 	agentResume *resume.Resume
 
 	// Service-level session (shared across all tasks)
@@ -48,13 +48,13 @@ type serviceAgent struct {
 	httpServer *http.Server
 
 	// Bus mode components
-	bus          bus.MessageBus
-	heartbeat    *heartbeat.BusSender
-	reg          registry.Registry
-	taskSubs     []bus.Subscription // work.<cap>.* subscriptions
-	discussSub   bus.Subscription   // discuss.* subscription
-	queueGroup   string
-	embedder     embedding.Embedder // for discuss pre-filter
+	bus        bus.MessageBus
+	heartbeat  *heartbeat.BusSender
+	reg        registry.Registry
+	taskSubs   []bus.Subscription // work.<cap>.* subscriptions
+	discussSub bus.Subscription   // discuss.* subscription
+	queueGroup string
+	embedder   embedding.Embedder // for discuss pre-filter
 }
 
 // Run executes the serve command.
@@ -662,20 +662,28 @@ func (a *serviceAgent) discussLLMTriage(ctx context.Context, task *tasks.TaskMes
 		}
 	}
 
+	// Check for prior outputs from other agents
+	priorContext := ""
+	if task.Metadata != nil {
+		if prior, ok := task.Metadata["prior_output"]; ok && prior != "" {
+			priorContext = fmt.Sprintf("\n\nPRIOR WORK (by %s):\n%s", task.Metadata["capability"], prior)
+		}
+	}
+
 	prompt := fmt.Sprintf(`You are deciding whether an agent should act on a collaborative task.
 
 AGENT PROFILE:
 %s
 
 TASK:
-%s
+%s%s
 
 Decide the agent's action. Reply with exactly one word:
-- EXECUTE — this task matches the agent's capabilities and the agent should do the work
+- EXECUTE — this task matches the agent's capabilities AND the prerequisites for the agent's work exist (e.g., code exists to test, design exists to review)
 - COMMENT — the agent has relevant expertise to contribute insights but should not do the full task
-- SKIP — this task is outside the agent's expertise
+- SKIP — this task is outside the agent's expertise OR the prerequisites for the agent's work don't exist yet
 
-Your answer:`, resumeSummary, taskText)
+Your answer:`, resumeSummary, taskText, priorContext)
 
 	llm := &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
 	resp, err := llm.Complete(ctx, prompt)
@@ -746,6 +754,9 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 		return
 	}
 
+	// Track if this came from a discuss.* topic
+	fromDiscuss := strings.HasPrefix(msg.Subject, "discuss.")
+
 	fmt.Fprintf(os.Stderr, "  → Task received: %s\n", task.TaskID)
 
 	// Update heartbeat status
@@ -779,6 +790,31 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 	if err := a.bus.Publish(resultSubject, resultData); err != nil {
 		fmt.Fprintf(os.Stderr, "  ✗ Failed to publish result: %v\n", err)
 		return
+	}
+
+	// If task came from discuss.*, republish result to discuss channel
+	// so other agents can pick up the output (e.g., tester sees coder's code)
+	if fromDiscuss {
+		followUp := tasks.TaskMessage{
+			TaskID:      task.TaskID,
+			Inputs:      task.Inputs,
+			Attempt:     task.Attempt,
+			SubmittedBy: a.agentID,
+			Metadata: map[string]string{
+				"agent_id":     a.agentID,
+				"capability":   a.capability.Name,
+				"prior_output": fmt.Sprintf("%v", result.Outputs),
+			},
+		}
+		followUpData, err := followUp.Marshal()
+		if err == nil {
+			discussSubject := fmt.Sprintf("discuss.%s", task.TaskID)
+			if pubErr := a.bus.Publish(discussSubject, followUpData); pubErr != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠️  Failed to republish to discuss: %v\n", pubErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "  📢 Result shared on discuss.%s\n", task.TaskID)
+			}
+		}
 	}
 
 	statusIcon := "✓"
