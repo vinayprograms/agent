@@ -31,7 +31,7 @@ type RunCmd struct {
 
 // ServeCmd runs the agent as a long-running service.
 type ServeCmd struct {
-	File      string `arg:"" default:"Agentfile" help:"Agentfile path"`
+	File      string `arg:"" optional:"" default:"Agentfile" help:"Agentfile path"`
 	Config    string `help:"Config file path"`
 	Policy    string `help:"Policy file path"`
 	Workspace string `help:"Workspace directory"`

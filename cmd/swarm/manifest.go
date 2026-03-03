@@ -34,6 +34,7 @@ type AgentSpec struct {
 	Config     string `yaml:"config"`
 	Policy     string `yaml:"policy"`
 	Capability string `yaml:"capability"`
+	Storage    string `yaml:"storage"`
 }
 
 // loadManifest reads a swarm.yaml file.
@@ -56,6 +57,7 @@ func loadManifest(path string) (*Manifest, error) {
 		m.Agents[i].Config = expandEnv(m.Agents[i].Config)
 		m.Agents[i].Policy = expandEnv(m.Agents[i].Policy)
 		m.Agents[i].Capability = expandEnv(m.Agents[i].Capability)
+		m.Agents[i].Storage = expandEnv(m.Agents[i].Storage)
 	}
 
 	// Defaults

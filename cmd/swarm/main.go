@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -592,7 +593,11 @@ func (u *UpCmd) Run(a *app) error {
 		agents = filtered
 	}
 
+	// Load existing PID records and clean stale entries
+	existingPIDs := cleanStalePIDs(loadPIDRecords(a.dataDir))
+
 	// Start each agent
+	var newPIDs []pidRecord
 	for _, ag := range agents {
 		fmt.Printf("  → %s (%s)\n", ag.Name, ag.Capability)
 		args := []string{"serve", "--bus", m.NATS.URL}
@@ -608,6 +613,9 @@ func (u *UpCmd) Run(a *app) error {
 		if ag.Capability != "" {
 			args = append(args, "--capability", ag.Capability)
 		}
+		if ag.Storage != "" {
+			args = append(args, "--storage", ag.Storage)
+		}
 
 		cmd := exec.Command("agent", args...)
 		cmd.Stdout = os.Stdout
@@ -617,6 +625,18 @@ func (u *UpCmd) Run(a *app) error {
 			continue
 		}
 		fmt.Printf("  ✓ Started %s (pid %d)\n", ag.Name, cmd.Process.Pid)
+		newPIDs = append(newPIDs, pidRecord{
+			Name:       ag.Name,
+			PID:        cmd.Process.Pid,
+			Capability: ag.Capability,
+			StartedAt:  time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// Save merged PID records
+	allPIDs := append(existingPIDs, newPIDs...)
+	if err := savePIDRecords(a.dataDir, allPIDs); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  Failed to save PID records: %v\n", err)
 	}
 
 	fmt.Println("Swarm started. Use 'swarm agents' to verify.")
@@ -624,81 +644,105 @@ func (u *UpCmd) Run(a *app) error {
 }
 
 func (d *DownCmd) Run(a *app) error {
-	// Graceful shutdown via NATS signal
+	// Phase 1: Try NATS discovery + control signal
+	natsOK := false
 	nc, err := a.connect()
 	if err != nil {
-		return err
-	}
-	defer nc.Close()
-
-	// Get list of agents from heartbeats
-	sub, err := nc.SubscribeSync("heartbeat.>")
-	if err != nil {
-		return err
-	}
-	defer sub.Unsubscribe()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	type agentInfo struct {
-		id   string
-		name string
-	}
-	agents := []agentInfo{}
-
-	for {
-		msg, err := sub.NextMsgWithContext(ctx)
-		if err != nil {
-			break
-		}
-		var hb struct {
-			AgentID  string            `json:"agent_id"`
-			Metadata map[string]string `json:"metadata"`
-		}
-		if err := json.Unmarshal(msg.Data, &hb); err != nil {
-			continue
-		}
-		name := hb.AgentID
-		if n, ok := hb.Metadata["name"]; ok && n != "" {
-			name = n
-		}
-		agents = append(agents, agentInfo{id: hb.AgentID, name: name})
+		fmt.Fprintf(os.Stderr, "⚠️  NATS unavailable: %v\n", err)
+	} else {
+		defer nc.Close()
+		natsOK = true
 	}
 
-	if len(agents) == 0 {
-		fmt.Println("No agents discovered")
+	var signaled []string // agent names that received NATS shutdown signal
+	if natsOK {
+		agents := discoverAgentsViaHeartbeat(nc, 2*time.Second)
+
+		// Filter if specific agents requested
+		targets := agents
+		if len(d.Agents) > 0 {
+			agentSet := map[string]struct{}{}
+			for _, name := range d.Agents {
+				agentSet[name] = struct{}{}
+			}
+			filtered := make([]discoveredAgent, 0)
+			for _, ag := range agents {
+				if _, ok := agentSet[ag.name]; ok {
+					filtered = append(filtered, ag)
+				}
+			}
+			targets = filtered
+		}
+
+		// Send shutdown signal via NATS
+		for _, ag := range targets {
+			fmt.Printf("  → Stopping %s (NATS)\n", ag.name)
+			if err := nc.Publish(fmt.Sprintf("control.%s.shutdown", ag.id), []byte{}); err != nil {
+				fmt.Printf("  ✗ Failed to signal %s: %v\n", ag.name, err)
+				continue
+			}
+			fmt.Printf("  ✓ Shutdown signal sent to %s\n", ag.name)
+			signaled = append(signaled, ag.name)
+		}
+	}
+
+	// Phase 2: PID fallback — wait briefly, then SIGTERM any still-alive processes
+	pidRecords := loadPIDRecords(a.dataDir)
+	if len(pidRecords) == 0 && len(signaled) == 0 {
+		fmt.Println("No agents discovered (NATS) and no saved PIDs")
 		return nil
 	}
 
-	// Filter if specific agents requested
-	targets := agents
-	if len(d.Agents) > 0 {
-		agentSet := map[string]struct{}{}
-		for _, name := range d.Agents {
-			agentSet[name] = struct{}{}
+	if len(pidRecords) > 0 {
+		// Filter PID records if specific agents requested
+		targets := pidRecords
+		if len(d.Agents) > 0 {
+			agentSet := map[string]struct{}{}
+			for _, name := range d.Agents {
+				agentSet[name] = struct{}{}
+			}
+			filtered := make([]pidRecord, 0)
+			for _, r := range pidRecords {
+				if _, ok := agentSet[r.Name]; ok {
+					filtered = append(filtered, r)
+				}
+			}
+			targets = filtered
 		}
-		filtered := make([]agentInfo, 0)
-		for _, ag := range agents {
-			if _, ok := agentSet[ag.name]; ok {
-				filtered = append(filtered, ag)
+
+		// Wait for NATS-signaled agents to exit gracefully
+		if len(signaled) > 0 {
+			fmt.Println("Waiting 3s for graceful shutdown...")
+			time.Sleep(3 * time.Second)
+		}
+
+		// SIGTERM any still-alive processes from PID records
+		for _, r := range targets {
+			if !isProcessAlive(r.PID) {
+				continue
+			}
+			fmt.Printf("  → Stopping %s (pid %d, SIGTERM)\n", r.Name, r.PID)
+			proc, err := os.FindProcess(r.PID)
+			if err != nil {
+				continue
+			}
+			if err := proc.Signal(syscall.SIGTERM); err != nil {
+				fmt.Printf("  ✗ Failed to SIGTERM %s (pid %d): %v\n", r.Name, r.PID, err)
+			} else {
+				fmt.Printf("  ✓ SIGTERM sent to %s (pid %d)\n", r.Name, r.PID)
 			}
 		}
-		targets = filtered
 	}
 
-	// Send shutdown signal
-	for _, ag := range targets {
-		fmt.Printf("  → Stopping %s\n", ag.name)
-		// Publish to control.<agent_id>.shutdown
-		if err := nc.Publish(fmt.Sprintf("control.%s.shutdown", ag.id), []byte{}); err != nil {
-			fmt.Printf("  ✗ Failed to signal %s: %v\n", ag.name, err)
-			continue
-		}
-		fmt.Printf("  ✓ Shutdown signal sent to %s\n", ag.name)
+	// Clean up PID file
+	remaining := cleanStalePIDs(loadPIDRecords(a.dataDir))
+	if len(remaining) == 0 {
+		os.Remove(pidFilePath(a.dataDir))
+	} else {
+		savePIDRecords(a.dataDir, remaining)
 	}
 
-	fmt.Println("Shutdown signals sent. Agents will drain and exit.")
+	fmt.Println("Shutdown complete.")
 	return nil
 }
 
@@ -999,6 +1043,104 @@ func (d *taskDB) saveRecords(records []taskRecord) error {
 		return err
 	}
 	return os.WriteFile(recordsPath, data, 0644)
+}
+
+// pidRecord tracks a started agent process.
+type pidRecord struct {
+	Name       string `json:"name"`
+	PID        int    `json:"pid"`
+	Capability string `json:"capability"`
+	StartedAt  string `json:"started_at"`
+}
+
+func pidFilePath(dataDir string) string {
+	return filepath.Join(dataDir, "pids.json")
+}
+
+func loadPIDRecords(dataDir string) []pidRecord {
+	data, err := os.ReadFile(pidFilePath(dataDir))
+	if err != nil {
+		return nil
+	}
+	var records []pidRecord
+	json.Unmarshal(data, &records)
+	return records
+}
+
+func savePIDRecords(dataDir string, records []pidRecord) error {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(records, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(pidFilePath(dataDir), data, 0644)
+}
+
+// isProcessAlive checks if a process exists using kill(pid, 0).
+func isProcessAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+// cleanStalePIDs removes records for processes that no longer exist.
+func cleanStalePIDs(records []pidRecord) []pidRecord {
+	alive := make([]pidRecord, 0, len(records))
+	for _, r := range records {
+		if isProcessAlive(r.PID) {
+			alive = append(alive, r)
+		}
+	}
+	return alive
+}
+
+// discoveredAgent holds agent identity discovered via heartbeat for shutdown.
+type discoveredAgent struct {
+	id   string
+	name string
+}
+
+// discoverAgentsViaHeartbeat listens for heartbeats and returns discovered agents.
+func discoverAgentsViaHeartbeat(nc *nats.Conn, timeout time.Duration) []discoveredAgent {
+	sub, err := nc.SubscribeSync("heartbeat.>")
+	if err != nil {
+		return nil
+	}
+	defer sub.Unsubscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	seen := map[string]bool{}
+	var agents []discoveredAgent
+
+	for {
+		msg, err := sub.NextMsgWithContext(ctx)
+		if err != nil {
+			break
+		}
+		var hb struct {
+			AgentID  string            `json:"agent_id"`
+			Metadata map[string]string `json:"metadata"`
+		}
+		if err := json.Unmarshal(msg.Data, &hb); err != nil {
+			continue
+		}
+		if seen[hb.AgentID] {
+			continue
+		}
+		seen[hb.AgentID] = true
+		name := hb.AgentID
+		if n, ok := hb.Metadata["name"]; ok && n != "" {
+			name = n
+		}
+		agents = append(agents, discoveredAgent{id: hb.AgentID, name: name})
+	}
+	return agents
 }
 
 // getUserHome returns the current user's home directory.

@@ -53,6 +53,7 @@ type serviceAgent struct {
 	reg        registry.Registry
 	taskSubs   []bus.Subscription // work.<cap>.* subscriptions
 	discussSub bus.Subscription   // discuss.* subscription
+	controlSub bus.Subscription   // control.<id>.shutdown subscription
 	queueGroup string
 	embedder   embedding.Embedder // for discuss pre-filter
 }
@@ -341,6 +342,16 @@ func (a *serviceAgent) runBusMode() error {
 		defer discussSub.Unsubscribe()
 	}
 
+	// Subscribe to control.<agentID>.shutdown for remote shutdown via `swarm down`
+	controlSubject := fmt.Sprintf("control.%s.shutdown", a.agentID)
+	controlSub, err := natsBus.Subscribe(controlSubject)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  Failed to subscribe to %s: %v\n", controlSubject, err)
+	} else {
+		a.controlSub = controlSub
+		defer controlSub.Unsubscribe()
+	}
+
 	// Handle shutdown signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -376,10 +387,25 @@ func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
 		discussCh = a.discussSub.Messages()
 	}
 
+	// Control channel (remote shutdown via `swarm down`)
+	var controlCh <-chan *bus.Message
+	if a.controlSub != nil {
+		controlCh = a.controlSub.Messages()
+	}
+
 	for {
 		select {
 		case <-sigCh:
 			fmt.Fprintf(os.Stderr, "\nReceived shutdown signal, draining...\n")
+			a.initiateBusShutdown(ctx)
+			return
+
+		case _, ok := <-controlCh:
+			if !ok {
+				controlCh = nil
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "\nReceived remote shutdown signal, draining...\n")
 			a.initiateBusShutdown(ctx)
 			return
 
@@ -849,6 +875,9 @@ func (a *serviceAgent) initiateBusShutdown(ctx context.Context) {
 	}
 	if a.discussSub != nil {
 		a.discussSub.Unsubscribe()
+	}
+	if a.controlSub != nil {
+		a.controlSub.Unsubscribe()
 	}
 
 	// Wait for current task to complete (with timeout)

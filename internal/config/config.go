@@ -76,7 +76,7 @@ type StorageConfig struct {
 
 // EmbeddingConfig holds embedding provider settings for resume vectors.
 type EmbeddingConfig struct {
-	// Provider name: "openai", "google", "openai-compat", "none"
+	// Provider name: "openai", "google", "openai-compat", "litellm", "none"
 	Provider string `toml:"provider"`
 	// Model name (e.g., "text-embedding-3-small", "text-embedding-004")
 	Model string `toml:"model"`
