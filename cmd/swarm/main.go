@@ -601,9 +601,6 @@ func (u *UpCmd) Run(a *app) error {
 	for _, ag := range agents {
 		fmt.Printf("  → %s (%s)\n", ag.Name, ag.Capability)
 		args := []string{"serve", "--bus", m.NATS.URL}
-		if ag.Agentfile != "" {
-			args = append(args, "-f", ag.Agentfile)
-		}
 		if ag.Config != "" {
 			args = append(args, "--config", ag.Config)
 		}
@@ -615,6 +612,9 @@ func (u *UpCmd) Run(a *app) error {
 		}
 		if ag.Storage != "" {
 			args = append(args, "--storage", ag.Storage)
+		}
+		if ag.Agentfile != "" {
+			args = append(args, ag.Agentfile)
 		}
 
 		cmd := exec.Command("agent", args...)
