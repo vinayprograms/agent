@@ -62,8 +62,8 @@ type HistoryCmd struct {
 	Limit      int    `name:"limit" short:"l" help:"Max results" default:"20"`
 }
 type UpCmd struct {
-	File   string   `name:"file" short:"f" help:"Manifest file" type:"existingfile"`
-	Agents []string `arg:"" optional:"" help:"Specific agents to start (default: all)"`
+	Agents []string `name:"agent" short:"a" optional:"" help:"Specific agents to start (default: all)"`
+	File   string   `arg:"" optional:"" default:"swarm.yaml" help:"Manifest file"`
 }
 type DownCmd struct {
 	Agents []string `arg:"" optional:"" help:"Specific agents to stop (default: all)"`

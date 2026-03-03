@@ -20,13 +20,13 @@ type CLI struct {
 
 // RunCmd executes a workflow from an Agentfile.
 type RunCmd struct {
-	File      string            `short:"f" default:"Agentfile" help:"Agentfile path"`
 	Input     map[string]string `short:"i" help:"Input key=value (repeatable)"`
 	Config    string            `help:"Config file path"`
 	Policy    string            `help:"Policy file path"`
 	Workspace string            `help:"Workspace directory"`
 	Goal      string            `help:"Inline goal description (skips Agentfile)"`
 	Debug     bool              `help:"Enable verbose logging (prompts, responses, tool outputs)"`
+	File      string            `arg:"" optional:"" default:"Agentfile" help:"Agentfile path"`
 }
 
 // ServeCmd runs the agent as a long-running service.
