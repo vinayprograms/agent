@@ -204,25 +204,30 @@ func subscribeCmd(nc *nats.Conn) tea.Cmd {
 				break
 			}
 			var hb struct {
-				AgentID      string   `json:"agent_id"`
-				Name         string   `json:"name"`
-				Status       string   `json:"status"`
-				Load         float64  `json:"load"`
-				Capabilities []string `json:"capabilities"`
+				AgentID  string            `json:"agent_id"`
+				Status   string            `json:"status"`
+				Load     float64           `json:"load"`
+				Metadata map[string]string `json:"metadata"`
 			}
 			if err := json.Unmarshal(msg.Data, &hb); err != nil {
 				continue
 			}
-			name := hb.Name
-			if name == "" {
-				name = hb.AgentID
+			// Extract name from metadata
+			name := hb.AgentID
+			if n, ok := hb.Metadata["name"]; ok && n != "" {
+				name = n
+			}
+			// Extract capabilities from metadata
+			var caps []string
+			if cap, ok := hb.Metadata["capability"]; ok && cap != "" {
+				caps = []string{cap}
 			}
 			agents = append(agents, agentInfo{
 				id:     hb.AgentID,
 				name:   name,
 				status: hb.Status,
 				load:   hb.Load,
-				caps:   hb.Capabilities,
+				caps:   caps,
 			})
 		}
 

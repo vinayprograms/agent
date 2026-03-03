@@ -174,19 +174,24 @@ func (a *AgentsCmd) Run(app *app) error {
 			break
 		}
 		var hb struct {
-			AgentID      string   `json:"agent_id"`
-			Status       string   `json:"status"`
-			Load         float64  `json:"load"`
-			Capabilities []string `json:"capabilities"`
+			AgentID  string            `json:"agent_id"`
+			Status   string            `json:"status"`
+			Load     float64           `json:"load"`
+			Metadata map[string]string `json:"metadata"`
 		}
 		if err := json.Unmarshal(msg.Data, &hb); err != nil {
 			continue
+		}
+		// Extract capabilities from metadata
+		var caps []string
+		if cap, ok := hb.Metadata["capability"]; ok && cap != "" {
+			caps = []string{cap}
 		}
 		agents[hb.AgentID] = &agentInfo{
 			id:     hb.AgentID,
 			status: hb.Status,
 			load:   hb.Load,
-			caps:   hb.Capabilities,
+			caps:   caps,
 		}
 	}
 
@@ -232,12 +237,12 @@ func (c *CapabilitiesCmd) Run(a *app) error {
 			break
 		}
 		var hb struct {
-			Capabilities []string `json:"capabilities"`
+			Metadata map[string]string `json:"metadata"`
 		}
 		if err := json.Unmarshal(msg.Data, &hb); err != nil {
 			continue
 		}
-		for _, cap := range hb.Capabilities {
+		if cap, ok := hb.Metadata["capability"]; ok && cap != "" {
 			capSet[cap]++
 		}
 	}
@@ -527,13 +532,17 @@ func (d *DownCmd) Run(a *app) error {
 			break
 		}
 		var hb struct {
-			AgentID string `json:"agent_id"`
-			Name    string `json:"name"`
+			AgentID  string            `json:"agent_id"`
+			Metadata map[string]string `json:"metadata"`
 		}
 		if err := json.Unmarshal(msg.Data, &hb); err != nil {
 			continue
 		}
-		agents = append(agents, agentInfo{id: hb.AgentID, name: hb.Name})
+		name := hb.AgentID
+		if n, ok := hb.Metadata["name"]; ok && n != "" {
+			name = n
+		}
+		agents = append(agents, agentInfo{id: hb.AgentID, name: name})
 	}
 
 	if len(agents) == 0 {
