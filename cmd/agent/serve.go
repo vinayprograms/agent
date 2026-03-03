@@ -717,7 +717,7 @@ Your answer:`, resumeSummary, taskText, priorContext)
 		fmt.Fprintf(os.Stderr, "  ⚠️  Triage LLM failed: %v (defaulting to EXECUTE for single-capability agent)\n", err)
 		// For single-capability agents, default to EXECUTE on LLM error
 		// Multi-capability agents should be more selective
-		if len(a.agentResume.Capabilities) <= 1 {
+		if a.agentResume == nil || len(a.agentResume.Capabilities) <= 1 {
 			return "EXECUTE"
 		}
 		return "SKIP"
