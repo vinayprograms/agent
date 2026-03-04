@@ -645,6 +645,35 @@
     word-break: break-all;
   }
   .modal-log-line:hover { background: var(--accent-soft); }
+  /* Task detail modal */
+  .task-input, .task-result {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .task-label {
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: block;
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .task-json {
+    margin-top: 6px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--dim);
+  }
+  .task-status { margin-bottom: 10px; }
+  .status-success { color: var(--green); font-weight: 600; }
+  .status-failed { color: var(--red); font-weight: 600; }
 
   /* ── Session timeline in modal ── */
   .session-header {
@@ -965,6 +994,19 @@
   </div>
 </div>
 
+<!-- Task Detail Modal -->
+<div class="modal-overlay" id="task-modal">
+  <div class="modal" style="max-width: 700px;">
+    <div class="modal-header">
+      <div class="modal-title">Task — <span id="task-id-display">—</span></div>
+      <button class="modal-close" onclick="closeTaskModal()">✕</button>
+    </div>
+    <div class="modal-body" id="task-modal-body" style="max-height: 60vh; overflow-y: auto;">
+      <div class="modal-loading">Loading task details...</div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── State ──
 const state = {
@@ -1245,7 +1287,7 @@ function renderActiveTasks() {
   const busyAgents = Object.values(state.agents).filter(a => a.status === 'busy');
 
   el.innerHTML = headerHtml + tasks.map(t => {
-    const elapsed = formatElapsed(Date.now() - t.startTime);
+    const elapsed = (t.startTime) ? formatElapsed(Date.now() - t.startTime) : '—';
     // Find agent working on this task by capability match
     let agentDisplay = t.agent || '—';
     const matchedAgent = busyAgents.find(a => a.capability === t.capability);
@@ -1255,7 +1297,7 @@ function renderActiveTasks() {
 
     return `<div class="task-row">
       <div class="dot"></div>
-      <div class="task-id">${esc(t.id.substring(0, 10))}</div>
+      <div class="task-id" onclick="showTaskDetail('${esc(t.id)}')">${esc(t.id.substring(0, 10))}</div>
       <div class="task-type">${esc(t.type)}</div>
       <div class="task-agent">${agentDisplay}</div>
       <div class="task-elapsed">${elapsed}</div>
@@ -1278,8 +1320,8 @@ function renderHistory() {
   el.innerHTML = headerHtml + state.history.slice(0, 20).map(h => {
     const statusClass = h.status === 'success' || h.status === 'converged' ? 'success' : 'failed';
     const icon = statusClass === 'success' ? '✓' : '✗';
-    return `<div class="history-row">
-      <div class="task-id">${esc(h.id.substring(0, 10))}</div>
+    return `<div class="history-row" ondblclick="showTaskDetail('${esc(h.id)}')">
+      <div class="task-id" onclick="showTaskDetail('${esc(h.id)}')">${esc(h.id.substring(0, 10))}</div>
       <div class="task-type">${esc(h.capability)}</div>
       <div class="history-status ${statusClass}">${icon} ${esc(h.status)}</div>
       <div>${esc(h.duration)}</div>
@@ -1506,6 +1548,49 @@ function closeLogModal() {
   modalAgent = null;
   stopSessionPoll();
   document.getElementById('log-modal').classList.remove('visible');
+}
+
+async function showTaskDetail(taskID) {
+  const body = document.getElementById('task-modal-body');
+  body.innerHTML = '<div class="modal-loading">Loading task details...</div>';
+  document.getElementById('task-id-display').textContent = taskID;
+  document.getElementById('task-modal').classList.add('visible');
+
+  try {
+    const resp = await fetch(`/api/task/${taskID}`);
+    if (!resp.ok) throw new Error('Not found');
+    const data = await resp.json();
+    renderTaskDetail(data);
+  } catch (err) {
+    body.innerHTML = `<div class="modal-empty">Error: ${esc(err.message)}</div>`;
+  }
+}
+
+function closeTaskModal() {
+  document.getElementById('task-modal').classList.remove('visible');
+}
+
+function renderTaskDetail(data) {
+  const body = document.getElementById('task-modal-body');
+  const input = data.input || {};
+  const result = data.result || {};
+
+  const inputHtml = `<div class="task-input">
+    <span class="task-label">Input Parameters</span>
+    <pre class="task-json">${esc(JSON.stringify(input, null, 2))}</pre>
+  </div>`;
+
+  const resultHtml = `<div class="task-result">
+    <span class="task-label">Result</span>
+    <div class="task-status">
+      Status: <span class="${result.status === 'success' ? 'status-success' : 'status-failed'}">${esc(result.status || '—')}</span>
+      ${result.error ? `<span class="error-msg">Error: ${esc(result.error)}</span>` : ''}
+    </div>
+    <span class="task-label">Output</span>
+    <pre class="task-json">${esc(JSON.stringify(result.outputs, null, 2))}</pre>
+  </div>`;
+
+  body.innerHTML = inputHtml + resultHtml;
 }
 
 function startSessionPoll(agentName, sessionId) {
@@ -1789,6 +1874,9 @@ function updateModalIfOpen(agentName) {
 }
 
 document.getElementById('modal-close').addEventListener('click', closeLogModal);
+document.getElementById('task-modal').addEventListener('click', function(e) {
+  if (e.target === document.getElementById('task-modal')) closeTaskModal();
+});
 document.getElementById('log-modal').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) closeLogModal();
 });

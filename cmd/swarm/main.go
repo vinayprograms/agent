@@ -1024,7 +1024,30 @@ func (d *taskDB) InsertTask(task *tasks.TaskMessage, status string) error {
 		Status:     status,
 		CreatedAt:  time.Now(),
 	})
-	return d.saveRecords(records)
+	if err := d.saveRecords(records); err != nil {
+		return err
+	}
+
+	// Save full input message for later retrieval
+	inputDir := filepath.Join(filepath.Dir(d.dbPath), "tasks")
+	if err := os.MkdirAll(inputDir, 0755); err != nil {
+		return nil // Non-fatal
+	}
+	data, err := task.Marshal()
+	if err != nil {
+		return nil
+	}
+	os.WriteFile(filepath.Join(inputDir, task.TaskID+".input.json"), data, 0644)
+	return nil
+}
+
+func (d *taskDB) GetTask(taskID string) (*tasks.TaskMessage, error) {
+	inputDir := filepath.Join(filepath.Dir(d.dbPath), "tasks")
+	data, err := os.ReadFile(filepath.Join(inputDir, taskID+".input.json"))
+	if err != nil {
+		return nil, err
+	}
+	return tasks.UnmarshalTaskMessage(data)
 }
 
 func (d *taskDB) UpdateResult(result *tasks.TaskResult) error {

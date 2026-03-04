@@ -108,6 +108,9 @@ func (s *webServer) start(ctx context.Context, addr string) error {
 	mux.HandleFunc("/api/sessions/", s.handleSessionLogs)
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
+	// API for task details
+	mux.HandleFunc("/api/task/", s.handleTaskDetail)
+
 	// Bind to localhost only (secure default)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -391,11 +394,31 @@ func (s *webServer) handleResultCommand(args []string, conn *websocket.Conn) {
 	if err != nil {
 		return
 	}
-
 	data, _ := json.Marshal(result)
 	msg := wsMessage{Type: "result_detail", Subject: "", Data: data}
 	out, _ := json.Marshal(msg)
 	websocket.Message.Send(conn, string(out))
+}
+
+// handleTaskDetail returns input+result for a task ID (HTTP endpoint for modal)
+func (s *webServer) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/task/")
+	if path == "" || path == "/" {
+		http.Error(w, "missing task_id", 400)
+		return
+	}
+	taskID := strings.TrimSuffix(path, ".json")
+
+	input, _ := s.db.GetTask(taskID)
+	result, _ := s.db.GetResult(taskID)
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"task_id":  taskID,
+		"input":    input,
+		"result":   result,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
 }
 
 func (s *webServer) handleShutdownCommand() {
