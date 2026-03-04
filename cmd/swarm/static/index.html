@@ -685,6 +685,8 @@
   .timeline-type.security { color: var(--yellow); }
   .timeline-type.error { color: var(--red); }
   .timeline-type.observation { color: var(--magenta); }
+  .timeline-type.subagent { color: var(--magenta); }
+  .timeline-type.warning { color: var(--yellow); }
   .timeline-content {
     color: var(--text-secondary);
     line-height: 1.5;
@@ -704,6 +706,63 @@
     max-height: 200px;
     color: var(--dim);
   }
+  /* Sub-agent and security styling */
+  .subagent-tag {
+    background: var(--accent-soft);
+    color: var(--accent);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .timeline-type.subagent_start, .timeline-type.subagent_end { color: var(--magenta); }
+  .timeline-type.phase_commit, .timeline-type.phase_reconcile,
+  .timeline-type.phase_supervise, .timeline-type.checkpoint { color: var(--yellow); }
+  .timeline-type.security_block, .timeline-type.security_static,
+  .timeline-type.security_triage, .timeline-type.security_supervisor,
+  .timeline-type.security_decision, .timeline-type.bash_security { color: var(--yellow); }
+  .phase-label {
+    background: var(--yellow-soft);
+    color: var(--yellow);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .sec-tier {
+    background: var(--yellow-soft);
+    color: var(--yellow);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .sec-allow { color: var(--green); font-weight: 600; }
+  .sec-deny { color: var(--red); font-weight: 600; }
+  .block-id {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--dim);
+    font-size: 11px;
+  }
+  .trust-trusted { color: var(--green); }
+  .trust-vetted { color: var(--cyan); }
+  .trust-untrusted { color: var(--red); }
+  .verdict-continue { color: var(--green); font-weight: 600; }
+  .verdict-reorient { color: var(--yellow); font-weight: 600; }
+  .verdict-pause { color: var(--red); font-weight: 600; }
+  .escalate-tag { color: var(--red); font-weight: 600; font-size: 11px; }
+  .taint-tree {
+    margin-top: 4px;
+    padding: 6px 10px;
+    background: var(--bg);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+  }
+  .taint-node { color: var(--dim); }
   .modal-tabs {
     display: flex;
     border-bottom: 1px solid var(--border);
@@ -1557,50 +1616,134 @@ function renderOutputView() {
 
 function renderEventContent(evt) {
   const type = evt.type || '';
+  const meta = evt.meta || {};
+  const agentTag = evt.agent ? `<span class="subagent-tag">[${esc(evt.agent)}]</span> ` : '';
 
   if (type === 'goal_start') {
-    return `<span class="goal-name">${esc(evt.goal || '—')}</span> started`;
+    return `${agentTag}<span class="goal-name">${esc(evt.goal || '—')}</span> started`;
   }
   if (type === 'goal_end') {
     const dur = evt.duration_ms ? ` <span class="duration">(${(evt.duration_ms/1000).toFixed(1)}s)</span>` : '';
     const status = evt.success === true ? '✓' : evt.success === false ? '✗' : '';
-    return `<span class="goal-name">${esc(evt.goal || '—')}</span> ${status}${dur}`;
+    return `${agentTag}<span class="goal-name">${esc(evt.goal || '—')}</span> ${status}${dur}`;
   }
   if (type === 'tool_call') {
     const args = evt.args ? `<pre>${esc(JSON.stringify(evt.args, null, 2))}</pre>` : '';
-    return `<span class="tool-name">${esc(evt.tool || '—')}</span>${args}`;
+    return `${agentTag}<span class="tool-name">${esc(evt.tool || '—')}</span>${args}`;
   }
   if (type === 'tool_result') {
     const dur = evt.duration_ms ? ` <span class="duration">(${evt.duration_ms}ms)</span>` : '';
     const status = evt.success === true ? '✓' : evt.success === false ? '✗' : '';
     const content = evt.content ? `<pre>${esc(truncate(evt.content, 300))}</pre>` : '';
-    return `<span class="tool-name">${esc(evt.tool || '—')}</span> ${status}${dur}${content}`;
+    return `${agentTag}<span class="tool-name">${esc(evt.tool || '—')}</span> ${status}${dur}${content}`;
   }
-  if (type === 'llm_response') {
+  if (type === 'assistant') {
     const content = evt.content ? truncate(evt.content, 200) : '';
-    return content ? esc(content) : null;
+    return content ? `${agentTag}${esc(content)}` : null;
   }
-  if (type === 'security_check' || type === 'security_result') {
-    const status = evt.success === true ? '✓ approved' : evt.success === false ? '✗ denied' : 'checking';
-    return `${esc(evt.tool || '—')}: ${status}`;
+
+  // ── Sub-agent events ──
+  if (type === 'subagent_start') {
+    const role = evt.agent_role ? ` (${esc(evt.agent_role)})` : '';
+    return `<span class="subagent-tag">${esc(evt.agent || '—')}</span>${role} spawned`;
   }
+  if (type === 'subagent_end') {
+    const dur = evt.duration_ms ? ` <span class="duration">(${(evt.duration_ms/1000).toFixed(1)}s)</span>` : '';
+    const status = evt.success === true ? '✓' : evt.success === false ? '✗' : '';
+    return `<span class="subagent-tag">${esc(evt.agent || '—')}</span> ${status} completed${dur}`;
+  }
+
+  // ── Supervision phases ──
+  if (type === 'phase_commit') {
+    const commitment = meta.commitment ? `<pre>${esc(truncate(meta.commitment, 200))}</pre>` : '';
+    return `${agentTag}<span class="phase-label">COMMIT</span> intent declared${commitment}`;
+  }
+  if (type === 'phase_reconcile') {
+    const triggers = meta.triggers && meta.triggers.length > 0 ? ` — triggers: ${meta.triggers.join(', ')}` : '';
+    const escalate = meta.escalate ? ' <span class="escalate-tag">→ ESCALATE</span>' : '';
+    return `${agentTag}<span class="phase-label">RECONCILE</span>${esc(triggers)}${escalate}`;
+  }
+  if (type === 'phase_supervise') {
+    const verdict = meta.verdict ? `<span class="verdict-${(meta.verdict||'').toLowerCase()}">${esc(meta.verdict)}</span>` : '';
+    const correction = meta.correction || meta.guidance || '';
+    const corrHtml = correction ? `<pre>${esc(truncate(correction, 200))}</pre>` : '';
+    return `${agentTag}<span class="phase-label">SUPERVISE</span> ${verdict}${corrHtml}`;
+  }
+  if (type === 'checkpoint') {
+    return `${agentTag}<span class="phase-label">CHECKPOINT</span> saved`;
+  }
+
+  // ── Security events ──
+  if (type === 'security_block') {
+    const trust = meta.trust || '—';
+    const source = meta.source || '';
+    return `${agentTag}Block <span class="block-id">${esc(meta.block_id || '—')}</span> registered as <span class="trust-${trust}">${trust}</span>${source ? ' from ' + esc(source) : ''}`;
+  }
+  if (type === 'security_static') {
+    const pass = meta.pass ? '✓ pass' : '✗ fail';
+    const flags = meta.flags && meta.flags.length > 0 ? ` [${meta.flags.join(', ')}]` : '';
+    const entropy = meta.entropy ? ` entropy=${meta.entropy.toFixed(2)}` : '';
+    return `${agentTag}<span class="sec-tier">STATIC</span> ${pass}${esc(flags)}${entropy}`;
+  }
+  if (type === 'security_triage') {
+    const suspicious = meta.suspicious ? '⚠ suspicious' : '✓ benign';
+    return `${agentTag}<span class="sec-tier">TRIAGE</span> ${suspicious}${meta.reason ? ' — ' + esc(truncate(meta.reason, 100)) : ''}`;
+  }
+  if (type === 'security_supervisor') {
+    const action = meta.action || '—';
+    const actionClass = action === 'allow' ? 'sec-allow' : action === 'deny' ? 'sec-deny' : '';
+    return `${agentTag}<span class="sec-tier">SUPERVISOR</span> <span class="${actionClass}">${esc(action)}</span>${meta.reason ? ' — ' + esc(truncate(meta.reason, 100)) : ''}`;
+  }
+  if (type === 'security_decision') {
+    const action = meta.action || '—';
+    const actionClass = action === 'allow' ? 'sec-allow' : action === 'deny' ? 'sec-deny' : '';
+    const path = meta.check_path || '';
+    const taintHtml = renderTaintLineage(meta.taint_lineage);
+    return `${agentTag}<span class="sec-tier">DECISION</span> <span class="${actionClass}">${esc(action)}</span> via ${esc(path)}${meta.reason ? ' — ' + esc(truncate(meta.reason, 100)) : ''}${taintHtml}`;
+  }
+  if (type === 'bash_security') {
+    const pass = evt.success === true ? '✓ allowed' : '✗ blocked';
+    return `${agentTag}<span class="sec-tier">BASH</span> ${pass}: <span class="tool-name">${esc(evt.content || '—')}</span>`;
+  }
+
+  // ── Other ──
   if (type === 'observation') {
-    return evt.content ? esc(truncate(evt.content, 200)) : null;
+    return evt.content ? `${agentTag}${esc(truncate(evt.content, 200))}` : null;
+  }
+  if (type === 'warning') {
+    return `${agentTag}<span class="error-msg">⚠ ${esc(evt.content || evt.error || '—')}</span>`;
   }
   if (type === 'error') {
-    return `<span class="error-msg">${esc(evt.error || evt.content || '—')}</span>`;
+    return `${agentTag}<span class="error-msg">${esc(evt.error || evt.content || '—')}</span>`;
   }
   // Generic fallback
-  if (evt.content) return esc(truncate(evt.content, 200));
+  if (evt.content) return `${agentTag}${esc(truncate(evt.content, 200))}`;
   return null;
+}
+
+function renderTaintLineage(lineage) {
+  if (!lineage || lineage.length === 0) return '';
+  let html = '<div class="taint-tree">';
+  for (const node of lineage) {
+    const indent = '  '.repeat(node.depth || 0);
+    html += `<div class="taint-node">${indent}<span class="block-id">${esc(node.block_id)}</span> <span class="trust-${node.trust}">${esc(node.trust)}</span>${node.source ? ' ← ' + esc(node.source) : ''}`;
+    if (node.tainted_by && node.tainted_by.length > 0) {
+      html += renderTaintLineage(node.tainted_by);
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
 }
 
 function classifyEventType(type) {
   if (type.startsWith('goal')) return type;
   if (type.startsWith('tool')) return type;
-  if (type === 'llm_response') return 'llm_response';
-  if (type.startsWith('security')) return 'security';
-  if (type === 'error') return 'error';
+  if (type === 'assistant') return 'llm_response';
+  if (type.startsWith('security') || type === 'bash_security') return 'security';
+  if (type.startsWith('phase_') || type === 'checkpoint') return 'security';
+  if (type.startsWith('subagent')) return 'subagent';
+  if (type === 'error' || type === 'warning') return 'error';
   if (type === 'observation') return 'observation';
   return '';
 }
