@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/executor"
 	"github.com/vinayprograms/agentkit/bus"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/embedding"
@@ -589,23 +590,23 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 	// Check for prior work — inject revision context if we've already contributed
 	prior := a.executedTasks[task.TaskID]
 	if prior != nil {
-		// Build XML context with all available information
-		var ctx_parts []string
-		ctx_parts = append(ctx_parts, fmt.Sprintf("<agent id=\"%s\" capability=\"%s\" round=\"%d\">\n%s\n</agent>",
-			a.agentID, a.capability.Name, prior.rounds, prior.output))
+		// Build XML discuss context using the standard builder
+		xmlBuilder := executor.NewXMLContextBuilder(a.wf.wf.Name)
+		xmlBuilder.SetDiscussTaskID(task.TaskID)
 
-		// Include feedback from the triggering agent
+		// Add this agent's prior output
+		xmlBuilder.AddDiscussContribution(a.agentID, a.capability.Name, prior.rounds, prior.output)
+
+		// Add the triggering agent's output
 		if task.Metadata != nil && task.Metadata["prior_output"] != "" {
-			ctx_parts = append(ctx_parts, fmt.Sprintf("<agent id=\"%s\" capability=\"%s\">\n%s\n</agent>",
-				task.Metadata["agent_id"], task.Metadata["capability"], task.Metadata["prior_output"]))
+			xmlBuilder.AddDiscussContribution(
+				task.Metadata["agent_id"], task.Metadata["capability"], 0, task.Metadata["prior_output"])
 		}
 
 		if task.Metadata == nil {
 			task.Metadata = make(map[string]string)
 		}
-		task.Metadata["revision_context"] = fmt.Sprintf(
-			"<discuss-context task=\"%s\">\n%s\n</discuss-context>\n\nRevise your prior work based on the other agents' contributions. Do NOT rewrite from scratch.",
-			task.TaskID, strings.Join(ctx_parts, "\n"))
+		task.Metadata["revision_context"] = xmlBuilder.Build()
 		fmt.Fprintf(os.Stderr, "  💬 Round %d revision for %s\n", prior.rounds+1, task.TaskID)
 	}
 

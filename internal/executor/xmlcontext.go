@@ -25,11 +25,21 @@ type ConvergenceIteration struct {
 	Output string // The output from this iteration
 }
 
+// AgentContribution represents an agent's output in a discuss round.
+type AgentContribution struct {
+	ID         string // Agent identifier
+	Capability string // Agent's announced capability
+	Round      int    // Which round this was (0 = first contribution from another agent)
+	Output     string // The agent's output
+}
+
 // XMLContextBuilder builds XML-structured prompts for LLM communication.
 type XMLContextBuilder struct {
 	workflowName          string
 	priorGoals            []GoalOutput
 	convergenceIterations []ConvergenceIteration
+	discussContributions  []AgentContribution
+	discussTaskID         string
 	isConverge            bool
 	currentGoal           struct {
 		id          string
@@ -70,6 +80,18 @@ func (b *XMLContextBuilder) SetCurrentGoal(id, description string) {
 // SetCorrection sets the supervisor correction for the current goal.
 func (b *XMLContextBuilder) SetCorrection(correction string) {
 	b.correction = correction
+}
+
+// AddDiscussContribution adds an agent's output from a discuss round.
+func (b *XMLContextBuilder) AddDiscussContribution(id, capability string, round int, output string) {
+	b.discussContributions = append(b.discussContributions, AgentContribution{
+		ID: id, Capability: capability, Round: round, Output: output,
+	})
+}
+
+// SetDiscussTaskID sets the task ID for discuss context.
+func (b *XMLContextBuilder) SetDiscussTaskID(taskID string) {
+	b.discussTaskID = taskID
 }
 
 // Build generates the XML-structured prompt.
@@ -140,6 +162,25 @@ func (b *XMLContextBuilder) Build() string {
 			buf.WriteString("\n")
 		}
 		buf.WriteString("</correction>\n")
+	}
+
+	// Add discuss context if present (swarm collaboration)
+	if len(b.discussContributions) > 0 {
+		buf.WriteString(fmt.Sprintf("\n<discuss-context task=%q>\n", escapeXML(b.discussTaskID)))
+		for _, c := range b.discussContributions {
+			if c.Round > 0 {
+				buf.WriteString(fmt.Sprintf("  <agent id=%q capability=%q round=\"%d\">\n", escapeXML(c.ID), escapeXML(c.Capability), c.Round))
+			} else {
+				buf.WriteString(fmt.Sprintf("  <agent id=%q capability=%q>\n", escapeXML(c.ID), escapeXML(c.Capability)))
+			}
+			escaped := escapeXML(c.Output)
+			buf.WriteString(escaped)
+			if !strings.HasSuffix(escaped, "\n") {
+				buf.WriteString("\n")
+			}
+			buf.WriteString("  </agent>\n")
+		}
+		buf.WriteString("</discuss-context>\n")
 	}
 
 	buf.WriteString("\n</workflow>")
