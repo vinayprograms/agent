@@ -46,6 +46,11 @@ type webServer struct {
 	storageRoot string // agent session storage root (from manifest)
 	pricing     map[string]modelPricing
 	db          *taskDB
+
+	// Cached state for reconnecting clients
+	cacheMu        sync.RWMutex
+	lastHeartbeats map[string][]byte // agent_id → last heartbeat JSON (wsMessage)
+	recentLogs     [][]byte          // ring buffer of recent log wsMessages
 }
 
 type modelPricing struct {
@@ -56,12 +61,14 @@ type modelPricing struct {
 
 func newWebServer(natsURL, dataDir, storageRoot string, pricing map[string]modelPricing, db *taskDB) *webServer {
 	return &webServer{
-		natsURL:     natsURL,
-		clients:     make(map[*websocket.Conn]bool),
-		dataDir:     dataDir,
-		storageRoot: storageRoot,
-		pricing:     pricing,
-		db:          db,
+		natsURL:        natsURL,
+		clients:        make(map[*websocket.Conn]bool),
+		dataDir:        dataDir,
+		storageRoot:    storageRoot,
+		pricing:        pricing,
+		db:             db,
+		lastHeartbeats: make(map[string][]byte),
+		recentLogs:     make([][]byte, 0, 500),
 	}
 }
 
@@ -134,6 +141,9 @@ func (s *webServer) broadcast(subject string, msg *nats.Msg) {
 		return
 	}
 
+	// Cache for reconnecting clients
+	s.cacheMessage(msgType, msg.Subject, data)
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -176,11 +186,43 @@ func (s *webServer) handleWS(conn *websocket.Conn) {
 	}
 }
 
+const maxCachedLogs = 500
+
+func (s *webServer) cacheMessage(msgType, subject string, data []byte) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+
+	switch msgType {
+	case "heartbeat":
+		// Extract agent_id from subject: heartbeat.<agent_id>
+		parts := strings.SplitN(subject, ".", 2)
+		if len(parts) == 2 {
+			s.lastHeartbeats[parts[1]] = data
+		}
+	case "log":
+		s.recentLogs = append(s.recentLogs, data)
+		if len(s.recentLogs) > maxCachedLogs {
+			s.recentLogs = s.recentLogs[len(s.recentLogs)-maxCachedLogs:]
+		}
+	}
+}
+
 func (s *webServer) sendInitialState(conn *websocket.Conn) {
+	// 1. Replay last heartbeat per agent (restores agent cards)
+	s.cacheMu.RLock()
+	for _, data := range s.lastHeartbeats {
+		websocket.Message.Send(conn, string(data))
+	}
+	// 2. Replay recent logs (restores event log)
+	for _, data := range s.recentLogs {
+		websocket.Message.Send(conn, string(data))
+	}
+	s.cacheMu.RUnlock()
+
+	// 3. Load completed tasks from DB (restores history table)
 	if s.db == nil {
 		return
 	}
-	// Load completed tasks from DB
 	records, err := s.db.ListTasks("", "", 50)
 	if err != nil {
 		return
