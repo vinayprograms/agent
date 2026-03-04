@@ -316,17 +316,14 @@ func (a *serviceAgent) runBusMode() error {
 		a.queueGroup = a.capability.Name + "-workers"
 	}
 
-	// Subscribe to work topics for each capability (queue sub — one agent gets each task)
-	capabilities := a.getCapabilities()
-	for _, cap := range capabilities {
-		subject := fmt.Sprintf("work.%s.*", cap)
-		sub, err := natsBus.QueueSubscribe(subject, a.queueGroup)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️  Failed to subscribe to %s: %v\n", subject, err)
-			continue
-		}
-		a.taskSubs = append(a.taskSubs, sub)
+	// Subscribe to work.<capability>.* (single capability per agent)
+	cap := a.getCapabilities()[0]
+	workSubject := fmt.Sprintf("work.%s.*", cap)
+	workSub, err := natsBus.QueueSubscribe(workSubject, a.queueGroup)
+	if err != nil {
+		return fmt.Errorf("subscribing to %s: %w", workSubject, err)
 	}
+	a.taskSubs = append(a.taskSubs, workSub)
 	defer func() {
 		for _, sub := range a.taskSubs {
 			sub.Unsubscribe()
@@ -358,9 +355,7 @@ func (a *serviceAgent) runBusMode() error {
 
 	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s)\n", a.capability.Name, a.agentID)
 	fmt.Fprintf(os.Stderr, "Connected to bus: %s\n", a.wf.cfg.Service.BusURL)
-	for _, cap := range capabilities {
-		fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (queue: %s)\n", cap, a.queueGroup)
-	}
+	fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (queue: %s)\n", cap, a.queueGroup)
 	fmt.Fprintf(os.Stderr, "Listening on: discuss.* (collaborative)\n")
 	fmt.Fprintf(os.Stderr, "Heartbeat interval: %s\n", heartbeatInterval)
 
@@ -463,22 +458,9 @@ func (a *serviceAgent) generateResume(ctx context.Context) error {
 		}
 		a.agentResume = r
 
-		// Include explicit --capability in resume (so triage LLM sees it)
-		if a.capability.Name != "" {
-			found := false
-			for _, c := range a.agentResume.Capabilities {
-				if c == a.capability.Name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				a.agentResume.Capabilities = append([]string{a.capability.Name}, a.agentResume.Capabilities...)
-			}
-		}
-
 		fmt.Fprintf(os.Stderr, "📋 Resume: %s — %s\n", r.Name, r.Description)
-		fmt.Fprintf(os.Stderr, "   Capabilities: %v\n", r.Capabilities)
+		fmt.Fprintf(os.Stderr, "   Resume capabilities: %v (internal, for triage)\n", r.Capabilities)
+		fmt.Fprintf(os.Stderr, "   Announced capability: %s\n", a.getCapabilities()[0])
 
 		// Embed the resume if embedding provider is configured
 		if err := a.embedResume(ctx); err != nil {
@@ -563,36 +545,13 @@ func (a *serviceAgent) registerWithRegistry(natsBus *bus.NATSBus) error {
 	return nil
 }
 
-// getCapabilities returns the merged list of inferred + configured capabilities.
+// getCapabilities returns the single announced capability for NATS subjects and registry.
+// Priority: --capability CLI > capability: in config > Agentfile NAME.
 func (a *serviceAgent) getCapabilities() []string {
-	seen := make(map[string]bool)
-	var caps []string
-
-	// Always include the explicit capability name (from --capability or NAME)
 	if a.capability.Name != "" {
-		seen[a.capability.Name] = true
-		caps = append(caps, a.capability.Name)
+		return []string{a.capability.Name}
 	}
-
-	// Inferred capabilities from resume
-	if a.agentResume != nil {
-		for _, c := range a.agentResume.Capabilities {
-			if !seen[c] {
-				seen[c] = true
-				caps = append(caps, c)
-			}
-		}
-	}
-
-	// Extra capabilities from config
-	for _, c := range a.wf.cfg.Service.Capabilities {
-		if !seen[c] {
-			seen[c] = true
-			caps = append(caps, c)
-		}
-	}
-
-	return caps
+	return []string{a.wf.wf.Name}
 }
 
 // Minimum cosine similarity for a discuss message to pass embedding pre-filter.

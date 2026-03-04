@@ -11,19 +11,19 @@ import (
 
 // Config represents the agent configuration.
 type Config struct {
-	Agent     AgentConfig           `toml:"agent"`
-	LLM       LLMConfig             `toml:"llm"`        // Default LLM settings
-	SmallLLM  LLMConfig             `toml:"small_llm"`  // Fast/cheap model for summarization
-	Profiles  map[string]Profile    `toml:"profiles"`   // Capability profiles
-	Web       WebConfig             `toml:"web"`
-	Telemetry TelemetryConfig       `toml:"telemetry"`
-	Storage   StorageConfig         `toml:"storage"`    // Persistent storage settings
-	MCP       MCPConfig             `toml:"mcp"`        // MCP tool servers
-	Skills    SkillsConfig          `toml:"skills"`     // Agent Skills
-	Security  SecurityConfig        `toml:"security"`   // Security framework
-	Timeouts  TimeoutsConfig        `toml:"timeouts"`   // Network operation timeouts
-	Embedding EmbeddingConfig        `toml:"embedding"`  // Embedding provider for resume vectors
-	Service   ServiceConfig         `toml:"service"`    // Service agent settings (for `agent serve`)
+	Agent     AgentConfig        `toml:"agent"`
+	LLM       LLMConfig          `toml:"llm"`       // Default LLM settings
+	SmallLLM  LLMConfig          `toml:"small_llm"` // Fast/cheap model for summarization
+	Profiles  map[string]Profile `toml:"profiles"`  // Capability profiles
+	Web       WebConfig          `toml:"web"`
+	Telemetry TelemetryConfig    `toml:"telemetry"`
+	Storage   StorageConfig      `toml:"storage"`   // Persistent storage settings
+	MCP       MCPConfig          `toml:"mcp"`       // MCP tool servers
+	Skills    SkillsConfig       `toml:"skills"`    // Agent Skills
+	Security  SecurityConfig     `toml:"security"`  // Security framework
+	Timeouts  TimeoutsConfig     `toml:"timeouts"`  // Network operation timeouts
+	Embedding EmbeddingConfig    `toml:"embedding"` // Embedding provider for resume vectors
+	Service   ServiceConfig      `toml:"service"`   // Service agent settings (for `agent serve`)
 }
 
 // AgentConfig contains agent identification settings.
@@ -106,9 +106,9 @@ type SkillsConfig struct {
 
 // SecurityConfig contains security framework configuration.
 type SecurityConfig struct {
-	Mode       string `toml:"mode"`        // "default" or "paranoid"
-	UserTrust  string `toml:"user_trust"`  // Trust level for user messages: "trusted", "vetted", "untrusted"
-	TriageLLM  string `toml:"triage_llm"`  // Profile name for Tier 2 triage (cheap/fast model)
+	Mode      string `toml:"mode"`       // "default" or "paranoid"
+	UserTrust string `toml:"user_trust"` // Trust level for user messages: "trusted", "vetted", "untrusted"
+	TriageLLM string `toml:"triage_llm"` // Profile name for Tier 2 triage (cheap/fast model)
 }
 
 // TimeoutsConfig contains timeout settings for network operations.
@@ -142,10 +142,6 @@ type ServiceConfig struct {
 
 	// Capability override. If empty, capabilities are inferred from Agentfile.
 	Capability string `toml:"capability"`
-
-	// Capabilities lists additional capability tags to merge with inferred ones.
-	// Uses dot-separated hierarchy (e.g., "code.golang", "test.unit").
-	Capabilities []string `toml:"capabilities"`
 }
 
 // New creates a new config with defaults.
