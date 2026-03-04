@@ -610,9 +610,12 @@ func (u *UpCmd) Run(a *app) error {
 		if ag.Capability != "" {
 			args = append(args, "--capability", ag.Capability)
 		}
-		if ag.Storage != "" {
-			args = append(args, "--storage", ag.Storage)
+		// Auto-isolate storage per agent under swarm storage root
+		agentStorage := ag.Storage
+		if agentStorage == "" {
+			agentStorage = filepath.Join(m.Storage.Root, "agents", ag.Name)
 		}
+		args = append(args, "--storage", agentStorage)
 		if ag.Agentfile != "" {
 			args = append(args, ag.Agentfile)
 		}
