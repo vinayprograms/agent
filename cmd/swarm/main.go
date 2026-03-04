@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -621,12 +623,15 @@ func (u *UpCmd) Run(a *app) error {
 		}
 
 		cmd := exec.Command("agent", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		// Prefix each agent's output with its name for multi-agent clarity
+		stdoutPipe, _ := cmd.StdoutPipe()
+		stderrPipe, _ := cmd.StderrPipe()
 		if err := cmd.Start(); err != nil {
 			fmt.Printf("  ✗ Failed to start %s: %v\n", ag.Name, err)
 			continue
 		}
+		go prefixLines(ag.Name, stdoutPipe, os.Stdout)
+		go prefixLines(ag.Name, stderrPipe, os.Stderr)
 		fmt.Printf("  ✓ Started %s (pid %d)\n", ag.Name, cmd.Process.Pid)
 		newPIDs = append(newPIDs, pidRecord{
 			Name:       ag.Name,
@@ -1147,6 +1152,14 @@ func discoverAgentsViaHeartbeat(nc *nats.Conn, timeout time.Duration) []discover
 }
 
 // getUserHome returns the current user's home directory.
+// prefixLines reads from r and writes each line to w with a [name] prefix.
+func prefixLines(name string, r io.Reader, w io.Writer) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		fmt.Fprintf(w, "[%s] %s\n", name, scanner.Text())
+	}
+}
+
 func getUserHome() string {
 	if u, err := user.Current(); err == nil {
 		return u.HomeDir
