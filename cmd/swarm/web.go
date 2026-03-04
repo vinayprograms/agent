@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	osexec "os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -340,6 +341,16 @@ func (s *webServer) handleShutdownCommand() {
 		subject := fmt.Sprintf("control.%s.shutdown", p.Name)
 		s.nc.Publish(subject, []byte(`{"action":"shutdown"}`))
 	}
+}
+
+// discoverTailscaleIP returns the Tailscale IPv4 address, or empty string.
+func discoverTailscaleIP() string {
+	out, err := osexec.Command("tailscale", "ip", "-4").Output()
+	if err != nil {
+		return ""
+	}
+	ip := strings.TrimSpace(string(out))
+	return ip
 }
 
 func classifySubject(subject string) string {
