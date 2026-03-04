@@ -1469,10 +1469,14 @@ async function fetchSessionLogs(agentName, sessionId, silent) {
       return;
     }
     const newData = await resp.json();
-    // Only re-render if data changed (new events appended)
-    if (!modalSessionData || newData.length !== modalSessionData.length) {
+    // Re-render if data changed (compare length — file is append-only)
+    const prevLen = modalSessionData ? modalSessionData.length : 0;
+    if (newData.length !== prevLen) {
+      const wasAtBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 50;
       modalSessionData = newData;
       renderSessionView();
+      // Auto-scroll to bottom if user was already there
+      if (wasAtBottom) body.scrollTop = body.scrollHeight;
     }
   } catch (err) {
     if (!silent) body.innerHTML = `<div class="modal-empty">Error loading session: ${esc(err.message)}</div>`;
@@ -1646,6 +1650,17 @@ setInterval(() => {
     }
   });
   if (changed) renderAgents();
+
+  // Remove agents that have been down for over 60s
+  let removed = false;
+  Object.entries(state.agents).forEach(([id, a]) => {
+    if (a.status === 'down' && now - a.lastSeen > 60000) {
+      delete state.agents[id];
+      removed = true;
+    }
+  });
+  if (removed) renderAgents();
+
   // Update wall time in header uptime
   document.getElementById('uptime').textContent = '▲ ' + formatElapsed(now - state.startTime);
 }, 1000);
