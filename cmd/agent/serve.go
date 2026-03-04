@@ -306,6 +306,10 @@ func (a *serviceAgent) runBusMode() error {
 	hbSender.SetMetadata("capability", a.capability.Name)
 	hbSender.SetMetadata("version", version)
 
+	// Wire metrics collector for dashboard reporting
+	mc := heartbeat.NewMetricsCollector(hbSender)
+	a.serviceRuntime.exec.SetMetricsCollector(mc)
+
 	// Add registry TTL touch to heartbeat callback
 	if a.reg != nil {
 		hbSender.SetCallback(func() {

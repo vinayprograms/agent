@@ -11,16 +11,23 @@ import (
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/checkpoint"
+	"github.com/vinayprograms/agent/internal/session"
+	"github.com/vinayprograms/agent/internal/skills"
+	"github.com/vinayprograms/agent/internal/supervision"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/logging"
 	"github.com/vinayprograms/agentkit/mcp"
 	"github.com/vinayprograms/agentkit/policy"
 	"github.com/vinayprograms/agentkit/security"
-	"github.com/vinayprograms/agent/internal/session"
-	"github.com/vinayprograms/agent/internal/skills"
-	"github.com/vinayprograms/agent/internal/supervision"
 	"github.com/vinayprograms/agentkit/tools"
 )
+
+// MetricsCollector receives LLM and supervision metrics for heartbeat reporting.
+type MetricsCollector interface {
+	RecordLLMCall(inputTokens, outputTokens, cacheCreation, cacheRead int, latencyMs int64)
+	RecordSupervision(approved bool)
+	SetSubagents(count int)
+}
 
 // ObservationExtractor extracts observations from step outputs.
 type ObservationExtractor interface {
@@ -103,9 +110,9 @@ type Executor struct {
 	loadedSkills map[string]*skills.Skill
 
 	// Session logging
-	session        *session.Session
-	sessionManager session.SessionManager
-	currentGoal    string
+	session               *session.Session
+	sessionManager        session.SessionManager
+	currentGoal           string
 	currentGoalSupervised bool // Whether the current goal is supervised (inherited by sub-agents)
 
 	// State
@@ -155,6 +162,9 @@ type Executor struct {
 	convergenceFailures map[string]int // goals that hit WITHIN limit without converging
 	convergenceContext  string         // current convergence history (for multi-agent goals)
 	mu                  sync.Mutex     // protects convergenceFailures
+
+	// Metrics collector for heartbeat reporting (optional, set by serve mode)
+	metricsCollector MetricsCollector
 }
 
 // NewExecutor creates a new executor.
@@ -211,6 +221,23 @@ func (e *Executor) SetDebug(debug bool) {
 }
 
 // SetObservationExtraction enables observation extraction and storage for semantic memory.
+// SetMetricsCollector sets the metrics collector for heartbeat reporting.
+func (e *Executor) SetMetricsCollector(mc MetricsCollector) {
+	e.metricsCollector = mc
+}
+
+// recordLLMMetrics reports token usage and latency to the metrics collector.
+func (e *Executor) recordLLMMetrics(resp *llm.ChatResponse, latency time.Duration) {
+	if e.metricsCollector == nil || resp == nil {
+		return
+	}
+	e.metricsCollector.RecordLLMCall(
+		resp.InputTokens, resp.OutputTokens,
+		resp.CacheCreationInputTokens, resp.CacheReadInputTokens,
+		latency.Milliseconds(),
+	)
+}
+
 func (e *Executor) SetObservationExtraction(extractor ObservationExtractor, store ObservationStore) {
 	e.observationExtractor = extractor
 	e.observationStore = store
@@ -308,10 +335,16 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 
 	if !result.Allowed {
 		e.logSecurityDecision(toolName, "deny", result.DenyReason, "", checkPath)
+		if e.metricsCollector != nil {
+			e.metricsCollector.RecordSupervision(false)
+		}
 		return fmt.Errorf("security: %s", result.DenyReason)
 	}
 
 	e.logSecurityDecision(toolName, "allow", "verified", "", checkPath)
+	if e.metricsCollector != nil {
+		e.metricsCollector.RecordSupervision(true)
+	}
 	return nil
 }
 
@@ -817,9 +850,11 @@ Respond with a JSON object:
 		{Role: "user", Content: commitPrompt},
 	}
 
+	commitStart := time.Now()
 	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
+	e.recordLLMMetrics(resp, time.Since(commitStart))
 
 	pre := &checkpoint.PreCheckpoint{
 		StepID:      goal.Name,
@@ -945,6 +980,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 
 		// Log full LLM interaction (for -vv replay)
 		e.logLLMCall(ctx, session.EventAssistant, messages, resp, llmDuration)
+		e.recordLLMMetrics(resp, llmDuration)
 
 		// Check for skill activation in response
 		if skill := e.checkSkillActivation(resp.Content); skill != nil {
@@ -1022,9 +1058,11 @@ Respond with a JSON object:
 		{Role: "user", Content: assessPrompt},
 	}
 
+	reconcileStart := time.Now()
 	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
+	e.recordLLMMetrics(resp, time.Since(reconcileStart))
 
 	post := &checkpoint.PostCheckpoint{
 		StepID:       goal.Name,
@@ -1333,9 +1371,11 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		{Role: "user", Content: synthesisPrompt},
 	}
 
+	synthStart := time.Now()
 	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
+	e.recordLLMMetrics(resp, time.Since(synthStart))
 	if err != nil {
 		if e.OnLLMError != nil {
 			e.OnLLMError(err)
