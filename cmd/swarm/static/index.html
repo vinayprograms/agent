@@ -1071,8 +1071,6 @@ function handleHeartbeat(hb) {
   const meta = hb.metadata || {};
   const name = meta.name || hb.agent_id;
   const cap = meta.capability || '—';
-
-  const meta = hb.metadata || {};
   const newStatus = hb.status || 'idle';
 
   // Use server-reported busy_since (millis epoch) — authoritative, survives refresh
