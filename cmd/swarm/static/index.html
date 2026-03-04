@@ -704,7 +704,14 @@
     font-size: 11px;
     overflow-x: auto;
     max-height: 200px;
+    max-width: 100%;
     color: var(--dim);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .timeline-content {
+    min-width: 0;
+    overflow: hidden;
   }
   /* Sub-agent and security styling */
   .subagent-tag {
