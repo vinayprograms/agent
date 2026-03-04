@@ -57,7 +57,7 @@ type serviceAgent struct {
 	queueGroup string
 	embedder   embedding.Embedder // for discuss pre-filter
 
-	// Track tasks this agent has executed (context for revisions, loop cap)
+	// Track tasks this agent has executed (context for revisions)
 	executedTasks map[string]*taskExecution
 }
 
@@ -66,8 +66,6 @@ type taskExecution struct {
 	rounds int    // how many times this agent has executed this task
 	output string // agent's last output (for revision context)
 }
-
-const maxDiscussRounds = 3 // cap re-executions per task to prevent runaway
 
 // Run executes the serve command.
 func (cmd *ServeCmd) Run() error {
@@ -588,14 +586,8 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 
 	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
 
-	// Check if we've hit the revision cap for this task
+	// Check for prior work — inject revision context if we've already contributed
 	prior := a.executedTasks[task.TaskID]
-	if prior != nil && prior.rounds >= maxDiscussRounds {
-		fmt.Fprintf(os.Stderr, "  💬 Max rounds (%d) reached for %s — skipping\n", maxDiscussRounds, task.TaskID)
-		return
-	}
-
-	// If we already executed, inject revision context into the task
 	if prior != nil {
 		feedback := ""
 		if task.Metadata != nil {
@@ -689,20 +681,26 @@ func (a *serviceAgent) discussLLMTriage(ctx context.Context, task *tasks.TaskMes
 		}
 	}
 
+	// Include this agent's own prior work if it already contributed
+	ownPrior := ""
+	if exec := a.executedTasks[task.TaskID]; exec != nil {
+		ownPrior = fmt.Sprintf("\n\nYOUR PRIOR CONTRIBUTION (round %d):\n%s", exec.rounds, exec.output)
+	}
+
 	prompt := fmt.Sprintf(`You are deciding whether an agent should act on a collaborative task.
 
 AGENT PROFILE:
 %s
 
 TASK:
-%s%s
+%s%s%s
 
 Decide the agent's action. Reply with exactly one word:
-- EXECUTE — this task matches the agent's capabilities AND the prerequisites for the agent's work exist (e.g., code exists to test, design exists to review)
-- COMMENT — the agent has relevant expertise to contribute insights but should not do the full task
-- SKIP — this task is outside the agent's expertise OR the prerequisites for the agent's work don't exist yet
+- EXECUTE — this task needs your capabilities AND either you haven't contributed yet, OR the feedback requires you to revise your prior work
+- COMMENT — you have relevant insights to share but don't need to do full work
+- SKIP — the task doesn't need your skills, OR your prior work is already sufficient and the feedback doesn't require changes
 
-Your answer:`, resumeSummary, taskText, priorContext)
+Your answer:`, resumeSummary, taskText, priorContext, ownPrior)
 
 	llm := &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
 	resp, err := llm.Complete(ctx, prompt)
