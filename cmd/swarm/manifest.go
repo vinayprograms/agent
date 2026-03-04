@@ -73,9 +73,21 @@ func loadManifest(path string) (*Manifest, error) {
 	return &m, nil
 }
 
-// expandEnv expands ${VAR} and $VAR in s.
+// expandEnv expands ${VAR}, $VAR, and ~ (home dir) in s.
 func expandEnv(s string) string {
+	s = expandTilde(s)
 	return os.ExpandEnv(s)
+}
+
+// expandTilde replaces a leading ~ with the user's home directory.
+func expandTilde(s string) string {
+	if s == "~" || strings.HasPrefix(s, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, s[1:])
+		}
+	}
+	return s
 }
 
 // findManifest looks for swarm.yaml in current directory.
