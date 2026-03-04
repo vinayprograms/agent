@@ -127,7 +127,7 @@
   }
   .top-row {
     display: grid;
-    grid-template-columns: 1fr 360px;
+    grid-template-columns: 1fr;
     gap: 20px;
   }
 
@@ -256,59 +256,107 @@
     margin-top: 6px;
   }
 
-  /* ── Stats Panel ── */
-  .stats-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-    padding: 20px;
-  }
-  .stat-item {
+  /* ── Stats Panel (compact) ── */
+  .stats-compact { padding: 16px 20px; }
+  .stats-row {
     display: flex;
-    flex-direction: column;
-    gap: 2px;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+    align-items: baseline;
+    margin-bottom: 12px;
   }
-  .stat-value {
-    font-size: 22px;
+  .stats-row:last-child { margin-bottom: 0; }
+  .stat-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
     font-weight: 700;
     color: var(--text);
-    line-height: 1.2;
-    letter-spacing: -0.02em;
   }
-  .stat-value.cost { color: var(--text); }
-  .stat-value.green { color: var(--green); }
-  .stat-value.yellow { color: var(--yellow); }
-  .stat-value.cyan { color: var(--cyan); }
-  .stat-value.red { color: var(--red); }
-  .stat-label {
+  .stat-num.green { color: var(--green); }
+  .stat-num.yellow { color: var(--yellow); }
+  .stat-num.cyan { color: var(--cyan); }
+  .stat-num.red { color: var(--red); }
+  .stat-lbl {
     font-size: 11px;
     color: var(--dim);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-weight: 500;
+    text-transform: lowercase;
+    margin-right: 4px;
   }
-  .stat-sub {
-    font-size: 11px;
+  .stat-pair {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .stats-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 10px 0;
+  }
+  .sup-bar-wide {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .sup-bar-wide .sup-bar-track {
+    width: 120px; height: 8px;
+    background: var(--bg);
+    border-radius: 4px;
+    overflow: hidden;
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  .sup-bar-wide .sup-bar-approved { background: var(--green); height: 100%; }
+  .sup-bar-wide .sup-bar-denied { background: var(--red); height: 100%; }
+  .sup-bar-wide .sup-counts {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
     color: var(--dim);
-    margin-top: 1px;
   }
-  .stat-sub .green { color: var(--green); }
+  .stat-llm-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .stat-llm-row .label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-llm-row .value {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--text);
+    font-size: 15px;
+  }
+  .stat-llm-row .cached {
+    color: var(--green);
+    font-size: 12px;
+  }
 
   /* ── Middle Row ── */
   .mid-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 320px;
     gap: 20px;
   }
 
   /* ── Active Tasks ── */
   .tasks-list { padding: 0; }
+  .task-header-row {
+    display: grid;
+    grid-template-columns: 10px 90px 60px 180px 70px 1fr;
+    gap: 8px;
+    padding: 8px 20px;
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+  }
   .task-row {
     display: grid;
-    grid-template-columns: 10px 90px 70px 180px 70px 1fr;
+    grid-template-columns: 10px 90px 60px 180px 70px 1fr;
     gap: 8px;
     align-items: center;
-    padding: 12px 20px;
+    padding: 10px 20px;
     border-bottom: 1px solid var(--border);
     font-size: 13px;
     transition: background 0.15s;
@@ -335,7 +383,7 @@
 
   /* ── Event Log ── */
   .log-container {
-    max-height: 320px;
+    max-height: 400px;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
@@ -366,6 +414,17 @@
   .log-msg.revision { color: var(--magenta); }
 
   /* ── History ── */
+  .history-header-row {
+    display: grid;
+    grid-template-columns: 90px 90px 110px 70px 60px 60px 1fr;
+    gap: 8px;
+    padding: 8px 20px;
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+  }
   .history-row {
     display: grid;
     grid-template-columns: 90px 90px 110px 70px 60px 60px 1fr;
@@ -632,7 +691,7 @@
 
 <div class="dashboard">
 
-  <!-- Top Row: Agents + Stats -->
+  <!-- Top Row: Agents (full width) -->
   <div class="top-row">
     <div class="panel">
       <div class="panel-header">Agents</div>
@@ -640,62 +699,45 @@
         <div class="empty">Waiting for heartbeats...</div>
       </div>
     </div>
-
-    <div class="panel">
-      <div class="panel-header">Swarm Stats</div>
-      <div class="stats-grid" id="stats-grid">
-        <div class="stat-item">
-          <div class="stat-value cost" id="stat-cost">$0.00</div>
-          <div class="stat-label">Total Cost</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value cyan" id="stat-tokens">0 / 0</div>
-          <div class="stat-label">Tokens In / Out</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value green" id="stat-cache">—</div>
-          <div class="stat-label">Cache Hit Rate</div>
-          <div class="stat-sub" id="stat-cache-savings"></div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value" id="stat-llm-calls">0</div>
-          <div class="stat-label">LLM Calls</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value green" id="stat-ttft">—</div>
-          <div class="stat-label">Avg TTFT</div>
-          <div class="stat-sub" id="stat-ttft-cold"></div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value" id="stat-tasks-summary">—</div>
-          <div class="stat-label">Tasks</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value" id="stat-sup">—</div>
-          <div class="stat-label">Supervision</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value" id="stat-wall">0m</div>
-          <div class="stat-label">Wall Time</div>
-        </div>
-      </div>
-    </div>
   </div>
 
-  <!-- Mid Row: Active Tasks + Event Log -->
+  <!-- Mid Row: Active Tasks + Stats -->
   <div class="mid-row">
     <div class="panel">
       <div class="panel-header">Active Tasks</div>
       <div id="active-tasks">
+        <div class="task-header-row">
+          <span></span><span>ID</span><span>Type</span><span>Agent(s)</span><span>Elapsed</span><span>Description</span>
+        </div>
         <div class="empty">No active tasks</div>
       </div>
     </div>
 
     <div class="panel">
-      <div class="panel-header">Event Log</div>
-      <div class="log-container" id="event-log">
-        <div class="empty">Listening for events...</div>
+      <div class="panel-header">Swarm Stats</div>
+      <div class="stats-compact" id="stats-panel">
+        <div class="stats-row" id="stats-summary"></div>
+        <div class="stats-divider"></div>
+        <div class="sup-bar-wide" id="stats-sup">
+          <span class="stat-lbl">Supervision:</span>
+          <span class="sup-bar-track"><span class="sup-bar-approved" id="sup-bar-a" style="width:0"></span><span class="sup-bar-denied" id="sup-bar-d" style="width:0"></span></span>
+          <span class="sup-counts" id="sup-counts">—</span>
+        </div>
+        <div class="stats-divider"></div>
+        <div class="stat-llm-row">
+          <span class="label">Avg LLM</span>
+          <span class="value" id="stat-ttft">—</span>
+          <span class="cached" id="stat-cache-info"></span>
+        </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Event Log (full width) -->
+  <div class="panel">
+    <div class="panel-header">Event Log</div>
+    <div class="log-container" id="event-log">
+      <div class="empty">Listening for events...</div>
     </div>
   </div>
 
@@ -703,6 +745,9 @@
   <div class="panel">
     <div class="panel-header">History</div>
     <div id="history">
+      <div class="history-header-row">
+        <span>ID</span><span>Cap</span><span>Status</span><span>Time</span><span>Rounds</span><span>Sup</span><span>Description</span>
+      </div>
       <div class="empty">No completed tasks</div>
     </div>
   </div>
@@ -1028,18 +1073,32 @@ function renderActiveTasks() {
   const el = document.getElementById('active-tasks');
   const tasks = Object.values(state.activeTasks);
 
+  const headerHtml = `<div class="task-header-row">
+    <span></span><span>ID</span><span>Type</span><span>Agent(s)</span><span>Elapsed</span><span>Description</span>
+  </div>`;
+
   if (tasks.length === 0) {
-    el.innerHTML = '<div class="empty">No active tasks</div>';
+    el.innerHTML = headerHtml + '<div class="empty">No active tasks</div>';
     return;
   }
 
-  el.innerHTML = tasks.map(t => {
+  // Find which agent is busy and match to task capability
+  const busyAgents = Object.values(state.agents).filter(a => a.status === 'busy');
+
+  el.innerHTML = headerHtml + tasks.map(t => {
     const elapsed = formatElapsed(Date.now() - t.startTime);
+    // Find agent working on this task by capability match
+    let agentDisplay = t.agent || '—';
+    const matchedAgent = busyAgents.find(a => a.capability === t.capability);
+    if (matchedAgent) {
+      agentDisplay = `${matchedAgent.name} <span style="color:var(--accent)">[${matchedAgent.capability}]</span>`;
+    }
+
     return `<div class="task-row">
       <div class="dot"></div>
       <div class="task-id">${esc(t.id.substring(0, 10))}</div>
       <div class="task-type">${esc(t.type)}</div>
-      <div class="task-agent">${esc(t.agent)}</div>
+      <div class="task-agent">${agentDisplay}</div>
       <div class="task-elapsed">${elapsed}</div>
       <div class="task-desc">${esc(t.description)}</div>
     </div>`;
@@ -1048,12 +1107,16 @@ function renderActiveTasks() {
 
 function renderHistory() {
   const el = document.getElementById('history');
+  const headerHtml = `<div class="history-header-row">
+    <span>ID</span><span>Cap</span><span>Status</span><span>Time</span><span>Rounds</span><span>Sup</span><span>Description</span>
+  </div>`;
+
   if (state.history.length === 0) {
-    el.innerHTML = '<div class="empty">No completed tasks</div>';
+    el.innerHTML = headerHtml + '<div class="empty">No completed tasks</div>';
     return;
   }
 
-  el.innerHTML = state.history.slice(0, 20).map(h => {
+  el.innerHTML = headerHtml + state.history.slice(0, 20).map(h => {
     const statusClass = h.status === 'success' || h.status === 'converged' ? 'success' : 'failed';
     const icon = statusClass === 'success' ? '✓' : '✗';
     return `<div class="history-row">
@@ -1093,7 +1156,7 @@ function addLog(subject, agent, msg, level) {
 function aggregateStats() {
   const agents = Object.values(state.agents);
   let tokIn = 0, tokOut = 0, cacheR = 0, cacheC = 0, calls = 0, latSum = 0, latCount = 0;
-  let supA = 0, supD = 0;
+  let supA = 0, supD = 0, totalSubs = 0;
 
   agents.forEach(a => {
     tokIn += a.tokensIn;
@@ -1104,42 +1167,43 @@ function aggregateStats() {
     if (a.avgLatency > 0) { latSum += a.avgLatency; latCount++; }
     supA += a.supApproved;
     supD += a.supDenied;
+    totalSubs += a.subagents;
   });
 
-  document.getElementById('stat-tokens').textContent = `${humanTokens(tokIn)} / ${humanTokens(tokOut)}`;
-  document.getElementById('stat-llm-calls').textContent = calls.toLocaleString();
+  const active = Object.keys(state.activeTasks).length;
+  const done = state.stats.tasksDone;
+  const failed = state.stats.tasksFailed;
 
-  // Cache hit rate
-  const totalCacheTokens = cacheR + cacheC;
-  if (totalCacheTokens > 0 && tokIn > 0) {
-    const hitRate = (cacheR / (cacheR + (tokIn - cacheR)) * 100).toFixed(0);
-    document.getElementById('stat-cache').textContent = `${hitRate}%`;
+  // Compact summary row: "6 agents  3 active  3 subs  14 done  1 failed"
+  const summaryEl = document.getElementById('stats-summary');
+  let parts = [];
+  parts.push(`<span class="stat-pair"><span class="stat-num">${agents.length}</span><span class="stat-lbl">agents</span></span>`);
+  if (active > 0) parts.push(`<span class="stat-pair"><span class="stat-num yellow">${active}</span><span class="stat-lbl">active</span></span>`);
+  if (totalSubs > 0) parts.push(`<span class="stat-pair"><span class="stat-num">${totalSubs}</span><span class="stat-lbl">subs</span></span>`);
+  if (done > 0) parts.push(`<span class="stat-pair"><span class="stat-num green">${done}</span><span class="stat-lbl">done</span></span>`);
+  if (failed > 0) parts.push(`<span class="stat-pair"><span class="stat-num red">${failed}</span><span class="stat-lbl">failed</span></span>`);
+  summaryEl.innerHTML = parts.join('');
+
+  // Supervision bar
+  const supTotal = supA + supD;
+  if (supTotal > 0) {
+    const apPct = (supA / supTotal * 100).toFixed(0);
+    const dnPct = (supD / supTotal * 100).toFixed(0);
+    document.getElementById('sup-bar-a').style.width = apPct + '%';
+    document.getElementById('sup-bar-d').style.width = dnPct + '%';
+    document.getElementById('sup-counts').innerHTML =
+      `<span style="color:var(--green)">${supA}</span> ✓ <span style="color:var(--red)">${supD}</span> ✗`;
   }
 
-  // TTFT
+  // Avg LLM latency + cache info
   if (latCount > 0) {
     const avgMs = latSum / latCount;
     document.getElementById('stat-ttft').textContent = `${(avgMs / 1000).toFixed(1)}s`;
   }
-
-  // Tasks
-  const active = Object.keys(state.activeTasks).length;
-  const done = state.stats.tasksDone;
-  const failed = state.stats.tasksFailed;
-  let taskHtml = '';
-  if (done > 0) taskHtml += `<span style="color:var(--green)">${done}</span> done `;
-  if (active > 0) taskHtml += `<span style="color:var(--yellow)">${active}</span> active `;
-  if (failed > 0) taskHtml += `<span style="color:var(--red)">${failed}</span> fail`;
-  document.getElementById('stat-tasks-summary').innerHTML = taskHtml || '—';
-
-  // Supervision
-  if (supA + supD > 0) {
-    document.getElementById('stat-sup').innerHTML =
-      `<span style="color:var(--green)">${supA}</span>✓ <span style="color:var(--red)">${supD}</span>✗`;
+  if (cacheR > 0 || cacheC > 0) {
+    const hitRate = tokIn > 0 ? (cacheR / tokIn * 100).toFixed(0) : 0;
+    document.getElementById('stat-cache-info').textContent = `(cached: ${hitRate}%)`;
   }
-
-  // Wall time
-  document.getElementById('stat-wall').textContent = formatElapsed(Date.now() - state.startTime);
 }
 
 // ── Command Input ──
@@ -1318,8 +1382,8 @@ setInterval(() => {
     }
   });
   if (changed) renderAgents();
-  // Update wall time
-  document.getElementById('stat-wall').textContent = formatElapsed(now - state.startTime);
+  // Update wall time in header uptime
+  document.getElementById('uptime').textContent = '▲ ' + formatElapsed(now - state.startTime);
 }, 1000);
 
 // ── Theme Toggle ──
