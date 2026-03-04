@@ -424,61 +424,39 @@ func disableTailscaleServe(localPort string) {
 }
 
 // handleSessionLogs serves JSONL session logs for an agent.
-// GET /api/sessions/<agent-name> → returns array of JSONL records from the latest session.
+// GET /api/sessions/<agent-name>/<session-id> → returns array of JSONL records.
+// Path on disk: <storageRoot>/agents/<name>/sessions/<name>/<session-id>.jsonl
 func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 	if s.storageRoot == "" {
 		http.Error(w, "storage root not configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Extract agent name from URL path: /api/sessions/<agent-name>
-	agentName := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
-	agentName = strings.TrimSuffix(agentName, "/")
-	if agentName == "" {
-		http.Error(w, "agent name required", http.StatusBadRequest)
+	// Extract agent name and session ID from URL: /api/sessions/<agent-name>/<session-id>
+	path := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	path = strings.TrimSuffix(path, "/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		http.Error(w, "usage: /api/sessions/<agent-name>/<session-id>", http.StatusBadRequest)
 		return
 	}
+	agentName := parts[0]
+	sessionID := parts[1]
 
-	// Sanitize agent name (prevent path traversal)
-	if strings.Contains(agentName, "..") || strings.Contains(agentName, "/") {
-		http.Error(w, "invalid agent name", http.StatusBadRequest)
-		return
+	// Sanitize (prevent path traversal)
+	for _, s := range []string{agentName, sessionID} {
+		if strings.Contains(s, "..") || strings.Contains(s, "/") || strings.Contains(s, "\\") {
+			http.Error(w, "invalid parameter", http.StatusBadRequest)
+			return
+		}
 	}
 
-	// Session logs live at: <storageRoot>/agents/<name>/sessions/*.jsonl
-	sessDir := filepath.Join(s.storageRoot, "agents", agentName, "sessions")
-	entries, err := os.ReadDir(sessDir)
+	// Session JSONL at: <storageRoot>/agents/<name>/sessions/<name>/<session-id>.jsonl
+	jsonlPath := filepath.Join(s.storageRoot, "agents", agentName, "sessions", agentName, sessionID+".jsonl")
+
+	data, err := os.ReadFile(jsonlPath)
 	if err != nil {
-		http.Error(w, "no sessions found", http.StatusNotFound)
-		return
-	}
-
-	// Find the latest .jsonl file (most recent session)
-	var latestFile string
-	var latestMod time.Time
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().After(latestMod) {
-			latestMod = info.ModTime()
-			latestFile = filepath.Join(sessDir, e.Name())
-		}
-	}
-
-	if latestFile == "" {
-		http.Error(w, "no session logs found", http.StatusNotFound)
-		return
-	}
-
-	// Read and return the JSONL file as a JSON array
-	data, err := os.ReadFile(latestFile)
-	if err != nil {
-		http.Error(w, "read error", http.StatusInternalServerError)
+		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
 

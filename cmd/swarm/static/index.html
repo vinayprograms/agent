@@ -1130,6 +1130,8 @@ function renderAgents() {
     }
 
     const logCount = (state.agentLogs[a.name] || []).length;
+    // Extract session ID from agent_id: <capability>-<session-id>
+    const sessId = a.id.startsWith(a.capability + '-') ? a.id.substring(a.capability.length + 1) : a.id;
 
     return `<div class="agent-card">
       <div class="status-dot ${statusClass}"></div>
@@ -1143,7 +1145,7 @@ function renderAgents() {
       </div>
       <div class="agent-bottom">
         <span>tasks: ${a.status === 'busy' ? 1 : 0}</span>
-        <a class="agent-logs-link" onclick="openLogModal('${esc(a.name)}')">Logs${logCount > 0 ? ' (' + logCount + ')' : ''}</a>
+        <a class="agent-logs-link" onclick="openLogModal('${esc(a.name)}','${esc(sessId)}')">Logs${logCount > 0 ? ' (' + logCount + ')' : ''}</a>
       </div>
     </div>`;
   }).join('');
@@ -1399,11 +1401,13 @@ function esc(s) {
 
 // ── Log Modal ──
 let modalAgent = null;
+let modalSessionId = null;
 let modalTab = 'session';
 let modalSessionData = null; // cached JSONL records
 
-function openLogModal(agentName) {
+function openLogModal(agentName, sessionId) {
   modalAgent = agentName;
+  modalSessionId = sessionId || null;
   modalTab = 'session';
   modalSessionData = null;
   document.getElementById('modal-agent-name').textContent = agentName;
@@ -1412,7 +1416,11 @@ function openLogModal(agentName) {
   document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
   document.querySelector('.modal-tab[data-tab="session"]').classList.add('active');
   // Fetch session JSONL
-  fetchSessionLogs(agentName);
+  if (sessionId) {
+    fetchSessionLogs(agentName, sessionId);
+  } else {
+    document.getElementById('modal-body').innerHTML = '<div class="modal-empty">No session ID available</div>';
+  }
 }
 
 function closeLogModal() {
@@ -1431,12 +1439,12 @@ function switchModalTab(tab) {
   }
 }
 
-async function fetchSessionLogs(agentName) {
+async function fetchSessionLogs(agentName, sessionId) {
   const body = document.getElementById('modal-body');
   body.innerHTML = '<div class="modal-loading">Loading session...</div>';
 
   try {
-    const resp = await fetch(`/api/sessions/${encodeURIComponent(agentName)}`);
+    const resp = await fetch(`/api/sessions/${encodeURIComponent(agentName)}/${encodeURIComponent(sessionId)}`);
     if (!resp.ok) {
       body.innerHTML = '<div class="modal-empty">No session logs found</div>';
       return;
