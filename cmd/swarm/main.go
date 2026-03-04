@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -76,10 +77,9 @@ type RestartCmd struct {
 	Agents []string `arg:"" optional:"" help:"Specific agents to restart (default: all)"`
 }
 type UICmd struct {
-	Port      int    `name:"port" short:"p" default:"9090" help:"Web UI port"`
-	Bind      string `name:"bind" short:"b" default:"127.0.0.1" help:"Bind address (default: localhost only)"`
-	Tailscale bool   `name:"tailscale" help:"Expose via Tailscale Serve with HTTPS (uses existing machine identity)"`
-	TUI       bool   `name:"tui" help:"Use terminal TUI instead of web"`
+	Port int    `name:"port" short:"p" default:"9090" help:"Web UI port"`
+	Bind string `name:"bind" short:"b" default:"127.0.0.1" help:"Bind address (default: localhost only)"`
+	TUI  bool   `name:"tui" help:"Use terminal TUI instead of web"`
 }
 type ReplayCmd struct {
 	TaskID string `arg:"" help:"Task ID to replay"`
@@ -831,14 +831,12 @@ func (u *UICmd) Run(a *app) error {
 	// Primary bind address
 	addr := fmt.Sprintf("%s:%d", u.Bind, u.Port)
 
-	// Optionally also expose via Tailscale Serve (HTTPS with proper certs)
-	if u.Tailscale {
-		port := fmt.Sprintf("%d", u.Port)
-		if err := srv.enableTailscaleServe(ctx, port); err != nil {
-			fmt.Fprintf(os.Stderr, "Tailscale Serve error: %v\n", err)
-		} else {
-			defer disableTailscaleServe(port)
-		}
+	// Auto-detect Tailscale and expose via Serve (HTTPS with proper certs)
+	port := fmt.Sprintf("%d", u.Port)
+	if err := srv.enableTailscaleServe(ctx, port); err != nil {
+		log.Printf("Tailscale Serve: %v (skipping — local-only mode)", err)
+	} else {
+		defer disableTailscaleServe(port)
 	}
 
 	return srv.start(ctx, addr)
