@@ -57,9 +57,17 @@ type serviceAgent struct {
 	queueGroup string
 	embedder   embedding.Embedder // for discuss pre-filter
 
-	// Track tasks this agent has already executed (prevent discuss runaway loops)
-	executedTasks map[string]bool
+	// Track tasks this agent has executed (context for revisions, loop cap)
+	executedTasks map[string]*taskExecution
 }
+
+// taskExecution tracks an agent's prior work on a task for discuss revisions.
+type taskExecution struct {
+	rounds int    // how many times this agent has executed this task
+	output string // agent's last output (for revision context)
+}
+
+const maxDiscussRounds = 3 // cap re-executions per task to prevent runaway
 
 // Run executes the serve command.
 func (cmd *ServeCmd) Run() error {
@@ -142,7 +150,7 @@ func (cmd *ServeCmd) Run() error {
 		status:         "idle",
 		taskDone:       make(chan struct{}),
 		drainTimeout:   drainTimeout,
-		executedTasks:  make(map[string]bool),
+		executedTasks:  make(map[string]*taskExecution),
 	}
 
 	// Ensure cleanup on exit
@@ -580,11 +588,26 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 
 	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
 
-	// Already executed this task — can only COMMENT, not re-execute
-	alreadyExecuted := a.executedTasks[task.TaskID]
-	if alreadyExecuted {
-		fmt.Fprintf(os.Stderr, "  💬 Already executed %s — skipping re-execution\n", task.TaskID)
+	// Check if we've hit the revision cap for this task
+	prior := a.executedTasks[task.TaskID]
+	if prior != nil && prior.rounds >= maxDiscussRounds {
+		fmt.Fprintf(os.Stderr, "  💬 Max rounds (%d) reached for %s — skipping\n", maxDiscussRounds, task.TaskID)
 		return
+	}
+
+	// If we already executed, inject revision context into the task
+	if prior != nil {
+		feedback := ""
+		if task.Metadata != nil {
+			feedback = task.Metadata["prior_output"]
+		}
+		if task.Metadata == nil {
+			task.Metadata = make(map[string]string)
+		}
+		task.Metadata["revision_context"] = fmt.Sprintf(
+			"You previously produced:\n%s\n\nFeedback from another agent:\n%s\n\nRevise your work based on this feedback. Do NOT rewrite from scratch.",
+			prior.output, feedback)
+		fmt.Fprintf(os.Stderr, "  💬 Round %d revision for %s\n", prior.rounds+1, task.TaskID)
 	}
 
 	// --- Round 1: Embedding pre-filter ---
@@ -813,8 +836,14 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 		}
 	}
 
-	// Track that we executed this task (prevents discuss runaway loops)
-	a.executedTasks[task.TaskID] = true
+	// Track execution for revision context
+	exec := a.executedTasks[task.TaskID]
+	if exec == nil {
+		exec = &taskExecution{}
+		a.executedTasks[task.TaskID] = exec
+	}
+	exec.rounds++
+	exec.output = fmt.Sprintf("%v", result.Outputs)
 
 	statusIcon := "✓"
 	if result.Status == tasks.ResultFailed {
@@ -887,7 +916,16 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage)
 
 	// Execute workflow using service runtime's executor
 	// All tasks share the same session, provider, tools, etc.
-	execResult, err := a.serviceRuntime.exec.Run(ctx, task.Inputs)
+	inputs := task.Inputs
+	// Inject revision context if present (discuss follow-up rounds)
+	if task.Metadata != nil && task.Metadata["revision_context"] != "" {
+		inputs = make(map[string]string, len(task.Inputs))
+		for k, v := range task.Inputs {
+			inputs[k] = v
+		}
+		inputs["_revision_context"] = task.Metadata["revision_context"]
+	}
+	execResult, err := a.serviceRuntime.exec.Run(ctx, inputs)
 	if err != nil {
 		result.Status = tasks.ResultFailed
 		result.Error = err.Error()
