@@ -9,13 +9,13 @@ import (
 	"log"
 	"net"
 	"net/http"
-	osexec "os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"golang.org/x/net/websocket"
+	"tailscale.com/tsnet"
 )
 
 //go:embed static
@@ -343,14 +343,63 @@ func (s *webServer) handleShutdownCommand() {
 	}
 }
 
-// discoverTailscaleIP returns the Tailscale IPv4 address, or empty string.
-func discoverTailscaleIP() string {
-	out, err := osexec.Command("tailscale", "ip", "-4").Output()
-	if err != nil {
-		return ""
+// startTailscale serves the web UI over Tailscale with auto-provisioned HTTPS.
+func (s *webServer) startTailscale(ctx context.Context, hostname string) error {
+	ts := &tsnet.Server{
+		Hostname: hostname,
 	}
-	ip := strings.TrimSpace(string(out))
-	return ip
+	defer ts.Close()
+
+	// Connect to NATS (separate connection for this listener)
+	nc, err := nats.Connect(s.natsURL,
+		nats.ReconnectWait(2*time.Second),
+		nats.MaxReconnects(-1),
+	)
+	if err != nil {
+		return fmt.Errorf("NATS connect: %w", err)
+	}
+	s.nc = nc
+
+	// Subscribe to NATS subjects
+	subjects := []string{"heartbeat.>", "work.>", "done.>", "discuss.>", "control.>"}
+	for _, subj := range subjects {
+		sub := subj
+		_, err := nc.Subscribe(sub, func(msg *nats.Msg) {
+			s.broadcast(sub, msg)
+		})
+		if err != nil {
+			return fmt.Errorf("subscribe %s: %w", sub, err)
+		}
+	}
+
+	// Get HTTPS listener with auto-provisioned cert
+	ln, err := ts.ListenTLS("tcp", ":443")
+	if err != nil {
+		return fmt.Errorf("tailscale listen: %w", err)
+	}
+	defer ln.Close()
+
+	// Serve static + websocket
+	staticFS, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		return fmt.Errorf("static files: %w", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/ws", websocket.Handler(s.handleWS))
+	mux.Handle("/", http.FileServer(http.FS(staticFS)))
+
+	fmt.Printf("Mission Control (Tailscale): https://%s/\n", hostname)
+
+	server := &http.Server{Handler: mux}
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Shutdown(shutCtx)
+	}()
+
+	return server.Serve(ln)
 }
 
 func classifySubject(subject string) string {

@@ -78,7 +78,7 @@ type RestartCmd struct {
 type UICmd struct {
 	Port      int    `name:"port" short:"p" default:"9090" help:"Web UI port"`
 	Bind      string `name:"bind" short:"b" default:"127.0.0.1" help:"Bind address (default: localhost only)"`
-	Tailscale bool   `name:"tailscale" help:"Also bind to Tailscale IP for private network access"`
+	Tailscale bool   `name:"tailscale" help:"Serve over Tailscale with auto-HTTPS (uses tsnet)"`
 	TUI       bool   `name:"tui" help:"Use terminal TUI instead of web"`
 }
 type ReplayCmd struct {
@@ -828,21 +828,14 @@ func (u *UICmd) Run(a *app) error {
 	// Primary bind address
 	addr := fmt.Sprintf("%s:%d", u.Bind, u.Port)
 
-	// Optionally also bind to Tailscale IP
+	// Optionally also serve over Tailscale with auto-HTTPS
 	if u.Tailscale {
-		tsIP := discoverTailscaleIP()
-		if tsIP != "" {
-			tsAddr := fmt.Sprintf("%s:%d", tsIP, u.Port)
-			go func() {
-				tsSrv := newWebServer(a.natsURL, a.dataDir, nil, db)
-				fmt.Printf("Mission Control (Tailscale): http://%s\n", tsAddr)
-				if err := tsSrv.start(ctx, tsAddr); err != nil {
-					fmt.Fprintf(os.Stderr, "Tailscale listener error: %v\n", err)
-				}
-			}()
-		} else {
-			fmt.Fprintln(os.Stderr, "⚠️  Could not discover Tailscale IP (is tailscale running?)")
-		}
+		go func() {
+			tsSrv := newWebServer(a.natsURL, a.dataDir, nil, db)
+			if err := tsSrv.startTailscale(ctx, "swarm-ui"); err != nil {
+				fmt.Fprintf(os.Stderr, "Tailscale error: %v\n", err)
+			}
+		}()
 	}
 
 	return srv.start(ctx, addr)
