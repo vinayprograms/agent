@@ -645,6 +645,15 @@ func (u *UpCmd) Run(a *app) error {
 		case err := <-done:
 			// Process already exited — it crashed
 			fmt.Printf("  ✗ %s exited immediately: %v\n", ag.Name, err)
+			// Notify UI via NATS
+			if nc != nil {
+				payload, _ := json.Marshal(map[string]string{
+					"agent":  ag.Name,
+					"line":   fmt.Sprintf("FATAL: agent exited immediately: %v", err),
+					"capability": ag.Capability,
+				})
+				nc.Publish(fmt.Sprintf("log.%s", ag.Name), payload)
+			}
 			continue
 		case <-time.After(500 * time.Millisecond):
 			// Still running after 500ms — likely healthy

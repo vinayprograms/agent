@@ -271,17 +271,17 @@ func (a *serviceAgent) runBusMode() error {
 	a.bus = natsBus
 	defer natsBus.Close()
 
-	// Generate resume from Agentfile (infer capabilities)
-	// Generate resume with timeout (don't block startup)
+	// Generate resume from Agentfile (required for collaboration)
 	resumeCtx, resumeCancel := context.WithTimeout(ctx, 15*time.Second)
 	if err := a.generateResume(resumeCtx); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Resume generation failed: %v (using fallback capability)\n", err)
+		resumeCancel()
+		return fmt.Errorf("resume generation failed (required for swarm collaboration): %w", err)
 	}
 	resumeCancel()
 
-	// Register with NATS KV registry
+	// Register with NATS KV registry (required for discovery)
 	if err := a.registerWithRegistry(natsBus); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Registry registration failed: %v\n", err)
+		return fmt.Errorf("registry registration failed (required for swarm discovery): %w", err)
 	}
 
 	// Parse heartbeat interval
