@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm Mission Control</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --card: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --dim: #484f58;
+    --blue: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --cyan: #79c0ff;
+    --magenta: #d2a8ff;
+    --input-bg: #0d1117;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--blue);
+    letter-spacing: 0.5px;
+  }
+  .header h1 span { opacity: 0.5; margin-right: 8px; }
+  .connection {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--dim);
+    background: var(--card);
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+  }
+  .connection .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+  .connection.disconnected .dot { background: var(--red); }
+
+  /* ── Layout ── */
+  .dashboard {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+    padding: 16px 24px;
+    max-width: 1800px;
+    margin: 0 auto;
+  }
+  .top-row {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 16px;
+  }
+
+  /* ── Panel ── */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 10px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--blue);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-body { padding: 16px; }
+
+  /* ── Agent Cards Grid ── */
+  .agents-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 16px;
+  }
+  .agent-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    min-width: 220px;
+    flex: 1;
+    max-width: 280px;
+    position: relative;
+    transition: border-color 0.2s;
+  }
+  .agent-card:hover { border-color: var(--dim); }
+  .agent-card .status-dot {
+    position: absolute;
+    top: 12px; right: 12px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+  }
+  .agent-card .status-dot.idle { background: var(--green); }
+  .agent-card .status-dot.busy {
+    background: var(--yellow);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .agent-card .status-dot.down {
+    background: transparent;
+    border: 2px solid var(--red);
+  }
+  .agent-card .status-dot.starting {
+    background: var(--blue);
+    animation: pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .agent-name {
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--text);
+  }
+  .agent-cap {
+    font-size: 12px;
+    color: var(--cyan);
+    margin-top: 2px;
+  }
+  .agent-elapsed {
+    position: absolute;
+    top: 30px; right: 12px;
+    font-size: 11px;
+    color: var(--yellow);
+  }
+  .agent-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 10px 0 8px;
+  }
+  .agent-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--dim);
+  }
+  .agent-subs { color: var(--dim); }
+  .agent-subs strong { color: var(--text); }
+  .sup-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .sup-bar-track {
+    width: 50px; height: 5px;
+    background: #21262d;
+    border-radius: 3px;
+    overflow: hidden;
+    display: inline-flex;
+  }
+  .sup-bar-approved { background: var(--green); height: 100%; }
+  .sup-bar-denied { background: var(--red); height: 100%; }
+  .agent-bottom {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--dim);
+    margin-top: 6px;
+  }
+
+  /* ── Stats Panel ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding: 16px;
+  }
+  .stat-item {
+    display: flex;
+    flex-direction: column;
+  }
+  .stat-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.2;
+  }
+  .stat-value.cost { color: var(--text); }
+  .stat-value.green { color: var(--green); }
+  .stat-value.yellow { color: var(--yellow); }
+  .stat-value.cyan { color: var(--cyan); }
+  .stat-value.red { color: var(--red); }
+  .stat-label {
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .stat-sub {
+    font-size: 11px;
+    color: var(--dim);
+    margin-top: 2px;
+  }
+  .stat-sub .green { color: var(--green); }
+
+  /* ── Middle Row ── */
+  .mid-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  /* ── Active Tasks ── */
+  .tasks-list { padding: 0; }
+  .task-row {
+    display: grid;
+    grid-template-columns: 10px 90px 70px 180px 70px 1fr;
+    gap: 8px;
+    align-items: center;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .task-row:last-child { border-bottom: none; }
+  .task-row .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--yellow);
+  }
+  .task-id { color: var(--magenta); font-weight: 600; }
+  .task-type { color: var(--cyan); }
+  .task-agent { color: var(--text); }
+  .task-elapsed { color: var(--yellow); font-weight: 600; }
+  .task-desc { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .task-header {
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Event Log ── */
+  .log-container {
+    max-height: 320px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .log-entry {
+    display: grid;
+    grid-template-columns: 65px 70px 160px 1fr;
+    gap: 8px;
+    padding: 4px 16px;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+  }
+  .log-entry:hover { background: rgba(88, 166, 255, 0.04); }
+  .log-ts { color: var(--dim); }
+  .log-subject { font-weight: 500; }
+  .log-subject.work { color: var(--text); }
+  .log-subject.done { color: var(--green); }
+  .log-subject.discuss { color: var(--cyan); }
+  .log-subject.heartbeat { color: var(--yellow); }
+  .log-subject.warn { color: var(--red); }
+  .log-subject.sup { color: var(--green); }
+  .log-agent { color: var(--cyan); }
+  .log-msg { color: var(--dim); }
+  .log-msg.success { color: var(--green); }
+  .log-msg.error { color: var(--red); }
+  .log-msg.info { color: var(--text); }
+  .log-msg.revision { color: var(--magenta); }
+
+  /* ── History ── */
+  .history-row {
+    display: grid;
+    grid-template-columns: 90px 90px 110px 70px 60px 60px 1fr;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .history-row:last-child { border-bottom: none; }
+  .history-status.success { color: var(--green); }
+  .history-status.failed { color: var(--red); }
+  .history-status.converged { color: var(--green); }
+
+  /* ── Command Input ── */
+  .command-bar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 100;
+  }
+  .command-bar .slash {
+    color: var(--blue);
+    font-size: 20px;
+    font-weight: 700;
+    user-select: none;
+  }
+  .command-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+  }
+  .command-input::placeholder { color: var(--dim); }
+  .command-hints {
+    font-size: 11px;
+    color: var(--dim);
+  }
+
+  /* ── Autocomplete ── */
+  .autocomplete {
+    position: fixed;
+    bottom: 52px; left: 24px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 0;
+    min-width: 500px;
+    display: none;
+    z-index: 200;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .autocomplete.visible { display: block; }
+  .autocomplete-header {
+    font-size: 11px;
+    color: var(--dim);
+    padding: 4px 14px 8px;
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .autocomplete-item {
+    display: grid;
+    grid-template-columns: 100px 180px 1fr;
+    gap: 8px;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .autocomplete-item:hover, .autocomplete-item.selected {
+    background: var(--border);
+  }
+  .autocomplete-cmd { color: var(--blue); font-weight: 600; }
+  .autocomplete-args { color: var(--dim); }
+  .autocomplete-desc { color: var(--dim); }
+
+  /* bottom padding for fixed command bar */
+  .dashboard { padding-bottom: 72px; }
+
+  /* ── Empty state ── */
+  .empty {
+    color: var(--dim);
+    text-align: center;
+    padding: 24px;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>⬡</span> Swarm Mission Control</h1>
+  <div class="connection" id="conn-status">
+    <div class="dot"></div>
+    <span id="nats-url">nats://localhost:4222</span>
+    <span id="uptime">—</span>
+  </div>
+</div>
+
+<div class="dashboard">
+
+  <!-- Top Row: Agents + Stats -->
+  <div class="top-row">
+    <div class="panel">
+      <div class="panel-header">Agents</div>
+      <div class="agents-grid" id="agents-grid">
+        <div class="empty">Waiting for heartbeats...</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">Swarm Stats</div>
+      <div class="stats-grid" id="stats-grid">
+        <div class="stat-item">
+          <div class="stat-value cost" id="stat-cost">$0.00</div>
+          <div class="stat-label">Total Cost</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value cyan" id="stat-tokens">0 / 0</div>
+          <div class="stat-label">Tokens In / Out</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value green" id="stat-cache">—</div>
+          <div class="stat-label">Cache Hit Rate</div>
+          <div class="stat-sub" id="stat-cache-savings"></div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="stat-llm-calls">0</div>
+          <div class="stat-label">LLM Calls</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value green" id="stat-ttft">—</div>
+          <div class="stat-label">Avg TTFT</div>
+          <div class="stat-sub" id="stat-ttft-cold"></div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="stat-tasks-summary">—</div>
+          <div class="stat-label">Tasks</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="stat-sup">—</div>
+          <div class="stat-label">Supervision</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="stat-wall">0m</div>
+          <div class="stat-label">Wall Time</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mid Row: Active Tasks + Event Log -->
+  <div class="mid-row">
+    <div class="panel">
+      <div class="panel-header">Active Tasks</div>
+      <div id="active-tasks">
+        <div class="empty">No active tasks</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">Event Log</div>
+      <div class="log-container" id="event-log">
+        <div class="empty">Listening for events...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- History -->
+  <div class="panel">
+    <div class="panel-header">History</div>
+    <div id="history">
+      <div class="empty">No completed tasks</div>
+    </div>
+  </div>
+</div>
+
+<!-- Command Bar -->
+<div class="command-bar">
+  <span class="slash">/</span>
+  <input type="text" class="command-input" id="cmd-input"
+    placeholder='task frontend "Build OAuth2 login page"'
+    autocomplete="off" spellcheck="false">
+  <span class="command-hints">Enter to run · Esc to clear</span>
+</div>
+
+<!-- Autocomplete -->
+<div class="autocomplete" id="autocomplete">
+  <div class="autocomplete-header">Commands</div>
+  <div class="autocomplete-item selected">
+    <span class="autocomplete-cmd">/task</span>
+    <span class="autocomplete-args">&lt;cap&gt; "description"</span>
+    <span class="autocomplete-desc">Submit a task</span>
+  </div>
+  <div class="autocomplete-item">
+    <span class="autocomplete-cmd">/discuss</span>
+    <span class="autocomplete-args">&lt;cap&gt; "topic"</span>
+    <span class="autocomplete-desc">Multi-agent discussion</span>
+  </div>
+  <div class="autocomplete-item">
+    <span class="autocomplete-cmd">/chain</span>
+    <span class="autocomplete-args">&lt;c1&gt; → &lt;c2&gt; "task"</span>
+    <span class="autocomplete-desc">Chain agents</span>
+  </div>
+  <div class="autocomplete-item">
+    <span class="autocomplete-cmd">/result</span>
+    <span class="autocomplete-args">&lt;task-id&gt;</span>
+    <span class="autocomplete-desc">View result output</span>
+  </div>
+  <div class="autocomplete-item">
+    <span class="autocomplete-cmd">/retry</span>
+    <span class="autocomplete-args">&lt;task-id&gt;</span>
+    <span class="autocomplete-desc">Retry failed task</span>
+  </div>
+  <div class="autocomplete-item">
+    <span class="autocomplete-cmd">/logs</span>
+    <span class="autocomplete-args">[agent-name]</span>
+    <span class="autocomplete-desc">Filter event log</span>
+  </div>
+  <div class="autocomplete-item">
+    <span class="autocomplete-cmd">/clear</span>
+    <span class="autocomplete-args"></span>
+    <span class="autocomplete-desc">Clear event log</span>
+  </div>
+  <div class="autocomplete-item">
+    <span class="autocomplete-cmd">/shutdown</span>
+    <span class="autocomplete-args"></span>
+    <span class="autocomplete-desc">Stop all agents</span>
+  </div>
+</div>
+
+<script>
+// ── State ──
+const state = {
+  agents: {},           // keyed by agent_id
+  activeTasks: {},      // keyed by task_id
+  history: [],
+  logEntries: [],
+  startTime: Date.now(),
+  stats: {
+    tokensIn: 0, tokensOut: 0,
+    cacheRead: 0, cacheCreation: 0,
+    llmCalls: 0, totalLatency: 0,
+    supApproved: 0, supDenied: 0,
+    tasksDone: 0, tasksFailed: 0,
+  },
+  wsConnected: false,
+};
+
+// ── WebSocket ──
+let ws = null;
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    state.wsConnected = true;
+    document.getElementById('conn-status').classList.remove('disconnected');
+    addLog('system', '', 'WebSocket connected', 'info');
+  };
+
+  ws.onclose = () => {
+    state.wsConnected = false;
+    document.getElementById('conn-status').classList.add('disconnected');
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onmessage = (evt) => {
+    try {
+      const msg = JSON.parse(evt.data);
+      handleMessage(msg);
+    } catch (e) {
+      console.error('Bad message:', e);
+    }
+  };
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+    case 'heartbeat': handleHeartbeat(msg.data); break;
+    case 'work': handleWork(msg.data, msg.subject); break;
+    case 'done': handleDone(msg.data, msg.subject); break;
+    case 'discuss': handleDiscuss(msg.data, msg.subject); break;
+    case 'control': handleControl(msg.data, msg.subject); break;
+    default: console.log('Unknown message type:', msg.type);
+  }
+}
+
+function handleHeartbeat(hb) {
+  const meta = hb.metadata || {};
+  const name = meta.name || hb.agent_id;
+  const cap = meta.capability || '—';
+
+  state.agents[hb.agent_id] = {
+    id: hb.agent_id,
+    name: name,
+    capability: cap,
+    status: hb.status || 'idle',
+    load: hb.load || 0,
+    lastSeen: Date.now(),
+    subagents: parseInt(meta.subagents || '0'),
+    supApproved: parseInt(meta.sup_approved || '0'),
+    supDenied: parseInt(meta.sup_denied || '0'),
+    tokensIn: parseInt(meta.tokens_in || '0'),
+    tokensOut: parseInt(meta.tokens_out || '0'),
+    cacheRead: parseInt(meta.cache_read_tokens || '0'),
+    cacheCreation: parseInt(meta.cache_creation_tokens || '0'),
+    llmCalls: parseInt(meta.llm_calls || '0'),
+    avgLatency: parseFloat(meta.avg_latency_ms || '0'),
+  };
+  renderAgents();
+  aggregateStats();
+}
+
+function handleWork(data, subject) {
+  const parts = subject.split('.');
+  const taskId = parts[2] || 'unknown';
+  const cap = parts[1] || '—';
+  state.activeTasks[taskId] = {
+    id: taskId, capability: cap, type: 'task',
+    startTime: Date.now(), agent: '—', description: data.task || '—',
+  };
+  addLog('work', cap, `Received ${taskId}`, 'info');
+  renderActiveTasks();
+}
+
+function handleDone(data, subject) {
+  const parts = subject.split('.');
+  const taskId = parts[2] || 'unknown';
+  const cap = parts[1] || '—';
+  const status = data.status || 'success';
+
+  if (state.activeTasks[taskId]) {
+    const task = state.activeTasks[taskId];
+    const elapsed = formatElapsed(Date.now() - task.startTime);
+    state.history.unshift({
+      id: taskId, capability: cap, status: status,
+      duration: elapsed, rounds: data.rounds || 1,
+      sup: `${data.sup_approved||0}✓ ${data.sup_denied||0}✗`,
+      description: task.description,
+    });
+    delete state.activeTasks[taskId];
+    if (status === 'success') state.stats.tasksDone++;
+    else state.stats.tasksFailed++;
+  }
+
+  const icon = status === 'success' ? '✓' : '✗';
+  addLog('done', cap, `${icon} ${taskId} complete`, status === 'success' ? 'success' : 'error');
+  renderActiveTasks();
+  renderHistory();
+  aggregateStats();
+}
+
+function handleDiscuss(data, subject) {
+  const parts = subject.split('.');
+  const taskId = parts[1] || 'unknown';
+  const agent = data.agent || '—';
+  const round = data.round || 1;
+  addLog('discuss', agent, `Round ${round} for ${taskId}`, 'info');
+}
+
+function handleControl(data, subject) {
+  addLog('control', '', subject, 'info');
+}
+
+// ── Rendering ──
+function renderAgents() {
+  const grid = document.getElementById('agents-grid');
+  const agents = Object.values(state.agents);
+
+  if (agents.length === 0) {
+    grid.innerHTML = '<div class="empty">Waiting for heartbeats...</div>';
+    return;
+  }
+
+  // Mark agents as down if no heartbeat for 30s
+  const now = Date.now();
+  agents.forEach(a => {
+    if (now - a.lastSeen > 30000) a.status = 'down';
+  });
+
+  grid.innerHTML = agents.map(a => {
+    const statusClass = a.status === 'busy' ? 'busy' :
+                        a.status === 'down' ? 'down' :
+                        a.status === 'starting' ? 'starting' : 'idle';
+    const elapsed = a.status === 'busy' ? `<div class="agent-elapsed">${formatElapsed(now - a.lastSeen)}</div>` : '';
+
+    const supTotal = a.supApproved + a.supDenied;
+    let supHtml = '<span>unsupervised</span>';
+    if (supTotal > 0) {
+      const apPct = (a.supApproved / supTotal * 100).toFixed(0);
+      const dnPct = (a.supDenied / supTotal * 100).toFixed(0);
+      supHtml = `<span class="sup-bar">
+        <span class="sup-bar-track">
+          <span class="sup-bar-approved" style="width:${apPct}%"></span>
+          <span class="sup-bar-denied" style="width:${dnPct}%"></span>
+        </span>
+        ${a.supApproved}✓ ${a.supDenied}✗
+      </span>`;
+    }
+
+    return `<div class="agent-card">
+      <div class="status-dot ${statusClass}"></div>
+      <div class="agent-name">${esc(a.name)}</div>
+      <div class="agent-cap">${esc(a.capability)}</div>
+      ${elapsed}
+      <div class="agent-divider"></div>
+      <div class="agent-meta">
+        <span class="agent-subs">⑂ <strong>${a.subagents}</strong> sub</span>
+        ${supHtml}
+      </div>
+      <div class="agent-bottom">
+        <span>tasks: ${a.status === 'busy' ? 1 : 0}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderActiveTasks() {
+  const el = document.getElementById('active-tasks');
+  const tasks = Object.values(state.activeTasks);
+
+  if (tasks.length === 0) {
+    el.innerHTML = '<div class="empty">No active tasks</div>';
+    return;
+  }
+
+  el.innerHTML = tasks.map(t => {
+    const elapsed = formatElapsed(Date.now() - t.startTime);
+    return `<div class="task-row">
+      <div class="dot"></div>
+      <div class="task-id">${esc(t.id.substring(0, 10))}</div>
+      <div class="task-type">${esc(t.type)}</div>
+      <div class="task-agent">${esc(t.agent)}</div>
+      <div class="task-elapsed">${elapsed}</div>
+      <div class="task-desc">${esc(t.description)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderHistory() {
+  const el = document.getElementById('history');
+  if (state.history.length === 0) {
+    el.innerHTML = '<div class="empty">No completed tasks</div>';
+    return;
+  }
+
+  el.innerHTML = state.history.slice(0, 20).map(h => {
+    const statusClass = h.status === 'success' || h.status === 'converged' ? 'success' : 'failed';
+    const icon = statusClass === 'success' ? '✓' : '✗';
+    return `<div class="history-row">
+      <div class="task-id">${esc(h.id.substring(0, 10))}</div>
+      <div class="task-type">${esc(h.capability)}</div>
+      <div class="history-status ${statusClass}">${icon} ${esc(h.status)}</div>
+      <div>${esc(h.duration)}</div>
+      <div>${h.rounds}</div>
+      <div>${esc(h.sup)}</div>
+      <div class="task-desc">${esc(h.description)}</div>
+    </div>`;
+  }).join('');
+}
+
+function addLog(subject, agent, msg, level) {
+  const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  state.logEntries.push({ ts, subject, agent, msg, level });
+  if (state.logEntries.length > 200) state.logEntries.shift();
+
+  const el = document.getElementById('event-log');
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  entry.innerHTML = `
+    <span class="log-ts">${ts}</span>
+    <span class="log-subject ${subject}">${esc(subject)}</span>
+    <span class="log-agent">${esc(agent)}</span>
+    <span class="log-msg ${level}">${esc(msg)}</span>
+  `;
+  // Remove "Listening..." placeholder
+  const empty = el.querySelector('.empty');
+  if (empty) empty.remove();
+
+  el.appendChild(entry);
+  el.scrollTop = el.scrollHeight;
+}
+
+function aggregateStats() {
+  const agents = Object.values(state.agents);
+  let tokIn = 0, tokOut = 0, cacheR = 0, cacheC = 0, calls = 0, latSum = 0, latCount = 0;
+  let supA = 0, supD = 0;
+
+  agents.forEach(a => {
+    tokIn += a.tokensIn;
+    tokOut += a.tokensOut;
+    cacheR += a.cacheRead;
+    cacheC += a.cacheCreation;
+    calls += a.llmCalls;
+    if (a.avgLatency > 0) { latSum += a.avgLatency; latCount++; }
+    supA += a.supApproved;
+    supD += a.supDenied;
+  });
+
+  document.getElementById('stat-tokens').textContent = `${humanTokens(tokIn)} / ${humanTokens(tokOut)}`;
+  document.getElementById('stat-llm-calls').textContent = calls.toLocaleString();
+
+  // Cache hit rate
+  const totalCacheTokens = cacheR + cacheC;
+  if (totalCacheTokens > 0 && tokIn > 0) {
+    const hitRate = (cacheR / (cacheR + (tokIn - cacheR)) * 100).toFixed(0);
+    document.getElementById('stat-cache').textContent = `${hitRate}%`;
+  }
+
+  // TTFT
+  if (latCount > 0) {
+    const avgMs = latSum / latCount;
+    document.getElementById('stat-ttft').textContent = `${(avgMs / 1000).toFixed(1)}s`;
+  }
+
+  // Tasks
+  const active = Object.keys(state.activeTasks).length;
+  const done = state.stats.tasksDone;
+  const failed = state.stats.tasksFailed;
+  let taskHtml = '';
+  if (done > 0) taskHtml += `<span style="color:var(--green)">${done}</span> done `;
+  if (active > 0) taskHtml += `<span style="color:var(--yellow)">${active}</span> active `;
+  if (failed > 0) taskHtml += `<span style="color:var(--red)">${failed}</span> fail`;
+  document.getElementById('stat-tasks-summary').innerHTML = taskHtml || '—';
+
+  // Supervision
+  if (supA + supD > 0) {
+    document.getElementById('stat-sup').innerHTML =
+      `<span style="color:var(--green)">${supA}</span>✓ <span style="color:var(--red)">${supD}</span>✗`;
+  }
+
+  // Wall time
+  document.getElementById('stat-wall').textContent = formatElapsed(Date.now() - state.startTime);
+}
+
+// ── Command Input ──
+const cmdInput = document.getElementById('cmd-input');
+const autocomplete = document.getElementById('autocomplete');
+let acSelectedIdx = 0;
+
+cmdInput.addEventListener('focus', () => {
+  if (cmdInput.value === '' || cmdInput.value.startsWith('/')) {
+    // Show autocomplete on focus if empty or typing command
+  }
+});
+
+cmdInput.addEventListener('input', () => {
+  const val = cmdInput.value;
+  if (val === '' || val === '/') {
+    autocomplete.classList.add('visible');
+    filterAutocomplete('');
+  } else if (val.startsWith('/')) {
+    const cmd = val.split(' ')[0];
+    autocomplete.classList.add('visible');
+    filterAutocomplete(cmd);
+  } else {
+    autocomplete.classList.remove('visible');
+  }
+});
+
+cmdInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    cmdInput.value = '';
+    autocomplete.classList.remove('visible');
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    autocomplete.classList.remove('visible');
+    executeCommand(cmdInput.value);
+    cmdInput.value = '';
+  } else if (e.key === 'Tab') {
+    e.preventDefault();
+    const items = autocomplete.querySelectorAll('.autocomplete-item:not([style*="display: none"])');
+    if (items.length > 0) {
+      const cmd = items[acSelectedIdx]?.querySelector('.autocomplete-cmd')?.textContent || '';
+      cmdInput.value = cmd + ' ';
+      autocomplete.classList.remove('visible');
+    }
+  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const items = autocomplete.querySelectorAll('.autocomplete-item:not([style*="display: none"])');
+    items[acSelectedIdx]?.classList.remove('selected');
+    if (e.key === 'ArrowDown') acSelectedIdx = Math.min(acSelectedIdx + 1, items.length - 1);
+    else acSelectedIdx = Math.max(acSelectedIdx - 1, 0);
+    items[acSelectedIdx]?.classList.add('selected');
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.command-bar') && !e.target.closest('.autocomplete')) {
+    autocomplete.classList.remove('visible');
+  }
+});
+
+function filterAutocomplete(prefix) {
+  const items = autocomplete.querySelectorAll('.autocomplete-item');
+  acSelectedIdx = 0;
+  let first = true;
+  items.forEach(item => {
+    const cmd = item.querySelector('.autocomplete-cmd').textContent;
+    const show = prefix === '' || cmd.startsWith(prefix);
+    item.style.display = show ? '' : 'none';
+    item.classList.remove('selected');
+    if (show && first) { item.classList.add('selected'); first = false; }
+  });
+}
+
+function executeCommand(raw) {
+  const val = raw.trim();
+  if (!val) return;
+
+  // Prepend / if missing
+  const cmd = val.startsWith('/') ? val : '/' + val;
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ command: cmd }));
+    addLog('cmd', '', cmd, 'info');
+  } else {
+    addLog('error', '', 'Not connected', 'error');
+  }
+}
+
+// ── Utilities ──
+function formatElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return `${m}m ${rs}s`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return `${h}h ${rm}m`;
+}
+
+function humanTokens(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(0) + 'K';
+  return n.toString();
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ── Periodic Updates ──
+setInterval(() => {
+  // Update elapsed times
+  renderActiveTasks();
+  // Check for down agents (no heartbeat for 30s)
+  const now = Date.now();
+  let changed = false;
+  Object.values(state.agents).forEach(a => {
+    if (now - a.lastSeen > 30000 && a.status !== 'down') {
+      a.status = 'down';
+      changed = true;
+      addLog('warn', a.name, `No heartbeat — marked DOWN`, 'error');
+    }
+  });
+  if (changed) renderAgents();
+  // Update wall time
+  document.getElementById('stat-wall').textContent = formatElapsed(now - state.startTime);
+}, 1000);
+
+// ── Init ──
+connectWS();
+cmdInput.focus();
+</script>
+</body>
+</html>

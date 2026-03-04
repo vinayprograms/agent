@@ -75,7 +75,10 @@ type DownCmd struct {
 type RestartCmd struct {
 	Agents []string `arg:"" optional:"" help:"Specific agents to restart (default: all)"`
 }
-type UICmd struct{}
+type UICmd struct {
+	Port int  `name:"port" short:"p" default:"9090" help:"Web UI port (localhost only)"`
+	TUI  bool `name:"tui" help:"Use terminal TUI instead of web"`
+}
 type ReplayCmd struct {
 	TaskID string `arg:"" help:"Task ID to replay"`
 	Web    bool   `name:"web" short:"w" help:"Generate HTML and open in browser"`
@@ -794,9 +797,33 @@ func (r *RestartCmd) Run(a *app) error {
 }
 
 func (u *UICmd) Run(a *app) error {
-	p := tea.NewProgram(newTUIModel(a.natsURL), tea.WithAltScreen())
-	_, err := p.Run()
-	return err
+	if u.TUI {
+		p := tea.NewProgram(newTUIModel(a.natsURL), tea.WithAltScreen())
+		_, err := p.Run()
+		return err
+	}
+
+	// Web UI (default)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigCh
+		cancel()
+	}()
+
+	db, err := a.db()
+	if err != nil {
+		return fmt.Errorf("open task DB: %w", err)
+	}
+	defer db.Close()
+
+	srv := newWebServer(a.natsURL, a.dataDir, nil, db)
+	addr := fmt.Sprintf("127.0.0.1:%d", u.Port)
+	return srv.start(ctx, addr)
 }
 
 func (r *ReplayCmd) Run(a *app) error {
