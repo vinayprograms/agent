@@ -589,16 +589,23 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 	// Check for prior work — inject revision context if we've already contributed
 	prior := a.executedTasks[task.TaskID]
 	if prior != nil {
-		feedback := ""
-		if task.Metadata != nil {
-			feedback = task.Metadata["prior_output"]
+		// Build XML context with all available information
+		var ctx_parts []string
+		ctx_parts = append(ctx_parts, fmt.Sprintf("<agent id=\"%s\" capability=\"%s\" round=\"%d\">\n%s\n</agent>",
+			a.agentID, a.capability.Name, prior.rounds, prior.output))
+
+		// Include feedback from the triggering agent
+		if task.Metadata != nil && task.Metadata["prior_output"] != "" {
+			ctx_parts = append(ctx_parts, fmt.Sprintf("<agent id=\"%s\" capability=\"%s\">\n%s\n</agent>",
+				task.Metadata["agent_id"], task.Metadata["capability"], task.Metadata["prior_output"]))
 		}
+
 		if task.Metadata == nil {
 			task.Metadata = make(map[string]string)
 		}
 		task.Metadata["revision_context"] = fmt.Sprintf(
-			"You previously produced:\n%s\n\nFeedback from another agent:\n%s\n\nRevise your work based on this feedback. Do NOT rewrite from scratch.",
-			prior.output, feedback)
+			"<discuss-context task=\"%s\">\n%s\n</discuss-context>\n\nRevise your prior work based on the other agents' contributions. Do NOT rewrite from scratch.",
+			task.TaskID, strings.Join(ctx_parts, "\n"))
 		fmt.Fprintf(os.Stderr, "  💬 Round %d revision for %s\n", prior.rounds+1, task.TaskID)
 	}
 
