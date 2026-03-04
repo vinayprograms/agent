@@ -51,6 +51,7 @@ type webServer struct {
 	cacheMu        sync.RWMutex
 	lastHeartbeats map[string][]byte // agent_id → last heartbeat JSON (wsMessage)
 	recentLogs     [][]byte          // ring buffer of recent log wsMessages
+	activeTasks    map[string][]byte // task_id → last task-related wsMessage (work/discuss)
 }
 
 type modelPricing struct {
@@ -69,6 +70,7 @@ func newWebServer(natsURL, dataDir, storageRoot string, pricing map[string]model
 		db:             db,
 		lastHeartbeats: make(map[string][]byte),
 		recentLogs:     make([][]byte, 0, 500),
+		activeTasks:    make(map[string][]byte),
 	}
 }
 
@@ -204,6 +206,20 @@ func (s *webServer) cacheMessage(msgType, subject string, data []byte) {
 		if len(s.recentLogs) > maxCachedLogs {
 			s.recentLogs = s.recentLogs[len(s.recentLogs)-maxCachedLogs:]
 		}
+	case "work", "discuss":
+		// Extract task_id from subject: work.<cap>.<task_id> or discuss.<task_id>
+		parts := strings.Split(subject, ".")
+		if len(parts) >= 2 {
+			taskID := parts[len(parts)-1]
+			s.activeTasks[taskID] = data
+		}
+	case "done":
+		// Remove from active when done: done.<cap>.<task_id>
+		parts := strings.Split(subject, ".")
+		if len(parts) >= 2 {
+			taskID := parts[len(parts)-1]
+			delete(s.activeTasks, taskID)
+		}
 	}
 }
 
@@ -213,7 +229,11 @@ func (s *webServer) sendInitialState(conn *websocket.Conn) {
 	for _, data := range s.lastHeartbeats {
 		websocket.Message.Send(conn, string(data))
 	}
-	// 2. Replay recent logs (restores event log)
+	// 2. Replay active tasks
+	for _, data := range s.activeTasks {
+		websocket.Message.Send(conn, string(data))
+	}
+	// 3. Replay recent logs (restores event log)
 	for _, data := range s.recentLogs {
 		websocket.Message.Send(conn, string(data))
 	}

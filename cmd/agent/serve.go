@@ -793,6 +793,8 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 	if a.heartbeat != nil {
 		a.heartbeat.SetStatus("busy")
 		a.heartbeat.SetLoad(1.0)
+		a.heartbeat.SetMetadata("busy_since", fmt.Sprintf("%d", time.Now().UnixMilli()))
+		a.heartbeat.SetMetadata("current_task", task.TaskID)
 	}
 
 	// Execute task
@@ -802,6 +804,8 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 	if a.heartbeat != nil {
 		a.heartbeat.SetStatus("idle")
 		a.heartbeat.SetLoad(0.0)
+		a.heartbeat.SetMetadata("busy_since", "")
+		a.heartbeat.SetMetadata("current_task", "")
 	}
 
 	// Publish result

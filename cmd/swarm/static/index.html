@@ -1030,14 +1030,13 @@ function handleHeartbeat(hb) {
   const name = meta.name || hb.agent_id;
   const cap = meta.capability || '—';
 
-  const prev = state.agents[hb.agent_id];
+  const meta = hb.metadata || {};
   const newStatus = hb.status || 'idle';
-  // Track when agent transitioned to busy (for task duration display)
-  let busySince = prev ? prev.busySince : null;
-  if (newStatus === 'busy' && (!prev || prev.status !== 'busy')) {
-    busySince = Date.now(); // just became busy
-  } else if (newStatus !== 'busy') {
-    busySince = null; // no longer busy
+
+  // Use server-reported busy_since (millis epoch) — authoritative, survives refresh
+  let busySince = null;
+  if (newStatus === 'busy' && meta.busy_since) {
+    busySince = parseInt(meta.busy_since, 10) || null;
   }
 
   state.agents[hb.agent_id] = {
@@ -1048,6 +1047,7 @@ function handleHeartbeat(hb) {
     load: hb.load || 0,
     lastSeen: Date.now(),
     busySince: busySince,
+    currentTask: meta.current_task || '',
     subagents: parseInt(meta.subagents || '0'),
     supApproved: parseInt(meta.sup_approved || '0'),
     supDenied: parseInt(meta.sup_denied || '0'),
