@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"sort"
@@ -632,6 +633,19 @@ func (u *UpCmd) Run(a *app) error {
 		}
 		go prefixLines(ag.Name, stdoutPipe, os.Stdout)
 		go prefixLines(ag.Name, stderrPipe, os.Stderr)
+
+		// Brief pause to catch immediate crashes (missing binary, bad config, etc.)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case err := <-done:
+			// Process already exited — it crashed
+			fmt.Printf("  ✗ %s exited immediately: %v\n", ag.Name, err)
+			continue
+		case <-time.After(500 * time.Millisecond):
+			// Still running after 500ms — likely healthy
+		}
+
 		fmt.Printf("  ✓ Started %s (pid %d)\n", ag.Name, cmd.Process.Pid)
 		newPIDs = append(newPIDs, pidRecord{
 			Name:       ag.Name,
@@ -647,7 +661,25 @@ func (u *UpCmd) Run(a *app) error {
 		fmt.Fprintf(os.Stderr, "⚠️  Failed to save PID records: %v\n", err)
 	}
 
-	fmt.Println("Swarm started. Use 'swarm agents' to verify.")
+	fmt.Println("Swarm started. Press Ctrl+C to stop all agents.")
+
+	// Stay alive to pipe agent output and handle shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	<-sigCh
+
+	fmt.Println("\nShutting down agents...")
+	for _, r := range newPIDs {
+		if isProcessAlive(r.PID) {
+			proc, err := os.FindProcess(r.PID)
+			if err == nil {
+				proc.Signal(syscall.SIGTERM)
+			}
+		}
+	}
+	// Brief wait for graceful shutdown
+	time.Sleep(2 * time.Second)
+
 	return nil
 }
 
