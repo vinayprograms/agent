@@ -21,6 +21,24 @@
     --input-bg: #0d1117;
     --radius: 10px;
     --radius-sm: 6px;
+    --accent: #58a6ff;
+  }
+
+  [data-theme="light"] {
+    --bg: #f6f8fa;
+    --panel: #ffffff;
+    --card: #f0f3f6;
+    --border: #d1d9e0;
+    --text: #1f2328;
+    --dim: #656d76;
+    --blue: #0969da;
+    --green: #1a7f37;
+    --yellow: #9a6700;
+    --red: #d1242f;
+    --cyan: #0550ae;
+    --magenta: #8250df;
+    --input-bg: #ffffff;
+    --accent: #0969da;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -384,6 +402,51 @@
   /* bottom padding for fixed command bar */
   .dashboard { padding-bottom: 72px; }
 
+  /* ── Theme Toggle ── */
+  .theme-toggle {
+    display: flex;
+    align-items: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px;
+    gap: 0;
+    position: relative;
+  }
+  .theme-toggle input { display: none; }
+  .theme-btn {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    position: relative;
+    z-index: 2;
+    transition: color 0.25s;
+    color: var(--dim);
+  }
+  .theme-btn:hover { color: var(--text); }
+  .theme-btn svg {
+    width: 18px; height: 18px;
+    fill: currentColor;
+  }
+  .theme-btn.active {
+    color: white;
+  }
+  .theme-slider {
+    position: absolute;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--accent);
+    top: 4px; left: 4px;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 1;
+  }
+  .theme-slider[data-pos="1"] { transform: translateX(0); }
+  .theme-slider[data-pos="2"] { transform: translateX(40px); }
+  .theme-slider[data-pos="3"] { transform: translateX(80px); }
+
   /* ── Empty state ── */
   .empty {
     color: var(--dim);
@@ -397,10 +460,24 @@
 
 <div class="header">
   <h1><span>⬡</span> Swarm Mission Control</h1>
-  <div class="connection" id="conn-status">
-    <div class="dot"></div>
-    <span id="nats-url">nats://localhost:4222</span>
-    <span id="uptime">—</span>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <div class="theme-toggle" id="theme-toggle">
+      <div class="theme-slider" id="theme-slider" data-pos="1"></div>
+      <label class="theme-btn active" data-theme="system" id="btn-system" title="System">
+        <svg viewBox="0 0 24 24"><path d="M4 2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6v2h2a1 1 0 110 2H8a1 1 0 110-2h2v-2H4a2 2 0 01-2-2V4a2 2 0 012-2zm0 2v12h16V4H4z"/></svg>
+      </label>
+      <label class="theme-btn" data-theme="light" id="btn-light" title="Light">
+        <svg viewBox="0 0 24 24"><path d="M12 7a5 5 0 100 10 5 5 0 000-10zm0-4a1 1 0 011 1v1a1 1 0 11-2 0V4a1 1 0 011-1zm0 17a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm9-9a1 1 0 110 2h-1a1 1 0 110-2h1zM4 11a1 1 0 110 2H3a1 1 0 110-2h1zm14.07-6.07a1 1 0 010 1.41l-.71.71a1 1 0 11-1.41-1.41l.71-.71a1 1 0 011.41 0zM7.05 16.95a1 1 0 010 1.41l-.71.71a1 1 0 11-1.41-1.41l.71-.71a1 1 0 011.41 0zm11.9 0a1 1 0 01-1.41 0l-.71-.71a1 1 0 111.41-1.41l.71.71a1 1 0 010 1.41zM7.05 7.05a1 1 0 01-1.41 0l-.71-.71a1 1 0 011.41-1.41l.71.71a1 1 0 010 1.41z"/></svg>
+      </label>
+      <label class="theme-btn" data-theme="dark" id="btn-dark" title="Dark">
+        <svg viewBox="0 0 24 24"><path d="M12.1 22c-5.5 0-10-4.5-10-10 0-4.8 3.4-8.8 8-9.8.4-.1.8 0 1 .3s.3.7.1 1.1c-.8 1.4-1.2 3-1.2 4.6 0 5 4 9 9 9 .8 0 1.6-.1 2.4-.3.4-.1.8 0 1.1.3.2.3.2.7 0 1-.2.4-.4.7-.6 1.1-2.1 3-5.5 4.7-9.3 4.7h-.5z"/></svg>
+      </label>
+    </div>
+    <div class="connection" id="conn-status">
+      <div class="dot"></div>
+      <span id="nats-url">nats://localhost:4222</span>
+      <span id="uptime">—</span>
+    </div>
   </div>
 </div>
 
@@ -970,6 +1047,42 @@ setInterval(() => {
   // Update wall time
   document.getElementById('stat-wall').textContent = formatElapsed(now - state.startTime);
 }, 1000);
+
+// ── Theme Toggle ──
+const themeSlider = document.getElementById('theme-slider');
+const themeBtns = document.querySelectorAll('.theme-btn');
+const positions = { system: '1', light: '2', dark: '3' };
+
+function getSystemTheme() {
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function applyTheme(choice) {
+  const effective = choice === 'system' ? getSystemTheme() : choice;
+  document.documentElement.setAttribute('data-theme', effective);
+  
+  themeSlider.setAttribute('data-pos', positions[choice]);
+  themeBtns.forEach(btn => btn.classList.remove('active'));
+  document.getElementById('btn-' + choice).classList.add('active');
+  
+  localStorage.setItem('swarm-theme', choice);
+}
+
+themeBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    applyTheme(btn.dataset.theme);
+  });
+});
+
+// Listen for system theme changes
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+  if (localStorage.getItem('swarm-theme') === 'system') {
+    applyTheme('system');
+  }
+});
+
+// Init theme from saved preference
+applyTheme(localStorage.getItem('swarm-theme') || 'system');
 
 // ── Init ──
 connectWS();
