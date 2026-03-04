@@ -585,6 +585,15 @@ func (u *UpCmd) Run(a *app) error {
 	fmt.Printf("NATS: %s\n", m.NATS.URL)
 	fmt.Printf("Storage: %s\n", m.Storage.Root)
 
+	// Connect to NATS for log forwarding to web UI
+	var nc *nats.Conn
+	if conn, err := nats.Connect(m.NATS.URL); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  NATS log forwarding unavailable: %v\n", err)
+	} else {
+		nc = conn
+		defer nc.Close()
+	}
+
 	// Filter agents if specified
 	agents := m.Agents
 	if len(u.Agents) > 0 {
@@ -639,8 +648,8 @@ func (u *UpCmd) Run(a *app) error {
 			fmt.Printf("  ✗ Failed to start %s: %v\n", ag.Name, err)
 			continue
 		}
-		go prefixLines(ag.Name, stdoutPipe, os.Stdout)
-		go prefixLines(ag.Name, stderrPipe, os.Stderr)
+		go prefixLines(ag.Name, stdoutPipe, os.Stdout, nc)
+		go prefixLines(ag.Name, stderrPipe, os.Stderr, nc)
 
 		// Brief pause to catch immediate crashes (missing binary, bad config, etc.)
 		done := make(chan error, 1)
@@ -1228,10 +1237,19 @@ func discoverAgentsViaHeartbeat(nc *nats.Conn, timeout time.Duration) []discover
 
 // getUserHome returns the current user's home directory.
 // prefixLines reads from r and writes each line to w with a [name] prefix.
-func prefixLines(name string, r io.Reader, w io.Writer) {
+// If nc is non-nil, also publishes each line to NATS on log.<name>.
+func prefixLines(name string, r io.Reader, w io.Writer, nc *nats.Conn) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		fmt.Fprintf(w, "[%s] %s\n", name, scanner.Text())
+		line := scanner.Text()
+		fmt.Fprintf(w, "[%s] %s\n", name, line)
+		if nc != nil {
+			payload, _ := json.Marshal(map[string]string{
+				"agent": name,
+				"line":  line,
+			})
+			nc.Publish(fmt.Sprintf("log.%s", name), payload)
+		}
 	}
 }
 

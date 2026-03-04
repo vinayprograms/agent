@@ -511,6 +511,93 @@
     font-size: 13px;
   }
 
+  /* ── Agent card logs link ── */
+  .agent-logs-link {
+    color: var(--accent);
+    font-size: 11px;
+    cursor: pointer;
+    text-decoration: none;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+  }
+  .agent-logs-link:hover { opacity: 1; text-decoration: underline; }
+
+  /* ── Log Modal ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 500;
+    justify-content: center;
+    align-items: center;
+  }
+  .modal-overlay.visible { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    width: 720px;
+    max-width: 90vw;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--shadow-elevated);
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .modal-title span { color: var(--accent); }
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--dim);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+  .modal-close:hover { color: var(--text); background: var(--card); }
+  .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .modal-log-line {
+    padding: 3px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .modal-log-line:hover { background: var(--accent-soft); }
+  .modal-log-line .log-prefix { color: var(--dim); }
+  .modal-log-line .log-info { color: var(--cyan); }
+  .modal-log-line .log-warn { color: var(--yellow); }
+  .modal-log-line .log-error { color: var(--red); }
+  .modal-log-line .log-emoji { }
+  .modal-empty {
+    color: var(--dim);
+    text-align: center;
+    padding: 40px 20px;
+    font-size: 13px;
+  }
+
   /* ── Scrollbar ── */
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -675,6 +762,19 @@
   </div>
 </div>
 
+<!-- Agent Log Modal -->
+<div class="modal-overlay" id="log-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Logs — <span id="modal-agent-name">agent</span></div>
+      <button class="modal-close" id="modal-close">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body">
+      <div class="modal-empty">No logs yet</div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── State ──
 const state = {
@@ -682,6 +782,7 @@ const state = {
   activeTasks: {},      // keyed by task_id
   history: [],
   logEntries: [],
+  agentLogs: {},        // keyed by agent name → array of lines
   startTime: Date.now(),
   stats: {
     tokensIn: 0, tokensOut: 0,
@@ -728,6 +829,8 @@ function handleMessage(msg) {
     case 'done': handleDone(msg.data, msg.subject); break;
     case 'discuss': handleDiscuss(msg.data, msg.subject); break;
     case 'control': handleControl(msg.data, msg.subject); break;
+    case 'log': handleLog(msg.data); break;
+    case 'history': handleHistoryRecord(msg.data); break;
     default: console.log('Unknown message type:', msg.type);
   }
 }
@@ -802,11 +905,67 @@ function handleDiscuss(data, subject) {
   const taskId = parts[1] || 'unknown';
   const agent = data.agent || '—';
   const round = data.round || 1;
+  const cap = data.capability || '—';
+
+  // Create active task entry for discuss topics
+  if (!state.activeTasks[taskId]) {
+    state.activeTasks[taskId] = {
+      id: taskId, capability: cap, type: 'discuss',
+      startTime: Date.now(), agent: agent,
+      description: data.task || data.topic || '—',
+    };
+    renderActiveTasks();
+    aggregateStats();
+  }
+
   addLog('discuss', agent, `Round ${round} for ${taskId}`, 'info');
 }
 
 function handleControl(data, subject) {
   addLog('control', '', subject, 'info');
+}
+
+function handleLog(data) {
+  const agent = data.agent || 'unknown';
+  const line = data.line || '';
+
+  // Store per-agent
+  if (!state.agentLogs[agent]) state.agentLogs[agent] = [];
+  state.agentLogs[agent].push({ ts: Date.now(), line });
+  // Cap at 500 lines per agent
+  if (state.agentLogs[agent].length > 500) state.agentLogs[agent].shift();
+
+  // Classify the line for event log coloring
+  let level = 'info';
+  let subject = 'log';
+  if (line.includes('ERROR') || line.includes('✗')) { level = 'error'; subject = 'warn'; }
+  else if (line.includes('WARN') || line.includes('⚠')) { level = 'error'; subject = 'warn'; }
+  else if (line.includes('💬 Decision: EXECUTE')) { level = 'success'; subject = 'discuss'; }
+  else if (line.includes('💬 Decision: SKIP')) { level = 'info'; subject = 'discuss'; }
+  else if (line.includes('💬 Discussion')) { subject = 'discuss'; }
+  else if (line.includes('→ Task received')) { level = 'success'; subject = 'work'; }
+  else if (line.includes('▶ Starting goal')) { level = 'info'; subject = 'work'; }
+  else if (line.includes('✓') || line.includes('done')) { level = 'success'; subject = 'done'; }
+
+  // Trim INFO timestamp prefix for cleaner display
+  let display = line.replace(/^(INFO|WARN|ERROR)\s+\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*/, '');
+  addLog(subject, agent, display, level);
+
+  // Update modal if open for this agent
+  updateModalIfOpen(agent);
+}
+
+function handleHistoryRecord(data) {
+  state.history.unshift({
+    id: data.task_id || data.id || '—',
+    capability: data.capability || '—',
+    status: data.status || 'success',
+    duration: data.duration || '—',
+    rounds: data.rounds || 1,
+    sup: `${data.sup_approved||0}✓ ${data.sup_denied||0}✗`,
+    description: data.description || data.task || '—',
+  });
+  renderHistory();
 }
 
 // ── Rendering ──
@@ -845,6 +1004,8 @@ function renderAgents() {
       </span>`;
     }
 
+    const logCount = (state.agentLogs[a.name] || []).length;
+
     return `<div class="agent-card">
       <div class="status-dot ${statusClass}"></div>
       <div class="agent-name">${esc(a.name)}</div>
@@ -857,6 +1018,7 @@ function renderAgents() {
       </div>
       <div class="agent-bottom">
         <span>tasks: ${a.status === 'busy' ? 1 : 0}</span>
+        <a class="agent-logs-link" onclick="openLogModal('${esc(a.name)}')">Logs${logCount > 0 ? ' (' + logCount + ')' : ''}</a>
       </div>
     </div>`;
   }).join('');
@@ -1090,6 +1252,56 @@ function esc(s) {
   d.textContent = s;
   return d.innerHTML;
 }
+
+// ── Log Modal ──
+let modalAgent = null;
+
+function openLogModal(agentName) {
+  modalAgent = agentName;
+  document.getElementById('modal-agent-name').textContent = agentName;
+  renderModalLogs(agentName);
+  document.getElementById('log-modal').classList.add('visible');
+}
+
+function closeLogModal() {
+  modalAgent = null;
+  document.getElementById('log-modal').classList.remove('visible');
+}
+
+function renderModalLogs(agentName) {
+  const body = document.getElementById('modal-body');
+  const logs = state.agentLogs[agentName] || [];
+
+  if (logs.length === 0) {
+    body.innerHTML = '<div class="modal-empty">No logs yet</div>';
+    return;
+  }
+
+  body.innerHTML = logs.map(entry => {
+    const line = esc(entry.line);
+    let cls = '';
+    if (entry.line.includes('ERROR')) cls = 'log-error';
+    else if (entry.line.includes('WARN')) cls = 'log-warn';
+    else if (entry.line.match(/^INFO/)) cls = 'log-info';
+    return `<div class="modal-log-line"><span class="${cls}">${line}</span></div>`;
+  }).join('');
+
+  body.scrollTop = body.scrollHeight;
+}
+
+function updateModalIfOpen(agentName) {
+  if (modalAgent === agentName) {
+    renderModalLogs(agentName);
+  }
+}
+
+document.getElementById('modal-close').addEventListener('click', closeLogModal);
+document.getElementById('log-modal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeLogModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && modalAgent) closeLogModal();
+});
 
 // ── Periodic Updates ──
 setInterval(() => {

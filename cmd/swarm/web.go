@@ -73,7 +73,7 @@ func (s *webServer) start(ctx context.Context, addr string) error {
 	s.nc = nc
 
 	// Subscribe to all relevant subjects
-	subjects := []string{"heartbeat.>", "work.>", "done.>", "discuss.>", "control.>"}
+	subjects := []string{"heartbeat.>", "work.>", "done.>", "discuss.>", "control.>", "log.>"}
 	for _, subj := range subjects {
 		sub := subj
 		_, err := nc.Subscribe(sub, func(msg *nats.Msg) {
@@ -430,6 +430,8 @@ func classifySubject(subject string) string {
 		return "discuss"
 	case strings.HasPrefix(subject, "control."):
 		return "control"
+	case strings.HasPrefix(subject, "log."):
+		return "log"
 	default:
 		return "unknown"
 	}
