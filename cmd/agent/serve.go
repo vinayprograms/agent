@@ -56,6 +56,9 @@ type serviceAgent struct {
 	controlSub bus.Subscription   // control.<id>.shutdown subscription
 	queueGroup string
 	embedder   embedding.Embedder // for discuss pre-filter
+
+	// Track tasks this agent has already executed (prevent discuss runaway loops)
+	executedTasks map[string]bool
 }
 
 // Run executes the serve command.
@@ -139,6 +142,7 @@ func (cmd *ServeCmd) Run() error {
 		status:         "idle",
 		taskDone:       make(chan struct{}),
 		drainTimeout:   drainTimeout,
+		executedTasks:  make(map[string]bool),
 	}
 
 	// Ensure cleanup on exit
@@ -576,6 +580,13 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 
 	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
 
+	// Already executed this task — can only COMMENT, not re-execute
+	alreadyExecuted := a.executedTasks[task.TaskID]
+	if alreadyExecuted {
+		fmt.Fprintf(os.Stderr, "  💬 Already executed %s — skipping re-execution\n", task.TaskID)
+		return
+	}
+
 	// --- Round 1: Embedding pre-filter ---
 	if !a.discussEmbeddingFilter(ctx, task) {
 		return
@@ -801,6 +812,9 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 			}
 		}
 	}
+
+	// Track that we executed this task (prevents discuss runaway loops)
+	a.executedTasks[task.TaskID] = true
 
 	statusIcon := "✓"
 	if result.Status == tasks.ResultFailed {
