@@ -648,8 +648,8 @@ func (u *UpCmd) Run(a *app) error {
 			fmt.Printf("  ✗ Failed to start %s: %v\n", ag.Name, err)
 			continue
 		}
-		go prefixLines(ag.Name, stdoutPipe, os.Stdout, nc)
-		go prefixLines(ag.Name, stderrPipe, os.Stderr, nc)
+		go prefixLines(ag.Name, ag.Capability, stdoutPipe, os.Stdout, nc)
+		go prefixLines(ag.Name, ag.Capability, stderrPipe, os.Stderr, nc)
 
 		// Brief pause to catch immediate crashes (missing binary, bad config, etc.)
 		done := make(chan error, 1)
@@ -1238,15 +1238,16 @@ func discoverAgentsViaHeartbeat(nc *nats.Conn, timeout time.Duration) []discover
 // getUserHome returns the current user's home directory.
 // prefixLines reads from r and writes each line to w with a [name] prefix.
 // If nc is non-nil, also publishes each line to NATS on log.<name>.
-func prefixLines(name string, r io.Reader, w io.Writer, nc *nats.Conn) {
+func prefixLines(name, capability string, r io.Reader, w io.Writer, nc *nats.Conn) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
 		fmt.Fprintf(w, "[%s] %s\n", name, line)
 		if nc != nil {
 			payload, _ := json.Marshal(map[string]string{
-				"agent": name,
-				"line":  line,
+				"agent":      name,
+				"capability": capability,
+				"line":       line,
 			})
 			nc.Publish(fmt.Sprintf("log.%s", name), payload)
 		}

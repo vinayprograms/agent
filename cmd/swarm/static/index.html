@@ -972,13 +972,21 @@ function handleControl(data, subject) {
 
 function handleLog(data) {
   const agent = data.agent || 'unknown';
+  const cap = data.capability || '';
   const line = data.line || '';
+  const entry = { ts: Date.now(), line };
 
-  // Store per-agent
+  // Store under swarm name
   if (!state.agentLogs[agent]) state.agentLogs[agent] = [];
-  state.agentLogs[agent].push({ ts: Date.now(), line });
-  // Cap at 500 lines per agent
+  state.agentLogs[agent].push(entry);
   if (state.agentLogs[agent].length > 500) state.agentLogs[agent].shift();
+
+  // Also index under capability name (heartbeat uses capability as agent name)
+  if (cap && cap !== agent) {
+    if (!state.agentLogs[cap]) state.agentLogs[cap] = [];
+    state.agentLogs[cap].push(entry);
+    if (state.agentLogs[cap].length > 500) state.agentLogs[cap].shift();
+  }
 
   // Classify the line for event log coloring
   let level = 'info';
@@ -996,8 +1004,9 @@ function handleLog(data) {
   let display = line.replace(/^(INFO|WARN|ERROR)\s+\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*/, '');
   addLog(subject, agent, display, level);
 
-  // Update modal if open for this agent
+  // Update modal if open for this agent (check both names)
   updateModalIfOpen(agent);
+  if (cap && cap !== agent) updateModalIfOpen(cap);
 }
 
 function handleHistoryRecord(data) {
