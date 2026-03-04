@@ -474,22 +474,9 @@ func (d *DiscussCmd) Run(a *app) error {
 		return fmt.Errorf("publish: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Published to discuss.%s — waiting for agents...\n", taskID)
+	fmt.Fprintf(os.Stderr, "Published discuss.%s — track progress in swarm ui\n", taskID)
 	fmt.Println(taskID)
-
-	// Wait for result (heartbeat-aware, no fixed timeout)
-	db, err := a.db()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	result, err := waitForResult(nc, taskID, db)
-	if err != nil {
-		return err
-	}
-
-	return printResult(result)
+	return nil
 }
 
 func (r *ResultCmd) Run(a *app) error {
