@@ -15,7 +15,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"golang.org/x/net/websocket"
-	"tailscale.com/tsnet"
+	tsclient "tailscale.com/client/local"
+	"tailscale.com/ipn"
 )
 
 //go:embed static
@@ -343,65 +344,78 @@ func (s *webServer) handleShutdownCommand() {
 	}
 }
 
-// startTailscale serves the web UI over Tailscale.
-// Plain HTTP over WireGuard — Tailscale already encrypts all traffic in transit.
-// No TLS certs needed. Access via http://<hostname>/ from any device on the tailnet.
-func (s *webServer) startTailscale(ctx context.Context, hostname string) error {
-	ts := &tsnet.Server{
-		Hostname: hostname,
-	}
-	defer ts.Close()
+// enableTailscaleServe configures Tailscale Serve to proxy HTTPS → localhost.
+// Uses the existing machine's Tailscale identity (like OpenClaw gateway does).
+// Access at https://<machine>.tail<xxx>.ts.net/ — proper Let's Encrypt certs via Tailscale.
+func (s *webServer) enableTailscaleServe(ctx context.Context, localPort string) error {
+	lc := &tsclient.Client{}
 
-	// Connect to NATS (separate connection for this listener)
-	nc, err := nats.Connect(s.natsURL,
-		nats.ReconnectWait(2*time.Second),
-		nats.MaxReconnects(-1),
-	)
+	// Get machine's DNS name and cert domains
+	status, err := lc.StatusWithoutPeers(ctx)
 	if err != nil {
-		return fmt.Errorf("NATS connect: %w", err)
+		return fmt.Errorf("tailscale status: %w (is tailscaled running?)", err)
 	}
-	s.nc = nc
 
-	// Subscribe to NATS subjects
-	subjects := []string{"heartbeat.>", "work.>", "done.>", "discuss.>", "control.>"}
-	for _, subj := range subjects {
-		sub := subj
-		_, err := nc.Subscribe(sub, func(msg *nats.Msg) {
-			s.broadcast(sub, msg)
-		})
-		if err != nil {
-			return fmt.Errorf("subscribe %s: %w", sub, err)
+	if len(status.CertDomains) == 0 {
+		return fmt.Errorf("no Tailscale cert domains available — enable HTTPS in Tailscale admin console")
+	}
+
+	domain := status.CertDomains[0]
+
+	// Get existing serve config (preserve other entries)
+	sc, err := lc.GetServeConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("get serve config: %w", err)
+	}
+	if sc == nil {
+		sc = &ipn.ServeConfig{}
+	}
+
+	// Configure: HTTPS on :443 → proxy to localhost:<port>
+	hostPort := ipn.HostPort(domain + ":443")
+
+	if sc.TCP == nil {
+		sc.TCP = make(map[uint16]*ipn.TCPPortHandler)
+	}
+	sc.TCP[443] = &ipn.TCPPortHandler{HTTPS: true}
+
+	if sc.Web == nil {
+		sc.Web = make(map[ipn.HostPort]*ipn.WebServerConfig)
+	}
+	sc.Web[hostPort] = &ipn.WebServerConfig{
+		Handlers: map[string]*ipn.HTTPHandler{
+			"/": {Proxy: "http://127.0.0.1:" + localPort},
+		},
+	}
+
+	if err := lc.SetServeConfig(ctx, sc); err != nil {
+		return fmt.Errorf("set serve config: %w", err)
+	}
+
+	fmt.Printf("Mission Control (Tailscale): https://%s/\n", domain)
+	return nil
+}
+
+// disableTailscaleServe removes the Tailscale Serve proxy config on shutdown.
+func disableTailscaleServe(localPort string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	lc := &tsclient.Client{}
+	sc, err := lc.GetServeConfig(ctx)
+	if err != nil || sc == nil {
+		return
+	}
+
+	// Remove our port 443 entries
+	delete(sc.TCP, 443)
+	for hp := range sc.Web {
+		if strings.HasSuffix(string(hp), ":443") {
+			delete(sc.Web, hp)
 		}
 	}
 
-	// Plain HTTP listener on the tailnet — WireGuard handles encryption
-	ln, err := ts.Listen("tcp", ":80")
-	if err != nil {
-		return fmt.Errorf("tailscale listen: %w", err)
-	}
-	defer ln.Close()
-
-	// Serve static + websocket
-	staticFS, err := fs.Sub(staticFiles, "static")
-	if err != nil {
-		return fmt.Errorf("static files: %w", err)
-	}
-
-	mux := http.NewServeMux()
-	mux.Handle("/ws", websocket.Handler(s.handleWS))
-	mux.Handle("/", http.FileServer(http.FS(staticFS)))
-
-	fmt.Printf("Mission Control (Tailscale): http://%s/\n", hostname)
-
-	server := &http.Server{Handler: mux}
-	go func() {
-		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		server.Shutdown(shutCtx)
-	}()
-
-	return server.Serve(ln)
+	_ = lc.SetServeConfig(ctx, sc)
 }
 
 func classifySubject(subject string) string {

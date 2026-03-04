@@ -78,7 +78,7 @@ type RestartCmd struct {
 type UICmd struct {
 	Port      int    `name:"port" short:"p" default:"9090" help:"Web UI port"`
 	Bind      string `name:"bind" short:"b" default:"127.0.0.1" help:"Bind address (default: localhost only)"`
-	Tailscale bool   `name:"tailscale" help:"Serve over Tailscale with auto-HTTPS (uses tsnet)"`
+	Tailscale bool   `name:"tailscale" help:"Expose via Tailscale Serve with HTTPS (uses existing machine identity)"`
 	TUI       bool   `name:"tui" help:"Use terminal TUI instead of web"`
 }
 type ReplayCmd struct {
@@ -831,14 +831,14 @@ func (u *UICmd) Run(a *app) error {
 	// Primary bind address
 	addr := fmt.Sprintf("%s:%d", u.Bind, u.Port)
 
-	// Optionally also serve over Tailscale with auto-HTTPS
+	// Optionally also expose via Tailscale Serve (HTTPS with proper certs)
 	if u.Tailscale {
-		go func() {
-			tsSrv := newWebServer(a.natsURL, a.dataDir, nil, db)
-			if err := tsSrv.startTailscale(ctx, "swarm-ui"); err != nil {
-				fmt.Fprintf(os.Stderr, "Tailscale error: %v\n", err)
-			}
-		}()
+		port := fmt.Sprintf("%d", u.Port)
+		if err := srv.enableTailscaleServe(ctx, port); err != nil {
+			fmt.Fprintf(os.Stderr, "Tailscale Serve error: %v\n", err)
+		} else {
+			defer disableTailscaleServe(port)
+		}
 	}
 
 	return srv.start(ctx, addr)
