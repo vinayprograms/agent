@@ -835,7 +835,15 @@ func (u *UICmd) Run(a *app) error {
 	}
 	defer db.Close()
 
-	srv := newWebServer(a.natsURL, a.dataDir, nil, db)
+	// Discover storage root from manifest (for session JSONL access)
+	storageRoot := ""
+	if manifestPath, err := findManifest(); err == nil {
+		if m, err := loadManifest(manifestPath); err == nil {
+			storageRoot = m.Storage.Root
+		}
+	}
+
+	srv := newWebServer(a.natsURL, a.dataDir, storageRoot, nil, db)
 
 	// Primary bind address
 	addr := fmt.Sprintf("%s:%d", u.Bind, u.Port)

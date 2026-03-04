@@ -645,11 +645,86 @@
     word-break: break-all;
   }
   .modal-log-line:hover { background: var(--accent-soft); }
-  .modal-log-line .log-prefix { color: var(--dim); }
-  .modal-log-line .log-info { color: var(--cyan); }
-  .modal-log-line .log-warn { color: var(--yellow); }
-  .modal-log-line .log-error { color: var(--red); }
-  .modal-log-line .log-emoji { }
+
+  /* ── Session timeline in modal ── */
+  .session-header {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--dim);
+  }
+  .session-header strong { color: var(--text-secondary); }
+  .timeline-event {
+    display: grid;
+    grid-template-columns: 60px 70px 1fr;
+    gap: 8px;
+    padding: 6px 20px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+    align-items: start;
+  }
+  .timeline-event:hover { background: var(--accent-soft); }
+  .timeline-event:last-child { border-bottom: none; }
+  .timeline-ts {
+    color: var(--dim);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .timeline-type {
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .timeline-type.goal_start { color: var(--accent); }
+  .timeline-type.goal_end { color: var(--accent); }
+  .timeline-type.tool_call { color: var(--cyan); }
+  .timeline-type.tool_result { color: var(--green); }
+  .timeline-type.llm_response { color: var(--text-secondary); }
+  .timeline-type.security { color: var(--yellow); }
+  .timeline-type.error { color: var(--red); }
+  .timeline-type.observation { color: var(--magenta); }
+  .timeline-content {
+    color: var(--text-secondary);
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .timeline-content .tool-name { color: var(--cyan); font-weight: 600; }
+  .timeline-content .goal-name { color: var(--accent); font-weight: 600; }
+  .timeline-content .duration { color: var(--dim); font-size: 11px; }
+  .timeline-content .error-msg { color: var(--red); }
+  .timeline-content pre {
+    margin-top: 4px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border-radius: 6px;
+    font-size: 11px;
+    overflow-x: auto;
+    max-height: 200px;
+    color: var(--dim);
+  }
+  .modal-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-tab {
+    padding: 10px 20px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+  }
+  .modal-tab:hover { color: var(--text-secondary); }
+  .modal-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .modal-loading {
+    color: var(--dim);
+    text-align: center;
+    padding: 40px 20px;
+    font-size: 13px;
+  }
   .modal-empty {
     color: var(--dim);
     text-align: center;
@@ -814,8 +889,12 @@
       <div class="modal-title">Logs — <span id="modal-agent-name">agent</span></div>
       <button class="modal-close" id="modal-close">✕</button>
     </div>
+    <div class="modal-tabs">
+      <div class="modal-tab active" data-tab="session" onclick="switchModalTab('session')">Session</div>
+      <div class="modal-tab" data-tab="output" onclick="switchModalTab('output')">Output</div>
+    </div>
     <div class="modal-body" id="modal-body">
-      <div class="modal-empty">No logs yet</div>
+      <div class="modal-loading">Loading session...</div>
     </div>
   </div>
 </div>
@@ -1320,12 +1399,20 @@ function esc(s) {
 
 // ── Log Modal ──
 let modalAgent = null;
+let modalTab = 'session';
+let modalSessionData = null; // cached JSONL records
 
 function openLogModal(agentName) {
   modalAgent = agentName;
+  modalTab = 'session';
+  modalSessionData = null;
   document.getElementById('modal-agent-name').textContent = agentName;
-  renderModalLogs(agentName);
   document.getElementById('log-modal').classList.add('visible');
+  // Reset tabs
+  document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector('.modal-tab[data-tab="session"]').classList.add('active');
+  // Fetch session JSONL
+  fetchSessionLogs(agentName);
 }
 
 function closeLogModal() {
@@ -1333,30 +1420,175 @@ function closeLogModal() {
   document.getElementById('log-modal').classList.remove('visible');
 }
 
-function renderModalLogs(agentName) {
+function switchModalTab(tab) {
+  modalTab = tab;
+  document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.modal-tab[data-tab="${tab}"]`).classList.add('active');
+  if (tab === 'session') {
+    renderSessionView();
+  } else {
+    renderOutputView();
+  }
+}
+
+async function fetchSessionLogs(agentName) {
   const body = document.getElementById('modal-body');
-  const logs = state.agentLogs[agentName] || [];
+  body.innerHTML = '<div class="modal-loading">Loading session...</div>';
+
+  try {
+    const resp = await fetch(`/api/sessions/${encodeURIComponent(agentName)}`);
+    if (!resp.ok) {
+      body.innerHTML = '<div class="modal-empty">No session logs found</div>';
+      return;
+    }
+    modalSessionData = await resp.json();
+    renderSessionView();
+  } catch (err) {
+    body.innerHTML = `<div class="modal-empty">Error loading session: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderSessionView() {
+  const body = document.getElementById('modal-body');
+  if (!modalSessionData || modalSessionData.length === 0) {
+    body.innerHTML = '<div class="modal-empty">No session data</div>';
+    return;
+  }
+
+  let html = '';
+
+  // Render header info
+  const header = modalSessionData.find(r => r._type === 'header');
+  if (header) {
+    html += `<div class="session-header">
+      <strong>${esc(header.workflow_name || '—')}</strong>
+      ${header.inputs ? ' · Inputs: ' + Object.entries(header.inputs).map(([k,v]) => `${esc(k)}="${esc(truncate(v,60))}"`).join(', ') : ''}
+    </div>`;
+  }
+
+  // Render events as timeline
+  const events = modalSessionData.filter(r => r._type === 'event');
+  const startTime = events.length > 0 ? new Date(events[0].timestamp).getTime() : 0;
+
+  for (const evt of events) {
+    const type = evt.type || 'unknown';
+    const ts = evt.timestamp ? formatTimeOffset(new Date(evt.timestamp).getTime() - startTime) : '—';
+    const typeClass = classifyEventType(type);
+    const content = renderEventContent(evt);
+    if (!content) continue; // skip noise events
+
+    html += `<div class="timeline-event">
+      <span class="timeline-ts">${ts}</span>
+      <span class="timeline-type ${typeClass}">${esc(type.replace(/_/g, ' '))}</span>
+      <div class="timeline-content">${content}</div>
+    </div>`;
+  }
+
+  // Render footer
+  const footer = modalSessionData.findLast ? modalSessionData.findLast(r => r._type === 'footer') :
+    [...modalSessionData].reverse().find(r => r._type === 'footer');
+  if (footer) {
+    const statusColor = footer.status === 'completed' ? 'var(--green)' : 'var(--red)';
+    html += `<div class="timeline-event">
+      <span class="timeline-ts">end</span>
+      <span class="timeline-type" style="color:${statusColor}">result</span>
+      <div class="timeline-content">
+        Status: <strong style="color:${statusColor}">${esc(footer.status || '—')}</strong>
+        ${footer.result ? `<pre>${esc(truncate(footer.result, 500))}</pre>` : ''}
+        ${footer.error ? `<span class="error-msg">${esc(footer.error)}</span>` : ''}
+      </div>
+    </div>`;
+  }
+
+  body.innerHTML = html || '<div class="modal-empty">No events found</div>';
+}
+
+function renderOutputView() {
+  const body = document.getElementById('modal-body');
+  const logs = state.agentLogs[modalAgent] || [];
 
   if (logs.length === 0) {
-    body.innerHTML = '<div class="modal-empty">No logs yet</div>';
+    body.innerHTML = '<div class="modal-empty">No output captured</div>';
     return;
   }
 
   body.innerHTML = logs.map(entry => {
     const line = esc(entry.line);
-    let cls = '';
-    if (entry.line.includes('ERROR')) cls = 'log-error';
-    else if (entry.line.includes('WARN')) cls = 'log-warn';
-    else if (entry.line.match(/^INFO/)) cls = 'log-info';
-    return `<div class="modal-log-line"><span class="${cls}">${line}</span></div>`;
+    return `<div class="modal-log-line">${line}</div>`;
   }).join('');
 
   body.scrollTop = body.scrollHeight;
 }
 
+function renderEventContent(evt) {
+  const type = evt.type || '';
+
+  if (type === 'goal_start') {
+    return `<span class="goal-name">${esc(evt.goal || '—')}</span> started`;
+  }
+  if (type === 'goal_end') {
+    const dur = evt.duration_ms ? ` <span class="duration">(${(evt.duration_ms/1000).toFixed(1)}s)</span>` : '';
+    const status = evt.success === true ? '✓' : evt.success === false ? '✗' : '';
+    return `<span class="goal-name">${esc(evt.goal || '—')}</span> ${status}${dur}`;
+  }
+  if (type === 'tool_call') {
+    const args = evt.args ? `<pre>${esc(JSON.stringify(evt.args, null, 2))}</pre>` : '';
+    return `<span class="tool-name">${esc(evt.tool || '—')}</span>${args}`;
+  }
+  if (type === 'tool_result') {
+    const dur = evt.duration_ms ? ` <span class="duration">(${evt.duration_ms}ms)</span>` : '';
+    const status = evt.success === true ? '✓' : evt.success === false ? '✗' : '';
+    const content = evt.content ? `<pre>${esc(truncate(evt.content, 300))}</pre>` : '';
+    return `<span class="tool-name">${esc(evt.tool || '—')}</span> ${status}${dur}${content}`;
+  }
+  if (type === 'llm_response') {
+    const content = evt.content ? truncate(evt.content, 200) : '';
+    return content ? esc(content) : null;
+  }
+  if (type === 'security_check' || type === 'security_result') {
+    const status = evt.success === true ? '✓ approved' : evt.success === false ? '✗ denied' : 'checking';
+    return `${esc(evt.tool || '—')}: ${status}`;
+  }
+  if (type === 'observation') {
+    return evt.content ? esc(truncate(evt.content, 200)) : null;
+  }
+  if (type === 'error') {
+    return `<span class="error-msg">${esc(evt.error || evt.content || '—')}</span>`;
+  }
+  // Generic fallback
+  if (evt.content) return esc(truncate(evt.content, 200));
+  return null;
+}
+
+function classifyEventType(type) {
+  if (type.startsWith('goal')) return type;
+  if (type.startsWith('tool')) return type;
+  if (type === 'llm_response') return 'llm_response';
+  if (type.startsWith('security')) return 'security';
+  if (type === 'error') return 'error';
+  if (type === 'observation') return 'observation';
+  return '';
+}
+
+function formatTimeOffset(ms) {
+  if (ms < 0) ms = 0;
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  const rms = ms % 1000;
+  if (m > 0) return `+${m}m${rs}s`;
+  if (s > 0) return `+${s}.${String(rms).padStart(3,'0').substring(0,1)}s`;
+  return `+${ms}ms`;
+}
+
+function truncate(s, max) {
+  if (!s) return '';
+  return s.length > max ? s.substring(0, max) + '…' : s;
+}
+
 function updateModalIfOpen(agentName) {
-  if (modalAgent === agentName) {
-    renderModalLogs(agentName);
+  if (modalAgent === agentName && modalTab === 'output') {
+    renderOutputView();
   }
 }
 

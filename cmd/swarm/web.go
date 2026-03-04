@@ -9,6 +9,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -36,13 +38,14 @@ type wsCommand struct {
 
 // webServer bridges NATS to WebSocket clients.
 type webServer struct {
-	nc      *nats.Conn
-	natsURL string
-	clients map[*websocket.Conn]bool
-	mu      sync.RWMutex
-	dataDir string
-	pricing map[string]modelPricing
-	db      *taskDB
+	nc          *nats.Conn
+	natsURL     string
+	clients     map[*websocket.Conn]bool
+	mu          sync.RWMutex
+	dataDir     string
+	storageRoot string // agent session storage root (from manifest)
+	pricing     map[string]modelPricing
+	db          *taskDB
 }
 
 type modelPricing struct {
@@ -51,13 +54,14 @@ type modelPricing struct {
 	CacheRead float64 `yaml:"cache_read"`
 }
 
-func newWebServer(natsURL, dataDir string, pricing map[string]modelPricing, db *taskDB) *webServer {
+func newWebServer(natsURL, dataDir, storageRoot string, pricing map[string]modelPricing, db *taskDB) *webServer {
 	return &webServer{
-		natsURL: natsURL,
-		clients: make(map[*websocket.Conn]bool),
-		dataDir: dataDir,
-		pricing: pricing,
-		db:      db,
+		natsURL:     natsURL,
+		clients:     make(map[*websocket.Conn]bool),
+		dataDir:     dataDir,
+		storageRoot: storageRoot,
+		pricing:     pricing,
+		db:          db,
 	}
 }
 
@@ -92,6 +96,7 @@ func (s *webServer) start(ctx context.Context, addr string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/ws", websocket.Handler(s.handleWS))
+	mux.HandleFunc("/api/sessions/", s.handleSessionLogs)
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	// Bind to localhost only (secure default)
@@ -416,6 +421,79 @@ func disableTailscaleServe(localPort string) {
 	}
 
 	_ = lc.SetServeConfig(ctx, sc)
+}
+
+// handleSessionLogs serves JSONL session logs for an agent.
+// GET /api/sessions/<agent-name> → returns array of JSONL records from the latest session.
+func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
+	if s.storageRoot == "" {
+		http.Error(w, "storage root not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Extract agent name from URL path: /api/sessions/<agent-name>
+	agentName := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	agentName = strings.TrimSuffix(agentName, "/")
+	if agentName == "" {
+		http.Error(w, "agent name required", http.StatusBadRequest)
+		return
+	}
+
+	// Sanitize agent name (prevent path traversal)
+	if strings.Contains(agentName, "..") || strings.Contains(agentName, "/") {
+		http.Error(w, "invalid agent name", http.StatusBadRequest)
+		return
+	}
+
+	// Session logs live at: <storageRoot>/agents/<name>/sessions/*.jsonl
+	sessDir := filepath.Join(s.storageRoot, "agents", agentName, "sessions")
+	entries, err := os.ReadDir(sessDir)
+	if err != nil {
+		http.Error(w, "no sessions found", http.StatusNotFound)
+		return
+	}
+
+	// Find the latest .jsonl file (most recent session)
+	var latestFile string
+	var latestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(latestMod) {
+			latestMod = info.ModTime()
+			latestFile = filepath.Join(sessDir, e.Name())
+		}
+	}
+
+	if latestFile == "" {
+		http.Error(w, "no session logs found", http.StatusNotFound)
+		return
+	}
+
+	// Read and return the JSONL file as a JSON array
+	data, err := os.ReadFile(latestFile)
+	if err != nil {
+		http.Error(w, "read error", http.StatusInternalServerError)
+		return
+	}
+
+	// Parse JSONL lines into array
+	var records []json.RawMessage
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		records = append(records, json.RawMessage(line))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(records)
 }
 
 func classifySubject(subject string) string {
