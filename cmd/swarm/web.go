@@ -343,7 +343,9 @@ func (s *webServer) handleShutdownCommand() {
 	}
 }
 
-// startTailscale serves the web UI over Tailscale with auto-provisioned HTTPS.
+// startTailscale serves the web UI over Tailscale.
+// Plain HTTP over WireGuard — Tailscale already encrypts all traffic in transit.
+// No TLS certs needed. Access via http://<hostname>/ from any device on the tailnet.
 func (s *webServer) startTailscale(ctx context.Context, hostname string) error {
 	ts := &tsnet.Server{
 		Hostname: hostname,
@@ -372,8 +374,8 @@ func (s *webServer) startTailscale(ctx context.Context, hostname string) error {
 		}
 	}
 
-	// Get HTTPS listener with auto-provisioned cert
-	ln, err := ts.ListenTLS("tcp", ":443")
+	// Plain HTTP listener on the tailnet — WireGuard handles encryption
+	ln, err := ts.Listen("tcp", ":80")
 	if err != nil {
 		return fmt.Errorf("tailscale listen: %w", err)
 	}
@@ -389,7 +391,7 @@ func (s *webServer) startTailscale(ctx context.Context, hostname string) error {
 	mux.Handle("/ws", websocket.Handler(s.handleWS))
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
-	fmt.Printf("Mission Control (Tailscale): https://%s/\n", hostname)
+	fmt.Printf("Mission Control (Tailscale): http://%s/\n", hostname)
 
 	server := &http.Server{Handler: mux}
 	go func() {
