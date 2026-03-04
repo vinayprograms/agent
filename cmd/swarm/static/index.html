@@ -1404,6 +1404,7 @@ let modalAgent = null;
 let modalSessionId = null;
 let modalTab = 'session';
 let modalSessionData = null; // cached JSONL records
+let modalPollTimer = null;
 
 function openLogModal(agentName, sessionId) {
   modalAgent = agentName;
@@ -1415,9 +1416,10 @@ function openLogModal(agentName, sessionId) {
   // Reset tabs
   document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
   document.querySelector('.modal-tab[data-tab="session"]').classList.add('active');
-  // Fetch session JSONL
+  // Fetch session JSONL + start polling
   if (sessionId) {
     fetchSessionLogs(agentName, sessionId);
+    startSessionPoll(agentName, sessionId);
   } else {
     document.getElementById('modal-body').innerHTML = '<div class="modal-empty">No session ID available</div>';
   }
@@ -1425,7 +1427,24 @@ function openLogModal(agentName, sessionId) {
 
 function closeLogModal() {
   modalAgent = null;
+  stopSessionPoll();
   document.getElementById('log-modal').classList.remove('visible');
+}
+
+function startSessionPoll(agentName, sessionId) {
+  stopSessionPoll();
+  modalPollTimer = setInterval(() => {
+    if (modalAgent === agentName && modalTab === 'session') {
+      fetchSessionLogs(agentName, sessionId, true);
+    }
+  }, 2000);
+}
+
+function stopSessionPoll() {
+  if (modalPollTimer) {
+    clearInterval(modalPollTimer);
+    modalPollTimer = null;
+  }
 }
 
 function switchModalTab(tab) {
@@ -1439,20 +1458,24 @@ function switchModalTab(tab) {
   }
 }
 
-async function fetchSessionLogs(agentName, sessionId) {
+async function fetchSessionLogs(agentName, sessionId, silent) {
   const body = document.getElementById('modal-body');
-  body.innerHTML = '<div class="modal-loading">Loading session...</div>';
+  if (!silent) body.innerHTML = '<div class="modal-loading">Loading session...</div>';
 
   try {
     const resp = await fetch(`/api/sessions/${encodeURIComponent(agentName)}/${encodeURIComponent(sessionId)}`);
     if (!resp.ok) {
-      body.innerHTML = '<div class="modal-empty">No session logs found</div>';
+      if (!silent) body.innerHTML = '<div class="modal-empty">No session logs found</div>';
       return;
     }
-    modalSessionData = await resp.json();
-    renderSessionView();
+    const newData = await resp.json();
+    // Only re-render if data changed (new events appended)
+    if (!modalSessionData || newData.length !== modalSessionData.length) {
+      modalSessionData = newData;
+      renderSessionView();
+    }
   } catch (err) {
-    body.innerHTML = `<div class="modal-empty">Error loading session: ${esc(err.message)}</div>`;
+    if (!silent) body.innerHTML = `<div class="modal-empty">Error loading session: ${esc(err.message)}</div>`;
   }
 }
 
