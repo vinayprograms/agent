@@ -21,6 +21,7 @@ type workflow struct {
 	policyPath    string
 	workspacePath string
 	debug         bool
+	yolo          bool // Enable bash with security guardrails
 
 	// Loaded artifacts
 	wf      *agentfile.Workflow

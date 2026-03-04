@@ -35,6 +35,7 @@ type AgentSpec struct {
 	Policy     string `yaml:"policy"`
 	Capability string `yaml:"capability"`
 	Storage    string `yaml:"storage"`
+	Yolo       bool   `yaml:"yolo"` // Enable bash with security guardrails
 }
 
 // loadManifest reads a swarm.yaml file.

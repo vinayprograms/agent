@@ -13,13 +13,13 @@ import (
 	"github.com/vinayprograms/agent/internal/checkpoint"
 	"github.com/vinayprograms/agent/internal/config"
 	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/mcp"
 	"github.com/vinayprograms/agentkit/memory"
 	"github.com/vinayprograms/agentkit/policy"
 	"github.com/vinayprograms/agentkit/security"
-	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agentkit/telemetry"
 	"github.com/vinayprograms/agentkit/tools"
 )
@@ -32,6 +32,7 @@ type runtime struct {
 	creds  *credentials.Credentials
 	inputs map[string]string
 	debug  bool
+	yolo   bool // Enable bash tool with security guardrails
 
 	// Components
 	provider       llm.Provider
@@ -64,6 +65,7 @@ func newRuntime(w *workflow, creds *credentials.Credentials) *runtime {
 		creds:  creds,
 		inputs: w.inputs,
 		debug:  w.debug,
+		yolo:   w.yolo,
 	}
 	rt.resolveStoragePath()
 	return rt
@@ -173,11 +175,20 @@ func (rt *runtime) createSmallLLM() error {
 // setupRegistry creates and configures the tool registry.
 func (rt *runtime) setupRegistry() {
 	rt.registry = tools.NewRegistry(rt.pol)
-	rt.setupBashChecker()
+
+	// Bash is opt-in via --yolo flag
+	if rt.yolo {
+		fmt.Println("⚠️  YOLO mode: bash enabled with security guardrails")
+		rt.registry.EnableBash()
+		rt.setupBashChecker()
+		if rt.smallLLM != nil {
+			rt.bashLLMChecker = policy.NewSmallLLMChecker(&llmGenerateAdapter{rt.smallLLM})
+			rt.registry.SetBashLLMChecker(rt.bashLLMChecker)
+		}
+	}
+
 	if rt.smallLLM != nil {
 		rt.registry.SetSummarizer(llm.NewSummarizer(rt.smallLLM))
-		rt.bashLLMChecker = policy.NewSmallLLMChecker(&llmGenerateAdapter{rt.smallLLM})
-		rt.registry.SetBashLLMChecker(rt.bashLLMChecker)
 	}
 	rt.registry.SetCredentials(rt.creds)
 }

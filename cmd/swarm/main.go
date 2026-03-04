@@ -624,6 +624,9 @@ func (u *UpCmd) Run(a *app) error {
 			agentStorage = filepath.Join(m.Storage.Root, "agents", ag.Name)
 		}
 		args = append(args, "--storage", agentStorage)
+		if ag.Yolo {
+			args = append(args, "--yolo")
+		}
 		if ag.Agentfile != "" {
 			args = append(args, ag.Agentfile)
 		}
