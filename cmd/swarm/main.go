@@ -345,10 +345,11 @@ func (s *SubmitCmd) Run(a *app) error {
 	}
 
 	task := tasks.TaskMessage{
-		TaskID:     taskID,
-		Capability: s.Capability,
-		Inputs:     inputs,
-		Attempt:    1,
+		TaskID:      taskID,
+		Capability:  s.Capability,
+		Inputs:      inputs,
+		Attempt:     1,
+		SubmittedAt: time.Now(),
 	}
 
 	data, err := task.Marshal()

@@ -1106,9 +1106,17 @@ function handleWork(data, subject) {
   const parts = subject.split('.');
   const taskId = parts[2] || 'unknown';
   const cap = parts[1] || '—';
+
+  // Use server-provided submitted_at if available (survives refresh)
+  let startTime = Date.now();
+  if (data.submitted_at) {
+    const t = new Date(data.submitted_at);
+    startTime = t.getTime();
+  }
+
   state.activeTasks[taskId] = {
     id: taskId, capability: cap, type: 'task',
-    startTime: Date.now(), agent: '—', description: data.task || '—',
+    startTime: startTime, agent: '—', description: data.task || '—',
   };
   addLog('work', cap, `Received ${taskId}`, 'info');
   renderActiveTasks();
@@ -1148,11 +1156,18 @@ function handleDiscuss(data, subject) {
   const round = data.round || 1;
   const cap = data.capability || '—';
 
+  // Use server-provided submitted_at if available
+  let startTime = Date.now();
+  if (data.submitted_at) {
+    const t = new Date(data.submitted_at);
+    startTime = t.getTime();
+  }
+
   // Create active task entry for discuss topics
   if (!state.activeTasks[taskId]) {
     state.activeTasks[taskId] = {
       id: taskId, capability: cap, type: 'discuss',
-      startTime: Date.now(), agent: agent,
+      startTime: startTime, agent: agent,
       description: data.task || data.topic || '—',
     };
     renderActiveTasks();
