@@ -240,7 +240,7 @@ func (a *serviceAgent) runHTTPMode() error {
 		a.initiateShutdown(ctx)
 	}()
 
-	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s)\n", a.capability.Name, a.agentID)
+	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s, capability: %s)\n", a.wf.wf.Name, a.agentID, a.capability.Name)
 	fmt.Fprintf(os.Stderr, "HTTP server listening on %s\n", a.wf.cfg.Service.HTTPAddr)
 	fmt.Fprintf(os.Stderr, "Endpoints:\n")
 	fmt.Fprintf(os.Stderr, "  GET  /health     - Health check\n")
@@ -303,7 +303,7 @@ func (a *serviceAgent) runBusMode() error {
 		return fmt.Errorf("creating heartbeat sender: %w", err)
 	}
 	a.heartbeat = hbSender
-	hbSender.SetMetadata("name", a.capability.Name)
+	hbSender.SetMetadata("name", a.wf.wf.Name)
 	hbSender.SetMetadata("capability", a.capability.Name)
 	hbSender.SetMetadata("version", version)
 
@@ -369,7 +369,7 @@ func (a *serviceAgent) runBusMode() error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
-	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s)\n", a.capability.Name, a.agentID)
+	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s, capability: %s)\n", a.wf.wf.Name, a.agentID, a.capability.Name)
 	fmt.Fprintf(os.Stderr, "Connected to bus: %s\n", a.wf.cfg.Service.BusURL)
 	fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (queue: %s)\n", cap, a.queueGroup)
 	fmt.Fprintf(os.Stderr, "Listening on: discuss.* (collaborative)\n")
