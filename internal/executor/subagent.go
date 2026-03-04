@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/checkpoint"
@@ -230,6 +231,18 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	if e.OnSubAgentStart != nil {
 		e.OnSubAgentStart(role, map[string]string{"task": task})
 	}
+
+	// Track active sub-agent count for metrics
+	count := atomic.AddInt32(&e.activeSubAgents, 1)
+	if e.metricsCollector != nil {
+		e.metricsCollector.SetSubagents(int(count))
+	}
+	defer func() {
+		c := atomic.AddInt32(&e.activeSubAgents, -1)
+		if e.metricsCollector != nil {
+			e.metricsCollector.SetSubagents(int(c))
+		}
+	}()
 
 	// Agent is supervised if: agent has SUPERVISED flag OR parent goal is supervised
 	// Infrastructure must also be available (supervisor + checkpoint store)

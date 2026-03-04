@@ -1030,13 +1030,24 @@ function handleHeartbeat(hb) {
   const name = meta.name || hb.agent_id;
   const cap = meta.capability || '—';
 
+  const prev = state.agents[hb.agent_id];
+  const newStatus = hb.status || 'idle';
+  // Track when agent transitioned to busy (for task duration display)
+  let busySince = prev ? prev.busySince : null;
+  if (newStatus === 'busy' && (!prev || prev.status !== 'busy')) {
+    busySince = Date.now(); // just became busy
+  } else if (newStatus !== 'busy') {
+    busySince = null; // no longer busy
+  }
+
   state.agents[hb.agent_id] = {
     id: hb.agent_id,
     name: name,
     capability: cap,
-    status: hb.status || 'idle',
+    status: newStatus,
     load: hb.load || 0,
     lastSeen: Date.now(),
+    busySince: busySince,
     subagents: parseInt(meta.subagents || '0'),
     supApproved: parseInt(meta.sup_approved || '0'),
     supDenied: parseInt(meta.sup_denied || '0'),
@@ -1179,7 +1190,7 @@ function renderAgents() {
     const statusClass = a.status === 'busy' ? 'busy' :
                         a.status === 'down' ? 'down' :
                         a.status === 'starting' ? 'starting' : 'idle';
-    const elapsed = a.status === 'busy' ? `<div class="agent-elapsed">${formatElapsed(now - a.lastSeen)}</div>` : '';
+    const elapsed = (a.status === 'busy' && a.busySince) ? `<div class="agent-elapsed">${formatElapsed(now - a.busySince)}</div>` : '';
 
     const supTotal = a.supApproved + a.supDenied;
     let supHtml = '<span>unsupervised</span>';

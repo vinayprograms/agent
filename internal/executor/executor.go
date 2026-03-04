@@ -165,6 +165,9 @@ type Executor struct {
 
 	// Metrics collector for heartbeat reporting (optional, set by serve mode)
 	metricsCollector MetricsCollector
+
+	// Sub-agent tracking
+	activeSubAgents int32 // atomic counter for active sub-agents
 }
 
 // NewExecutor creates a new executor.
