@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/vinayprograms/agentkit/tasks"
 	"golang.org/x/net/websocket"
 	tsclient "tailscale.com/client/local"
 	"tailscale.com/ipn"
@@ -311,13 +312,18 @@ func (s *webServer) handleTaskCommand(args []string) {
 		}()
 	}
 
-	payload := map[string]interface{}{
-		"task_id":      taskID,
-		"task":         task,
-		"capability":   capability,
-		"submitted_at": time.Now().UTC().Format(time.RFC3339),
+	taskMsg := &tasks.TaskMessage{
+		TaskID:      taskID,
+		Capability:  capability,
+		Inputs:      map[string]string{"task": task},
+		Attempt:     1,
+		SubmittedAt: time.Now(),
 	}
-	data, _ := json.Marshal(payload)
+	data, _ := taskMsg.Marshal()
+
+	if s.db != nil {
+		s.db.InsertTask(taskMsg, "pending")
+	}
 
 	if err := s.nc.Publish(subject, data); err != nil {
 		log.Printf("Publish error: %v", err)
@@ -334,13 +340,18 @@ func (s *webServer) handleDiscussCommand(args []string) {
 	taskID := fmt.Sprintf("d-%d", time.Now().UnixNano()/1e6)
 	subject := fmt.Sprintf("discuss.%s", taskID)
 
-	payload := map[string]interface{}{
-		"task_id":      taskID,
-		"task":         topic,
-		"capability":   capability,
-		"submitted_at": time.Now().UTC().Format(time.RFC3339),
+	taskMsg := &tasks.TaskMessage{
+		TaskID:      taskID,
+		Capability:  capability,
+		Inputs:      map[string]string{"task": topic},
+		Attempt:     1,
+		SubmittedAt: time.Now(),
 	}
-	data, _ := json.Marshal(payload)
+	data, _ := taskMsg.Marshal()
+
+	if s.db != nil {
+		s.db.InsertTask(taskMsg, "discuss")
+	}
 
 	if err := s.nc.Publish(subject, data); err != nil {
 		log.Printf("Publish error: %v", err)
