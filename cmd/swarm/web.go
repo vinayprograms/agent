@@ -422,8 +422,20 @@ func (s *webServer) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	taskID := strings.TrimSuffix(path, ".json")
 
-	input, _ := s.db.GetTask(taskID)
-	result, _ := s.db.GetResult(taskID)
+	if s.db == nil {
+		http.Error(w, "no task database", 500)
+		return
+	}
+
+	input, inputErr := s.db.GetTask(taskID)
+	result, resultErr := s.db.GetResult(taskID)
+
+	if inputErr != nil {
+		log.Printf("GetTask(%s): %v", taskID, inputErr)
+	}
+	if resultErr != nil {
+		log.Printf("GetResult(%s): %v", taskID, resultErr)
+	}
 
 	data, _ := json.Marshal(map[string]interface{}{
 		"task_id":  taskID,
