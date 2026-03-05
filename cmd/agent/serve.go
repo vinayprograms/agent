@@ -738,10 +738,50 @@ Your answer:`, resumeSummary, taskText, priorContext, ownPrior)
 	}
 }
 
-// publishDiscussComment runs the agent on the task but publishes the result
-// as a comment on the discuss topic (not as a done.* result).
+// publishDiscussComment generates a lightweight comment (single LLM call, no tools)
+// and publishes it back to the discuss topic.
 func (a *serviceAgent) publishDiscussComment(ctx context.Context, task *tasks.TaskMessage) {
-	result := a.executeTask(ctx, task)
+	start := time.Now()
+
+	// Build a simple comment prompt — no tool use, just insights
+	taskText := buildTaskText(task)
+	prompt := fmt.Sprintf(`You are %s. A collaborative task is being discussed.
+
+TASK: %s
+
+Share brief, actionable insights from your perspective. Keep it concise (2-5 sentences).
+Do NOT attempt to do the full work — just provide observations, suggestions, or concerns.`, a.capability.Name, taskText)
+
+	// Use small LLM for comments (cheap, fast)
+	commentLLM := a.serviceRuntime.smallLLM
+	if commentLLM == nil {
+		commentLLM = a.serviceRuntime.provider
+	}
+
+	resp, err := commentLLM.Chat(ctx, llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Comment generation failed: %v\n", err)
+		return
+	}
+
+	comment := resp.Content
+	if comment == "" {
+		return
+	}
+
+	result := &tasks.TaskResult{
+		TaskID:      task.TaskID,
+		AgentID:     a.agentID,
+		Status:      tasks.ResultSuccess,
+		Outputs:     comment,
+		DurationMs:  time.Since(start).Milliseconds(),
+		CompletedAt: time.Now(),
+		Metadata:    map[string]string{"type": "comment", "capability": a.capability.Name},
+	}
 
 	resultData, err := result.Marshal()
 	if err != nil {
@@ -749,7 +789,6 @@ func (a *serviceAgent) publishDiscussComment(ctx context.Context, task *tasks.Ta
 		return
 	}
 
-	// Publish comment back to the discuss topic
 	replyTo := task.ReplyTo
 	if replyTo == "" {
 		replyTo = fmt.Sprintf("discuss.%s", task.TaskID)
