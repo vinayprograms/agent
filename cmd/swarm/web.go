@@ -589,8 +589,9 @@ func (s *webServer) handleHumanReply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Message string `json:"message"`
-		Target  string `json:"target,omitempty"` // @agent addressing
+		Message    string `json:"message"`
+		Target     string `json:"target,omitempty"`     // @agent addressing
+		Synthesize bool   `json:"synthesize,omitempty"` // request synthesis
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Message == "" {
 		http.Error(w, "invalid body: need {\"message\": \"...\"}", 400)
@@ -613,9 +614,30 @@ func (s *webServer) handleHumanReply(w http.ResponseWriter, r *http.Request) {
 		meta["target_agent"] = body.Target
 	}
 
+	// For synthesis requests, inject full thread context so agents have all contributions
+	taskContent := body.Message
+	if body.Synthesize && s.db != nil {
+		thread, err := s.db.GetThread(taskID)
+		if err == nil && len(thread) > 0 {
+			var ctx strings.Builder
+			ctx.WriteString("THREAD CONTEXT (all contributions so far):\n\n")
+			for _, e := range thread {
+				label := e.AgentID
+				if e.Capability != "" {
+					label = e.Capability
+				}
+				ctx.WriteString(fmt.Sprintf("[%s] (%s):\n%s\n\n", label, e.Type, e.Content))
+			}
+			ctx.WriteString("---\n\nSYNTHESIS REQUEST:\n")
+			ctx.WriteString(body.Message)
+			taskContent = ctx.String()
+			meta["type"] = "synthesis_request"
+		}
+	}
+
 	tm := &tasks.TaskMessage{
 		TaskID:      taskID,
-		Inputs:      map[string]string{"task": body.Message},
+		Inputs:      map[string]string{"task": taskContent},
 		Metadata:    meta,
 		Attempt:     1,
 		SubmittedBy: "human",

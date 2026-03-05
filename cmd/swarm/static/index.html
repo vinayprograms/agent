@@ -817,6 +817,37 @@
     color: var(--dim);
     padding: 4px 16px 0;
   }
+  .thread-target-hint code {
+    background: var(--bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
+  }
+  .thread-activity {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--dim);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+  .activity-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: blink 1s ease-in-out infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .thread-activity strong { color: var(--text-secondary); }
 
   /* ── Session timeline in modal ── */
   .session-header {
@@ -1803,13 +1834,28 @@ function renderThreadView(taskID, thread, body) {
     ? '<div class="thread-empty">No contributions yet. Agents are working...</div>'
     : thread.map(entry => renderThreadEntry(entry)).join('');
 
+  // Find agents currently working on this task
+  const busyAgents = Object.values(state.agents)
+    .filter(a => a.status === 'busy' && a.currentTask === taskID)
+    .map(a => a.name || a.capability);
+
+  const activityHtml = busyAgents.length > 0
+    ? `<div class="thread-activity" id="thread-activity">
+        <span class="activity-dot"></span>
+        ${busyAgents.map(a => `<strong>${esc(a)}</strong>`).join(', ')} working...
+      </div>`
+    : '';
+
   body.style.padding = '0';
   body.innerHTML = `
     <div class="thread-container">
       <div class="thread-messages" id="thread-messages">
         ${messagesHtml}
+        ${activityHtml}
       </div>
-      <div class="thread-target-hint">💡 Use <code>@agent-name</code> to direct your reply to a specific agent</div>
+      <div class="thread-target-hint">
+        💡 <code>@agent-name</code> to target · <code>/synthesize</code> to summarize all contributions
+      </div>
       <div class="thread-reply-bar">
         <textarea class="thread-reply-input" id="thread-reply-input"
           placeholder="Reply to this discussion..."
@@ -1856,6 +1902,13 @@ async function sendThreadReply(taskID) {
   const message = input.value.trim();
   if (!message) return;
 
+  // Handle /synthesize command
+  if (message === '/synthesize' || message === '/synthesis' || message === '/summarize') {
+    input.value = '';
+    await requestSynthesis(taskID);
+    return;
+  }
+
   // Extract @target if present
   let target = '';
   const atMatch = message.match(/@(\S+)/);
@@ -1890,6 +1943,33 @@ async function sendThreadReply(taskID) {
   } finally {
     input.disabled = false;
     input.focus();
+  }
+}
+
+async function requestSynthesis(taskID) {
+  try {
+    const resp = await fetch(`/api/reply/${taskID}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        message: 'Synthesize all contributions in this discussion into a coherent summary. Identify areas of agreement, disagreement, and open questions.',
+        synthesize: true,
+      }),
+    });
+    if (!resp.ok) throw new Error('Failed');
+
+    const msgs = document.getElementById('thread-messages');
+    if (msgs) {
+      const entry = renderThreadEntry({
+        agent_id: 'human', type: 'human',
+        content: '🔄 Requested synthesis of all contributions...',
+        timestamp: new Date().toISOString(),
+      });
+      msgs.insertAdjacentHTML('beforeend', entry);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+  } catch (err) {
+    console.error('Synthesis request failed:', err);
   }
 }
 

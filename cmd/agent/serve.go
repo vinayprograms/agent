@@ -599,10 +599,26 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 		fmt.Fprintf(os.Stderr, "  💬 Addressed to me: %s\n", task.TaskID)
 	}
 
+	// Convergence: cap agent-to-agent rounds at 3 per task.
+	// Human replies (type=human_reply) reset the counter — human steers the conversation.
+	isHumanMessage := task.Metadata != nil && task.Metadata["type"] == "human_reply"
+	prior := a.executedTasks[task.TaskID]
+	if prior != nil && prior.rounds >= 3 && !isHumanMessage {
+		fmt.Fprintf(os.Stderr, "  💬 Converged: max rounds reached for %s (round %d)\n", task.TaskID, prior.rounds)
+		return
+	}
+	if isHumanMessage && prior != nil {
+		// Human re-engaged — reset round counter to allow more agent work
+		prior.rounds = 0
+		fmt.Fprintf(os.Stderr, "  💬 Human re-engaged: reset rounds for %s\n", task.TaskID)
+	}
+
 	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
 
 	// Check for prior work — inject revision context if we've already contributed
-	prior := a.executedTasks[task.TaskID]
+	if prior == nil {
+		prior = a.executedTasks[task.TaskID]
+	}
 	if prior != nil {
 		// Build XML discuss context using the standard builder
 		xmlBuilder := executor.NewXMLContextBuilder(a.wf.wf.Name)
