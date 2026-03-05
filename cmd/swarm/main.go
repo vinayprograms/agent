@@ -459,9 +459,10 @@ func (d *DiscussCmd) Run(a *app) error {
 	}
 
 	task := tasks.TaskMessage{
-		TaskID:  taskID,
-		Inputs:  inputs,
-		Attempt: 1,
+		TaskID:      taskID,
+		Inputs:      inputs,
+		Attempt:     1,
+		SubmittedAt: time.Now(),
 	}
 
 	data, err := task.Marshal()

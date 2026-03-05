@@ -312,9 +312,10 @@ func (s *webServer) handleTaskCommand(args []string) {
 	}
 
 	payload := map[string]interface{}{
-		"task_id":    taskID,
-		"task":       task,
-		"capability": capability,
+		"task_id":      taskID,
+		"task":         task,
+		"capability":   capability,
+		"submitted_at": time.Now().UTC().Format(time.RFC3339),
 	}
 	data, _ := json.Marshal(payload)
 
@@ -334,9 +335,10 @@ func (s *webServer) handleDiscussCommand(args []string) {
 	subject := fmt.Sprintf("discuss.%s", taskID)
 
 	payload := map[string]interface{}{
-		"task_id":    taskID,
-		"task":       topic,
-		"capability": capability,
+		"task_id":      taskID,
+		"task":         topic,
+		"capability":   capability,
+		"submitted_at": time.Now().UTC().Format(time.RFC3339),
 	}
 	data, _ := json.Marshal(payload)
 
