@@ -788,6 +788,18 @@ func (d *DownCmd) Run(a *app) error {
 		}
 	}
 
+	// Notify UI that swarm is shutting down
+	if natsOK {
+		payload, _ := json.Marshal(map[string]interface{}{
+			"event":  "swarm_shutdown",
+			"agents": signaled,
+		})
+		nc.Publish("control.swarm.shutdown", payload)
+		nc.Flush()
+		// Brief pause to let the message propagate to WebSocket clients
+		time.Sleep(200 * time.Millisecond)
+	}
+
 	// Clean up PID file
 	remaining := cleanStalePIDs(loadPIDRecords(a.dataDir))
 	if len(remaining) == 0 {

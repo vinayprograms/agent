@@ -1178,6 +1178,22 @@ function handleDiscuss(data, subject) {
 }
 
 function handleControl(data, subject) {
+  if (subject === 'control.swarm.shutdown') {
+    addLog('control', 'swarm', '⏻ Swarm shutting down', 'error');
+    // Mark all agents as down immediately
+    for (const id in state.agents) {
+      state.agents[id].status = 'down';
+      state.agents[id].busySince = null;
+    }
+    renderAgents();
+    // Update connection status
+    const badge = document.getElementById('connection-badge');
+    if (badge) {
+      badge.textContent = '⏻ Swarm stopped';
+      badge.style.color = 'var(--red)';
+    }
+    return;
+  }
   addLog('control', '', subject, 'info');
 }
 
