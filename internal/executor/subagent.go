@@ -739,9 +739,9 @@ const TersenessGuidance = `OUTPUT RULES (HEADLESS AGENT — no human is reading 
 • Think silently, output results only
 
 EXECUTION STRATEGY:
-• Work incrementally — one small step at a time
-• Each step: one tool call, verify result, then next step
-• Do NOT plan multiple steps ahead — act on what you see now
+• When multiple tool calls are INDEPENDENT (no data dependency between them), emit them ALL in a single response — they execute in parallel
+• Only sequence tool calls when one DEPENDS on another's result
+• Example: reading 3 files = 1 turn with 3 tool calls. Reading a file then editing based on contents = 2 turns.
 • Prefer several small edits over one large rewrite
 • Read before writing — confirm state before changing it
 • Stop as soon as the goal is met — do not over-deliver
