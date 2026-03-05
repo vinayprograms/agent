@@ -1749,7 +1749,8 @@ function renderOutputView() {
 function renderEventContent(evt) {
   const type = evt.type || '';
   const meta = evt.meta || {};
-  const agentTag = evt.agent ? `<span class="subagent-tag">[${esc(evt.agent)}]</span> ` : '';
+  // Only show agent tag for sub-agents (different from the modal's main agent)
+  const agentTag = (evt.agent && evt.agent !== modalAgent) ? `<span class="subagent-tag">[${esc(evt.agent)}]</span> ` : '';
 
   if (type === 'goal_start') {
     return `${agentTag}<span class="goal-name">${esc(evt.goal || '—')}</span> started`;
