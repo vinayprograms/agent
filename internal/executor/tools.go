@@ -105,7 +105,11 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 
 	tool := e.registry.Get(tc.Name)
 	if tool == nil {
-		return nil, fmt.Errorf("tool not found: %s", tc.Name)
+		var names []string
+		for _, d := range e.registry.Definitions() {
+			names = append(names, d.Name)
+		}
+		return nil, fmt.Errorf("tool '%s' does not exist. Use one of: %s", tc.Name, strings.Join(names, ", "))
 	}
 
 	result, err := tool.Execute(ctx, tc.Args)
