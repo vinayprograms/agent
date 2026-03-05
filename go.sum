@@ -243,6 +243,8 @@ github.com/vinayprograms/agentkit v0.1.1-20260304232444-b3de41b.0.20260304232615
 github.com/vinayprograms/agentkit v0.1.1-20260304232444-b3de41b.0.20260304232615-99da026456a6/go.mod h1:TAZVm7gmnL28R+dolmy/X+p1Kamli2m3B+uqRmgEztQ=
 github.com/vinayprograms/agentkit v0.1.1-20260304232444-b3de41b.0.20260305032248-a751f17fa1b0 h1:owSUhuG+iV1EqzkrvB0RPOlzwxAURrGK0x5UuMdEpoo=
 github.com/vinayprograms/agentkit v0.1.1-20260304232444-b3de41b.0.20260305032248-a751f17fa1b0/go.mod h1:TAZVm7gmnL28R+dolmy/X+p1Kamli2m3B+uqRmgEztQ=
+github.com/vinayprograms/agentkit v0.1.1-20260304232444-b3de41b.0.20260305035017-f6e3f2ccb1f4 h1:8FjrP6sYq8BmlaBxZ0wKY+oYSTIvkmwgrn0ornH8dhw=
+github.com/vinayprograms/agentkit v0.1.1-20260304232444-b3de41b.0.20260305035017-f6e3f2ccb1f4/go.mod h1:TAZVm7gmnL28R+dolmy/X+p1Kamli2m3B+uqRmgEztQ=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e h1:JVG44RsyaB9T2KIHavMF/ppJZNG9ZpyihvCd0w101no=
