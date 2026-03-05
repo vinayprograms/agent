@@ -160,30 +160,30 @@
   .agents-grid {
     display: flex;
     flex-wrap: wrap;
-    gap: 14px;
-    padding: 20px;
+    gap: 8px;
+    padding: 12px 20px;
   }
   .agent-card {
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 16px 18px;
-    min-width: 220px;
-    flex: 1;
-    max-width: 280px;
-    position: relative;
+    border-radius: 999px;
+    padding: 6px 14px 6px 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
     transition: all 0.2s ease;
+    font-size: 12px;
+    white-space: nowrap;
   }
   .agent-card:hover {
     border-color: var(--border-hover);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-    transform: translateY(-1px);
   }
   .agent-card .status-dot {
-    position: absolute;
-    top: 16px; right: 16px;
-    width: 10px; height: 10px;
+    width: 8px; height: 8px;
     border-radius: 50%;
+    flex-shrink: 0;
   }
   .agent-card .status-dot.idle {
     background: var(--green);
@@ -197,6 +197,7 @@
   .agent-card .status-dot.down {
     background: transparent;
     border: 2px solid var(--red);
+    width: 4px; height: 4px;
   }
   .agent-card .status-dot.starting {
     background: var(--accent);
@@ -209,37 +210,33 @@
   }
   .agent-name {
     font-weight: 600;
-    font-size: 15px;
+    font-size: 12px;
     color: var(--text);
-    letter-spacing: -0.01em;
   }
   .agent-cap {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--accent);
-    margin-top: 3px;
     font-weight: 500;
   }
   .agent-elapsed {
-    position: absolute;
-    top: 34px; right: 16px;
     font-size: 11px;
     color: var(--yellow);
     font-family: 'JetBrains Mono', monospace;
   }
-  .agent-divider {
-    height: 1px;
-    background: var(--border);
-    margin: 12px 0 10px;
-  }
-  .agent-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  .agent-detail {
     font-size: 11px;
     color: var(--dim);
   }
-  .agent-subs { color: var(--dim); }
-  .agent-subs strong { color: var(--text-secondary); }
+  .agent-detail strong { color: var(--text-secondary); }
+  .agent-logs-link {
+    font-size: 11px;
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .agent-card:hover .agent-logs-link { opacity: 1; }
   .sup-bar {
     display: inline-flex;
     align-items: center;
@@ -1287,20 +1284,22 @@ function renderAgents() {
     // Extract session ID from agent_id: <capability>-<session-id>
     const sessId = a.id.startsWith(a.capability + '-') ? a.id.substring(a.capability.length + 1) : a.id;
 
-    return `<div class="agent-card">
+    // Compact details: subs + supervision inline
+    const details = [];
+    if (a.subagents > 0) details.push(`⑂${a.subagents}`);
+    if (a.sup_approved > 0 || a.sup_denied > 0) details.push(`✓${a.sup_approved||0} ✗${a.sup_denied||0}`);
+    const detailSpan = details.length ? `<span class="agent-detail">${details.join(' ')}</span>` : '';
+
+    // Show capability only if different from name
+    const capSpan = (a.capability && a.capability !== a.name) ? `<span class="agent-cap">${esc(a.capability)}</span>` : '';
+
+    return `<div class="agent-card" onclick="openLogModal('${esc(a.name)}','${esc(sessId)}')">
       <div class="status-dot ${statusClass}"></div>
-      <div class="agent-name">${esc(a.name)}</div>
-      <div class="agent-cap">${esc(a.capability)}</div>
+      <span class="agent-name">${esc(a.name)}</span>
+      ${capSpan}
       ${elapsed}
-      <div class="agent-divider"></div>
-      <div class="agent-meta">
-        <span class="agent-subs">⑂ <strong>${a.subagents}</strong> sub</span>
-        ${supHtml}
-      </div>
-      <div class="agent-bottom">
-        <span>tasks: ${a.status === 'busy' ? 1 : 0}</span>
-        <a class="agent-logs-link" onclick="openLogModal('${esc(a.name)}','${esc(sessId)}')">Logs${logCount > 0 ? ' (' + logCount + ')' : ''}</a>
-      </div>
+      ${detailSpan}
+      <a class="agent-logs-link">↗</a>
     </div>`;
   }).join('');
 }
