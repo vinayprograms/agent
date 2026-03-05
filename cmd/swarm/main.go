@@ -692,8 +692,20 @@ func (u *UpCmd) Run(a *app) error {
 			}
 		}
 	}
-	// Brief wait for graceful shutdown
-	time.Sleep(2 * time.Second)
+
+	// Wait for graceful shutdown, then force kill survivors
+	fmt.Println("Waiting 10s for graceful shutdown...")
+	time.Sleep(10 * time.Second)
+
+	for _, r := range newPIDs {
+		if isProcessAlive(r.PID) {
+			proc, err := os.FindProcess(r.PID)
+			if err == nil {
+				fmt.Printf("  ✗ %s (pid %d) didn't exit — SIGKILL\n", r.Name, r.PID)
+				proc.Signal(syscall.SIGKILL)
+			}
+		}
+	}
 
 	return nil
 }
