@@ -738,6 +738,14 @@ const TersenessGuidance = `OUTPUT RULES (HEADLESS AGENT — no human is reading 
 • NO sign-offs ("Let me know if...", "Hope this helps!")
 • Think silently, output results only
 
+EXECUTION STRATEGY:
+• Work incrementally — one small step at a time
+• Each step: one tool call, verify result, then next step
+• Do NOT plan multiple steps ahead — act on what you see now
+• Prefer several small edits over one large rewrite
+• Read before writing — confirm state before changing it
+• Stop as soon as the goal is met — do not over-deliver
+
 `
 
 // SemanticMemoryGuidancePrefix is injected when semantic memory tools are available.
