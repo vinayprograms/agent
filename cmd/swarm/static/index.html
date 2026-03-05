@@ -679,6 +679,145 @@
   .status-success { color: var(--green); font-weight: 600; }
   .status-failed { color: var(--red); font-weight: 600; }
 
+  /* ── Thread view (discuss conversations) ── */
+  .thread-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: 70vh;
+  }
+  .thread-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+  }
+  .thread-entry {
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    max-width: 85%;
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .thread-entry.topic {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    max-width: 100%;
+  }
+  .thread-entry.human {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    margin-left: auto;
+    max-width: 75%;
+  }
+  .thread-entry.execute {
+    background: var(--card);
+    border-left: 3px solid var(--green);
+  }
+  .thread-entry.comment {
+    background: var(--card);
+    border-left: 3px solid var(--cyan);
+  }
+  .thread-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 11px;
+  }
+  .thread-agent {
+    font-weight: 700;
+    color: var(--text);
+  }
+  .thread-badge {
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .thread-badge.execute { background: var(--green); color: var(--bg); }
+  .thread-badge.comment { background: var(--cyan); color: var(--bg); }
+  .thread-badge.topic { background: var(--accent); color: var(--bg); }
+  .thread-badge.human { background: var(--accent); color: var(--bg); }
+  .thread-time {
+    color: var(--dim);
+    margin-left: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+  }
+  .thread-content {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .thread-content pre {
+    margin-top: 6px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    overflow-x: auto;
+    max-height: 300px;
+    white-space: pre-wrap;
+  }
+  .thread-reply-bar {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 0 0 12px 12px;
+  }
+  .thread-reply-input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    resize: none;
+    min-height: 36px;
+    max-height: 100px;
+  }
+  .thread-reply-input:focus { border-color: var(--accent); }
+  .thread-reply-input::placeholder { color: var(--dim); }
+  .thread-send-btn {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    align-self: flex-end;
+  }
+  .thread-send-btn:hover { filter: brightness(1.1); }
+  .thread-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .thread-empty {
+    text-align: center;
+    color: var(--dim);
+    padding: 40px 20px;
+    font-size: 13px;
+  }
+  .thread-target-hint {
+    font-size: 11px;
+    color: var(--dim);
+    padding: 4px 16px 0;
+  }
+
   /* ── Session timeline in modal ── */
   .session-header {
     padding: 12px 20px;
@@ -1000,12 +1139,12 @@
 
 <!-- Task Detail Modal -->
 <div class="modal-overlay" id="task-modal">
-  <div class="modal" style="max-width: 700px;">
+  <div class="modal" style="max-width: 750px;">
     <div class="modal-header">
       <div class="modal-title">Task — <span id="task-id-display">—</span></div>
       <button class="modal-close" onclick="closeTaskModal()">✕</button>
     </div>
-    <div class="modal-body" id="task-modal-body" style="max-height: 60vh; overflow-y: auto;">
+    <div class="modal-body" id="task-modal-body" style="max-height: 70vh; overflow-y: auto; padding: 0;">
       <div class="modal-loading">Loading task details...</div>
     </div>
   </div>
@@ -1585,31 +1724,51 @@ function closeLogModal() {
   document.getElementById('log-modal').classList.remove('visible');
 }
 
+let activeThreadTaskID = null;
+let threadPollTimer = null;
+
 async function showTaskDetail(taskID) {
   const body = document.getElementById('task-modal-body');
-  body.innerHTML = '<div class="modal-loading">Loading task details...</div>';
+  body.innerHTML = '<div class="modal-loading" style="padding:20px;">Loading task details...</div>';
   document.getElementById('task-id-display').textContent = taskID;
   document.getElementById('task-modal').classList.add('visible');
+  activeThreadTaskID = taskID;
 
+  // Check if this is a discuss task (d- prefix or discuss status)
+  const isDiscuss = taskID.startsWith('d-') || isDiscussTask(taskID);
+
+  if (isDiscuss) {
+    await showThreadView(taskID, body);
+  } else {
+    await showClassicTaskDetail(taskID, body);
+  }
+}
+
+function isDiscussTask(taskID) {
+  // Check active tasks and history for discuss type
+  const active = state.activeTasks[taskID];
+  if (active && active.type === 'discuss') return true;
+  const hist = state.history.find(h => h.id === taskID);
+  if (hist && hist.status === 'discuss') return true;
+  return false;
+}
+
+async function showClassicTaskDetail(taskID, body) {
   try {
     const resp = await fetch(`/api/task/${taskID}`);
     if (!resp.ok) throw new Error('Not found');
     const data = await resp.json();
-    renderTaskDetail(data);
+    renderClassicTaskDetail(data, body);
   } catch (err) {
-    body.innerHTML = `<div class="modal-empty">Error: ${esc(err.message)}</div>`;
+    body.innerHTML = `<div class="modal-empty" style="padding:20px;">Error: ${esc(err.message)}</div>`;
   }
 }
 
-function closeTaskModal() {
-  document.getElementById('task-modal').classList.remove('visible');
-}
-
-function renderTaskDetail(data) {
-  const body = document.getElementById('task-modal-body');
+function renderClassicTaskDetail(data, body) {
   const input = data.input || {};
   const result = data.result || {};
 
+  body.style.padding = '16px';
   const inputHtml = `<div class="task-input">
     <span class="task-label">Input Parameters</span>
     <pre class="task-json">${esc(JSON.stringify(input, null, 2))}</pre>
@@ -1626,6 +1785,144 @@ function renderTaskDetail(data) {
   </div>`;
 
   body.innerHTML = inputHtml + resultHtml;
+}
+
+async function showThreadView(taskID, body) {
+  try {
+    const resp = await fetch(`/api/thread/${taskID}`);
+    const thread = await resp.json();
+    renderThreadView(taskID, thread, body);
+    startThreadPoll(taskID);
+  } catch (err) {
+    body.innerHTML = `<div class="modal-empty" style="padding:20px;">Error loading thread: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderThreadView(taskID, thread, body) {
+  const messagesHtml = thread.length === 0
+    ? '<div class="thread-empty">No contributions yet. Agents are working...</div>'
+    : thread.map(entry => renderThreadEntry(entry)).join('');
+
+  body.style.padding = '0';
+  body.innerHTML = `
+    <div class="thread-container">
+      <div class="thread-messages" id="thread-messages">
+        ${messagesHtml}
+      </div>
+      <div class="thread-target-hint">💡 Use <code>@agent-name</code> to direct your reply to a specific agent</div>
+      <div class="thread-reply-bar">
+        <textarea class="thread-reply-input" id="thread-reply-input"
+          placeholder="Reply to this discussion..."
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendThreadReply('${esc(taskID)}');}"></textarea>
+        <button class="thread-send-btn" onclick="sendThreadReply('${esc(taskID)}')">Send</button>
+      </div>
+    </div>`;
+
+  // Scroll to bottom
+  const msgs = document.getElementById('thread-messages');
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+function renderThreadEntry(entry) {
+  const type = entry.type || 'execute';
+  const agent = entry.agent_id || 'unknown';
+  const cap = entry.capability || '';
+  const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+
+  let displayName = agent;
+  if (type === 'topic') displayName = '📋 Topic';
+  else if (type === 'human') displayName = '👤 You';
+  else if (cap) displayName = cap;
+
+  // Detect code blocks and format content
+  let content = esc(entry.content || '');
+  // Wrap content that looks like code in pre tags
+  if (content.includes('```')) {
+    content = content.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre>$2</pre>');
+  }
+
+  return `<div class="thread-entry ${esc(type)}">
+    <div class="thread-header">
+      <span class="thread-agent">${displayName}</span>
+      <span class="thread-badge ${esc(type)}">${esc(type)}</span>
+      <span class="thread-time">${ts}</span>
+    </div>
+    <div class="thread-content">${content}</div>
+  </div>`;
+}
+
+async function sendThreadReply(taskID) {
+  const input = document.getElementById('thread-reply-input');
+  const message = input.value.trim();
+  if (!message) return;
+
+  // Extract @target if present
+  let target = '';
+  const atMatch = message.match(/@(\S+)/);
+  if (atMatch) {
+    target = atMatch[1];
+  }
+
+  input.value = '';
+  input.disabled = true;
+
+  try {
+    const resp = await fetch(`/api/reply/${taskID}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message, target}),
+    });
+    if (!resp.ok) throw new Error('Failed to send');
+
+    // Optimistically add to thread
+    const msgs = document.getElementById('thread-messages');
+    if (msgs) {
+      const entry = renderThreadEntry({
+        agent_id: 'human', type: 'human', content: message,
+        timestamp: new Date().toISOString(),
+      });
+      msgs.insertAdjacentHTML('beforeend', entry);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+  } catch (err) {
+    console.error('Reply failed:', err);
+    input.value = message; // Restore on failure
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+function startThreadPoll(taskID) {
+  stopThreadPoll();
+  threadPollTimer = setInterval(async () => {
+    if (activeThreadTaskID !== taskID) return;
+    try {
+      const resp = await fetch(`/api/thread/${taskID}`);
+      const thread = await resp.json();
+      const msgs = document.getElementById('thread-messages');
+      if (msgs) {
+        const wasAtBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 50;
+        msgs.innerHTML = thread.length === 0
+          ? '<div class="thread-empty">No contributions yet. Agents are working...</div>'
+          : thread.map(e => renderThreadEntry(e)).join('');
+        if (wasAtBottom) msgs.scrollTop = msgs.scrollHeight;
+      }
+    } catch (err) { /* ignore poll errors */ }
+  }, 2000);
+}
+
+function stopThreadPoll() {
+  if (threadPollTimer) {
+    clearInterval(threadPollTimer);
+    threadPollTimer = null;
+  }
+}
+
+function closeTaskModal() {
+  activeThreadTaskID = null;
+  stopThreadPoll();
+  document.getElementById('task-modal').classList.remove('visible');
 }
 
 function startSessionPoll(agentName, sessionId) {

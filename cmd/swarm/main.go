@@ -1199,6 +1199,58 @@ func (d *taskDB) saveRecords(records []taskRecord) error {
 	return os.WriteFile(recordsPath, data, 0644)
 }
 
+// threadEntry represents a single contribution in a discuss thread.
+type threadEntry struct {
+	AgentID    string    `json:"agent_id"`
+	Capability string    `json:"capability,omitempty"`
+	Type       string    `json:"type"` // "topic", "execute", "comment", "human"
+	Content    string    `json:"content"`
+	Round      int       `json:"round,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
+}
+
+// AppendThread adds an entry to a discuss thread (JSONL file).
+func (d *taskDB) AppendThread(taskID string, entry threadEntry) error {
+	threadDir := filepath.Join(filepath.Dir(d.dbPath), "tasks")
+	if err := os.MkdirAll(threadDir, 0755); err != nil {
+		return fmt.Errorf("create thread dir: %w", err)
+	}
+	threadPath := filepath.Join(threadDir, taskID+".thread.jsonl")
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal thread entry: %w", err)
+	}
+	f, err := os.OpenFile(threadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open thread file: %w", err)
+	}
+	defer f.Close()
+	_, err = f.Write(append(data, '\n'))
+	return err
+}
+
+// GetThread returns all entries in a discuss thread.
+func (d *taskDB) GetThread(taskID string) ([]threadEntry, error) {
+	threadDir := filepath.Join(filepath.Dir(d.dbPath), "tasks")
+	threadPath := filepath.Join(threadDir, taskID+".thread.jsonl")
+	data, err := os.ReadFile(threadPath)
+	if err != nil {
+		return nil, err
+	}
+	var entries []threadEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var entry threadEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
 // pidRecord tracks a started agent process.
 type pidRecord struct {
 	Name       string `json:"name"`

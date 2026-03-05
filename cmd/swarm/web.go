@@ -109,8 +109,10 @@ func (s *webServer) start(ctx context.Context, addr string) error {
 	mux.HandleFunc("/api/sessions/", s.handleSessionLogs)
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
-	// API for task details
+	// API for task details and discuss threads
 	mux.HandleFunc("/api/task/", s.handleTaskDetail)
+	mux.HandleFunc("/api/thread/", s.handleThreadAPI)
+	mux.HandleFunc("/api/reply/", s.handleHumanReply)
 
 	// Bind to localhost only (secure default)
 	listener, err := net.Listen("tcp", addr)
@@ -188,7 +190,79 @@ func (s *webServer) persistNATSMessage(msgType, subject string, data []byte) {
 			return
 		}
 		s.db.UpdateResult(&result)
+
+	case "discuss":
+		// Persist discuss contributions to thread
+		s.persistDiscussContribution(subject, data)
 	}
+}
+
+// persistDiscussContribution records a discuss message into the thread JSONL.
+func (s *webServer) persistDiscussContribution(subject string, data []byte) {
+	parts := strings.Split(subject, ".")
+	if len(parts) < 2 {
+		return
+	}
+	taskID := parts[len(parts)-1]
+
+	// Try as TaskResult first (agent comments/results)
+	var result tasks.TaskResult
+	if err := json.Unmarshal(data, &result); err == nil && result.AgentID != "" {
+		entryType := "execute"
+		if result.Metadata != nil && result.Metadata["type"] == "comment" {
+			entryType = "comment"
+		}
+		content := ""
+		if s, ok := result.Outputs.(string); ok {
+			content = s
+		} else {
+			b, _ := json.Marshal(result.Outputs)
+			content = string(b)
+		}
+		cap := ""
+		if result.Metadata != nil {
+			cap = result.Metadata["capability"]
+		}
+		s.db.AppendThread(taskID, threadEntry{
+			AgentID:    result.AgentID,
+			Capability: cap,
+			Type:       entryType,
+			Content:    content,
+			Timestamp:  result.CompletedAt,
+		})
+		// Also persist as task input for the task detail view
+		return
+	}
+
+	// Try as TaskMessage (initial topic or follow-up with prior_output)
+	tm, err := tasks.UnmarshalTaskMessage(data)
+	if err != nil {
+		return
+	}
+
+	// If it has prior_output metadata, it's an agent follow-up (already captured via result)
+	if tm.Metadata != nil && tm.Metadata["prior_output"] != "" {
+		return
+	}
+
+	// Initial discuss topic from human
+	content := ""
+	if task, ok := tm.Inputs["task"]; ok {
+		content = task
+	} else {
+		for _, v := range tm.Inputs {
+			content = v
+			break
+		}
+	}
+
+	s.db.InsertTask(tm, "discuss")
+	s.db.AppendThread(taskID, threadEntry{
+		AgentID:   tm.SubmittedBy,
+		Type:      "topic",
+		Content:   content,
+		Timestamp: tm.SubmittedAt,
+	})
 }
 
 func (s *webServer) handleWS(conn *websocket.Conn) {
@@ -474,6 +548,89 @@ func (s *webServer) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 	})
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
+}
+
+// handleThreadAPI returns the full discuss thread for a task ID.
+func (s *webServer) handleThreadAPI(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimPrefix(r.URL.Path, "/api/thread/")
+	taskID = strings.TrimSuffix(taskID, "/")
+	if taskID == "" {
+		http.Error(w, "missing task_id", 400)
+		return
+	}
+	if s.db == nil {
+		http.Error(w, "no database", 500)
+		return
+	}
+
+	thread, err := s.db.GetThread(taskID)
+	if err != nil {
+		// Return empty thread rather than error
+		thread = []threadEntry{}
+	}
+
+	data, _ := json.Marshal(thread)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
+// handleHumanReply lets the user inject a message into a discuss thread.
+func (s *webServer) handleHumanReply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST only", 405)
+		return
+	}
+
+	taskID := strings.TrimPrefix(r.URL.Path, "/api/reply/")
+	taskID = strings.TrimSuffix(taskID, "/")
+	if taskID == "" {
+		http.Error(w, "missing task_id", 400)
+		return
+	}
+
+	var body struct {
+		Message string `json:"message"`
+		Target  string `json:"target,omitempty"` // @agent addressing
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Message == "" {
+		http.Error(w, "invalid body: need {\"message\": \"...\"}", 400)
+		return
+	}
+
+	// Record in thread
+	if s.db != nil {
+		s.db.AppendThread(taskID, threadEntry{
+			AgentID:   "human",
+			Type:      "human",
+			Content:   body.Message,
+			Timestamp: time.Now(),
+		})
+	}
+
+	// Build TaskMessage and publish to discuss.*
+	meta := map[string]string{"type": "human_reply"}
+	if body.Target != "" {
+		meta["target_agent"] = body.Target
+	}
+
+	tm := &tasks.TaskMessage{
+		TaskID:      taskID,
+		Inputs:      map[string]string{"task": body.Message},
+		Metadata:    meta,
+		Attempt:     1,
+		SubmittedBy: "human",
+		SubmittedAt: time.Now(),
+	}
+	data, _ := tm.Marshal()
+
+	subject := fmt.Sprintf("discuss.%s", taskID)
+	if err := s.nc.Publish(subject, data); err != nil {
+		http.Error(w, "publish failed", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok": true}`))
 }
 
 func (s *webServer) handleShutdownCommand() {

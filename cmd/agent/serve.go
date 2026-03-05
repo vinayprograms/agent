@@ -590,6 +590,15 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 		return
 	}
 
+	// Agent addressing: if target_agent is set, skip unless it matches us
+	if task.Metadata != nil && task.Metadata["target_agent"] != "" {
+		target := task.Metadata["target_agent"]
+		if target != a.agentID && target != a.capability.Name && target != a.wf.wf.Name {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "  💬 Addressed to me: %s\n", task.TaskID)
+	}
+
 	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
 
 	// Check for prior work — inject revision context if we've already contributed
