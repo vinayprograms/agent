@@ -170,6 +170,11 @@ type Executor struct {
 	activeSubAgents int32 // atomic counter for active sub-agents
 }
 
+// Registry returns the tool registry.
+func (e *Executor) Registry() *tools.Registry {
+	return e.registry
+}
+
 // NewExecutor creates a new executor.
 func NewExecutor(wf *agentfile.Workflow, provider llm.Provider, registry *tools.Registry, pol *policy.Policy) *Executor {
 	e := &Executor{

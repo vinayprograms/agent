@@ -743,33 +743,88 @@ Your answer:`, resumeSummary, taskText, priorContext, ownPrior)
 func (a *serviceAgent) publishDiscussComment(ctx context.Context, task *tasks.TaskMessage) {
 	start := time.Now()
 
-	// Build a simple comment prompt — no tool use, just insights
+	// COMMENT mode: read-only tools + memory, no writes
 	taskText := buildTaskText(task)
-	prompt := fmt.Sprintf(`You are %s. A collaborative task is being discussed.
 
-TASK: %s
+	readOnlyNames := []string{
+		"read", "glob", "grep", "ls", "head", "tail", "diff", "tree",
+		"pwd", "hostname", "whoami", "sysinfo",
+		"web_fetch", "web_search",
+		"scratchpad_read", "scratchpad_write", "scratchpad_list", "scratchpad_search",
+		"remember", "recall",
+	}
 
-Share brief, actionable insights from your perspective. Keep it concise (2-5 sentences).
-Do NOT attempt to do the full work — just provide observations, suggestions, or concerns.`, a.capability.Name, taskText)
+	registry := a.serviceRuntime.exec.Registry()
+	commentRegistry := registry.Subset(readOnlyNames)
 
-	// Use small LLM for comments (cheap, fast)
+	// Build tool definitions for LLM
+	var toolDefs []llm.ToolDef
+	for _, def := range commentRegistry.Definitions() {
+		toolDefs = append(toolDefs, llm.ToolDef{
+			Name:        def.Name,
+			Description: def.Description,
+			Parameters:  def.Parameters,
+		})
+	}
+
 	commentLLM := a.serviceRuntime.smallLLM
 	if commentLLM == nil {
 		commentLLM = a.serviceRuntime.provider
 	}
 
-	resp, err := commentLLM.Chat(ctx, llm.ChatRequest{
-		Messages: []llm.Message{
-			{Role: "user", Content: prompt},
-		},
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  ✗ Comment generation failed: %v\n", err)
-		return
+	prompt := fmt.Sprintf(`You are %s. A collaborative task is being discussed.
+
+TASK: %s
+
+You are in COMMENT mode — provide brief, actionable insights (2-5 sentences).
+You may use tools to read files and gather context. Do NOT attempt the full work.`, a.capability.Name, taskText)
+
+	messages := []llm.Message{{Role: "user", Content: prompt}}
+
+	// Simple tool loop (max 5 rounds to prevent runaway)
+	var finalContent string
+	for i := 0; i < 5; i++ {
+		resp, err := commentLLM.Chat(ctx, llm.ChatRequest{
+			Messages: messages,
+			Tools:    toolDefs,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ Comment LLM failed: %v\n", err)
+			return
+		}
+
+		// If no tool calls, we have the final response
+		if len(resp.ToolCalls) == 0 {
+			finalContent = resp.Content
+			break
+		}
+
+		// Execute tool calls against restricted registry
+		messages = append(messages, llm.Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls})
+		for _, tc := range resp.ToolCalls {
+			tool := commentRegistry.Get(tc.Name)
+			if tool == nil {
+				messages = append(messages, llm.Message{
+					Role:       "tool",
+					Content:    fmt.Sprintf("tool '%s' not available in comment mode", tc.Name),
+					ToolCallID: tc.ID,
+				})
+				continue
+			}
+			result, toolErr := tool.Execute(ctx, tc.Args)
+			content := fmt.Sprintf("%v", result)
+			if toolErr != nil {
+				content = fmt.Sprintf("error: %v", toolErr)
+			}
+			messages = append(messages, llm.Message{
+				Role:       "tool",
+				Content:    content,
+				ToolCallID: tc.ID,
+			})
+		}
 	}
 
-	comment := resp.Content
-	if comment == "" {
+	if finalContent == "" {
 		return
 	}
 
@@ -777,7 +832,7 @@ Do NOT attempt to do the full work — just provide observations, suggestions, o
 		TaskID:      task.TaskID,
 		AgentID:     a.agentID,
 		Status:      tasks.ResultSuccess,
-		Outputs:     comment,
+		Outputs:     finalContent,
 		DurationMs:  time.Since(start).Milliseconds(),
 		CompletedAt: time.Now(),
 		Metadata:    map[string]string{"type": "comment", "capability": a.capability.Name},
