@@ -147,6 +147,9 @@ func (s *webServer) broadcast(subject string, msg *nats.Msg) {
 		return
 	}
 
+	// Persist incoming NATS data to task DB
+	s.persistNATSMessage(msgType, subject, msg.Data)
+
 	// Cache for reconnecting clients
 	s.cacheMessage(msgType, msg.Subject, data)
 
@@ -158,6 +161,33 @@ func (s *webServer) broadcast(subject string, msg *nats.Msg) {
 			c.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			websocket.Message.Send(c, string(data))
 		}(conn)
+	}
+}
+
+// persistNATSMessage saves task inputs and results to the DB as they flow through NATS.
+// This ensures the UI can always show task details, even for tasks submitted by other processes.
+func (s *webServer) persistNATSMessage(msgType, subject string, data []byte) {
+	if s.db == nil {
+		return
+	}
+
+	switch msgType {
+	case "work":
+		// Persist task input: work.<cap>.<task_id>
+		tm, err := tasks.UnmarshalTaskMessage(data)
+		if err != nil {
+			return
+		}
+		// Idempotent — InsertTask appends but GetTask uses file lookup
+		s.db.InsertTask(tm, "pending")
+
+	case "done":
+		// Persist task result: done.<cap>.<task_id>
+		var result tasks.TaskResult
+		if err := json.Unmarshal(data, &result); err != nil {
+			return
+		}
+		s.db.UpdateResult(&result)
 	}
 }
 

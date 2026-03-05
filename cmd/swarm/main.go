@@ -1042,8 +1042,15 @@ func openTaskDB(path string) (*taskDB, error) {
 func (d *taskDB) Close() error { return nil }
 
 func (d *taskDB) InsertTask(task *tasks.TaskMessage, status string) error {
-	// Simple JSON append for now - will migrate to SQLite
 	records := d.loadRecords()
+
+	// Deduplicate — skip if task already recorded
+	for _, r := range records {
+		if r.TaskID == task.TaskID {
+			return nil
+		}
+	}
+
 	records = append(records, taskRecord{
 		TaskID:     task.TaskID,
 		Capability: task.Capability,
@@ -1057,13 +1064,15 @@ func (d *taskDB) InsertTask(task *tasks.TaskMessage, status string) error {
 	// Save full input message for later retrieval
 	inputDir := filepath.Join(filepath.Dir(d.dbPath), "tasks")
 	if err := os.MkdirAll(inputDir, 0755); err != nil {
-		return nil // Non-fatal
+		return fmt.Errorf("create task input dir: %w", err)
 	}
 	data, err := task.Marshal()
 	if err != nil {
-		return nil
+		return fmt.Errorf("marshal task input: %w", err)
 	}
-	os.WriteFile(filepath.Join(inputDir, task.TaskID+".input.json"), data, 0644)
+	if err := os.WriteFile(filepath.Join(inputDir, task.TaskID+".input.json"), data, 0644); err != nil {
+		return fmt.Errorf("write task input: %w", err)
+	}
 	return nil
 }
 
