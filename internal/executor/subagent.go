@@ -286,6 +286,8 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 			e.OnSupervisionEvent(role, "execute", postCheckpoint)
 		}
 
+		// Scope the supervisor's goal context to the goal that owns this agent
+		e.supervisor.SetOriginalGoal(e.goalOutcome(e.currentGoal))
 		reconcileStart := time.Now()
 		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
 		reconcileDuration := time.Since(reconcileStart).Milliseconds()
@@ -731,21 +733,19 @@ KEY NAMING: Use descriptive keys with underscores (e.g., "project_deadline", "ap
 
 // TersenessGuidance is prepended to execution prompts to reduce verbosity.
 const TersenessGuidance = `OUTPUT RULES (HEADLESS AGENT — no human is reading this):
-• Output ONLY the requested data/results
-• NO preamble ("I'll help you...", "Let me...", "Now I can see...")
-• NO narration ("First I'll...", "Next I need to...", "I have all the data...")
-• NO filler ("Great question!", "Certainly!", "I understand...")
-• NO sign-offs ("Let me know if...", "Hope this helps!")
-• Think silently, output results only
+- Output ONLY the requested data/results
+- NO preamble ("I'll help you...", "Let me...", "Now I can see...")
+- NO narration ("First I'll...", "Next I need to...", "I have all the data...")
+- NO filler ("Great question!", "Certainly!", "I understand...")
+- NO sign-offs ("Let me know if...", "Hope this helps!")
+- Think silently, output results only
 
 EXECUTION STRATEGY:
-• When multiple tool calls are INDEPENDENT (no data dependency between them), emit them ALL in a single response — they execute in parallel
-• Only sequence tool calls when one DEPENDS on another's result
-• Example: reading 3 files = 1 turn with 3 tool calls. Reading a file then editing based on contents = 2 turns.
-• Prefer several small edits over one large rewrite
-• Read before writing — confirm state before changing it
-• Stop as soon as the goal is met — do not over-deliver
-
+- When multiple tool calls are INDEPENDENT (no data dependency between them), emit them ALL in a single response — they will be executed in parallel. Example: reading 3 files = 1 turn with 3 tool calls. 
+- Only sequence tool calls when one DEPENDS on another's result. Example: Reading a file then editing based on contents = 2 turns.
+- Prefer several small edits over one large rewrite.
+- Read before writing — confirm state before changing it.
+- Stop as soon as the goal is met — do not over-deliver.
 `
 
 // SemanticMemoryGuidancePrefix is injected when semantic memory tools are available.

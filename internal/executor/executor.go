@@ -500,16 +500,6 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 		return &Result{Status: StatusFailed, Error: err.Error()}, err
 	}
 
-	// Set original goal for supervisor if supervision is enabled
-	if e.supervisor != nil {
-		// Build original goal from workflow description
-		var goalDescriptions []string
-		for _, goal := range e.workflow.Goals {
-			goalDescriptions = append(goalDescriptions, goal.Outcome)
-		}
-		e.supervisor.SetOriginalGoal(strings.Join(goalDescriptions, "; "))
-	}
-
 	// Bind inputs
 	if err := e.bindInputs(inputs); err != nil {
 		e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
@@ -568,12 +558,12 @@ func (e *Executor) executeRunStep(ctx context.Context, step agentfile.Step, resu
 			return fmt.Errorf("goal not found: %s", goalName)
 		}
 
-		output, err := e.executeGoal(ctx, goal)
+		gr, err := e.executeGoalWithTracking(ctx, goal)
 		if err != nil {
 			return err
 		}
 
-		e.outputs[goalName] = output
+		e.outputs[goalName] = gr.Output
 		result.Iterations[goalName] = 1
 	}
 	return nil
@@ -585,15 +575,6 @@ type GoalResult struct {
 	ToolCallsMade bool
 }
 
-// executeGoal executes a single goal (wrapper for backwards compatibility).
-func (e *Executor) executeGoal(ctx context.Context, goal *agentfile.Goal) (string, error) {
-	gr, err := e.executeGoalWithTracking(ctx, goal)
-	if err != nil {
-		return "", err
-	}
-	return gr.Output, nil
-}
-
 // isSupervised determines if a goal should be supervised based on goal settings and workflow defaults.
 func (e *Executor) isSupervised(goal *agentfile.Goal) bool {
 	return goal.IsSupervised(e.workflow)
@@ -602,6 +583,20 @@ func (e *Executor) isSupervised(goal *agentfile.Goal) bool {
 // requiresHuman determines if a goal requires human approval.
 func (e *Executor) requiresHuman(goal *agentfile.Goal) bool {
 	return goal.RequiresHuman(e.workflow)
+}
+
+// goalOutcome returns the interpolated outcome description for a goal by name, falling back to the name itself.
+// Handles goals defined inline, from a file (FROM path.md), or from an agent skill.
+func (e *Executor) goalOutcome(name string) string {
+	for _, g := range e.workflow.Goals {
+		if g.Name == name {
+			if g.Outcome != "" {
+				return e.interpolate(g.Outcome)
+			}
+			break
+		}
+	}
+	return name
 }
 
 // executeGoalWithTracking executes a single goal with four-phase execution when supervision is enabled.
@@ -689,10 +684,12 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	e.currentGoalSupervised = supervised
 
 	// ============================================
-	// PHASE 1: COMMIT - Agent declares intent
+	// PHASE 1: COMMIT - Agent declares intent (only for supervised goals)
+	// Unsupervised goals skip COMMIT+post-checkpoint; prior goal outputs in the XML
+	// context already provide sufficient history for any downstream supervisor.
 	// ============================================
 	var preCheckpoint *checkpoint.PreCheckpoint
-	if e.checkpointStore != nil {
+	if supervised && e.checkpointStore != nil {
 		preCheckpoint = e.commitPhase(ctx, goal, prompt)
 		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
 			e.logger.Warn("failed to save pre-checkpoint", map[string]interface{}{
@@ -734,6 +731,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	// PHASE 3 & 4: RECONCILE & SUPERVISE (only for supervised steps)
 	// ============================================
 	if supervised && e.supervisor != nil && preCheckpoint != nil && postCheckpoint != nil {
+		// Scope the supervisor's goal context to this specific goal (use the already-interpolated description)
+		e.supervisor.SetOriginalGoal(goalDescription)
 		// RECONCILE: Static pattern checks
 		reconcileStart := time.Now()
 		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
@@ -921,7 +920,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 	start := time.Now()
 
 	// Build system message with skills context
-	systemMsg := TersenessGuidance + "You are a helpful assistant executing a workflow goal."
+	systemMsg := TersenessGuidance + "\nYou are a helpful assistant executing a workflow goal."
 
 	// Inject security research framing if enabled
 	if prefix := e.securityResearchPrefix(); prefix != "" {
@@ -1169,7 +1168,7 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 	// PHASE 1: COMMIT - Declare intent for multi-agent goal
 	// ============================================
 	var preCheckpoint *checkpoint.PreCheckpoint
-	if e.checkpointStore != nil {
+	if supervised && e.checkpointStore != nil {
 		preCheckpoint = e.commitPhase(ctx, goal, prompt)
 		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
 			e.logger.Warn("failed to save pre-checkpoint", map[string]interface{}{
@@ -1219,6 +1218,8 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 	if supervised && e.supervisor != nil && preCheckpoint != nil && postCheckpoint != nil {
 		humanRequired := e.requiresHuman(goal)
 
+		// Scope the supervisor's goal context to this specific goal (interpolate in case of variable references)
+		e.supervisor.SetOriginalGoal(e.interpolate(goal.Outcome))
 		reconcileStart := time.Now()
 		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
 		reconcileDuration := time.Since(reconcileStart).Milliseconds()
