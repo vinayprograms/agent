@@ -13,7 +13,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/muesli/reflow v0.3.0
 	github.com/nats-io/nats.go v1.49.0
-	github.com/vinayprograms/agentkit v0.1.1-0.20260304175601-287a7dfd706a
+	github.com/vinayprograms/agentkit v0.1.1-20260304232444-b3de41b.0.20260304232615-99da026456a6
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/trace v1.40.0
 	golang.org/x/net v0.51.0
@@ -131,5 +131,3 @@ require (
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-replace github.com/vinayprograms/agentkit => ../agentkit
