@@ -14,22 +14,21 @@ import (
 
 // logEvent logs a generic event to the session.
 func (e *Executor) logEvent(eventType, content string) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:      eventType,
 		Goal:      e.currentGoal,
 		Content:   content,
 		Timestamp: time.Now(),
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // LogBashSecurity logs a bash security decision to the session.
 // This is called by the bash security checker callback.
 func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason string, durationMs int64, inputTokens, outputTokens int) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -45,7 +44,7 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 		content += fmt.Sprintf(" | reason: %s", reason)
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:       session.EventBashSecurity,
 		Goal:       e.currentGoal,
 		Content:    content,
@@ -62,7 +61,6 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 			TokensOut: outputTokens,
 		},
 	})
-	e.sessionManager.Update(e.session)
 
 	// Also log to structured logger
 	e.logger.Debug("bash security check", map[string]interface{}{
@@ -78,14 +76,14 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 func (e *Executor) logToolCall(ctx context.Context, name string, args map[string]interface{}) string {
 	corrID := fmt.Sprintf("tool-%d", time.Now().UnixNano())
 
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return corrID
 	}
 
 	// Get agent identity from context (thread-safe for parallel execution)
 	agentID := getAgentIdentity(ctx)
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:          session.EventToolCall,
 		CorrelationID: corrID,
 		Goal:          e.currentGoal,
@@ -104,7 +102,7 @@ func (e *Executor) logToolResult(ctx context.Context, name string, args map[stri
 	// Structured logging to stdout
 	e.logger.ToolResult(name, duration, err)
 
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -143,13 +141,13 @@ func (e *Executor) logToolResult(ctx context.Context, name string, args map[stri
 	if err != nil {
 		event.Error = err.Error()
 	}
-	e.session.Events = append(e.session.Events, event)
+	e.session.AddEvent(event)
 	e.sessionManager.Update(e.session)
 }
 
 // logLLMCall logs an LLM call with full prompt/response for forensics.
 func (e *Executor) logLLMCall(ctx context.Context, eventType string, messages []llm.Message, resp *llm.ChatResponse, duration time.Duration) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -175,7 +173,7 @@ func (e *Executor) logLLMCall(ctx context.Context, eventType string, messages []
 		meta.Thinking = truncateForLog(resp.Thinking, 2000)
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:       eventType,
 		Goal:       e.currentGoal,
 		Content:    content,
@@ -190,11 +188,11 @@ func (e *Executor) logLLMCall(ctx context.Context, eventType string, messages []
 
 // logGoalStart logs the start of a goal execution.
 func (e *Executor) logGoalStart(goalName string) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 	e.currentGoal = goalName
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:      session.EventGoalStart,
 		Goal:      goalName,
 		Content:   fmt.Sprintf("Starting goal: %s", goalName),
@@ -205,7 +203,7 @@ func (e *Executor) logGoalStart(goalName string) {
 
 // logGoalEnd logs the end of a goal execution.
 func (e *Executor) logGoalEnd(goalName, output string) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -220,7 +218,7 @@ func (e *Executor) logGoalEnd(goalName, output string) {
 		}
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:      session.EventGoalEnd,
 		Goal:      goalName,
 		Content:   content,
@@ -231,7 +229,7 @@ func (e *Executor) logGoalEnd(goalName, output string) {
 
 // logPhaseCommit logs the COMMIT phase of goal execution.
 func (e *Executor) logPhaseCommit(goal, commitment, confidence string, durationMs int64) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -242,7 +240,7 @@ func (e *Executor) logPhaseCommit(goal, commitment, confidence string, durationM
 		commitmentMeta = commitment
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:       session.EventPhaseCommit,
 		Goal:       goal,
 		Content:    content,
@@ -259,7 +257,7 @@ func (e *Executor) logPhaseCommit(goal, commitment, confidence string, durationM
 
 // logPhaseExecute logs the EXECUTE phase of goal execution.
 func (e *Executor) logPhaseExecute(goal, result string, durationMs int64) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -270,7 +268,7 @@ func (e *Executor) logPhaseExecute(goal, result string, durationMs int64) {
 		resultMeta = truncateForLog(result, 2000)
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:       session.EventPhaseExecute,
 		Goal:       goal,
 		Content:    content,
@@ -286,10 +284,10 @@ func (e *Executor) logPhaseExecute(goal, result string, durationMs int64) {
 
 // logPhaseReconcile logs the RECONCILE phase of goal execution.
 func (e *Executor) logPhaseReconcile(goal, step string, triggers []string, escalate bool, durationMs int64) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:       session.EventPhaseReconcile,
 		Goal:       goal,
 		Step:       step,
@@ -312,7 +310,7 @@ func (e *Executor) logPhaseSupervise(goal, step, verdict, guidance string, human
 
 // logPhaseSuperviseWithDetails logs supervisor review with full LLM details.
 func (e *Executor) logPhaseSuperviseWithDetails(goal, step, verdict, guidance string, humanRequired bool, durationMs int64, supervisorType, model, prompt, response, thinking string) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -332,7 +330,7 @@ func (e *Executor) logPhaseSuperviseWithDetails(goal, step, verdict, guidance st
 		meta.Thinking = thinking
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:       session.EventPhaseSupervise,
 		Goal:       goal,
 		Step:       step,
@@ -346,10 +344,10 @@ func (e *Executor) logPhaseSuperviseWithDetails(goal, step, verdict, guidance st
 
 // logCheckpoint logs a checkpoint creation.
 func (e *Executor) logCheckpoint(checkpointType, goal, step, checkpointID string) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:      session.EventCheckpoint,
 		Goal:      goal,
 		Step:      step,
@@ -370,7 +368,7 @@ func (e *Executor) logSecurityBlock(blockID, trust, blockType, source, xmlBlock 
 
 // logSecurityBlockWithTaint logs a content block with taint lineage.
 func (e *Executor) logSecurityBlockWithTaint(blockID, trust, blockType, source, xmlBlock string, entropy float64, taintedBy []string) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -380,7 +378,7 @@ func (e *Executor) logSecurityBlockWithTaint(blockID, trust, blockType, source, 
 		content = truncateForLog(xmlBlock, 500)
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:      session.EventSecurityBlock,
 		Goal:      e.currentGoal,
 		Content:   content,
@@ -398,10 +396,10 @@ func (e *Executor) logSecurityBlockWithTaint(blockID, trust, blockType, source, 
 
 // logSecurityStatic logs a static security check result.
 func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []string, pass bool, flags []string, skipReason string, taintLineage []*security.TaintLineageNode) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:      session.EventSecurityStatic,
 		Tool:      tool,
 		Goal:      e.currentGoal,
@@ -454,7 +452,7 @@ func (e *Executor) logSecurityTriage(tool, blockID string, suspicious bool, mode
 
 // logSecurityTriageWithDetails logs LLM triage with full details.
 func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious bool, model string, latencyMs int64, inputTokens, outputTokens int, prompt, response, thinking, skipReason string) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -476,7 +474,7 @@ func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious
 		meta.Thinking = thinking
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:       session.EventSecurityTriage,
 		Tool:       tool,
 		Goal:       e.currentGoal,
@@ -494,7 +492,7 @@ func (e *Executor) logSecuritySupervisor(tool, blockID, verdict, reason, model s
 
 // logSecuritySupervisorWithDetails logs supervisor review with full LLM details.
 func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reason, model string, latencyMs int64, inputTokens, outputTokens int, prompt, response, thinking string) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -517,7 +515,7 @@ func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reas
 		meta.Thinking = thinking
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:       session.EventSecuritySupervisor,
 		Tool:       tool,
 		Goal:       e.currentGoal,
@@ -530,10 +528,10 @@ func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reas
 
 // logSecurityDecision logs final security decision to session.
 func (e *Executor) logSecurityDecision(tool, action, reason, trust, checkPath string) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:      session.EventSecurityDecision,
 		Tool:      tool,
 		Goal:      e.currentGoal,
@@ -550,7 +548,7 @@ func (e *Executor) logSecurityDecision(tool, action, reason, trust, checkPath st
 
 // logSubAgentStart logs the start of a sub-agent execution.
 func (e *Executor) logSubAgentStart(name, role, model, task string, inputs map[string]string) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 
@@ -566,7 +564,7 @@ func (e *Executor) logSubAgentStart(name, role, model, task string, inputs map[s
 		meta.SubAgentInputs = inputs
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:      session.EventSubAgentStart,
 		Goal:      e.currentGoal,
 		Agent:     name,
@@ -579,7 +577,7 @@ func (e *Executor) logSubAgentStart(name, role, model, task string, inputs map[s
 
 // logSubAgentEnd logs the end of a sub-agent execution.
 func (e *Executor) logSubAgentEnd(name, role, model, output string, durationMs int64, err error) {
-	if e.session == nil || e.sessionManager == nil {
+	if e.session == nil {
 		return
 	}
 	errStr := ""
@@ -600,7 +598,7 @@ func (e *Executor) logSubAgentEnd(name, role, model, output string, durationMs i
 		meta.SubAgentOutput = truncateForLog(output, 2000)
 	}
 
-	e.session.Events = append(e.session.Events, session.Event{
+	e.session.AddEvent(session.Event{
 		Type:       session.EventSubAgentEnd,
 		Goal:       e.currentGoal,
 		Agent:      name,

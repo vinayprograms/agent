@@ -140,9 +140,6 @@ type Executor struct {
 	// Security verifier
 	securityVerifier *security.Verifier
 
-	// Last security check result - used to taint tool results with influencing blocks
-	lastSecurityRelatedBlocks []string
-
 	// Timeouts for network operations (seconds)
 	timeoutMCP       int
 	timeoutWebSearch int
@@ -271,12 +268,9 @@ func (e *Executor) extractAndStoreObservations(ctx context.Context, stepName, st
 }
 
 // verifyToolCall checks a tool call against the security verifier if configured.
-func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map[string]interface{}) error {
-	// Clear previous related blocks
-	e.lastSecurityRelatedBlocks = nil
-
+func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map[string]interface{}) ([]string, error) {
 	if e.securityVerifier == nil {
-		return nil // No security verifier configured
+		return nil, nil // No security verifier configured
 	}
 
 	// Use agent role from context for block filtering in multi-agent scenarios
@@ -284,13 +278,14 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 	agentContext := agentID.Role
 	result, err := e.securityVerifier.VerifyToolCall(ctx, toolName, args, e.currentGoal, agentContext)
 	if err != nil {
-		return fmt.Errorf("security verification error: %w", err)
+		return nil, fmt.Errorf("security verification error: %w", err)
 	}
 
-	// Store related blocks for taint propagation when registering tool results
+	// Collect related blocks for taint propagation when registering tool results
+	var relatedBlocks []string
 	if result.Tier1 != nil {
 		for _, b := range result.Tier1.RelatedBlocks {
-			e.lastSecurityRelatedBlocks = append(e.lastSecurityRelatedBlocks, b.ID)
+			relatedBlocks = append(relatedBlocks, b.ID)
 		}
 	}
 
@@ -346,14 +341,14 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 		if e.metricsCollector != nil {
 			e.metricsCollector.RecordSupervision(false)
 		}
-		return fmt.Errorf("security: %s", result.DenyReason)
+		return nil, fmt.Errorf("security: %s", result.DenyReason)
 	}
 
 	e.logSecurityDecision(toolName, "allow", "verified", "", checkPath)
 	if e.metricsCollector != nil {
 		e.metricsCollector.RecordSupervision(true)
 	}
-	return nil
+	return relatedBlocks, nil
 }
 
 // AddUntrustedContent registers untrusted content with the security verifier.

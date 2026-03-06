@@ -74,7 +74,8 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	}
 
 	// Security verification before execution
-	if err := e.verifyToolCall(ctx, tc.Name, tc.Args); err != nil {
+	relatedBlocks, err := e.verifyToolCall(ctx, tc.Name, tc.Args)
+	if err != nil {
 		e.logToolResult(ctx, tc.Name, tc.Args, "", nil, err, time.Since(start))
 		if e.OnToolError != nil {
 			e.OnToolError(tc.Name, tc.Args, err, agentID.Role)
@@ -93,7 +94,7 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 
 		// MCP tools return external content - register as untrusted
 		if err == nil && result != nil {
-			e.registerUntrustedResult(ctx, tc.Name, result)
+			e.registerUntrustedResult(ctx, tc.Name, result, relatedBlocks)
 		}
 		return result, err
 	}
@@ -120,7 +121,7 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 
 	// Register external tool results as untrusted content
 	if err == nil && result != nil && isExternalTool(tc.Name) {
-		e.registerUntrustedResult(ctx, tc.Name, result)
+		e.registerUntrustedResult(ctx, tc.Name, result, relatedBlocks)
 	}
 
 	if err != nil && e.OnToolError != nil {
@@ -144,7 +145,7 @@ func isExternalTool(name string) bool {
 }
 
 // registerUntrustedResult registers tool result as untrusted content block.
-func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string, result interface{}) {
+func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string, result interface{}, relatedBlocks []string) {
 	if e.securityVerifier == nil {
 		return
 	}
@@ -172,7 +173,7 @@ func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string,
 
 	// Register as untrusted content block with taint from influencing blocks
 	source := fmt.Sprintf("tool:%s", toolName)
-	e.AddUntrustedContentWithTaint(ctx, content, source, e.lastSecurityRelatedBlocks)
+	e.AddUntrustedContentWithTaint(ctx, content, source, relatedBlocks)
 }
 
 // toolResult holds the result of a parallel tool execution.

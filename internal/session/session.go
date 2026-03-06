@@ -71,6 +71,13 @@ const (
 	EventSecurityTier3 = EventSecuritySupervisor
 )
 
+// Writer tuning constants.
+const (
+	eventChSize    = 256 // buffered channel capacity
+	batchSizeMax   = 50  // flush when batch reaches this size
+	flushInterval  = 500 * time.Millisecond
+)
+
 // Session represents a workflow execution session.
 type Session struct {
 	ID           string                 `json:"id"`
@@ -86,8 +93,15 @@ type Session struct {
 	UpdatedAt    time.Time              `json:"updated_at"`
 
 	// Internal state (not persisted)
-	seqCounter uint64    // Monotonic sequence counter
+	seqCounter uint64     // Monotonic sequence counter
 	mu         sync.Mutex
+
+	// Batched writer state (not persisted)
+	eventCh    chan Event          // buffered event channel
+	flushCh    chan chan struct{}   // explicit flush requests
+	stopCh     chan struct{}       // signal to stop writer
+	writerDone chan struct{}       // closed when writer exits
+	sessionMgr SessionManager     // for persisting batches
 }
 
 // Event represents a single entry in the session log.
@@ -212,18 +226,127 @@ func (s *Session) CurrentSeqID() uint64 {
 	return atomic.LoadUint64(&s.seqCounter)
 }
 
-// AddEvent adds a new event to the session with automatic sequencing.
-func (s *Session) AddEvent(event Event) uint64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Start launches the background writer goroutine.
+// Must be called before AddEvent if batched writes are desired.
+// If mgr is nil, AddEvent falls back to direct append (no persistence).
+func (s *Session) Start(mgr SessionManager) {
+	if mgr == nil {
+		return
+	}
+	s.sessionMgr = mgr
+	s.eventCh = make(chan Event, eventChSize)
+	s.flushCh = make(chan chan struct{}, 4)
+	s.stopCh = make(chan struct{})
+	s.writerDone = make(chan struct{})
+	go s.writerLoop()
+}
 
+// Flush blocks until all buffered events are persisted to disk.
+func (s *Session) Flush() {
+	if s.eventCh == nil {
+		return
+	}
+	done := make(chan struct{})
+	s.flushCh <- done
+	<-done
+}
+
+// Close flushes remaining events and stops the writer goroutine.
+// Safe to call even if Start was never called.
+func (s *Session) Close() {
+	if s.stopCh == nil {
+		return
+	}
+	close(s.stopCh)
+	<-s.writerDone
+}
+
+// AddEvent adds a new event to the session with automatic sequencing.
+// If the writer is running, events are sent to the channel for batched persistence.
+// Otherwise, events are appended directly (backward-compatible for tests).
+func (s *Session) AddEvent(event Event) uint64 {
 	event.SeqID = s.nextSeqID()
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
+
+	if s.eventCh != nil {
+		s.eventCh <- event
+		return event.SeqID
+	}
+
+	// Fallback: direct append (no writer running)
+	s.mu.Lock()
 	s.Events = append(s.Events, event)
 	s.UpdatedAt = time.Now()
+	s.mu.Unlock()
 	return event.SeqID
+}
+
+// writerLoop is the background goroutine that batches events and flushes to disk.
+func (s *Session) writerLoop() {
+	defer close(s.writerDone)
+
+	ticker := time.NewTicker(flushInterval)
+	defer ticker.Stop()
+
+	var batch []Event
+
+	for {
+		select {
+		case evt := <-s.eventCh:
+			batch = append(batch, evt)
+			if len(batch) >= batchSizeMax {
+				s.persistBatch(batch)
+				batch = batch[:0]
+			}
+
+		case <-ticker.C:
+			if len(batch) > 0 {
+				s.persistBatch(batch)
+				batch = batch[:0]
+			}
+
+		case done := <-s.flushCh:
+			batch = s.drainChannel(batch)
+			if len(batch) > 0 {
+				s.persistBatch(batch)
+				batch = batch[:0]
+			}
+			close(done)
+
+		case <-s.stopCh:
+			batch = s.drainChannel(batch)
+			if len(batch) > 0 {
+				s.persistBatch(batch)
+			}
+			return
+		}
+	}
+}
+
+// drainChannel reads all pending events from eventCh without blocking.
+func (s *Session) drainChannel(batch []Event) []Event {
+	for {
+		select {
+		case evt := <-s.eventCh:
+			batch = append(batch, evt)
+		default:
+			return batch
+		}
+	}
+}
+
+// persistBatch appends events to the session and calls the session manager.
+func (s *Session) persistBatch(batch []Event) {
+	s.mu.Lock()
+	s.Events = append(s.Events, batch...)
+	s.UpdatedAt = time.Now()
+	s.mu.Unlock()
+
+	if s.sessionMgr != nil {
+		s.sessionMgr.Update(s)
+	}
 }
 
 // StartCorrelation generates a new correlation ID for linking related events.
