@@ -93,7 +93,6 @@ func (e *Executor) logToolCall(ctx context.Context, name string, args map[string
 		AgentRole:     agentID.Role,
 		Timestamp:     time.Now(),
 	})
-	e.sessionManager.Update(e.session)
 	return corrID
 }
 
@@ -142,7 +141,6 @@ func (e *Executor) logToolResult(ctx context.Context, name string, args map[stri
 		event.Error = err.Error()
 	}
 	e.session.AddEvent(event)
-	e.sessionManager.Update(e.session)
 }
 
 // logLLMCall logs an LLM call with full prompt/response for forensics.
@@ -183,7 +181,6 @@ func (e *Executor) logLLMCall(ctx context.Context, eventType string, messages []
 		Timestamp:  time.Now(),
 		Meta:       meta,
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logGoalStart logs the start of a goal execution.
@@ -198,7 +195,6 @@ func (e *Executor) logGoalStart(goalName string) {
 		Content:   fmt.Sprintf("Starting goal: %s", goalName),
 		Timestamp: time.Now(),
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logGoalEnd logs the end of a goal execution.
@@ -224,7 +220,6 @@ func (e *Executor) logGoalEnd(goalName, output string) {
 		Content:   content,
 		Timestamp: time.Now(),
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logPhaseCommit logs the COMMIT phase of goal execution.
@@ -252,7 +247,6 @@ func (e *Executor) logPhaseCommit(goal, commitment, confidence string, durationM
 			Confidence: confidence,
 		},
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logPhaseExecute logs the EXECUTE phase of goal execution.
@@ -279,7 +273,6 @@ func (e *Executor) logPhaseExecute(goal, result string, durationMs int64) {
 			Result: resultMeta,
 		},
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logPhaseReconcile logs the RECONCILE phase of goal execution.
@@ -300,7 +293,6 @@ func (e *Executor) logPhaseReconcile(goal, step string, triggers []string, escal
 			Escalate: escalate,
 		},
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logPhaseSupervise logs the SUPERVISE phase of goal execution.
@@ -339,7 +331,6 @@ func (e *Executor) logPhaseSuperviseWithDetails(goal, step, verdict, guidance st
 		Timestamp:  time.Now(),
 		Meta:       meta,
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logCheckpoint logs a checkpoint creation.
@@ -358,7 +349,6 @@ func (e *Executor) logCheckpoint(checkpointType, goal, step, checkpointID string
 			CheckpointID:   checkpointID,
 		},
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logSecurityBlock logs when a content block is registered for security tracking.
@@ -391,7 +381,6 @@ func (e *Executor) logSecurityBlockWithTaint(blockID, trust, blockType, source, 
 			Entropy:   entropy,
 		},
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logSecurityStatic logs a static security check result.
@@ -414,7 +403,6 @@ func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []str
 			TaintLineage:  convertTaintLineage(taintLineage),
 		},
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // convertTaintLineage converts security taint lineage to session format.
@@ -482,7 +470,6 @@ func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious
 		Timestamp:  time.Now(),
 		Meta:       meta,
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logSecuritySupervisor logs supervisor review to session.
@@ -523,7 +510,6 @@ func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reas
 		Timestamp:  time.Now(),
 		Meta:       meta,
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logSecurityDecision logs final security decision to session.
@@ -543,7 +529,6 @@ func (e *Executor) logSecurityDecision(tool, action, reason, trust, checkPath st
 			CheckPath: checkPath,
 		},
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logSubAgentStart logs the start of a sub-agent execution.
@@ -572,7 +557,6 @@ func (e *Executor) logSubAgentStart(name, role, model, task string, inputs map[s
 		Timestamp: time.Now(),
 		Meta:      meta,
 	})
-	e.sessionManager.Update(e.session)
 }
 
 // logSubAgentEnd logs the end of a sub-agent execution.
@@ -609,5 +593,4 @@ func (e *Executor) logSubAgentEnd(name, role, model, output string, durationMs i
 		Timestamp:  time.Now(),
 		Meta:       meta,
 	})
-	e.sessionManager.Update(e.session)
 }

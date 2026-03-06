@@ -413,10 +413,27 @@ func (e *Executor) SetSkills(refs []skills.SkillRef) {
 	e.skillRefs = refs
 }
 
-// SetSession sets the session for logging events.
+// SetSession sets the session for logging events and starts the batched writer.
 func (e *Executor) SetSession(sess *session.Session, mgr session.SessionManager) {
 	e.session = sess
 	e.sessionManager = mgr
+	if sess != nil && mgr != nil {
+		sess.Start(mgr)
+	}
+}
+
+// flushSession flushes buffered session events to disk.
+func (e *Executor) flushSession() {
+	if e.session != nil {
+		e.session.Flush()
+	}
+}
+
+// closeSession stops the session writer, flushing all remaining events.
+func (e *Executor) closeSession() {
+	if e.session != nil {
+		e.session.Close()
+	}
 }
 
 // SetTimeouts configures timeouts for network operations.
@@ -484,6 +501,9 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 	defer func() {
 		// Span will be ended by the return paths below
 	}()
+
+	// Ensure batched session writer is closed at the end of workflow execution
+	defer e.closeSession()
 
 	// Set main agent identity in context (workflow name as both name and role)
 	ctx = withAgentIdentity(ctx, workflowName, "main")
@@ -623,6 +643,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			}
 		}
 		e.logGoalEnd(goal.Name, result.Output)
+		e.flushSession()
 		return &GoalResult{Output: result.Output, ToolCallsMade: false}, nil
 	}
 
@@ -644,6 +665,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			}
 		}
 		e.logGoalEnd(goal.Name, output)
+		e.flushSession()
 		return &GoalResult{Output: output, ToolCallsMade: false}, nil
 	}
 
@@ -823,6 +845,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	}
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
 	e.logGoalEnd(goal.Name, output)
+	e.flushSession()
 	return &GoalResult{Output: output, ToolCallsMade: toolCallsMade}, nil
 }
 
