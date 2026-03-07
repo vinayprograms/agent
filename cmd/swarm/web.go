@@ -149,8 +149,8 @@ func (s *webServer) broadcast(subject string, msg *nats.Msg) {
 		return
 	}
 
-	// Persist incoming NATS data to task DB
-	s.persistNATSMessage(msgType, subject, msg.Data)
+	// Persist incoming NATS data to task DB (use actual message subject, not subscribe pattern)
+	s.persistNATSMessage(msgType, msg.Subject, msg.Data)
 
 	// Cache for reconnecting clients
 	s.cacheMessage(msgType, msg.Subject, data)
