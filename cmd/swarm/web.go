@@ -259,6 +259,14 @@ func (s *webServer) persistDiscussContribution(subject string, data []byte) {
 		return
 	}
 
+	// Skip human replies — already persisted by handleHumanReply
+	if tm.Metadata != nil && tm.Metadata["type"] == "human_reply" {
+		return
+	}
+	if tm.Metadata != nil && tm.Metadata["type"] == "synthesis_request" {
+		return
+	}
+
 	// Initial discuss topic from human
 	content := ""
 	if task, ok := tm.Inputs["task"]; ok {
