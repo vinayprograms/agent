@@ -1882,13 +1882,13 @@ function renderThreadView(taskID, thread, body) {
 function renderThreadEntry(entry) {
   const type = entry.type || 'execute';
   const agent = entry.agent_id || 'unknown';
+  const name = entry.name || '';
   const cap = entry.capability || '';
   const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
 
-  let displayName = agent;
+  let displayName = name || cap || agent;
   if (type === 'topic') displayName = '📋 Topic';
   else if (type === 'human') displayName = '👤 You';
-  else if (cap) displayName = cap;
 
   // Detect code blocks and format content
   let content = esc(entry.content || '');
@@ -1985,11 +1985,15 @@ async function requestSynthesis(taskID) {
 
 function startThreadPoll(taskID) {
   stopThreadPoll();
+  let lastThreadLen = 0;
   threadPollTimer = setInterval(async () => {
     if (activeThreadTaskID !== taskID) return;
     try {
       const resp = await fetch(`/api/thread/${taskID}`);
       const thread = await resp.json();
+      // Only re-render if thread has new entries
+      if (thread.length === lastThreadLen) return;
+      lastThreadLen = thread.length;
       const msgs = document.getElementById('thread-messages');
       if (msgs) {
         const wasAtBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 50;
@@ -1999,7 +2003,7 @@ function startThreadPoll(taskID) {
         if (wasAtBottom) msgs.scrollTop = msgs.scrollHeight;
       }
     } catch (err) { /* ignore poll errors */ }
-  }, 2000);
+  }, 3000);
 }
 
 function stopThreadPoll() {

@@ -234,12 +234,15 @@ func (s *webServer) persistDiscussContribution(subject string, data []byte) {
 			content = string(b)
 		}
 		cap := ""
+		name := ""
 		if result.Metadata != nil {
 			cap = result.Metadata["capability"]
+			name = result.Metadata["name"]
 		}
 		s.db.AppendThread(taskID, threadEntry{
 			AgentID:    result.AgentID,
 			Capability: cap,
+			Name:       name,
 			Type:       entryType,
 			Content:    content,
 			Timestamp:  result.CompletedAt,

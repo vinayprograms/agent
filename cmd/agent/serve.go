@@ -33,6 +33,7 @@ type serviceAgent struct {
 
 	// Agent identity (uses session ID)
 	agentID     string
+	displayName string // swarm agent name (or Agentfile NAME if standalone)
 	capability  registry.CapabilitySchema
 	agentResume *resume.Resume
 
@@ -143,11 +144,18 @@ func (cmd *ServeCmd) Run() error {
 		agentID = fmt.Sprintf("%s-%s", capabilityName, serviceRt.sess.ID)
 	}
 
+	// Display name: swarm agent name if available, otherwise Agentfile NAME
+	displayName := wf.wf.Name
+	if wf.sessionLabel != "" {
+		displayName = wf.sessionLabel
+	}
+
 	// Create service agent
 	agent := &serviceAgent{
 		wf:             wf,
 		creds:          creds,
 		agentID:        agentID,
+		displayName:    displayName,
 		capability:     capability,
 		serviceRuntime: serviceRt,
 		status:         "idle",
@@ -318,12 +326,7 @@ func (a *serviceAgent) runBusMode() error {
 		return fmt.Errorf("creating heartbeat sender: %w", err)
 	}
 	a.heartbeat = hbSender
-	// Use session label (swarm agent name) if provided, otherwise Agentfile NAME
-	agentDisplayName := a.wf.wf.Name
-	if a.wf.sessionLabel != "" {
-		agentDisplayName = a.wf.sessionLabel
-	}
-	hbSender.SetMetadata("name", agentDisplayName)
+	hbSender.SetMetadata("name", a.displayName)
 	hbSender.SetMetadata("session_id", a.serviceRuntime.sess.ID)
 	hbSender.SetMetadata("capability", a.capability.Name)
 	hbSender.SetMetadata("version", version)
@@ -614,7 +617,7 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 	// Agent addressing: if target_agent is set, skip unless it matches us
 	if task.Metadata != nil && task.Metadata["target_agent"] != "" {
 		target := task.Metadata["target_agent"]
-		if target != a.agentID && target != a.capability.Name && target != a.wf.wf.Name {
+		if target != a.agentID && target != a.capability.Name && target != a.wf.wf.Name && target != a.displayName {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "  💬 Addressed to me: %s\n", task.TaskID)
@@ -881,7 +884,7 @@ You may use tools to read files and gather context. Do NOT attempt the full work
 		Outputs:     finalContent,
 		DurationMs:  time.Since(start).Milliseconds(),
 		CompletedAt: time.Now(),
-		Metadata:    map[string]string{"type": "comment", "capability": a.capability.Name},
+		Metadata:    map[string]string{"type": "comment", "capability": a.capability.Name, "name": a.displayName},
 	}
 
 	resultData, err := result.Marshal()
@@ -1098,6 +1101,11 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage)
 	}
 
 	result.DurationMs = time.Since(start).Milliseconds()
+	if result.Metadata == nil {
+		result.Metadata = make(map[string]string)
+	}
+	result.Metadata["capability"] = a.capability.Name
+	result.Metadata["name"] = a.displayName
 	return result
 }
 

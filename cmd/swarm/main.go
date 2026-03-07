@@ -1204,7 +1204,8 @@ func (d *taskDB) saveRecords(records []taskRecord) error {
 type threadEntry struct {
 	AgentID    string    `json:"agent_id"`
 	Capability string    `json:"capability,omitempty"`
-	Type       string    `json:"type"` // "topic", "execute", "comment", "human"
+	Name       string    `json:"name,omitempty"` // swarm agent display name (for @mentions)
+	Type       string    `json:"type"`           // "topic", "execute", "comment", "human"
 	Content    string    `json:"content"`
 	Round      int       `json:"round,omitempty"`
 	Timestamp  time.Time `json:"timestamp"`
