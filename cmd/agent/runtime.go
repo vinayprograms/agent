@@ -31,8 +31,9 @@ type runtime struct {
 	pol    *policy.Policy
 	creds  *credentials.Credentials
 	inputs map[string]string
-	debug  bool
-	yolo   bool // Enable bash tool with security guardrails
+	debug        bool
+	yolo         bool   // Enable bash tool with security guardrails
+	sessionLabel string // Override session directory name
 
 	// Components
 	provider       llm.Provider
@@ -59,13 +60,14 @@ type runtime struct {
 // newRuntime creates a runtime from loaded workflow configuration.
 func newRuntime(w *workflow, creds *credentials.Credentials) *runtime {
 	rt := &runtime{
-		wf:     w.wf,
-		cfg:    w.cfg,
-		pol:    w.pol,
-		creds:  creds,
-		inputs: w.inputs,
-		debug:  w.debug,
-		yolo:   w.yolo,
+		wf:           w.wf,
+		cfg:          w.cfg,
+		pol:          w.pol,
+		creds:        creds,
+		inputs:       w.inputs,
+		debug:        w.debug,
+		yolo:         w.yolo,
+		sessionLabel: w.sessionLabel,
 	}
 	rt.resolveStoragePath()
 	return rt
@@ -82,7 +84,12 @@ func (rt *runtime) resolveStoragePath() {
 		home, _ := os.UserHomeDir()
 		rt.storagePath = filepath.Join(home, rt.storagePath[1:])
 	}
-	rt.sessionPath = filepath.Join(rt.storagePath, "sessions", rt.wf.Name)
+	// Use sessionLabel if provided (swarm passes agent name), otherwise workflow name
+	sessDir := rt.wf.Name
+	if rt.sessionLabel != "" {
+		sessDir = rt.sessionLabel
+	}
+	rt.sessionPath = filepath.Join(rt.storagePath, "sessions", sessDir)
 }
 
 // setup initializes all runtime components. Returns error on failure.

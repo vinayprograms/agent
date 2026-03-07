@@ -784,26 +784,9 @@ func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Session JSONL at: <storageRoot>/agents/<name>/sessions/<workflow>/<session-id>.jsonl
-	// The workflow name may differ from the agent name (set by NAME in Agentfile).
-	// Try the agent name first, then scan for matching session ID in other subdirs.
+	// Session JSONL at: <storageRoot>/agents/<name>/sessions/<name>/<session-id>.jsonl
+	// The swarm passes --session-label to align the session dir with the agent name.
 	jsonlPath := filepath.Join(s.storageRoot, "agents", agentName, "sessions", agentName, sessionID+".jsonl")
-	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-		// Scan session subdirectories for matching session ID
-		sessRoot := filepath.Join(s.storageRoot, "agents", agentName, "sessions")
-		if entries, dirErr := os.ReadDir(sessRoot); dirErr == nil {
-			for _, entry := range entries {
-				if !entry.IsDir() {
-					continue
-				}
-				candidate := filepath.Join(sessRoot, entry.Name(), sessionID+".jsonl")
-				if _, statErr := os.Stat(candidate); statErr == nil {
-					jsonlPath = candidate
-					break
-				}
-			}
-		}
-	}
 
 	data, err := os.ReadFile(jsonlPath)
 	if err != nil {

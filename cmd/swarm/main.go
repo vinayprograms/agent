@@ -622,6 +622,7 @@ func (u *UpCmd) Run(a *app) error {
 			agentStorage = filepath.Join(m.Storage.Root, "agents", ag.Name)
 		}
 		args = append(args, "--storage", agentStorage)
+		args = append(args, "--session-label", ag.Name)
 		if ag.Yolo {
 			args = append(args, "--yolo")
 		}

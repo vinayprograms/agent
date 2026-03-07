@@ -102,6 +102,9 @@ func (cmd *ServeCmd) Run() error {
 	if cmd.Storage != "" {
 		wf.cfg.Storage.Path = cmd.Storage
 	}
+	if cmd.SessionLabel != "" {
+		wf.sessionLabel = cmd.SessionLabel
+	}
 
 	// Determine capability name
 	capabilityName := wf.cfg.Service.Capability
