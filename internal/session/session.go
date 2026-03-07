@@ -102,6 +102,7 @@ type Session struct {
 	stopCh     chan struct{}       // signal to stop writer
 	writerDone chan struct{}       // closed when writer exits
 	sessionMgr SessionManager     // for persisting batches
+	closeOnce  sync.Once          // ensures Close() is idempotent
 }
 
 // Event represents a single entry in the session log.
@@ -252,13 +253,15 @@ func (s *Session) Flush() {
 }
 
 // Close flushes remaining events and stops the writer goroutine.
-// Safe to call even if Start was never called.
+// Safe to call even if Start was never called. Idempotent — safe to call multiple times.
 func (s *Session) Close() {
 	if s.stopCh == nil {
 		return
 	}
-	close(s.stopCh)
-	<-s.writerDone
+	s.closeOnce.Do(func() {
+		close(s.stopCh)
+		<-s.writerDone
+	})
 }
 
 // AddEvent adds a new event to the session with automatic sequencing.
