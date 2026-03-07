@@ -577,9 +577,9 @@ deny = ["**/.env", "**/*.key"]
 enabled = true
 allow = ["$WORKSPACE/**"]
 
+# Bash policy only applies when --yolo flag is used
 [tools.bash]
 enabled = true
-allowlist = ["ls *", "cat *", "grep *"]
 denylist = ["rm *", "sudo *"]
 
 [tools.web_fetch]
@@ -695,7 +695,7 @@ See `examples/agent/security-research/` for security research workflow examples.
 ### High-Risk Tools
 
 These tools receive extra scrutiny when untrusted content is in context:
-- `bash` - Shell command execution
+- `bash` - Shell command execution (opt-in via `--yolo` flag)
 - `write` - File system writes  
 - `web_fetch` - External HTTP requests
 - `spawn_agent` - Sub-agent creation
@@ -1064,7 +1064,7 @@ Set `provider` explicitly for custom or ambiguous model names.
 - `ls` — List directory contents
 
 ### Shell
-- `bash` — Execute shell commands (policy-controlled)
+- `bash` — Execute shell commands (requires `--yolo` flag; policy-controlled when enabled)
 
 ### Web
 - `web_search` — Search the web
@@ -1153,12 +1153,14 @@ Without `allow_domains`, all domains are allowed.
 
 ### Shell Command Security
 
-Restrict shell commands with allowlists/denylists:
+The bash tool requires the `--yolo` (`-y`) flag to activate. Without it, bash is not available regardless of policy settings.
+
+When enabled, restrict shell commands with denylists:
 
 ```toml
+# Only applies when agent is run with --yolo flag
 [bash]
 enabled = true
-allowlist = ["ls *", "cat *", "go build *", "go test *"]
 denylist = ["rm -rf *", "sudo *", "curl * | bash"]
 ```
 

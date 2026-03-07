@@ -49,7 +49,7 @@ api_key = "anthropic-specific-key"
 
 | Command | Description |
 |---------|-------------|
-| run | Execute a workflow |
+| run | Execute a workflow (use `--yolo` to enable bash tool) |
 | validate | Check syntax without running |
 | inspect | Show workflow/package structure |
 | pack | Create a signed package |

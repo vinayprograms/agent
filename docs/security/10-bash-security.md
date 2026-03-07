@@ -1,6 +1,18 @@
 # Bash Security
 
-The bash tool uses a two-step security model to prevent command injection and unauthorized file access.
+## Activation
+
+The bash tool is **opt-in only** via the `--yolo` (`-y`) CLI flag:
+
+```bash
+agent run --yolo -f Agentfile
+```
+
+Without this flag, bash is not registered in the tool registry and is completely unavailable to the agent — regardless of policy.toml settings. This is the master gate; policy.toml controls *what* bash can do once enabled, but `--yolo` controls *whether* it exists at all.
+
+## Security Model
+
+Once enabled, the bash tool uses a two-step security model to prevent command injection and unauthorized file access.
 
 ## Architecture
 
