@@ -183,6 +183,20 @@ func (s *webServer) persistNATSMessage(msgType, subject string, data []byte) {
 		// Idempotent — InsertTask appends but GetTask uses file lookup
 		s.db.InsertTask(tm, "pending")
 
+		// Also record as thread topic so the task detail modal shows the full conversation
+		taskContent := ""
+		if task, ok := tm.Inputs["task"]; ok {
+			taskContent = task
+		}
+		if taskContent != "" {
+			s.db.AppendThread(tm.TaskID, threadEntry{
+				AgentID:   tm.SubmittedBy,
+				Type:      "topic",
+				Content:   taskContent,
+				Timestamp: tm.SubmittedAt,
+			})
+		}
+
 	case "done":
 		// Persist task result: done.<cap>.<task_id>
 		var result tasks.TaskResult

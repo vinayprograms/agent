@@ -1765,14 +1765,23 @@ async function showTaskDetail(taskID) {
   document.getElementById('task-modal').classList.add('visible');
   activeThreadTaskID = taskID;
 
-  // Check if this is a discuss task (d- prefix or discuss status)
-  const isDiscuss = taskID.startsWith('d-') || isDiscussTask(taskID);
-
-  if (isDiscuss) {
-    await showThreadView(taskID, body);
-  } else {
-    await showClassicTaskDetail(taskID, body);
+  // Always try to load thread — work tasks also have discuss threads
+  // when agents share results on discuss.t-*
+  try {
+    const resp = await fetch(`/api/thread/${taskID}`);
+    const thread = await resp.json();
+    if (thread && thread.length > 0) {
+      // Thread exists — show thread view (works for both d- and t- tasks)
+      renderThreadView(taskID, thread, body);
+      startThreadPoll(taskID);
+      return;
+    }
+  } catch (e) {
+    // No thread — fall through to classic view
   }
+
+  // No thread entries — show classic input/result view
+  await showClassicTaskDetail(taskID, body);
 }
 
 function isDiscussTask(taskID) {
