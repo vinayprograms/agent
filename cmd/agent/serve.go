@@ -324,6 +324,7 @@ func (a *serviceAgent) runBusMode() error {
 		agentDisplayName = a.wf.sessionLabel
 	}
 	hbSender.SetMetadata("name", agentDisplayName)
+	hbSender.SetMetadata("session_id", a.serviceRuntime.sess.ID)
 	hbSender.SetMetadata("capability", a.capability.Name)
 	hbSender.SetMetadata("version", version)
 

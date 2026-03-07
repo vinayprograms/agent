@@ -1271,6 +1271,7 @@ function handleHeartbeat(hb) {
     cacheCreation: parseInt(meta.cache_creation_tokens || '0'),
     llmCalls: parseInt(meta.llm_calls || '0'),
     avgLatency: parseFloat(meta.avg_latency_ms || '0'),
+    sessionId: meta.session_id || '',
   };
   renderAgents();
   aggregateStats();
@@ -1452,8 +1453,8 @@ function renderAgents() {
     }
 
     const logCount = (state.agentLogs[a.name] || []).length;
-    // Extract session ID from agent_id: <capability>-<session-id>
-    const sessId = a.id.startsWith(a.capability + '-') ? a.id.substring(a.capability.length + 1) : a.id;
+    // Use session_id from heartbeat metadata (no more parsing agent_id)
+    const sessId = a.sessionId || a.id;
 
     // Compact details: subs + supervision inline
     const details = [];
