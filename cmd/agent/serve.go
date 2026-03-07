@@ -318,7 +318,12 @@ func (a *serviceAgent) runBusMode() error {
 		return fmt.Errorf("creating heartbeat sender: %w", err)
 	}
 	a.heartbeat = hbSender
-	hbSender.SetMetadata("name", a.wf.wf.Name)
+	// Use session label (swarm agent name) if provided, otherwise Agentfile NAME
+	agentDisplayName := a.wf.wf.Name
+	if a.wf.sessionLabel != "" {
+		agentDisplayName = a.wf.sessionLabel
+	}
+	hbSender.SetMetadata("name", agentDisplayName)
 	hbSender.SetMetadata("capability", a.capability.Name)
 	hbSender.SetMetadata("version", version)
 
