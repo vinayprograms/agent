@@ -272,12 +272,24 @@ func (a *serviceAgent) runBusMode() error {
 	defer natsBus.Close()
 
 	// Generate resume from Agentfile (required for collaboration)
-	resumeCtx, resumeCancel := context.WithTimeout(ctx, 15*time.Second)
-	if err := a.generateResume(resumeCtx); err != nil {
+	// Retry with backoff — LLM calls can timeout under rate limiting or cold starts
+	var resumeErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		resumeCtx, resumeCancel := context.WithTimeout(ctx, 30*time.Second)
+		resumeErr = a.generateResume(resumeCtx)
 		resumeCancel()
-		return fmt.Errorf("resume generation failed (required for swarm collaboration): %w", err)
+		if resumeErr == nil {
+			break
+		}
+		if attempt < 3 {
+			backoff := time.Duration(attempt) * 2 * time.Second
+			fmt.Fprintf(os.Stderr, "⚠️  Resume generation attempt %d/3 failed: %v (retrying in %s)\n", attempt, resumeErr, backoff)
+			time.Sleep(backoff)
+		}
 	}
-	resumeCancel()
+	if resumeErr != nil {
+		return fmt.Errorf("resume generation failed after 3 attempts (required for swarm collaboration): %w", resumeErr)
+	}
 
 	// Register with NATS KV registry (required for discovery)
 	if err := a.registerWithRegistry(natsBus); err != nil {
