@@ -769,7 +769,7 @@ func disableTailscaleServe(localPort string) {
 
 // handleSessionLogs serves JSONL session logs for an agent.
 // GET /api/sessions/<agent-name>/<session-id> → returns array of JSONL records.
-// Path on disk: <storageRoot>/sessions/<label>/<session-id>.jsonl
+// Path on disk: <storageRoot>/agents/<name>/sessions/<label>/<session-id>.jsonl
 func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 	if s.storageRoot == "" {
 		http.Error(w, "storage root not configured", http.StatusServiceUnavailable)
@@ -795,9 +795,9 @@ func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Find session JSONL by scanning all subdirs under <storageRoot>/sessions/
+	// Find session JSONL by scanning all subdirs under <storageRoot>/agents/<name>/sessions/
 	// The subdirectory name varies (could be agent name, workflow name, or label).
-	sessRoot := filepath.Join(s.storageRoot, "sessions")
+	sessRoot := filepath.Join(s.storageRoot, "agents", agentName, "sessions")
 	jsonlPath := ""
 	if entries, err := os.ReadDir(sessRoot); err == nil {
 		for _, entry := range entries {
@@ -813,6 +813,8 @@ func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if jsonlPath == "" {
+		log.Printf("[web] session not found: storageRoot=%q agent=%q sessionID=%q sessRoot=%q",
+			s.storageRoot, agentName, sessionID, sessRoot)
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}

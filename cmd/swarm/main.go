@@ -77,9 +77,10 @@ type RestartCmd struct {
 	Agents []string `arg:"" optional:"" help:"Specific agents to restart (default: all)"`
 }
 type UICmd struct {
-	Port int    `name:"port" short:"p" default:"9090" help:"Web UI port"`
-	Bind string `name:"bind" short:"b" default:"127.0.0.1" help:"Bind address (default: localhost only)"`
-	TUI  bool   `name:"tui" help:"Use terminal TUI instead of web"`
+	Port    int    `name:"port" short:"p" default:"9090" help:"Web UI port"`
+	Bind    string `name:"bind" short:"b" default:"127.0.0.1" help:"Bind address (default: localhost only)"`
+	TUI     bool   `name:"tui" help:"Use terminal TUI instead of web"`
+	Manifest string `name:"manifest" short:"f" default:"" help:"Path to swarm.yaml (default: auto-detect in CWD)"`
 }
 type ReplayCmd struct {
 	TaskID string `arg:"" help:"Task ID to replay"`
@@ -860,10 +861,19 @@ func (u *UICmd) Run(a *app) error {
 
 	// Discover storage root from manifest (for session JSONL access)
 	storageRoot := ""
-	if manifestPath, err := findManifest(); err == nil {
+	manifestPath := u.Manifest
+	if manifestPath == "" {
+		manifestPath, _ = findManifest()
+	}
+	if manifestPath != "" {
 		if m, err := loadManifest(manifestPath); err == nil {
 			storageRoot = m.Storage.Root
+			log.Printf("[ui] storage root: %s (from %s)", storageRoot, manifestPath)
+		} else {
+			log.Printf("[ui] failed to load manifest %s: %v", manifestPath, err)
 		}
+	} else {
+		log.Printf("[ui] no manifest found — session logs will be unavailable")
 	}
 
 	srv := newWebServer(a.natsURL, a.dataDir, storageRoot, nil, db)
