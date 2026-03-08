@@ -521,6 +521,8 @@ loop:
 
 The change is minimal in code terms — an additional check between tool result collection and the next LLM invocation. The complexity lies not in the mechanism but in the prompt engineering: the interrupts block, the guidance framework, and the context management that keeps the conversation coherent.
 
+**Solo agent compatibility.** When an agent runs outside a swarm (`agent run` with no NATS connection), the interrupt buffer is never created (nil), the swarm context goroutine is never started, and the deliberation loop is never entered. The buffer drain check short-circuits immediately on a nil buffer — zero overhead. The executor behaves identically to the pre-collaboration execution loop. The state machine collapses to a single state (EXECUTING) with no transitions. This is by design: the collaboration model is additive. It activates only when NATS subscriptions exist, which only happens in swarm mode.
+
 ### 9.4 Triage
 
 The current triage mechanism (similarity scoring + LLM decision) becomes the entry gate to deliberation rather than the entry gate to execution. Its role narrows: instead of deciding EXECUTE/COMMENT/SKIP, it decides only whether the task is relevant enough to enter deliberation. The richer decisions — what to do, what to claim, how to participate — are made during deliberation itself.
