@@ -798,6 +798,7 @@ func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 	// Session JSONL at: <storageRoot>/agents/<name>/sessions/<name>/<session-id>.jsonl
 	// The swarm passes --session-label to align the session dir with the agent name.
 	jsonlPath := filepath.Join(s.storageRoot, "agents", agentName, "sessions", agentName, sessionID+".jsonl")
+	log.Printf("[session-debug] storageRoot=%s agent=%s session=%s path=%s exists=%v", s.storageRoot, agentName, sessionID, jsonlPath, fileExists(jsonlPath))
 
 	data, err := os.ReadFile(jsonlPath)
 	if err != nil {
@@ -817,6 +818,11 @@ func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(records)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func classifySubject(subject string) string {
