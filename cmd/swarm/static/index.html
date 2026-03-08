@@ -1732,7 +1732,6 @@ let modalSessionData = null; // cached JSONL records
 let modalPollTimer = null;
 
 function openLogModal(agentName, sessionId) {
-  console.log('[session-debug] openLogModal:', agentName, sessionId, '→ /api/sessions/' + agentName + '/' + sessionId);
   modalAgent = agentName;
   modalSessionId = sessionId || null;
   modalTab = 'session';
