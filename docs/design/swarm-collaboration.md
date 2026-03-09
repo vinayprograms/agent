@@ -155,6 +155,8 @@ Each deliberation is a single LLM call with the following context:
 
 The LLM produces both a natural language contribution (the discussion content) and a structured signal (NEED_INFO or CLAIM). If the signal is CLAIM, the agent transitions to EXECUTING. Otherwise, the response is published on `discuss.<task_id>` (or discarded if the agent has nothing to say), and the agent returns to MONITORING.
 
+**Response channel selection.** Deliberation can be triggered by messages on either `discuss.*` (broadcast) or `work.<name>.*` (directed). The response channel is not determined by the source channel — it is determined by the content's relevance to the swarm. The deliberation prompt instructs the LLM: if the triggering message or the agent's response contains information that affects other agents' understanding of the task — decisions, constraints, architectural changes, discovered problems — the response must be published on `discuss.<task_id>` so the swarm stays aligned. If the exchange is narrowly scoped to this agent alone (credentials, agent-specific configuration, a clarification that does not affect others' work), the response may remain on the directed channel. The LLM makes this judgment based on the content, not the channel.
+
 ### 3.6 Deliberation Limits
 
 While individual deliberation cycles are transient, the accumulated discussion for a task can grow unbounded if agents keep exchanging NEED_INFO messages without converging. The `max_deliberation_rounds` configuration parameter (default: 20) caps the total number of discuss messages per task across all agents. When the limit is reached, each agent must either CLAIM or withdraw on its next deliberation cycle.
