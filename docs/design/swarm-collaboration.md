@@ -46,7 +46,7 @@ The collaboration model presented here is guided by five principles:
 
 The swarm uses four NATS subject families. Three of them — `work.*`, `discuss.*`, and `done.*` — carry task-related messages. The fourth — `heartbeat.*` — carries agent status. Understanding the routing semantics of each is essential, because the choice of subject determines *who sees the message*, which directly affects collaboration.
 
-**`discuss.<task_id>` — broadcast to all agents.** Every agent in the swarm receives every message published to `discuss.*`. This is the primary channel for collaboration: task submission, deliberation, questions, status updates, and abandonment explanations. When a task requires multiple agents to deliberate and self-select their roles, it is submitted on `discuss.*` so that all agents can participate.
+**`discuss.<task_id>` — broadcast to all agents.** Every agent in the swarm receives every message published to `discuss.*`. This is the primary channel for collaboration: task submission, deliberation, questions, status updates, and abandonment explanations. When a task requires multiple agents to deliberate and self-select their roles, it is submitted on `discuss.*` so that all agents can participate. Like `work.*` and `done.*`, the discuss channel requires JetStream persistence — an agent that is mid-execution when a CLAIM arrives must not lose that message. JetStream ensures discuss messages are durably stored and delivered to all consumers, even if an agent is temporarily busy processing a previous message.
 
 **`work.<capability>.<task_id>` — load-balanced within a capability.** Agents subscribe to `work.<capability>.*` using NATS queue groups. When a message arrives, NATS delivers it to exactly one agent within the matching queue group — the one with the least pending messages. If a swarm has three frontend agents, only one of them receives a message on `work.frontend.*`. The other two never see it.
 
@@ -96,7 +96,9 @@ Critically, deliberation is not a sustained state. The agent does not "sit in" d
 
 This design eliminates the question of "how long should deliberation last?" There is no deliberation window. Each message is a stimulus, each response is a reaction, and the conversation unfolds through successive cycles. An agent that needs more information publishes its question, returns to MONITORING, and re-enters DELIBERATING when an answer arrives.
 
-**EXECUTING.** The agent is actively running its workflow — invoking tools, generating code, processing data. During execution, the agent remains connected to `discuss.<task_id>` through an interrupt buffer (Section 4). It is focused on its claimed work but receives new information at natural breakpoints in its execution loop.
+**EXECUTING.** The agent is actively running its workflow — invoking tools, generating code, processing data. An agent handles one task at a time. Messages arriving on `work.<capability>.*` or `work.<name>.*` during execution are not lost — JetStream holds them until the agent returns to MONITORING and consumes them. Messages on `discuss.*` for the current task route to the interrupt buffer (Section 4); discuss messages for other tasks are received but deferred to the next MONITORING cycle.
+
+During execution, the agent remains connected to `discuss.<task_id>` through the interrupt buffer. It is focused on its claimed work but receives new information at natural breakpoints in its execution loop.
 
 The execution loop is iterative. At the end of each iteration — after all tool calls have completed and results have been collected — the agent checks its interrupt buffer for new messages. If messages are present, they are folded into the context for the next iteration. At the beginning of that next iteration, the LLM evaluates the combined state: its own work-in-progress, the tool results from the previous iteration, and any interrupt messages. Based on this evaluation, it decides whether to continue executing, or to abandon execution and transition to DELIBERATING (to explain why) or directly to MONITORING.
 
@@ -114,7 +116,7 @@ The state machine has five transitions:
 
 **EXECUTING → MONITORING.** Triggered on successful completion. The agent publishes a DONE message on `discuss.<task_id>` (so other agents learn about the completion) and simultaneously publishes structured completion metadata on `done.<capability>.<task_id>` (for infrastructure consumers). It then returns to MONITORING.
 
-**EXECUTING → DELIBERATING.** Triggered when the agent, during execution, determines it must communicate something to the swarm before it can continue — or that its work is no longer viable. The agent transitions to DELIBERATING, where it publishes its message (an explanation of the problem, a question, or an abort reason) on `discuss.<task_id>` or on `work.<name>.*` if the message targets a specific agent. After publishing, it follows the normal DELIBERATING exit: back to MONITORING. The agent does not resume its prior execution. If the situation resolves and the agent's capabilities are still relevant, a subsequent message will trigger a new MONITORING → DELIBERATING → EXECUTING cycle — a fresh execution, not a continuation.
+**EXECUTING → DELIBERATING.** Triggered when the agent, during execution, determines it must communicate something to the swarm before it can continue — or that its work is no longer viable. The LLM signals abandonment by including `ABANDON:` as a prefix in its text response, followed by the explanation. The executor pattern-matches on this keyword — consistent with how CLAIM works as a keyword signal embedded in natural language. Everything after `ABANDON:` becomes the explanation published to `discuss.<task_id>` (or `work.<name>.*` if the message targets a specific agent). After publishing, the agent follows the normal DELIBERATING exit: back to MONITORING. The agent does not resume its prior execution. If the situation resolves and the agent's capabilities are still relevant, a subsequent message will trigger a new MONITORING → DELIBERATING → EXECUTING cycle — a fresh execution, not a continuation.
 
 This transition deserves careful attention. When an agent abandons execution, it does not silently disappear. It communicates the reason for abandonment so that other agents can update their understanding of the problem. The abandon message might reveal a constraint that other agents have not encountered ("Apple's OAuth requires server-side JWT validation with rotating keys — this changes the token verification architecture"), flag a dependency ("I can't proceed until the database schema is finalized"), or declare that the work is no longer viable ("the migration to GitLab makes this GitHub Actions workflow obsolete"). Other agents, upon receiving this message, will enter their own DELIBERATING state and decide how to respond.
 
@@ -188,6 +190,16 @@ This is particularly important for `work.<capability>.*` messages. Because NATS 
 While individual deliberation cycles are transient, the accumulated discussion for a task can grow unbounded if agents keep exchanging NEED_INFO messages without converging. The `max_deliberation_rounds` configuration parameter (default: 20) caps the total number of discuss messages per task across all agents. When the limit is reached, each agent must either CLAIM or withdraw on its next deliberation cycle.
 
 This is a safety valve, not a design goal. Well-functioning agents should converge long before the limit. If agents routinely hit the limit, it suggests the task is poorly scoped or agent capabilities are poorly matched — problems that configuration cannot solve.
+
+### 3.6 Triage Cost
+
+Every `discuss.*` message triggers a triage evaluation in every agent to determine relevance. With many concurrent tasks and agents, this could become expensive. The triage mechanism uses a two-tier approach to keep costs bounded:
+
+**Tier 1: Deterministic keyword match (zero LLM cost).** The agent's capability description is tokenized into keywords at startup. Incoming discuss messages are checked against these keywords. A CSS discussion between frontend and design agents contains no keywords matching the backend agent's capability — it is skipped immediately without any LLM call.
+
+**Tier 2: LLM triage (only for tier-1 matches).** Messages that pass the keyword filter are evaluated by the LLM to determine relevance and decide the deliberation response. This is the existing similarity-based triage mechanism, now applied only to the subset of messages that passed the cheap first filter.
+
+This tiering means an agent in a busy swarm with many concurrent tasks pays LLM triage cost only for messages that are plausibly related to its capability. Unrelated discussions are filtered at near-zero cost.
 
 ---
 
@@ -281,7 +293,7 @@ When the interrupt buffer contains messages, they are formatted into an XML bloc
 </interrupts>
 ```
 
-The **context** element grounds the LLM in what it was doing. Without this, the LLM must reconstruct its execution state from the conversation history — feasible but error-prone and token-expensive. The context element makes the agent's current position explicit.
+The **context** element grounds the LLM in what it was doing. Without this, the LLM must reconstruct its execution state from the conversation history — feasible but error-prone and token-expensive. The context element makes the agent's current position explicit. It is generated deterministically by the executor from data already in memory — the current goal description (from the Agentfile) and the list of tool calls completed so far in this execution. No LLM call is needed; the executor simply templates: "Working on: [goal]. Completed: [tool names + brief args]. Remaining: [subsequent goals if defined]."
 
 The **messages** element contains the raw discuss messages, preserving attribution and timestamps. These are not summarized — the LLM needs the original wording to assess relevance and implications.
 
@@ -345,10 +357,10 @@ Swarm context contains three categories of information, each maintained by a dif
 
 ### 5.3 Relevance Filtering
 
-Not all swarm activity is relevant to every agent. A backend agent does not need detailed awareness of CSS discussions between the frontend and design agents. Swarm context applies a relevance filter:
+Not all swarm activity is relevant to every agent. A backend agent does not need detailed awareness of CSS discussions between the frontend and design agents. Swarm context applies a relevance filter that varies by agent state:
 
-- **Agent states**: Always included for all agents. This is compact and universally useful — knowing who is alive and what they're doing costs few tokens and provides broad situational awareness.
-- **Task discussions**: Only the current task's discussion is included in full. Other tasks' discussions are excluded unless the agent is subscribed to them.
+- **Agent states**: Always included for all agents in all states. This is compact and universally useful — knowing who is alive and what they're doing costs few tokens and provides broad situational awareness.
+- **Task discussions**: State-dependent. During MONITORING, no task discussions are included — the agent is idle, there is no "current task." During DELIBERATING, the triggering task's discussion is included. During EXECUTING, the executing task's discussion is included. Other tasks' discussions are always excluded.
 - **Completed work**: Included only for tasks whose capability is related to the agent's own capability or whose discuss messages the agent participated in. Unrelated completions are excluded.
 
 The goal is to answer: **does this information help the agent do its current job?** If not, it does not enter the context.
@@ -626,11 +638,25 @@ collaboration:
 
 **context_summary_threshold** (default: 10). Number of discussion messages per task before older messages are summarized. Lower values produce more aggressive summarization (fewer tokens, less detail). Higher values preserve more raw messages (more tokens, more detail).
 
+### 8.2 Workspace Isolation
+
+Each agent in the swarm operates in its own working directory: `workspace/<agent-name>/`. The swarm launcher creates these directories before starting agents and sets each agent's cwd accordingly. Agents do not share a filesystem — integration happens through task output published on `discuss.*` and `done.*`, not through shared files.
+
+If the workspace is a git repository, agents can use git worktrees for lightweight isolation while sharing the repository history. However, the design does not assume git is available. The default — separate directories — works without prerequisites.
+
+### 8.3 Task Lifecycle
+
+A task is considered complete when every agent that published a CLAIM for that task has subsequently published a DONE message on `discuss.<task_id>` and returned to MONITORING. The swarm tracks this through the discuss message log: CLAIMs create obligations, DONE messages fulfill them. When all obligations are fulfilled and no agent is EXECUTING or DELIBERATING for the task, the task is complete.
+
+There is no explicit "task complete" signal broadcast to the swarm — completion is an observable property of the swarm state, not a message. External consumers (the swarm UI, monitoring systems) can determine task completion by watching `done.*` publications against known CLAIMs.
+
 ---
 
 ## 9. Open Questions
 
 Several design questions remain unresolved. They are captured here for future consideration.
+
+**Agent crash recovery (deferred to hive).** When an agent process crashes mid-execution, other agents can detect the failure through stale heartbeats — but heartbeats arrive on a timer and detection is inherently delayed. More fundamentally, if the crashed agent is the sole provider of a required capability, the swarm cannot self-heal. Spawning a replacement, reassigning work, and deciding whether to resume or restart the task all require orchestrator-level intelligence. This is a hive concern (dedicated orchestrator agent), not a swarm concern. The swarm's responsibility is limited to: detecting heartbeat staleness, updating swarm context to reflect the missing agent, and publishing the observation on `discuss.*` so remaining agents can adapt their plans. Recovery is out of scope.
 
 **Sub-agent forking for sidequests.** When an interrupt reveals orthogonal work — work that is relevant but not part of the agent's current task — the agent currently has two options: ignore it or adjust its plan to incorporate it. A third option — forking a sub-agent to handle the sidequest while the main agent continues — is architecturally appealing but adds significant complexity. The implications for state management, resource consumption, and swarm coordination need careful analysis before this is viable.
 
