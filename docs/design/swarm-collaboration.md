@@ -391,106 +391,194 @@ This handoff is injected as context in the first execution LLM turn. It is typic
 
 This section walks through concrete scenarios to illustrate how the collaboration mechanisms interact in practice. Each scenario uses a three-agent swarm: **frontend** (UI/HTML/CSS/JS), **backend** (API/database), and **webserver** (routing/proxy/infrastructure).
 
-### 7.1 Scenario: Clean Task Division
+Each scenario presents the ideal case first, then examines how the system behaves when LLM quality varies. The design must work correctly — or at least degrade gracefully — regardless of whether the underlying model is a frontier reasoning model or a smaller, more impulsive one.
 
-**Task submitted:** "Build a user registration system with email verification."
+### 7.1 Scenario: Task Division
 
-1. Task is submitted on `discuss.<task_id>`. All three agents receive it (broadcast), pass the relevance threshold, and each transitions from MONITORING to DELIBERATING.
+**Task submitted on `discuss.<task_id>`:** "Build a user registration system with email verification."
 
-2. **Backend** (first to respond): "I'll handle the registration API endpoint, user database schema, and email verification token generation. NEED_INFO: What email service are we using?" Backend returns to MONITORING.
+#### 7.1.1 Deliberate, then execute (ideal)
 
-3. **Frontend** (triggered by the discuss message): "I'll build the registration form and the email verification landing page. NEED_INFO: What fields does the registration form need?" Frontend returns to MONITORING.
+1. All three agents receive the task, pass the relevance threshold, and each transitions to DELIBERATING.
 
-4. **Webserver** (triggered by the discuss messages): "I'll set up the routes: POST /register → backend, GET /verify → backend, static assets → frontend build output. NEED_INFO: Are there any rate limiting requirements?" Webserver returns to MONITORING.
+2. **Backend**: "I'll handle the registration API endpoint, user database schema, and email verification token generation. NEED_INFO: What email service are we using?" Returns to MONITORING.
 
-5. **Backend** (triggered by frontend's question): "Registration fields: email, password, display name. No specific rate limiting unless frontend wants it. CLAIM: Registration API, user schema, email token generation." Backend transitions to EXECUTING.
+3. **Frontend** (triggered by the discuss message): "I'll build the registration form and the email verification landing page. NEED_INFO: What fields does the registration form need?" Returns to MONITORING.
 
-6. **Frontend** (triggered by backend's response): "Got it — three fields plus a submit button. CLAIM: Registration form, verification landing page, client-side validation." Frontend transitions to EXECUTING.
+4. **Webserver**: "I'll set up the routes: POST /register → backend, GET /verify → backend, static assets → frontend build output. NEED_INFO: Are there any rate limiting requirements?" Returns to MONITORING.
 
-7. **Webserver** (triggered by the discussion): "CLAIM: Route configuration, reverse proxy rules, static asset serving." Webserver transitions to EXECUTING.
+5. **Backend** (triggered by frontend's question): "Registration fields: email, password, display name. No specific rate limiting unless frontend wants it. CLAIM: Registration API, user schema, email token generation." Transitions to EXECUTING.
 
-8. All three agents execute their claimed portions independently. No interrupts arise because the task was cleanly divided.
+6. **Frontend**: "Got it — three fields plus a submit button. CLAIM: Registration form, verification landing page, client-side validation." Transitions to EXECUTING.
 
-This scenario illustrates the simplest case: the discussion unfolds through reactive cycles of MONITORING → DELIBERATING → MONITORING, each triggered by the previous agent's discuss message. No agent "waits" in deliberation — each responds to a message and returns to MONITORING until the next message arrives. Convergence happens naturally.
+7. **Webserver**: "CLAIM: Route configuration, reverse proxy rules, static asset serving." Transitions to EXECUTING.
+
+8. All three execute independently. Clean division, no interrupts needed.
+
+The discussion unfolds through reactive cycles of MONITORING → DELIBERATING → MONITORING, each triggered by the previous agent's discuss message. Convergence happens naturally.
+
+#### 7.1.2 Aggressive claim (less mature LLM)
+
+A less sophisticated model — or one with an aggressive persona — may skip deliberation entirely:
+
+1. All three agents receive the task.
+
+2. **Backend** immediately: "CLAIM: I'll build the entire registration system — API, database, email verification." Transitions to EXECUTING without asking questions or waiting for others.
+
+3. **Frontend** enters DELIBERATING, sees backend's CLAIM. Two possible reactions:
+   - *Capable LLM*: "Backend claimed the API layer. CLAIM: I'll handle the registration form UI and verification landing page — the frontend pieces backend didn't claim." Transitions to EXECUTING.
+   - *Less capable LLM*: "CLAIM: I'll build the registration form." Claims a narrow slice and misses the verification landing page. Some work goes unclaimed.
+
+4. **Webserver** sees both CLAIMs and fills remaining gaps — or also claims aggressively, potentially overlapping with backend.
+
+The system still functions. Agents execute their claimed portions. If claims overlap, both agents produce work — wasteful but not a correctness failure. Results land on `done.*` and the swarm operator sees what was produced. If work was missed (no agent claimed the verification landing page), this surfaces as an incomplete result — a quality problem, not a system failure.
+
+#### 7.1.3 Simultaneous claims (race condition)
+
+If all three agents process the task at nearly the same time (before seeing each other's discuss messages):
+
+1. All three CLAIM simultaneously, each describing their full scope — potentially with significant overlap.
+
+2. Each transitions to EXECUTING without seeing the others' CLAIMs.
+
+3. The CLAIMs arrive in each agent's interrupt buffer during execution. At the next interrupt check, each agent sees what the others claimed.
+
+4. A capable LLM adjusts: "Backend also claimed the API routes — I'll focus on the frontend-specific pieces." A less capable LLM ignores the interrupt and produces overlapping work.
+
+This is the worst case for the collaboration model: all agents working in isolation with potential duplication. The interrupt mechanism provides a recovery path (agents can adjust after seeing others' CLAIMs), but it depends on the LLM being attentive to interrupt content. The Agentfile persona can mitigate this by instructing agents to review CLAIMs carefully, but the design cannot guarantee it.
 
 ### 7.2 Scenario: Mid-Execution Course Correction
 
-**Task submitted:** "Add real-time notifications to the dashboard."
+**Task submitted on `discuss.<task_id>`:** "Add real-time notifications to the dashboard."
 
-1. All three agents deliberate through several reactive cycles. Backend CLAIMs the notification API (REST), frontend CLAIMs the notification UI panel, webserver CLAIMs the routing.
+#### 7.2.1 Graceful adjustment (ideal)
 
-2. Frontend begins executing. After implementing the initial UI, it realizes REST polling will create a poor user experience for real-time updates. It publishes on `discuss.<task_id>`: "REST polling every 2 seconds is going to be janky. We should use WebSocket for the notification feed."
+1. Agents deliberate. Backend CLAIMs the notification API (REST), frontend CLAIMs the notification UI panel, webserver CLAIMs the routing.
 
-3. Backend is mid-execution, writing REST notification endpoints. At the next interrupt check (after its current tool calls complete), it sees the frontend's message in the interrupts block.
+2. Frontend, while executing, realizes REST polling creates a poor user experience. It publishes on `discuss.<task_id>`: "REST polling every 2 seconds is going to be janky. We should use WebSocket for the notification feed."
 
-4. Backend's LLM evaluates: the REST endpoints it has written are for fetching notification history — those are still valid. But the "new notification" push mechanism needs to change from REST to WebSocket. The LLM adjusts its remaining plan to implement a WebSocket handler alongside the REST history endpoint. Execution continues.
+3. Backend, mid-execution writing REST endpoints, receives the interrupt. It evaluates: the REST history endpoints are still valid, but the push mechanism needs to change to WebSocket. It adjusts its remaining plan and continues executing.
 
-5. Webserver also receives the interrupt. It evaluates: WebSocket requires an upgrade-capable proxy configuration. It adjusts its nginx config to support WebSocket upgrade headers on the `/ws/notifications` path. Execution continues.
+4. Webserver also receives the interrupt, adjusts its config to support WebSocket upgrade headers. Execution continues.
 
-6. All three agents complete execution with a coherent result — REST for history, WebSocket for real-time — despite the mid-execution design change.
+5. All three complete with a coherent result — REST for history, WebSocket for real-time.
 
-This scenario illustrates the interrupt mechanism's primary value: agents adapt to discoveries made by other agents during execution, without requiring a full stop and restart.
+#### 7.2.2 Interrupt ignored (less capable LLM)
+
+3. Backend receives the interrupt but the LLM does not recognize the implication. It treats the message as irrelevant ("I'm building an API, not a UI") and continues building the REST push endpoint.
+
+4. Backend completes and publishes a REST-only notification API on `done.*`. Frontend has built a WebSocket-based UI. The outputs are incompatible.
+
+This is a quality failure, not a system failure. The interrupt was delivered; the LLM failed to act on it. Mitigation: the interrupts block guidance (Section 4.3) explicitly instructs the LLM to evaluate how messages affect its current work. Stronger persona instructions can further emphasize cross-agent awareness. But ultimately, a model that ignores relevant interrupts will produce lower-quality swarm output — the same way a developer who ignores Slack messages produces integration failures.
+
+#### 7.2.3 Over-reaction (less calibrated LLM)
+
+3. Backend receives the interrupt about WebSocket. A poorly calibrated LLM panics: "The entire API design is changing. I need to start over." It abandons execution, discarding the perfectly valid REST history endpoints it already built.
+
+4. Backend re-enters DELIBERATING, publishes an abandonment explanation, and returns to MONITORING. Eventually it re-engages and rebuilds everything from scratch — including the REST endpoints it had already completed.
+
+This is a waste of compute but not a system failure. The design handles it correctly: abandonment transitions through DELIBERATING (explanation published), partial work is preserved on disk (the REST endpoints still exist as files), and re-engagement starts fresh. The loss is efficiency, not correctness. Mitigation: the interrupts block guidance frames the decision space — the LLM should adjust when possible and abandon only when its work is truly no longer viable. Persona instructions can reinforce this calibration.
 
 ### 7.3 Scenario: Execution with Discussion
 
-**Task submitted:** "Implement OAuth2 login with Google and GitHub providers."
+**Task submitted on `discuss.<task_id>`:** "Implement OAuth2 login with Google and GitHub providers."
 
-1. Agents deliberate through reactive cycles. Backend CLAIMs the OAuth2 flow implementation, frontend CLAIMs the login UI, webserver CLAIMs the callback route configuration.
+#### 7.3.1 Continue independent work while waiting (ideal)
 
-2. Backend begins executing. It implements the Google OAuth2 flow. At the next interrupt check, it finds a message from the frontend: "The design team wants to support 'Sign in with Apple' too. Apple's OAuth is significantly different — they require server-side token validation and have a unique key rotation mechanism."
+1. Backend CLAIMs OAuth2 flows, frontend CLAIMs the login UI, webserver CLAIMs callback routes.
 
-3. Backend's LLM evaluates: Apple OAuth adds complexity but doesn't invalidate the current work. The Google flow is already complete. However, the LLM has a question about key management. It publishes on `discuss.<task_id>`: "Adding Apple OAuth. Question: Apple's JWKS endpoint has reliability concerns — should I add a caching layer, or will webserver handle that at the proxy level?" It then continues executing the GitHub OAuth flow, which is independent of the Apple question.
+2. Backend implements Google OAuth. An interrupt arrives from frontend: "Design team wants Apple sign-in too. Apple requires server-side JWT validation with rotating keys."
 
-4. Frontend responds on discuss: "From the UI side, Apple requires a specific button style. I'll need the callback URL format."
+3. Backend evaluates: Apple adds complexity but doesn't invalidate current work. Google flow is complete. Backend publishes a question on `discuss.<task_id>`: "Apple's JWKS endpoint has reliability concerns — caching layer here or at the proxy?" It continues executing the GitHub OAuth flow, which is independent.
 
-5. Webserver responds on discuss: "I can add a caching proxy for Apple's JWKS endpoint. 1-hour cache with background refresh."
+4. Webserver and frontend respond on discuss. Backend receives the answers as future interrupts, incorporates them, and implements Apple OAuth.
 
-6. Backend finishes GitHub OAuth. At the next interrupt check, it receives the webserver's and frontend's responses. The question is answered — webserver handles JWKS caching. Backend proceeds to implement Apple OAuth with JWT validation. It publishes the callback URL format on discuss, answering frontend's question.
+5. All agents complete with aligned understanding. The backend never stopped working — it asked its question, continued on independent steps, and adapted when the answer arrived.
 
-7. All three agents complete with aligned understanding. The backend did not stop working — it asked its question, continued on independent work, and incorporated the answer when it arrived.
+#### 7.3.2 Blocked by ambiguity (less capable LLM)
 
-This scenario illustrates a key property of the three-state model: an agent can participate in discussion *during* execution by publishing questions on discuss (via tool calls) and receiving answers as future interrupts. There is no need for a separate "paused" state — the agent keeps working on what it can and adapts when answers arrive.
+3. Backend receives the Apple OAuth interrupt. Instead of identifying independent work (GitHub flow) it could continue with, the LLM treats the entire OAuth task as blocked: "I can't implement any more OAuth flows until the Apple question is resolved." It produces no tool calls.
+
+4. The execution loop idles — the LLM generates text-only responses ("waiting for clarification") with no tool calls. Each interrupt check finds the discuss responses, and eventually the LLM has its answer and resumes.
+
+This is the natural idle behavior described in Section 2.1. It works correctly — the agent waits, receives the answer, and continues. The cost is wasted time: the LLM could have been working on the independent GitHub flow. But the design does not require the LLM to identify independent work; it merely enables it. A less capable LLM simply takes longer to complete the same task.
 
 ### 7.4 Scenario: Abandonment and Re-engagement
 
-**Task submitted:** "Set up CI/CD pipeline with automated testing."
+**Task submitted on `discuss.<task_id>`:** "Set up CI/CD pipeline with automated testing."
 
-1. Agents deliberate. Backend CLAIMs the test suite and CI configuration, frontend CLAIMs frontend test setup, webserver CLAIMs the deployment pipeline.
+#### 7.4.1 Clean abandonment with explanation (ideal)
 
-2. Backend begins executing, setting up a GitHub Actions workflow with unit tests.
+1. Backend CLAIMs CI configuration, frontend CLAIMs test setup, webserver CLAIMs the deployment pipeline.
 
-3. An interrupt arrives from the swarm operator (via `discuss.<task_id>`): "We're migrating from GitHub to GitLab next week. Don't invest in GitHub-specific CI."
+2. Backend begins building a GitHub Actions workflow.
 
-4. Backend's LLM evaluates: the entire GitHub Actions workflow it is building will be obsolete. It decides to abandon execution. The executor transitions the agent to DELIBERATING, where it publishes: "Abandoning GitHub Actions workflow — not viable given GitLab migration. Partial work in .github/workflows/ may be useful as reference for GitLab CI syntax translation." Backend then transitions to MONITORING.
+3. Interrupt from the swarm operator: "We're migrating to GitLab next week. Don't invest in GitHub-specific CI."
 
-5. Frontend finishes its test setup (framework-agnostic, not affected by the CI migration). Webserver evaluates the same interrupt and also abandons, publishing its own explanation.
+4. Backend evaluates: the GitHub Actions work is obsolete. It abandons, publishing: "Abandoning GitHub Actions workflow — not viable given GitLab migration. Partial work in .github/workflows/ may be useful as reference." Transitions to MONITORING.
 
-6. Later, the swarm operator posts: "GitLab migration complete. Here are the repo URLs and CI runner details."
+5. Webserver evaluates the same interrupt, also abandons with explanation.
 
-7. Backend receives this message, enters DELIBERATING, reads the discussion history. It CLAIMs: "I'll set up the GitLab CI pipeline using the completed test suite. Can reference the GitHub Actions structure for pipeline design." Backend transitions to EXECUTING and begins fresh.
+6. Later, the operator posts: "GitLab migration complete. Here are the repo URLs." Backend re-enters DELIBERATING, CLAIMs the GitLab CI setup, and executes fresh.
 
-8. Backend executes, now building for GitLab CI.
+#### 7.4.2 Silent abandonment (less capable LLM)
 
-This scenario illustrates abandonment as a reversible disengagement. The agent stops work that is no longer viable, communicates why (so other agents can adapt), returns to MONITORING, and re-engages when circumstances change. The re-engagement is a fresh execution, not a resumption — there is no saved state to restore, which keeps the model simple.
+4. Backend decides to abandon but the LLM does not produce a clear explanation. It simply stops generating tool calls. The executor detects the end-of-turn signal with no meaningful output and transitions through DELIBERATING to MONITORING.
+
+5. The abandonment message published on `discuss.*` is vague or absent. Other agents do not understand why backend stopped. Webserver continues building a deployment pipeline for GitHub, unaware that the migration makes it obsolete — it didn't receive the operator's message as an interrupt (it arrived before webserver started executing), and backend didn't relay the concern.
+
+This is a degraded outcome. The system still functions — backend stopped, webserver will eventually finish and produce an obsolete pipeline, and the operator will notice. But the lack of a clear abandonment explanation prevents other agents from adapting. Mitigation: the interrupts block guidance states that abandonment explanations are mandatory. The executor can enforce this structurally — if the LLM signals abandonment without producing a discuss message, the executor can inject a generic one: "Agent backend abandoned execution of task t-xyz. No reason provided."
+
+#### 7.4.3 Failure to recognize obsolescence (less capable LLM)
+
+4. Backend receives the GitLab migration interrupt but the LLM does not recognize that GitHub Actions is GitHub-specific. It continues building the workflow, completes it, and publishes the result.
+
+5. The result is a fully functional GitHub Actions pipeline that will be useless after the GitLab migration.
+
+This is a pure LLM reasoning failure. The design delivered the interrupt; the model failed to draw the conclusion. There is no system-level mitigation — if the model cannot reason about the relationship between "GitLab migration" and "GitHub Actions," the collaboration model cannot compensate. The operator sees the result, recognizes the mismatch, and submits a new task.
 
 ### 7.5 Scenario: Dependency Chain
 
-**Task submitted:** "Build an API with tests and documentation."
+**Task submitted on `discuss.<task_id>`:** "Build an API with tests and documentation."
 
-1. All three agents enter deliberation via reactive cycles:
-   - **Backend**: "I'll build the API. Others will need my code before they can test or document. CLAIM: API implementation — routes, handlers, models." Backend transitions to EXECUTING.
-   - **Frontend**: "I have nothing to contribute to an API-only task." Frontend returns to MONITORING silently.
-   - **Webserver**: "I'll write the API documentation once the endpoints are defined. NEED_INFO: waiting for backend to define the API." Webserver returns to MONITORING.
+#### 7.5.1 Patient waiting (ideal)
 
-2. Backend executes, building the API. Webserver is in MONITORING — idle, but its swarm context updates as backend heartbeats arrive showing EXECUTING status.
+1. All three agents deliberate:
+   - **Backend**: "I'll build the API. Others will need my code first. CLAIM: API implementation." Transitions to EXECUTING.
+   - **Frontend**: "Nothing to contribute to an API task." Returns to MONITORING silently.
+   - **Webserver**: "I'll write documentation once endpoints are defined. NEED_INFO: waiting for backend." Returns to MONITORING.
 
-3. Backend completes and publishes its result on `done.*`. The result includes the API specification.
+2. Backend executes. Webserver is idle in MONITORING, swarm context updating from heartbeats.
 
-4. Webserver receives the `done.*` message, enters DELIBERATING. Its dependency is satisfied. It CLAIMs: "API documentation based on the implemented endpoints." Webserver transitions to EXECUTING.
+3. Backend completes, publishes result on `done.*` with the API specification.
 
-5. If a tester agent existed, it would follow the same pattern — staying in MONITORING with NEED_INFO until the API is built, then CLAIMing test development when the `done.*` message triggers a new deliberation.
+4. Webserver receives the `done.*` message, enters DELIBERATING. Dependency satisfied. CLAIMs: "API documentation based on implemented endpoints." Transitions to EXECUTING.
 
-This scenario illustrates that NEED_INFO followed by a return to MONITORING is a natural expression of dependency. The agent does not block or hold resources while waiting. It is genuinely idle in MONITORING, and the arrival of the dependency resolution (via `done.*`) triggers a new reactive cycle that leads to CLAIM and execution.
+NEED_INFO followed by a return to MONITORING is a natural expression of dependency. The agent does not block or hold resources while waiting.
+
+#### 7.5.2 Premature claim (less capable LLM)
+
+1. Webserver does not recognize the dependency. It CLAIMs immediately: "CLAIM: API documentation." Transitions to EXECUTING.
+
+2. Webserver begins executing but has no API specification to document. Two possible outcomes:
+   - *Somewhat capable LLM*: Recognizes it has nothing to document. Publishes on `discuss.*`: "I can't write documentation yet — no API spec available." Abandons and returns to MONITORING. Eventually re-engages when backend completes.
+   - *Less capable LLM*: Hallucinates an API specification and writes documentation for endpoints that don't exist. Publishes the result. The output is useless.
+
+The first outcome is the design working as intended — the agent discovers the dependency during execution, abandons with an explanation, and re-engages later. The idle time is wasted, but the final output is correct.
+
+The second outcome is a model quality failure. The design cannot prevent an LLM from hallucinating content. The result lands on `done.*`, and the operator or other agents must recognize that the documentation doesn't match the actual API. A future enhancement might have the documentation agent cross-reference its output against the `done.*` results from the backend agent, but this is beyond the current design scope.
+
+### 7.6 Observations on LLM Quality
+
+The scenarios above reveal a consistent pattern: the collaboration design provides the mechanisms — interrupts, discussion channels, swarm context — but the quality of collaboration depends on the quality of the LLM's reasoning. The design degrades gracefully rather than failing catastrophically:
+
+- **Best case (capable LLM):** Agents deliberate thoughtfully, divide work cleanly, adapt to interrupts, and produce coherent results.
+- **Middle case (adequate LLM):** Agents may skip deliberation, react slowly to interrupts, or idle when they could be working on independent tasks. Results are correct but the process is less efficient.
+- **Worst case (weak LLM):** Agents claim aggressively, ignore interrupts, hallucinate content, or fail to explain abandonment. Results may be duplicated, incomplete, or incorrect.
+
+The design cannot compensate for fundamental reasoning failures. What it can do — and does — is ensure that every agent has access to the information it needs to make good decisions. The interrupt mechanism delivers relevant messages. The swarm context provides situational awareness. The deliberation prompts frame the decision space. Whether the LLM uses this information well is a function of model capability, not system design.
+
+Persona instructions in the Agentfile are the primary lever for steering LLM behavior toward better collaboration. Instructions like "always review other agents' CLAIMs before deciding your scope" and "evaluate interrupts carefully before deciding they are irrelevant" can significantly improve outcomes with models that are capable enough to follow instructions but not insightful enough to derive this behavior independently.
 
 ---
 
