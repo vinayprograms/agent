@@ -5,9 +5,13 @@ NAME tester
 INPUT task
 
 GOAL test """
-Write comprehensive Go tests for: $task
-Include table-driven tests, edge cases, and error conditions.
-Output ONLY the test code, no explanations.
+Here is a task for which you are expected to write test scripts:
+
+---
+$task
+---
+
+Write comprehensive tests in the language that task asks for. If language is not specified, discuss with other agents to figure it out. Tests must be written across all 6 categories of testing - unit tests, integration tests, system tests, performance tests, failure mode tests and security tests. Apply testing patterns like equivalence partitioning, boundary conditions analysis, edge cases, and error condition. Output ONLY the test code, no explanations.
 """ -> test_code
 
 RUN main USING test

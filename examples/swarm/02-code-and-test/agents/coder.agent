@@ -5,9 +5,13 @@ NAME coder
 INPUT task
 
 GOAL code """
-Write clean, idiomatic Go code for: $task
-Include proper error handling and comments.
-Output ONLY the code, no explanations.
+Here is a task you must work on:
+
+---
+$task
+---
+
+Write clean, well structured code in whatever language the task requires (Go, Python, Javascript, HTML, CSS, etc). For designing, rely on GRASP, YAGNI and SOLID patterns. Include proper error handling and comments. Output ONLY the code, no explanations.
 """ -> source_code
 
 RUN main USING code
