@@ -223,8 +223,17 @@ func (s *webServer) persistDiscussContribution(subject string, data []byte) {
 	var result tasks.TaskResult
 	if err := json.Unmarshal(data, &result); err == nil && result.AgentID != "" {
 		entryType := "execute"
-		if result.Metadata != nil && result.Metadata["type"] == "comment" {
-			entryType = "comment"
+		if result.Metadata != nil {
+			switch result.Metadata["type"] {
+			case "comment":
+				entryType = "comment"
+			case "deliberation":
+				if signal, ok := result.Metadata["signal"]; ok {
+					entryType = strings.ToLower(signal) // "claim" or "need_info"
+				} else {
+					entryType = "deliberation"
+				}
+			}
 		}
 		content := ""
 		if s, ok := result.Outputs.(string); ok {

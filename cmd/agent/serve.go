@@ -848,19 +848,22 @@ AGENT PROFILE:
 TASK:
 %s%s
 
-Evaluate the task and the current swarm state. Decide your action:
-- CLAIM — this task needs your capabilities and you are ready to take responsibility for a specific portion
-- NEED_INFO — you have a question, insight, or need information before you can commit
-- SKIP — the task doesn't need your skills
+Evaluate the task and the current swarm state. Decide ONE action:
 
-Reply format — first line is the decision, remaining lines are your response to the swarm:
-CLAIM: <what specific portion of work you are taking responsibility for>
-NEED_INFO: <your question, insight, or dependency that needs resolution>
+- CLAIM — you are READY to start working RIGHT NOW. You have NO unanswered questions and NO unresolved dependencies. You will immediately begin executing after claiming.
+- NEED_INFO — you have questions, dependencies, or insights to share BEFORE you can commit to working. Use this if you need clarification on requirements, technology choices, or anything else before starting. Do NOT claim if you have questions.
+- SKIP — the task doesn't need your skills.
+
+IMPORTANT: If your response contains ANY questions or "I need to know..." statements, you MUST choose NEED_INFO, not CLAIM. CLAIM means you start working immediately with zero open questions.
+
+Reply format — first line is EXACTLY the decision keyword followed by a colon and your message:
+CLAIM: <what specific work you are taking on — no questions allowed>
+NEED_INFO: <your question or dependency>
 SKIP
 
 Examples:
-CLAIM: I'll handle the REST API routes, request validation, and database queries.
-NEED_INFO: What email service are we using? I need this before I can implement the verification flow.
+CLAIM: I'll implement the REST API routes with JWT authentication and PostgreSQL queries.
+NEED_INFO: Which OAuth2 providers should I support? I need this before I can implement the auth flow.
 SKIP`, resumeSummary, taskText, swarmCtx)
 
 	llmAdapter := &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
