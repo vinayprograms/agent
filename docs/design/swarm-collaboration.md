@@ -88,7 +88,11 @@ The only outbound activity during MONITORING is heartbeat emission, which is a t
 
 An agent enters MONITORING when it first joins the swarm, when it completes a task, or when it abandons execution. MONITORING is the stable state — the state the agent always returns to between engagements.
 
-When an agent joins an active swarm, JetStream replays existing messages on its subscribed subjects. The agent consumes these replayed messages to build its swarm context — agent states, task discussion logs, completed work — but does not trigger DELIBERATING for historical messages. This is the same as a human joining a meeting late: you catch up silently, then participate going forward. Only messages arriving after the agent finishes its replay are treated as live triggers for deliberation.
+When an agent starts, it goes through a **REPLAY** phase before entering the collaboration state machine. JetStream persists all messages, so every agent startup involves replaying the stream history. During REPLAY, the agent consumes all messages up to the stream's current last sequence number, building its swarm context — agent states, task discussion logs, completed work — without triggering deliberation for individual messages.
+
+Once replay completes, the agent transitions to DELIBERATING — not MONITORING. The agent now has full awareness of the swarm's state: which tasks exist, what has been claimed, what remains open, what questions are unanswered. It evaluates this state against its own capability and decides whether to CLAIM unclaimed work, respond to open questions, or settle into MONITORING because nothing requires its attention. This is the same as joining a meeting late: you catch up, then you jump in where you're needed — you don't wait for someone to explicitly address you.
+
+For the first agent in a fresh swarm, the stream is empty, REPLAY completes immediately, and the initial DELIBERATING cycle finds nothing to act on — the agent enters MONITORING and waits for the first task.
 
 **DELIBERATING.** The agent is evaluating whether and how to respond to an incoming message. Deliberation is **transient** — it is triggered by the arrival of a message on `discuss.*` or `work.<name>.*` (or `work.<capability>.*` for directed assignments), and it concludes with one of three outcomes:
 
