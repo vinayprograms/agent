@@ -938,7 +938,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 	start := time.Now()
 
 	// Build system message with skills context
-	systemMsg := TersenessGuidance + "\nYou are a helpful assistant executing a workflow goal."
+	systemMsg := InformationProcessingGuidance + TersenessGuidance + "\nYou are a helpful assistant executing a workflow goal."
 
 	// Inject security research framing if enabled
 	if prefix := e.securityResearchPrefix(); prefix != "" {
@@ -1334,7 +1334,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 				systemPrompt = fmt.Sprintf("You are a %s. Complete the task and return your findings.", role)
 			}
 			// Prepend terseness guidance
-			systemPrompt = TersenessGuidance + systemPrompt
+			systemPrompt = InformationProcessingGuidance + TersenessGuidance + systemPrompt
 
 			// Use spawnAgentWithPrompt which shares code with dynamic agents
 			// Pass agent's supervision flag - agent is supervised if it has SUPERVISED or inherits from goal
@@ -1394,7 +1394,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	)
 
 	messages := []llm.Message{
-		{Role: "system", Content: TersenessGuidance + "You are synthesizing multiple agent responses."},
+		{Role: "system", Content: InformationProcessingGuidance + TersenessGuidance + "You are synthesizing multiple agent responses."},
 		{Role: "user", Content: synthesisPrompt},
 	}
 

@@ -33,7 +33,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	ctx = withAgentIdentity(ctx, role, role)
 
 	// Build system prompt for the sub-agent
-	systemPrompt := TersenessGuidance + fmt.Sprintf("You are a %s. Complete the task and return your findings.", role)
+	systemPrompt := InformationProcessingGuidance + TersenessGuidance + fmt.Sprintf("You are a %s. Complete the task and return your findings.", role)
 
 	// Inject security research framing if enabled
 	if prefix := e.securityResearchPrefix(); prefix != "" {
@@ -687,16 +687,14 @@ When explaining security concepts:
 `, e.securityResearchScope)
 }
 
-// SwarmReasoningGuidance is injected in swarm mode to improve information-processing quality.
+// InformationProcessingGuidance is prepended to all system prompts.
 // Based on Shannon's information theory: the LLM should weight surprising/contradictory
-// signals more heavily than routine/expected ones across all context blocks.
-const SwarmReasoningGuidance = `INFORMATION PROCESSING (Shannon's principle):
-The information value of a signal is proportional to how much it surprises you relative to your current understanding. Apply this when processing all context — interrupts, discussion messages, swarm state, CLAIMs:
-- Contradictions, novel constraints, and unexpected changes carry HIGH information. A single interrupt announcing a technology migration may invalidate your entire plan. Weight it accordingly.
-- Routine confirmations, repeated agreements, and expected status updates carry LOW information. Do not let volume of low-value signals drown out rare high-value ones.
-- When evaluating interrupts during execution: one message that contradicts your approach matters more than ten that confirm it.
-- When deliberating: a single dissenting perspective may carry more insight than unanimous agreement.
-Allocate your reasoning effort proportionally to information content, not message count.
+// signals more heavily than routine/expected ones across all context it receives.
+const InformationProcessingGuidance = `INFORMATION PROCESSING (Shannon's principle):
+The information value of a signal is proportional to how much it surprises you relative to your current understanding. Apply this to everything in your context — tool results, prior goals, corrections, instructions, any structured block:
+- Contradictions, novel constraints, and unexpected changes carry HIGH information. Weight them accordingly.
+- Routine confirmations, expected results, and repeated patterns carry LOW information. Do not let volume of low-value content drown out rare high-value signals.
+- Allocate your reasoning effort proportionally to information content, not volume.
 
 `
 
