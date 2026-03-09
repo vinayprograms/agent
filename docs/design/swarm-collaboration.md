@@ -76,7 +76,7 @@ The key takeaway: **`discuss.*` is the collaboration channel. `work.*` is the as
 
 ![Agent State Machine](diagrams/state-machine.png)
 
-*Figure 1: The three-state agent lifecycle. MONITORING is the stable resting state. DELIBERATING is transient — triggered by each incoming message, producing a single decision, then returning to MONITORING. EXECUTING runs the agent loop with interrupt awareness. The dashed abandon path routes through DELIBERATING (to publish an explanation) before returning to MONITORING.*
+*Figure 1: The three-state agent lifecycle. MONITORING is the stable resting state. DELIBERATING is transient — triggered by each incoming message, producing a single decision, then returning to MONITORING. EXECUTING runs the agent loop with interrupt awareness. Both completion and abandonment follow the same path: EXECUTING → MONITORING, with the final output published to `discuss.*` and `done.*`. The EXECUTING → DELIBERATING path is for mid-task questions only.*
 
 At any moment, a swarm agent is in exactly one of three states. These states govern how the agent processes incoming messages, whether it participates in discussion, and whether it is actively executing work.
 
@@ -87,6 +87,8 @@ At any moment, a swarm agent is in exactly one of three states. These states gov
 The only outbound activity during MONITORING is heartbeat emission, which is a timer-driven infrastructure concern independent of the agent's logical state. The agent does not update swarm context as a deliberate action; rather, the NATS message handler passively maintains the in-memory swarm context data structure as messages arrive on subscribed subjects. This is a side effect of message receipt, not an activity of the MONITORING state itself.
 
 An agent enters MONITORING when it first joins the swarm, when it completes a task, or when it abandons execution. MONITORING is the stable state — the state the agent always returns to between engagements.
+
+When an agent joins an active swarm, JetStream replays existing messages on its subscribed subjects. The agent consumes these replayed messages to build its swarm context — agent states, task discussion logs, completed work — but does not trigger DELIBERATING for historical messages. This is the same as a human joining a meeting late: you catch up silently, then participate going forward. Only messages arriving after the agent finishes its replay are treated as live triggers for deliberation.
 
 **DELIBERATING.** The agent is evaluating whether and how to respond to an incoming message. Deliberation is **transient** — it is triggered by the arrival of a message on `discuss.*` or `work.<name>.*` (or `work.<capability>.*` for directed assignments), and it concludes with one of three outcomes:
 
@@ -106,6 +108,8 @@ The execution loop is iterative. At the end of each iteration — after all tool
 
 This design has an important degenerate case: when no interrupts arrive, the buffer is always empty, the interrupts block is never included, and the execution loop behaves identically to the current non-collaborative agent loop. The collaboration machinery has zero overhead when there is nothing to collaborate about.
 
+When the execution loop terminates — whether through task completion or abandonment — the executor publishes the LLM's final text output to both `discuss.<task_id>` and `done.<capability>.<task_id>`, and the agent transitions to MONITORING. The content of the message is what distinguishes the two outcomes: a completion posts a result summary, an abandonment explains why the agent stopped. The flow is identical in both cases.
+
 ### 2.2 Transitions
 
 The state machine has five transitions:
@@ -120,9 +124,9 @@ The state machine has five transitions:
 
 **EXECUTING → DELIBERATING.** Triggered when the agent, during execution, needs to communicate something to the swarm mid-task — a question, a constraint it discovered, or a dependency it needs resolved. The agent transitions to DELIBERATING, publishes its message on `discuss.<task_id>` (or `work.<name>.*` for a directed message), and returns to MONITORING. The agent does not resume its prior execution. If the situation resolves and the agent's capabilities are still relevant, a subsequent message will trigger a new MONITORING → DELIBERATING → EXECUTING cycle — a fresh execution, not a continuation.
 
-Note that abandonment does not use this transition. When an agent decides to stop (whether due to completion or abandonment), the agentic loop terminates naturally (no tool calls) and the EXECUTING → MONITORING transition handles it. The EXECUTING → DELIBERATING path exists specifically for cases where the agent needs to *say something to the swarm* before stopping — and the message needs to be part of a deliberation cycle, not a final output.
+Note that both completion and abandonment use the EXECUTING → MONITORING transition, not this one. The EXECUTING → DELIBERATING path exists specifically for mid-task communication where the agent needs to say something *and then the swarm needs to react before work can continue* — a deliberation cycle, not a final output.
 
-This transition deserves careful attention. When an agent abandons execution, it does not silently disappear. It communicates the reason for abandonment so that other agents can update their understanding of the problem. The abandon message might reveal a constraint that other agents have not encountered ("Apple's OAuth requires server-side JWT validation with rotating keys — this changes the token verification architecture"), flag a dependency ("I can't proceed until the database schema is finalized"), or declare that the work is no longer viable ("the migration to GitLab makes this GitHub Actions workflow obsolete"). Other agents, upon receiving this message, will enter their own DELIBERATING state and decide how to respond.
+Regardless of which transition an agent takes out of EXECUTING, the agent does not silently disappear. Completion posts a result summary; abandonment explains the reason. In either case, the message is published on `discuss.<task_id>` (where all agents see it) and `done.<capability>.<task_id>` (for infrastructure). Other agents, upon receiving the message, enter their own DELIBERATING state and decide how to respond. An abandonment message might reveal a constraint ("Apple's OAuth requires server-side JWT validation with rotating keys"), flag a dependency ("I can't proceed until the database schema is finalized"), or declare obsolescence ("the migration to GitLab makes this GitHub Actions workflow obsolete").
 
 Partial work produced before abandonment is not cleaned up. Files written, code generated, configurations created — all remain in place. Other agents may find partial work useful as a starting point if the task is later re-engaged.
 
@@ -265,9 +269,8 @@ When the interrupt buffer contains messages, they are formatted into an XML bloc
 ```xml
 <interrupts>
   <context>
-    Current execution state: implementing REST API route handlers.
-    Completed: schema definition (step 1), route scaffolding (step 2).
-    Remaining: handler implementation (step 3), integration wiring (step 4).
+    Current goal: Implement REST API route handlers with request
+    validation and database query integration.
   </context>
 
   <messages>
@@ -522,7 +525,7 @@ This is a quality failure, not a system failure. The interrupt was delivered; th
 
 4. Backend re-enters DELIBERATING, publishes an abandonment explanation, and returns to MONITORING. Eventually it re-engages and rebuilds everything from scratch — including the REST endpoints it had already completed.
 
-This is a waste of compute but not a system failure. The design handles it correctly: abandonment transitions through DELIBERATING (explanation published), partial work is preserved on disk (the REST endpoints still exist as files), and re-engagement starts fresh. The loss is efficiency, not correctness. Mitigation: the interrupts block guidance frames the decision space — the LLM should adjust when possible and abandon only when its work is truly no longer viable. Persona instructions can reinforce this calibration.
+This is a waste of compute but not a system failure. The design handles it correctly: the loop terminates, the abandonment explanation is published to `discuss.*` and `done.*`, partial work is preserved on disk (the REST endpoints still exist as files), and re-engagement starts fresh. The loss is efficiency, not correctness. Mitigation: the interrupts block guidance frames the decision space — the LLM should adjust when possible and abandon only when its work is truly no longer viable. Persona instructions can reinforce this calibration.
 
 ### 7.3 Scenario: Execution with Discussion
 
@@ -568,7 +571,7 @@ This is the natural idle behavior described in Section 2.1. It works correctly �
 
 #### 7.4.2 Silent abandonment (less capable LLM)
 
-4. Backend decides to abandon but the LLM does not produce a clear explanation. It simply stops generating tool calls. The executor detects the end-of-turn signal with no meaningful output and transitions through DELIBERATING to MONITORING.
+4. Backend decides to abandon but the LLM does not produce a clear explanation. It simply stops generating tool calls. The executor publishes the vague output to `discuss.*` and `done.*`, and transitions to MONITORING.
 
 5. The abandonment message published on `discuss.*` is vague or absent. Other agents do not understand why backend stopped. Webserver continues building a deployment pipeline for GitHub, unaware that the migration makes it obsolete — it didn't receive the operator's message as an interrupt (it arrived before webserver started executing), and backend didn't relay the concern.
 
@@ -632,6 +635,8 @@ Persona instructions in the Agentfile are the primary lever for steering LLM beh
 A task is considered complete when every agent that published a CLAIM for that task has subsequently published a DONE message on `discuss.<task_id>` and returned to MONITORING. The swarm tracks this through the discuss message log: CLAIMs create obligations, DONE messages fulfill them. When all obligations are fulfilled and no agent is EXECUTING or DELIBERATING for the task, the task is complete.
 
 There is no explicit "task complete" signal broadcast to the swarm — completion is an observable property of the swarm state, not a message. External consumers (the swarm UI, monitoring systems) can determine task completion by watching `done.*` publications against known CLAIMs.
+
+If an agent crashes after CLAIMing but before posting its outcome, the task remains incomplete by this definition — the CLAIM obligation is never fulfilled. The swarm cannot self-heal this; it surfaces as an incomplete result during human review. See Section 10 (Agent crash recovery) for further discussion.
 
 ---
 
