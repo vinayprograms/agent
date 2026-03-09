@@ -133,7 +133,7 @@ func (m tuiModel) View() string {
 	agentLines := []string{styleHeader.Render("Agents")}
 	for _, ag := range m.agents {
 		status := ag.status
-		if status == "idle" {
+		if status == "monitoring" || status == "idle" {
 			status = styleIdle.Render(status)
 		} else {
 			status = styleBusy.Render(status)

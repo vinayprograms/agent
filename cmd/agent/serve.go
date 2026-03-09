@@ -320,7 +320,7 @@ func (a *serviceAgent) runBusMode() error {
 		Bus:           natsBus,
 		AgentID:       a.agentID,
 		Interval:      heartbeatInterval,
-		InitialStatus: "idle",
+		InitialStatus: "monitoring",
 	})
 	if err != nil {
 		return fmt.Errorf("creating heartbeat sender: %w", err)
@@ -934,9 +934,9 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 
 	// Update heartbeat status
 	if a.heartbeat != nil {
-		a.heartbeat.SetStatus("busy")
+		a.heartbeat.SetStatus("executing")
 		a.heartbeat.SetLoad(1.0)
-		a.heartbeat.SetMetadata("busy_since", fmt.Sprintf("%d", time.Now().UnixMilli()))
+		a.heartbeat.SetMetadata("executing_since", fmt.Sprintf("%d", time.Now().UnixMilli()))
 		a.heartbeat.SetMetadata("current_task", task.TaskID)
 	}
 
@@ -945,9 +945,9 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 
 	// Update heartbeat status
 	if a.heartbeat != nil {
-		a.heartbeat.SetStatus("idle")
+		a.heartbeat.SetStatus("monitoring")
 		a.heartbeat.SetLoad(0.0)
-		a.heartbeat.SetMetadata("busy_since", "")
+		a.heartbeat.SetMetadata("executing_since", "")
 		a.heartbeat.SetMetadata("current_task", "")
 	}
 
