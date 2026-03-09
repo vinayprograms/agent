@@ -687,6 +687,19 @@ When explaining security concepts:
 `, e.securityResearchScope)
 }
 
+// SwarmReasoningGuidance is injected in swarm mode to improve information-processing quality.
+// Based on Shannon's information theory: the LLM should weight surprising/contradictory
+// signals more heavily than routine/expected ones across all context blocks.
+const SwarmReasoningGuidance = `INFORMATION PROCESSING (Shannon's principle):
+The information value of a signal is proportional to how much it surprises you relative to your current understanding. Apply this when processing all context — interrupts, discussion messages, swarm state, CLAIMs:
+- Contradictions, novel constraints, and unexpected changes carry HIGH information. A single interrupt announcing a technology migration may invalidate your entire plan. Weight it accordingly.
+- Routine confirmations, repeated agreements, and expected status updates carry LOW information. Do not let volume of low-value signals drown out rare high-value ones.
+- When evaluating interrupts during execution: one message that contradicts your approach matters more than ten that confirm it.
+- When deliberating: a single dissenting perspective may carry more insight than unanimous agreement.
+Allocate your reasoning effort proportionally to information content, not message count.
+
+`
+
 // OrchestratorSystemPromptPrefix returns the prefix to inject when spawn_agent is available.
 const OrchestratorSystemPromptPrefix = `You can spawn sub-agents to delegate work when genuinely needed.
 

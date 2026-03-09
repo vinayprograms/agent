@@ -30,7 +30,7 @@ This model has three fundamental deficiencies:
 
 ### 1.2 Design Principles
 
-The collaboration model presented here is guided by four principles:
+The collaboration model presented here is guided by five principles:
 
 **Agents are participants, not workers.** A worker receives instructions and produces output. A participant engages with the problem, discusses approaches with peers, adapts to changing circumstances, and takes ownership of a self-determined portion of the work. The collaboration model treats agents as the latter.
 
@@ -39,6 +39,8 @@ The collaboration model presented here is guided by four principles:
 **Awareness is continuous, not episodic.** An agent should always have access to what is happening in the swarm — who is working on what, what decisions have been made, what remains unresolved. This awareness should be maintained passively, without requiring the agent to explicitly request it.
 
 **Coordination emerges from communication, not from central control.** There is no dispatcher that assigns work to agents. Agents observe the swarm state, participate in discussion, and self-select their contributions. The NATS messaging infrastructure provides the communication substrate; the agents provide the intelligence.
+
+**Information value is proportional to surprise.** Shannon's information theory provides the guiding heuristic for how agents allocate reasoning effort across their inputs. A signal's information content is inversely proportional to its probability — routine confirmations ("sounds good," repeated agreements) carry almost no information, while contradictions, novel constraints, and unexpected changes carry high information. An interrupt announcing a technology migration matters more than ten status heartbeats. A single dissenting CLAIM matters more than five agreeing ones. This principle applies everywhere an agent processes context: during deliberation (weighting discussion messages), during interrupt evaluation (deciding whether to adjust or continue), and during context summarization (preserving high-entropy signals, compressing low-entropy consensus). It is injected into the agent's system prompt so that the LLM itself applies this heuristic when reasoning about the XML context blocks it receives.
 
 ### 1.3 NATS Subject Routing
 
