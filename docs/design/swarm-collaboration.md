@@ -221,6 +221,25 @@ This injection point is chosen for three reasons. First, it avoids the complexit
 
 The third point deserves emphasis. If the LLM's previous turn was intended to be the final one — producing the task result — the interrupt check still occurs before that result is published. The LLM receives both its tool results and the new interrupt messages, and can decide whether the result is still valid or whether the interrupts necessitate further work. Completion is never premature.
 
+In pseudocode, the complete execution loop is:
+
+```
+loop:
+  send messages to LLM
+  receive response (text + tool calls)
+  if abandonment signaled: exit loop → DELIBERATING
+  execute tool calls
+  collect results
+  drain interrupt buffer
+  if interrupts present:
+    format interrupts block
+    add to messages
+  if stop_reason == "end_turn" and no interrupts: break
+  add results to messages
+```
+
+**Solo agent compatibility.** When an agent runs outside a swarm (no NATS connection), the interrupt buffer is never created (nil) and the buffer drain check short-circuits in nanoseconds. No swarm context goroutine starts, no deliberation loop is entered, and the state machine collapses to a single state (EXECUTING). The executor produces identical behavior to a non-collaborative agent. The collaboration model is purely additive — it activates only when NATS subscriptions exist, which only happens in swarm mode.
+
 ### 4.3 The Interrupts Block
 
 When the interrupt buffer contains messages, they are formatted into an XML block and included in the next LLM turn. The block has three components:
@@ -607,72 +626,7 @@ collaboration:
 
 ---
 
-## 9. Relationship to Existing Architecture
-
-The collaboration model builds on top of the existing swarm infrastructure rather than replacing it. This section maps the new concepts to existing code structures.
-
-### 9.1 NATS Subjects
-
-No new NATS subjects are required. The existing subject hierarchy provides all the communication channels the collaboration model needs. The routing semantics described in Section 1.3 apply throughout:
-
-- **Task submission for collaboration** → `discuss.<task_id>` (broadcast to all agents)
-- **Directed task assignment** → `work.<capability>.<task_id>` (load-balanced to one agent per capability)
-- **Agent-to-agent messages** → `work.<name>.<task_id>` (directed to a specific agent)
-- **Deliberation and discussion** → `discuss.<task_id>` (broadcast)
-- **CLAIMs** → `discuss.<task_id>` (broadcast, so all agents see who claimed what)
-- **Interrupt sources** → `discuss.<task_id>` messages arriving during execution
-- **Abandonment explanations** → `discuss.<task_id>` (broadcast) or `work.<name>.*` (if targeted)
-- **Completion results** → `done.<capability>.<task_id>` (infrastructure only — agents do not subscribe)
-- **Agent status** → `heartbeat.<name>` (broadcast, builds swarm context)
-
-### 9.2 Agentfile
-
-No changes to Agentfile syntax. The agent's persona, goals, and workflow steps remain as defined. The collaboration model changes how the executor *engages with* the Agentfile — goals and steps become a starting strategy that can be adapted based on interrupts — but the Agentfile format itself is untouched.
-
-### 9.3 Executor
-
-The executor is the primary code change. The current execution loop:
-
-```
-loop:
-  send messages to LLM
-  receive response (text + tool calls)
-  execute tool calls
-  collect results
-  if stop_reason == "end_turn": break
-  add results to messages
-```
-
-Becomes:
-
-```
-loop:
-  send messages to LLM
-  receive response (text + tool calls)
-  if abandonment signaled: exit loop → DELIBERATING
-  execute tool calls
-  collect results
-  drain interrupt buffer
-  if interrupts present:
-    format interrupts block
-    add to messages
-  if stop_reason == "end_turn" and no interrupts: break
-  add results to messages
-```
-
-The changes are minimal in code terms: a buffer drain between tool result collection and the next LLM invocation, and an abandonment check on LLM responses. The complexity lies not in the mechanism but in the prompt engineering: the interrupts block, the guidance framework, and the context management that keeps the conversation coherent.
-
-**Solo agent compatibility.** When an agent runs outside a swarm (`agent run` with no NATS connection), the interrupt buffer is never created (nil), the swarm context goroutine is never started, and the deliberation loop is never entered. The buffer drain check short-circuits immediately on a nil buffer — zero overhead. The executor behaves identically to the pre-collaboration execution loop. The state machine collapses to a single state (EXECUTING) with no transitions. This is by design: the collaboration model is additive. It activates only when NATS subscriptions exist, which only happens in swarm mode.
-
-### 9.4 Triage
-
-The current triage mechanism (similarity scoring + LLM decision) becomes the entry gate to deliberation rather than the entry gate to execution. Its role narrows: instead of deciding EXECUTE/COMMENT/SKIP, it decides only whether the incoming message is relevant enough to trigger DELIBERATING. The richer decisions — what to say, what to claim, how to participate — are made during deliberation itself.
-
-Note that triage applies primarily to `discuss.*` messages, where the agent must determine relevance from content. For `work.<capability>.*` and `work.<name>.*` messages, relevance is implicit — NATS routed the message to this agent, so it is always relevant and always triggers DELIBERATING.
-
----
-
-## 10. Open Questions
+## 9. Open Questions
 
 Several design questions remain unresolved. They are captured here for future consideration.
 
