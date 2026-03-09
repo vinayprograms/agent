@@ -40,6 +40,26 @@ The collaboration model presented here is guided by four principles:
 
 **Coordination emerges from communication, not from central control.** There is no dispatcher that assigns work to agents. Agents observe the swarm state, participate in discussion, and self-select their contributions. The NATS messaging infrastructure provides the communication substrate; the agents provide the intelligence.
 
+### 1.3 NATS Subject Routing
+
+The swarm uses four NATS subject families. Three of them — `work.*`, `discuss.*`, and `done.*` — carry task-related messages. The fourth — `heartbeat.*` — carries agent status. Understanding the routing semantics of each is essential, because the choice of subject determines *who sees the message*, which directly affects collaboration.
+
+**`discuss.<task_id>` — broadcast to all agents.** Every agent in the swarm receives every message published to `discuss.*`. This is the primary channel for collaboration: task submission, deliberation, questions, status updates, and abandonment explanations. When a task requires multiple agents to deliberate and self-select their roles, it is submitted on `discuss.*` so that all agents can participate.
+
+**`work.<capability>.<task_id>` — load-balanced within a capability.** Agents subscribe to `work.<capability>.*` using NATS queue groups. When a message arrives, NATS delivers it to exactly one agent within the matching queue group — the one with the least pending messages. If a swarm has three frontend agents, only one of them receives a message on `work.frontend.*`. The other two never see it.
+
+This has a critical implication for collaboration: **`work.<capability>.*` is not suitable for tasks that require multi-agent deliberation.** The message reaches only one agent per capability, so other agents cannot participate in discussion or self-select their roles. Use `work.<capability>.*` when you already know which capability should handle a task and want NATS to select the best available agent — effectively bypassing deliberation for directed assignment.
+
+There is a subtlety when the capability segment is omitted or wildcarded. A message published to a subject that matches multiple capability queue groups — for example, if agents subscribe with overlapping patterns — will be delivered to one agent *per matching queue group*. In a swarm where each agent subscribes to a distinct capability (`work.code.*`, `work.test.*`, `work.infra.*`), a broadly-targeted work message reaches one agent per capability. This resembles a broadcast, but it is not: if multiple agents share the same capability, only one per capability receives the message. For true broadcast semantics, use `discuss.*`.
+
+**`work.<name>.<task_id>` — directed to a specific agent.** When an agent subscribes to `work.<name>.*` (where `name` is its unique agent name rather than a shared capability), messages on this subject reach that specific agent. This is the channel for agent-to-agent private communication: "hey backend, here's the callback URL format you asked about." The sending agent resolves the target name from the agent directory in swarm context (Section 5.2).
+
+**`done.<capability>.<task_id>` — completion broadcast.** Published when an agent finishes execution. All agents receive these messages, allowing them to update their swarm context and trigger dependent work.
+
+**`heartbeat.<name>` — agent status.** Periodic status updates from each agent. All agents receive these, maintaining the live agent directory in swarm context.
+
+The key takeaway: **`discuss.*` is the collaboration channel. `work.*` is the assignment channel.** Tasks that need deliberation go to `discuss.*`. Tasks that need direct execution go to `work.<capability>.*`. Agent-to-agent messages go to `work.<name>.*`. The design doc uses these channels accordingly in all subsequent sections and scenarios.
+
 ---
 
 ## 2. The Agent State Machine
@@ -52,13 +72,13 @@ At any moment, a swarm agent is in exactly one of three states. These states gov
 
 ### 2.1 States
 
-**MONITORING.** The agent is idle, listening to all NATS subjects it is subscribed to — `work.*`, `discuss.*`, `done.*`, `heartbeat.*`. It performs no outbound communication and takes no action. MONITORING is the agent's resting state — the state it occupies when it has no task to deliberate on and no work to execute.
+**MONITORING.** The agent is idle, listening to all NATS subjects it is subscribed to — `discuss.*`, `work.<capability>.*`, `work.<name>.*`, `done.*`, `heartbeat.*`. It performs no outbound communication and takes no action. MONITORING is the agent's resting state — the state it occupies when it has no task to deliberate on and no work to execute.
 
 The only outbound activity during MONITORING is heartbeat emission, which is a timer-driven infrastructure concern independent of the agent's logical state. The agent does not update swarm context as a deliberate action; rather, the NATS message handler passively maintains the in-memory swarm context data structure as messages arrive on subscribed subjects. This is a side effect of message receipt, not an activity of the MONITORING state itself.
 
 An agent enters MONITORING when it first joins the swarm, when it completes a task, or when it abandons execution. MONITORING is the stable state — the state the agent always returns to between engagements.
 
-**DELIBERATING.** The agent is evaluating whether and how to respond to an incoming message. Deliberation is **transient** — it is triggered by the arrival of a message on `work.*` or `discuss.*`, and it concludes with one of three outcomes:
+**DELIBERATING.** The agent is evaluating whether and how to respond to an incoming message. Deliberation is **transient** — it is triggered by the arrival of a message on `discuss.*` or `work.<name>.*` (or `work.<capability>.*` for directed assignments), and it concludes with one of three outcomes:
 
 1. The agent publishes a response on `discuss.<task_id>` and returns to MONITORING.
 2. The agent determines it has nothing to contribute and returns to MONITORING silently.
@@ -78,7 +98,7 @@ This design has an important degenerate case: when no interrupts arrive, the buf
 
 The state machine has five transitions:
 
-**MONITORING → DELIBERATING.** Triggered when a message arrives on `work.*` or `discuss.*` that passes the agent's relevance threshold. The existing similarity-based triage mechanism determines relevance — if the message's semantic similarity to the agent's capability exceeds the configured threshold, the agent enters deliberation.
+**MONITORING → DELIBERATING.** Triggered when a message arrives on `discuss.*`, `work.<capability>.*`, or `work.<name>.*` that passes the agent's relevance threshold. For `discuss.*` messages, the existing similarity-based triage mechanism determines relevance — if the message's semantic similarity to the agent's capability exceeds the configured threshold, the agent enters deliberation. For `work.*` messages, relevance is implicit — the message was routed to this agent by NATS, so it is always relevant.
 
 **DELIBERATING → MONITORING.** The default exit from deliberation. The agent has either published a response on `discuss.<task_id>` or determined it has nothing to contribute. In either case, it returns to MONITORING and awaits the next message.
 
@@ -110,15 +130,17 @@ Deliberation is the mechanism by which agents develop shared understanding of a 
 
 In the current system, triage is a single decision point: a task arrives, the agent evaluates it once, and the outcome is final. The collaboration model replaces this with a reactive loop:
 
-1. A message arrives (task or discuss).
+1. A message arrives on `discuss.*` (broadcast), `work.<capability>.*` (assignment), or `work.<name>.*` (directed).
 2. The agent enters DELIBERATING.
 3. The agent evaluates the message in context (task description, prior discussion, swarm state).
-4. The agent produces one of: a discuss response, silence, or a CLAIM.
+4. The agent produces one of: a response, silence, or a CLAIM.
 5. The agent returns to MONITORING (or transitions to EXECUTING on CLAIM).
 
 Each message is an independent trigger. There is no persistent deliberation session, no accumulated state within the DELIBERATING phase, and no timer governing how long deliberation lasts. The agent's understanding of the task accumulates in the swarm context and in the discuss message history — both of which persist across deliberation cycles in the background data structures — not in the DELIBERATING state itself.
 
 This reactive model has a natural analogy in human collaboration: a developer receives a Slack message, reads the thread, posts a reply, and goes back to whatever they were doing. They do not enter a "deliberation mode" and wait. If someone replies to their message, they receive a new notification, read it, respond, and return. The conversation unfolds through a series of independent reactions, not through a sustained deliberation session.
+
+The choice of response channel depends on the message content, not the source channel (see Section 3.4).
 
 ### 3.2 Signals
 
@@ -142,14 +164,16 @@ A practical consideration: some agents may depend on others' work. A tester cann
 
 Each deliberation is a single LLM call with the following context:
 
-- The triggering message (from `work.*` or `discuss.*`)
+- The triggering message (from `discuss.*`, `work.<capability>.*`, or `work.<name>.*`)
 - The agent's capability description and persona (from its Agentfile)
 - All prior discuss messages for this task (or a summary if they exceed the context summary threshold — see Section 6)
 - The agent's current swarm context snapshot (Section 5)
 
 The LLM produces both a natural language contribution (the discussion content) and a structured signal (NEED_INFO or CLAIM). If the signal is CLAIM, the agent transitions to EXECUTING. Otherwise, the response is published on `discuss.<task_id>` (or discarded if the agent has nothing to say), and the agent returns to MONITORING.
 
-**Response channel selection.** Deliberation can be triggered by messages on either `discuss.*` (broadcast) or `work.<name>.*` (directed). The response channel is not determined by the source channel — it is determined by the content's relevance to the swarm. The deliberation prompt instructs the LLM: if the triggering message or the agent's response contains information that affects other agents' understanding of the task — decisions, constraints, architectural changes, discovered problems — the response must be published on `discuss.<task_id>` so the swarm stays aligned. If the exchange is narrowly scoped to this agent alone (credentials, agent-specific configuration, a clarification that does not affect others' work), the response may remain on the directed channel. The LLM makes this judgment based on the content, not the channel.
+**Response channel selection.** Deliberation can be triggered by messages on `discuss.*` (broadcast), `work.<capability>.*` (load-balanced assignment), or `work.<name>.*` (directed). The response channel is not determined by the source channel — it is determined by the content's relevance to the swarm. The deliberation prompt instructs the LLM: if the triggering message or the agent's response contains information that affects other agents' understanding of the task — decisions, constraints, architectural changes, discovered problems — the response must be published on `discuss.<task_id>` so the swarm stays aligned. If the exchange is narrowly scoped to this agent alone (credentials, agent-specific configuration, a clarification that does not affect others' work), the response may remain on the directed channel. The LLM makes this judgment based on the content, not the channel.
+
+This is particularly important for `work.<capability>.*` messages. Because NATS delivers these to only one agent per capability (Section 1.3), the other agents in the swarm have no visibility into the message. If the task has implications for the broader swarm, the receiving agent must cross-post relevant information to `discuss.<task_id>` to prevent blind spots.
 
 ### 3.5 Deliberation Limits
 
@@ -371,7 +395,7 @@ This section walks through concrete scenarios to illustrate how the collaboratio
 
 **Task submitted:** "Build a user registration system with email verification."
 
-1. Task arrives on `work.*`. All three agents pass the relevance threshold. Each transitions from MONITORING to DELIBERATING.
+1. Task is submitted on `discuss.<task_id>`. All three agents receive it (broadcast), pass the relevance threshold, and each transitions from MONITORING to DELIBERATING.
 
 2. **Backend** (first to respond): "I'll handle the registration API endpoint, user database schema, and email verification token generation. NEED_INFO: What email service are we using?" Backend returns to MONITORING.
 
@@ -495,13 +519,17 @@ The collaboration model builds on top of the existing swarm infrastructure rathe
 
 ### 9.1 NATS Subjects
 
-No new NATS subjects are required. The existing subject hierarchy — `work.*`, `discuss.*`, `done.*`, `heartbeat.*` — provides all the communication channels the collaboration model needs.
+No new NATS subjects are required. The existing subject hierarchy provides all the communication channels the collaboration model needs. The routing semantics described in Section 1.3 apply throughout:
 
-- Deliberation occurs on `discuss.<task_id>` (existing)
-- CLAIMs are published on `discuss.<task_id>` (existing, new message type)
-- Interrupt sources are `discuss.<task_id>` messages (existing)
-- Abandonment explanations are published on `discuss.<task_id>` or `work.<name>.*` (existing)
-- Swarm context is built from `heartbeat.*` and `done.*` (existing)
+- **Task submission for collaboration** → `discuss.<task_id>` (broadcast to all agents)
+- **Directed task assignment** → `work.<capability>.<task_id>` (load-balanced to one agent per capability)
+- **Agent-to-agent messages** → `work.<name>.<task_id>` (directed to a specific agent)
+- **Deliberation and discussion** → `discuss.<task_id>` (broadcast)
+- **CLAIMs** → `discuss.<task_id>` (broadcast, so all agents see who claimed what)
+- **Interrupt sources** → `discuss.<task_id>` messages arriving during execution
+- **Abandonment explanations** → `discuss.<task_id>` (broadcast) or `work.<name>.*` (if targeted)
+- **Completion results** → `done.<capability>.<task_id>` (broadcast)
+- **Agent status** → `heartbeat.<name>` (broadcast, builds swarm context)
 
 ### 9.2 Agentfile
 
@@ -545,6 +573,8 @@ The changes are minimal in code terms: a buffer drain between tool result collec
 ### 9.4 Triage
 
 The current triage mechanism (similarity scoring + LLM decision) becomes the entry gate to deliberation rather than the entry gate to execution. Its role narrows: instead of deciding EXECUTE/COMMENT/SKIP, it decides only whether the incoming message is relevant enough to trigger DELIBERATING. The richer decisions — what to say, what to claim, how to participate — are made during deliberation itself.
+
+Note that triage applies primarily to `discuss.*` messages, where the agent must determine relevance from content. For `work.<capability>.*` and `work.<name>.*` messages, relevance is implicit — NATS routed the message to this agent, so it is always relevant and always triggers DELIBERATING.
 
 ---
 
