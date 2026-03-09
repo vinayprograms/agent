@@ -165,11 +165,26 @@ type Executor struct {
 
 	// Sub-agent tracking
 	activeSubAgents int32 // atomic counter for active sub-agents
+
+	// Interrupt buffer for swarm collaboration (nil = non-swarm mode)
+	interruptBuffer *InterruptBuffer
 }
 
 // Registry returns the tool registry.
 func (e *Executor) Registry() *tools.Registry {
 	return e.registry
+}
+
+// SetInterruptBuffer attaches an interrupt buffer for swarm collaboration.
+// When set, the executor drains the buffer between LLM turns and injects
+// interrupt messages into the context. A nil buffer disables interrupts.
+func (e *Executor) SetInterruptBuffer(buf *InterruptBuffer) {
+	e.interruptBuffer = buf
+}
+
+// InterruptBuffer returns the current interrupt buffer (may be nil).
+func (e *Executor) InterruptBuffer() *InterruptBuffer {
+	return e.interruptBuffer
 }
 
 // NewExecutor creates a new executor.
@@ -1023,9 +1038,23 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 			continue
 		}
 
-		// No tool calls = goal complete
+		// No tool calls — check for pending interrupts before terminating
 		if len(resp.ToolCalls) == 0 {
-			// Convert tools used map to slice
+			if interrupts := e.interruptBuffer.Drain(); len(interrupts) > 0 {
+				// Interrupts arrived — LLM must re-evaluate before terminating
+				messages = append(messages, llm.Message{
+					Role:    "assistant",
+					Content: resp.Content,
+				})
+				interruptBlock := FormatInterruptsBlock(goal.Outcome, interrupts)
+				messages = append(messages, llm.Message{
+					Role:    "user",
+					Content: interruptBlock,
+				})
+				e.logEvent(session.EventUser, interruptBlock)
+				continue
+			}
+			// No interrupts, no tool calls — execution complete
 			for tool := range toolsUsedMap {
 				toolsUsed = append(toolsUsed, tool)
 			}
@@ -1050,6 +1079,16 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 		// Execute tool calls in parallel
 		toolMessages := e.executeToolsParallel(ctx, resp.ToolCalls)
 		messages = append(messages, toolMessages...)
+
+		// Drain interrupt buffer after tool execution
+		if interrupts := e.interruptBuffer.Drain(); len(interrupts) > 0 {
+			interruptBlock := FormatInterruptsBlock(goal.Outcome, interrupts)
+			messages = append(messages, llm.Message{
+				Role:    "user",
+				Content: interruptBlock,
+			})
+			e.logEvent(session.EventUser, interruptBlock)
+		}
 	}
 }
 
