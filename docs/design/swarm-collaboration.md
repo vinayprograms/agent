@@ -54,7 +54,9 @@ There is a subtlety when the capability segment is omitted or wildcarded. A mess
 
 **`work.<name>.<task_id>` — directed to a specific agent.** When an agent subscribes to `work.<name>.*` (where `name` is its unique agent name rather than a shared capability), messages on this subject reach that specific agent. This is the channel for agent-to-agent private communication: "hey backend, here's the callback URL format you asked about." The sending agent resolves the target name from the agent directory in swarm context (Section 5.2).
 
-**`done.<capability>.<task_id>` — completion broadcast.** Published when an agent finishes execution. All agents receive these messages, allowing them to update their swarm context and trigger dependent work.
+**`done.<capability>.<task_id>` — infrastructure-only completion signal.** Published when an agent finishes execution. Agents **write** to this subject but **never subscribe** to it. It exists for non-agent consumers: the swarm UI dashboard, metrics collection, task tracking databases, webhooks, and future cross-swarm orchestration. Keeping `done.*` separate from the agent collaboration flow prevents dual delivery of completion events (see below).
+
+Agents learn about completions through `discuss.*`. When an agent finishes execution, it publishes a DONE message on `discuss.<task_id>` (which all agents see) and simultaneously publishes structured completion metadata on `done.<capability>.<task_id>` (which only infrastructure sees). One event, two channels, no overlap in subscribers.
 
 **`heartbeat.<name>` — agent status.** Periodic status updates from each agent. All agents receive these, maintaining the live agent directory in swarm context.
 
@@ -72,7 +74,7 @@ At any moment, a swarm agent is in exactly one of three states. These states gov
 
 ### 2.1 States
 
-**MONITORING.** The agent is idle, listening to all NATS subjects it is subscribed to — `discuss.*`, `work.<capability>.*`, `work.<name>.*`, `done.*`, `heartbeat.*`. It performs no outbound communication and takes no action. MONITORING is the agent's resting state — the state it occupies when it has no task to deliberate on and no work to execute.
+**MONITORING.** The agent is idle, listening to all NATS subjects it is subscribed to — `discuss.*`, `work.<capability>.*`, `work.<name>.*`, and `heartbeat.*`. It performs no outbound communication and takes no action. MONITORING is the agent's resting state — the state it occupies when it has no task to deliberate on and no work to execute.
 
 The only outbound activity during MONITORING is heartbeat emission, which is a timer-driven infrastructure concern independent of the agent's logical state. The agent does not update swarm context as a deliberate action; rather, the NATS message handler passively maintains the in-memory swarm context data structure as messages arrive on subscribed subjects. This is a side effect of message receipt, not an activity of the MONITORING state itself.
 
@@ -104,7 +106,7 @@ The state machine has five transitions:
 
 **DELIBERATING → EXECUTING.** Triggered when the agent determines, during deliberation, that it has sufficient information to begin work. The agent publishes a CLAIM on `discuss.<task_id>` specifying what portion of the task it is taking responsibility for, initializes its interrupt buffer, and begins workflow execution.
 
-**EXECUTING → MONITORING.** Triggered on successful completion. The agent publishes its result on `done.<capability>.<task_id>` and returns to MONITORING.
+**EXECUTING → MONITORING.** Triggered on successful completion. The agent publishes a DONE message on `discuss.<task_id>` (so other agents learn about the completion) and simultaneously publishes structured completion metadata on `done.<capability>.<task_id>` (for infrastructure consumers). It then returns to MONITORING.
 
 **EXECUTING → DELIBERATING.** Triggered when the agent, during execution, determines it must communicate something to the swarm before it can continue — or that its work is no longer viable. The agent transitions to DELIBERATING, where it publishes its message (an explanation of the problem, a question, or an abort reason) on `discuss.<task_id>` or on `work.<name>.*` if the message targets a specific agent. After publishing, it follows the normal DELIBERATING exit: back to MONITORING. The agent does not resume its prior execution. If the situation resolves and the agent's capabilities are still relevant, a subsequent message will trigger a new MONITORING → DELIBERATING → EXECUTING cycle — a fresh execution, not a continuation.
 
@@ -158,7 +160,7 @@ A CLAIM triggers the transition to EXECUTING. It is the only signal that does no
 
 Deliberation converges when all relevant agents have either CLAIMed their portion or withdrawn to MONITORING. There is no explicit "deliberation complete" signal — convergence is emergent. Each agent independently decides, upon each incoming message, whether it has enough information to CLAIM or enough evidence to stay silent.
 
-A practical consideration: some agents may depend on others' work. A tester cannot CLAIM until a coder has CLAIMed (and ideally completed). This is natural and expected. The tester publishes NEED_INFO ("waiting for code to test"), returns to MONITORING, and re-enters DELIBERATING when the `done.*` message from the coder arrives. It does not block other agents from CLAIMing and executing. Dependencies resolve naturally through the message-driven reactive loop.
+A practical consideration: some agents may depend on others' work. A tester cannot CLAIM until a coder has CLAIMed (and ideally completed). This is natural and expected. The tester publishes NEED_INFO ("waiting for code to test"), returns to MONITORING, and re-enters DELIBERATING when the coder's DONE message arrives on `discuss.<task_id>`. It does not block other agents from CLAIMing and executing. Dependencies resolve naturally through the message-driven reactive loop.
 
 ### 3.4 Deliberation Context
 
@@ -314,7 +316,7 @@ Swarm context contains three categories of information, each maintained by a dif
 
 **Task discussions** (from `discuss.*`). A per-task log of discussion messages. When the log for a task exceeds the configured summary threshold (default: 10 messages), older messages are summarized by the small LLM and replaced with the summary. Recent messages are preserved verbatim. This sliding window ensures discussion context remains bounded while retaining the most current exchanges in full fidelity.
 
-**Completed work** (from `done.*`). A log of task completions: which agent completed what, with a brief summary of the result. This gives agents awareness of what has been accomplished without requiring them to read full results.
+**Completed work** (from `discuss.*` DONE messages). A log of task completions: which agent completed what, with a brief summary of the result. When an agent finishes execution, it publishes a DONE message on `discuss.<task_id>` — this is how other agents learn about completions. The parallel publication to `done.<capability>.<task_id>` serves infrastructure consumers only (swarm UI, metrics, task tracking); agents never subscribe to `done.*`.
 
 ### 5.3 Relevance Filtering
 
@@ -550,9 +552,9 @@ This is a pure LLM reasoning failure. The design delivered the interrupt; the mo
 
 2. Backend executes. Webserver is idle in MONITORING, swarm context updating from heartbeats.
 
-3. Backend completes, publishes result on `done.*` with the API specification.
+3. Backend completes, publishes a DONE message on `discuss.<task_id>` with the API specification summary, and simultaneously publishes structured completion metadata on `done.<capability>.<task_id>` for infrastructure.
 
-4. Webserver receives the `done.*` message, enters DELIBERATING. Dependency satisfied. CLAIMs: "API documentation based on implemented endpoints." Transitions to EXECUTING.
+4. Webserver receives the DONE message on `discuss.*`, enters DELIBERATING. Dependency satisfied. CLAIMs: "API documentation based on implemented endpoints." Transitions to EXECUTING.
 
 NEED_INFO followed by a return to MONITORING is a natural expression of dependency. The agent does not block or hold resources while waiting.
 
@@ -566,7 +568,7 @@ NEED_INFO followed by a return to MONITORING is a natural expression of dependen
 
 The first outcome is the design working as intended — the agent discovers the dependency during execution, abandons with an explanation, and re-engages later. The idle time is wasted, but the final output is correct.
 
-The second outcome is a model quality failure. The design cannot prevent an LLM from hallucinating content. The result lands on `done.*`, and the operator or other agents must recognize that the documentation doesn't match the actual API. A future enhancement might have the documentation agent cross-reference its output against the `done.*` results from the backend agent, but this is beyond the current design scope.
+The second outcome is a model quality failure. The design cannot prevent an LLM from hallucinating content. The result is published on `discuss.*` and `done.*`, and the operator or other agents must recognize that the documentation doesn't match the actual API. A future enhancement might have the documentation agent cross-reference its output against the backend agent's DONE message on `discuss.*`, but this is beyond the current design scope.
 
 ### 7.6 Observations on LLM Quality
 
@@ -616,7 +618,7 @@ No new NATS subjects are required. The existing subject hierarchy provides all t
 - **CLAIMs** → `discuss.<task_id>` (broadcast, so all agents see who claimed what)
 - **Interrupt sources** → `discuss.<task_id>` messages arriving during execution
 - **Abandonment explanations** → `discuss.<task_id>` (broadcast) or `work.<name>.*` (if targeted)
-- **Completion results** → `done.<capability>.<task_id>` (broadcast)
+- **Completion results** → `done.<capability>.<task_id>` (infrastructure only — agents do not subscribe)
 - **Agent status** → `heartbeat.<name>` (broadcast, builds swarm context)
 
 ### 9.2 Agentfile
