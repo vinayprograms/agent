@@ -1,0 +1,3 @@
+# Source files — regenerate PNGs with:
+# dot -Tpng -Gdpi=300 <file>.dot -o <file>.png
+*.dot

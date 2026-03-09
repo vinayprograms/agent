@@ -44,43 +44,53 @@ The collaboration model presented here is guided by four principles:
 
 ## 2. The Agent State Machine
 
-At any moment, a swarm agent is in exactly one of four states. These states govern how the agent processes incoming messages, whether it participates in discussion, and whether it is actively executing work.
+![Agent State Machine](diagrams/state-machine.png)
+
+*Figure 1: The three-state agent lifecycle. MONITORING is the stable resting state. DELIBERATING is transient — triggered by each incoming message, producing a single decision, then returning to MONITORING. EXECUTING runs the agent loop with interrupt awareness. The dashed abandon path routes through DELIBERATING (to publish an explanation) before returning to MONITORING.*
+
+At any moment, a swarm agent is in exactly one of three states. These states govern how the agent processes incoming messages, whether it participates in discussion, and whether it is actively executing work.
 
 ### 2.1 States
 
-**MONITORING.** The agent is idle but attentive. It listens to all NATS subjects it is subscribed to — `work.*`, `discuss.*`, `done.*`, `heartbeat.*` — and updates its swarm context (Section 5) as messages arrive. It does not participate in discussions or execute work. This is the agent's resting state.
+**MONITORING.** The agent is idle, listening to all NATS subjects it is subscribed to — `work.*`, `discuss.*`, `done.*`, `heartbeat.*`. It performs no outbound communication and takes no action. MONITORING is the agent's resting state — the state it occupies when it has no task to deliberate on and no work to execute.
 
-An agent enters MONITORING when it first joins the swarm, when it completes a task, or when it aborts execution and steps back. MONITORING is not passive disengagement — the agent is actively maintaining its understanding of the swarm. It simply has no current task.
+The only outbound activity during MONITORING is heartbeat emission, which is a timer-driven infrastructure concern independent of the agent's logical state. The agent does not update swarm context as a deliberate action; rather, the NATS message handler passively maintains the in-memory swarm context data structure as messages arrive on subscribed subjects. This is a side effect of message receipt, not an activity of the MONITORING state itself.
 
-**DELIBERATING.** The agent is engaged in discussion about a specific task. It reads and contributes to messages on `discuss.<task_id>`, building understanding of what the task requires, what other agents are planning, and what role it should play. Deliberation is a multi-round process — the agent may ask questions, answer others' questions, propose approaches, and refine its understanding through dialogue.
+An agent enters MONITORING when it first joins the swarm, when it completes a task, or when it abandons execution. MONITORING is the stable state — the state the agent always returns to between engagements.
 
-Deliberation ends when the agent either claims a portion of the work (transitioning to EXECUTING) or determines the task is not relevant to its capabilities (transitioning back to MONITORING).
+**DELIBERATING.** The agent is evaluating whether and how to respond to an incoming message. Deliberation is **transient** — it is triggered by the arrival of a message on `work.*` or `discuss.*`, and it concludes with one of three outcomes:
 
-**EXECUTING.** The agent is actively running its workflow — invoking tools, generating code, processing data. During execution, the agent remains connected to `discuss.<task_id>` through an interrupt buffer (Section 4). It is focused on its claimed work but can be interrupted by relevant new information.
+1. The agent publishes a response on `discuss.<task_id>` and returns to MONITORING.
+2. The agent determines it has nothing to contribute and returns to MONITORING silently.
+3. The agent determines it has sufficient information to begin work and transitions to EXECUTING.
 
-**PAUSED.** The agent has temporarily suspended execution because an interrupt requires discussion before work can continue. The agent re-enters deliberation on `discuss.<task_id>`, specifically about the concern that caused the pause. Once resolved, the agent resumes execution from where it stopped.
+Critically, deliberation is not a sustained state. The agent does not "sit in" deliberation waiting for more information. It evaluates the current message in the context of everything it knows — the task description, prior discussion, swarm context — makes a single decision, acts on it, and returns to MONITORING. Multi-round discussion emerges naturally from repeated cycles of MONITORING → DELIBERATING → MONITORING, where each new `discuss.*` message triggers a fresh deliberation. The agent is reactive, not blocking.
 
-PAUSED is distinct from DELIBERATING in one important way: a PAUSED agent has execution state — partially completed work, a position in its workflow, accumulated tool results. When it resumes, it continues from that state rather than starting fresh. A DELIBERATING agent has no execution state; it is deciding whether and what to execute.
+This design eliminates the question of "how long should deliberation last?" There is no deliberation window. Each message is a stimulus, each response is a reaction, and the conversation unfolds through successive cycles. An agent that needs more information publishes its question, returns to MONITORING, and re-enters DELIBERATING when an answer arrives.
+
+**EXECUTING.** The agent is actively running its workflow — invoking tools, generating code, processing data. During execution, the agent remains connected to `discuss.<task_id>` through an interrupt buffer (Section 4). It is focused on its claimed work but receives new information at natural breakpoints in its execution loop.
+
+The execution loop is iterative. At the end of each iteration — after all tool calls have completed and results have been collected — the agent checks its interrupt buffer for new messages. If messages are present, they are folded into the context for the next iteration. At the beginning of that next iteration, the LLM evaluates the combined state: its own work-in-progress, the tool results from the previous iteration, and any interrupt messages. Based on this evaluation, it decides whether to continue executing, or to abandon execution and transition to DELIBERATING (to explain why) or directly to MONITORING.
+
+This design has an important degenerate case: when no interrupts arrive, the buffer is always empty, the interrupts block is never included, and the execution loop behaves identically to the current non-collaborative agent loop. The collaboration machinery has zero overhead when there is nothing to collaborate about.
 
 ### 2.2 Transitions
 
-The state machine has the following transitions:
+The state machine has five transitions:
 
-**MONITORING → DELIBERATING.** Triggered when a task arrives that is relevant to the agent's capability. Relevance is determined by the existing similarity-based triage mechanism — if the task's semantic similarity to the agent's capability exceeds the configured threshold, the agent enters deliberation.
+**MONITORING → DELIBERATING.** Triggered when a message arrives on `work.*` or `discuss.*` that passes the agent's relevance threshold. The existing similarity-based triage mechanism determines relevance — if the message's semantic similarity to the agent's capability exceeds the configured threshold, the agent enters deliberation.
 
-**DELIBERATING → EXECUTING.** Triggered when the agent publishes a CLAIM on `discuss.<task_id>`. The CLAIM specifies what portion of the task the agent is taking responsibility for. This transition initializes the interrupt buffer and begins workflow execution.
+**DELIBERATING → MONITORING.** The default exit from deliberation. The agent has either published a response on `discuss.<task_id>` or determined it has nothing to contribute. In either case, it returns to MONITORING and awaits the next message.
 
-**DELIBERATING → MONITORING.** Triggered when the agent determines, through deliberation, that the task is not relevant to its capabilities, or that other agents have the task fully covered. The agent may optionally publish a brief message on `discuss.<task_id>` explaining its withdrawal.
+**DELIBERATING → EXECUTING.** Triggered when the agent determines, during deliberation, that it has sufficient information to begin work. The agent publishes a CLAIM on `discuss.<task_id>` specifying what portion of the task it is taking responsibility for, initializes its interrupt buffer, and begins workflow execution.
 
-**EXECUTING → MONITORING.** Triggered on successful completion. The agent publishes its result on `done.<capability>.<task_id>` and returns to monitoring.
+**EXECUTING → MONITORING.** Triggered on successful completion. The agent publishes its result on `done.<capability>.<task_id>` and returns to MONITORING.
 
-**EXECUTING → PAUSED.** Triggered when the agent, upon processing an interrupt (Section 4), determines it cannot continue without further discussion. The agent publishes its concern on `discuss.<task_id>` and waits.
+**EXECUTING → DELIBERATING.** Triggered when the agent, during execution, determines it must communicate something to the swarm before it can continue — or that its work is no longer viable. The agent transitions to DELIBERATING, where it publishes its message (an explanation of the problem, a question, or an abort reason) on `discuss.<task_id>` or on `work.<name>.*` if the message targets a specific agent. After publishing, it follows the normal DELIBERATING exit: back to MONITORING. The agent does not resume its prior execution. If the situation resolves and the agent's capabilities are still relevant, a subsequent message will trigger a new MONITORING → DELIBERATING → EXECUTING cycle — a fresh execution, not a continuation.
 
-**EXECUTING → MONITORING (via abort).** Triggered when the agent determines its work is no longer viable. The agent publishes the abort reason on `discuss.<task_id>`, stops execution, and returns to monitoring. Partial work is not cleaned up — other agents may find it useful. The agent continues to watch `discuss.<task_id>` and may re-enter DELIBERATING if subsequent messages resolve the abort reason.
+This transition deserves careful attention. When an agent abandons execution, it does not silently disappear. It communicates the reason for abandonment so that other agents can update their understanding of the problem. The abandon message might reveal a constraint that other agents have not encountered ("Apple's OAuth requires server-side JWT validation with rotating keys — this changes the token verification architecture"), flag a dependency ("I can't proceed until the database schema is finalized"), or declare that the work is no longer viable ("the migration to GitLab makes this GitHub Actions workflow obsolete"). Other agents, upon receiving this message, will enter their own DELIBERATING state and decide how to respond.
 
-**PAUSED → EXECUTING.** Triggered when the concern that caused the pause is resolved through discussion. The agent resumes execution from its saved state.
-
-**PAUSED → MONITORING (via abort).** Same as EXECUTING → MONITORING abort, but from the paused state.
+Partial work produced before abandonment is not cleaned up. Files written, code generated, configurations created — all remain in place. Other agents may find partial work useful as a starting point if the task is later re-engaged.
 
 ### 2.3 State Visibility
 
@@ -90,25 +100,43 @@ Each agent's current state is communicated to the swarm through the existing hea
 
 ## 3. Deliberation
 
-Deliberation is the process by which agents develop shared understanding of a task before committing to execution. It replaces the current single-shot triage decision with a multi-round discussion that allows agents to ask questions, propose approaches, negotiate responsibilities, and signal readiness.
+![Reactive Deliberation Cycle](diagrams/reactive-deliberation.png)
 
-### 3.1 Entry
+*Figure 2: A single deliberation cycle. Each incoming message triggers one evaluation, producing one of three outcomes: respond with NEED_INFO (then return to MONITORING), stay silent (return to MONITORING), or CLAIM (transition to EXECUTING). Multi-round discussion emerges from repeated cycles.*
 
-When a task arrives and passes the relevance threshold, the agent enters deliberation. Its first action is to read any existing messages on `discuss.<task_id>` — other agents may have already begun discussing the task. The agent then makes its initial assessment: does it understand the task well enough to claim a portion, or does it need more information?
+Deliberation is the mechanism by which agents develop shared understanding of a task. It replaces the current single-shot triage decision — which produces an irrevocable EXECUTE, COMMENT, or SKIP — with a reactive, message-driven process that allows agents to ask questions, propose approaches, negotiate responsibilities, and commit to work.
+
+### 3.1 The Reactive Model
+
+In the current system, triage is a single decision point: a task arrives, the agent evaluates it once, and the outcome is final. The collaboration model replaces this with a reactive loop:
+
+1. A message arrives (task or discuss).
+2. The agent enters DELIBERATING.
+3. The agent evaluates the message in context (task description, prior discussion, swarm state).
+4. The agent produces one of: a discuss response, silence, or a CLAIM.
+5. The agent returns to MONITORING (or transitions to EXECUTING on CLAIM).
+
+Each message is an independent trigger. There is no persistent deliberation session, no accumulated state within the DELIBERATING phase, and no timer governing how long deliberation lasts. The agent's understanding of the task accumulates in the swarm context and in the discuss message history — both of which persist across deliberation cycles in the background data structures — not in the DELIBERATING state itself.
+
+This reactive model has a natural analogy in human collaboration: a developer receives a Slack message, reads the thread, posts a reply, and goes back to whatever they were doing. They do not enter a "deliberation mode" and wait. If someone replies to their message, they receive a new notification, read it, respond, and return. The conversation unfolds through a series of independent reactions, not through a sustained deliberation session.
 
 ### 3.2 Signals
 
 During deliberation, each agent's contribution on `discuss.<task_id>` includes a structured signal alongside its natural language content. There are exactly two signals:
 
-**NEED_INFO.** The agent has questions or is waiting for information before it can commit. This signal tells other agents that deliberation is not yet complete — at least one participant still needs clarity. A NEED_INFO message typically includes the specific question or dependency: "I need to know the API contract before I can implement the handlers" or "Waiting for the coder to finish before I can write tests."
+**NEED_INFO.** The agent has questions or is waiting for information before it can commit. This signal tells other agents that at least one participant still needs clarity. A NEED_INFO message typically includes the specific question or dependency: "I need to know the API contract before I can implement the handlers" or "Waiting for the coder to finish before I can write tests."
+
+After publishing a NEED_INFO message, the agent returns to MONITORING. When the answer arrives — as a new `discuss.*` message — the agent re-enters DELIBERATING and evaluates whether the answer is sufficient to CLAIM.
 
 **CLAIM.** The agent has sufficient understanding and is committing to a specific portion of the work. The CLAIM message specifies what the agent is taking responsibility for: "CLAIM: I'm handling the REST API routes, request validation, and database queries." This specificity is important — it tells other agents what is covered and, by implication, what remains unclaimed.
 
+A CLAIM triggers the transition to EXECUTING. It is the only signal that does not return to MONITORING.
+
 ### 3.3 Convergence
 
-Deliberation converges when all relevant agents have either CLAIMed their portion or withdrawn to MONITORING. There is no explicit "deliberation complete" signal — convergence is emergent. Each agent independently decides when it has enough information to CLAIM or enough evidence to withdraw.
+Deliberation converges when all relevant agents have either CLAIMed their portion or withdrawn to MONITORING. There is no explicit "deliberation complete" signal — convergence is emergent. Each agent independently decides, upon each incoming message, whether it has enough information to CLAIM or enough evidence to stay silent.
 
-A practical consideration: some agents may depend on others' work. The tester cannot CLAIM until the coder has CLAIMed (and ideally completed). This is natural and expected — the tester remains in deliberation with NEED_INFO until the dependency is satisfied. It does not block other agents from CLAIMing and executing.
+A practical consideration: some agents may depend on others' work. A tester cannot CLAIM until a coder has CLAIMed (and ideally completed). This is natural and expected. The tester publishes NEED_INFO ("waiting for code to test"), returns to MONITORING, and re-enters DELIBERATING when the `done.*` message from the coder arrives. It does not block other agents from CLAIMing and executing. Dependencies resolve naturally through the message-driven reactive loop.
 
 ### 3.4 Straggler Handling
 
@@ -118,18 +146,28 @@ The straggler timeout is a swarm-level configuration parameter, not a per-agent 
 
 ### 3.5 Deliberation Context
 
-Each deliberation round is an LLM call with the following context:
+Each deliberation is a single LLM call with the following context:
 
-- The task description (from the original `work.*` or `discuss.*` message)
+- The triggering message (from `work.*` or `discuss.*`)
 - The agent's capability description and persona (from its Agentfile)
-- All discuss messages for this task (or a summary if they exceed the context summary threshold — see Section 6)
+- All prior discuss messages for this task (or a summary if they exceed the context summary threshold — see Section 6)
 - The agent's current swarm context snapshot (Section 5)
 
-The LLM produces both a natural language contribution (the discussion content) and a structured signal (NEED_INFO or CLAIM). If the signal is CLAIM, the agent transitions to EXECUTING.
+The LLM produces both a natural language contribution (the discussion content) and a structured signal (NEED_INFO or CLAIM). If the signal is CLAIM, the agent transitions to EXECUTING. Otherwise, the response is published on `discuss.<task_id>` (or discarded if the agent has nothing to say), and the agent returns to MONITORING.
+
+### 3.6 Deliberation Limits
+
+While individual deliberation cycles are transient, the accumulated discussion for a task can grow unbounded if agents keep exchanging NEED_INFO messages without converging. The `max_deliberation_rounds` configuration parameter (default: 20) caps the total number of discuss messages per task across all agents. When the limit is reached, each agent must either CLAIM or withdraw on its next deliberation cycle.
+
+This is a safety valve, not a design goal. Well-functioning agents should converge long before the limit. If agents routinely hit the limit, it suggests the task is poorly scoped or agent capabilities are poorly matched — problems that configuration cannot solve.
 
 ---
 
 ## 4. Execution with Interrupts
+
+![Execution Loop with Interrupts](diagrams/execution-loop.png)
+
+*Figure 3: The execution loop. After each LLM turn, the agent checks for abandonment, executes tools, drains the interrupt buffer, and assembles the next turn. If interrupts are present, they are formatted into an XML block and included in the next LLM invocation. The loop exits on task completion (with no pending interrupts) or on abandonment.*
 
 Once an agent CLAIMs a task and begins execution, it does not become deaf to the swarm. An interrupt mechanism allows new information to reach the agent at natural breakpoints in its workflow, enabling it to adapt its approach without losing progress.
 
@@ -143,9 +181,9 @@ The buffer is a simple FIFO queue. Messages are not filtered, prioritized, or de
 
 The interrupt buffer is checked at exactly one point in the execution cycle: **between LLM turns, after all tool results have been collected and before the next LLM invocation.**
 
-The execution cycle of a single LLM turn is:
+The execution cycle of a single iteration is:
 
-1. LLM receives context (messages, tool results, etc.)
+1. LLM receives context (messages, tool results, interrupts if any)
 2. LLM produces a response (text, tool calls, or both)
 3. If tool calls are present, all requested tools execute (possibly in parallel)
 4. Tool results are collected
@@ -159,7 +197,7 @@ The third point deserves emphasis. If the LLM's previous turn was intended to be
 
 ### 4.3 The Interrupts Block
 
-When the interrupt buffer contains messages, they are formatted into an XML block and prepended to the next LLM turn. The block has three components:
+When the interrupt buffer contains messages, they are formatted into an XML block and included in the next LLM turn. The block has three components:
 
 ```xml
 <interrupts>
@@ -184,18 +222,14 @@ When the interrupt buffer contains messages, they are formatted into an XML bloc
 
   <guidance>
     The above messages arrived while you were executing. Evaluate
-    them against your current work and decide:
+    them against your current work and decide how to proceed.
+    You may continue working if the messages are irrelevant,
+    adjust your approach if they affect your remaining work,
+    or abandon execution if your work is no longer viable.
 
-    CONTINUE — The messages are irrelevant to your current step.
-               Proceed with your plan unchanged.
-    ADJUST   — The messages affect your approach. Modify your
-               remaining work accordingly and continue executing.
-    PAUSE    — You cannot proceed without further discussion.
-               Publish your concern on discuss and wait.
-    ABORT    — Your work is no longer viable given this new
-               information. Publish the reason and stop.
-
-    State your decision and reasoning before taking action.
+    If you abandon, you MUST explain the reason in your response.
+    This explanation will be published to the swarm so other agents
+    understand why work was stopped and can adapt accordingly.
   </guidance>
 </interrupts>
 ```
@@ -204,45 +238,41 @@ The **context** element grounds the LLM in what it was doing. Without this, the 
 
 The **messages** element contains the raw discuss messages, preserving attribution and timestamps. These are not summarized — the LLM needs the original wording to assess relevance and implications.
 
-The **guidance** element provides the decision framework. It defines exactly four options, each with clear semantics. This is not merely instructional — it constrains the LLM's response space, reducing the likelihood of ambiguous or unexpected reactions to interrupts.
+The **guidance** element frames the decision. Rather than prescribing a fixed set of categorical decisions (CONTINUE, ADJUST, ABORT), the guidance instructs the LLM to reason naturally about how to proceed. The LLM may continue working unchanged, modify its plan, ask a question on discuss (which it can do via tool calls during the same iteration), or decide to abandon. The only hard requirement is that abandonment must include an explanation — this is enforced because other agents depend on understanding why work stopped.
 
-### 4.4 Interrupt Decisions
+### 4.4 Execution Decisions After Interrupts
 
-When the LLM processes an interrupts block, it produces one of four decisions:
+When the LLM processes an interrupts block at the start of an iteration, it reasons about the interrupt messages in the context of its current work and decides how to proceed. Three broad outcomes are possible:
 
-**CONTINUE.** The interrupt messages are not relevant to the agent's current work. Execution proceeds unchanged. The messages are recorded in the swarm context (Section 5) for future reference but do not affect the current workflow.
+**Continue or adjust.** The LLM determines that the interrupt messages are either irrelevant to its current work or relevant but manageable. In the former case, it proceeds with its plan unchanged. In the latter, it modifies its approach for remaining steps — for example, switching from REST to WebSocket serialization after learning that the frontend changed the transport protocol. In both cases, execution continues within the same loop. The LLM may also publish a question or clarification on `discuss.<task_id>` during the same iteration (via tool calls), without interrupting its own execution.
 
-Example: The frontend agent discusses CSS framework choices. The backend agent, implementing database queries, continues without adjustment.
+**Abandon.** The LLM determines that its work is no longer viable or that it cannot proceed without resolving a fundamental question. It produces an explanation of the problem — surfacing constraints, flagging architectural concerns, or declaring that the approach is obsolete. The executor detects the abandonment signal, transitions the agent to DELIBERATING (where the explanation is published to `discuss.<task_id>` or `work.<name>.*`), and then to MONITORING. The agent does not resume its prior execution. If the situation resolves and a new message triggers deliberation, the agent starts a fresh execution cycle.
 
-**ADJUST.** The interrupt messages are relevant and require the agent to modify its approach, but the agent can incorporate the changes without stopping. The LLM adjusts its plan for remaining steps and continues executing.
+The distinction between adjustment and abandonment is not categorical — it is a judgment the LLM makes based on the severity of the interrupt's implications. An interrupt that changes a detail (date format, endpoint path) warrants adjustment. An interrupt that invalidates the premise (technology migration, complete redesign) warrants abandonment. The LLM's reasoning, visible in its response, makes this judgment transparent and auditable.
 
-Example: The frontend agent announces it will send dates in ISO 8601 format instead of Unix timestamps. The backend agent adjusts its serialization logic in the next tool call.
+### 4.5 The Degenerate Case
 
-**PAUSE.** The interrupt raises a question the agent cannot resolve alone. The agent publishes its concern on `discuss.<task_id>` and transitions to the PAUSED state (Section 2.1). Execution state is preserved — the agent's position in the workflow, accumulated tool results, and the current conversation context are all retained.
+When no interrupts arrive during execution — the common case in quiet swarms or solo agent runs — the interrupt buffer is always empty. The check at step 5 of the execution cycle finds nothing, no interrupts block is assembled, and the next iteration proceeds with tool results alone. The execution loop behaves identically to the current non-collaborative agent loop.
 
-Example: The frontend agent announces a complete API redesign. The backend agent cannot determine which of its completed work is still valid without discussing the new design. It pauses and asks for clarification.
+This is not merely an optimization; it is a design guarantee. The collaboration machinery is purely additive. An agent running outside a swarm (`agent run` with no NATS connection) never initializes an interrupt buffer, never starts a swarm context goroutine, and never enters deliberation. The buffer drain check short-circuits on a nil buffer in nanoseconds. The executor produces the exact same behavior as the pre-collaboration implementation. Solo agents pay zero cost for the existence of collaboration code.
 
-**ABORT.** The interrupt reveals that the agent's entire approach is no longer viable. The agent publishes the abort reason on `discuss.<task_id>`, stops execution, and transitions to MONITORING. Partial work is left in place — other agents or future tasks may build on it.
+### 4.6 Interrupt Processing Cost
 
-Example: The team decides to replace the custom backend with a third-party service. The backend agent's work is no longer needed. It aborts but remains in MONITORING, ready to re-engage if the decision is reversed.
+Each interrupt check that finds messages adds context to the next LLM invocation — the LLM must process the interrupts alongside its regular tool results. This is not a separate LLM call; it is additional content in the same call that would have happened anyway. The marginal cost is the token count of the interrupts block.
 
-### 4.5 Interrupt Processing Cost
+Interrupt checks that find an empty buffer incur zero cost — the check is a non-blocking channel read that completes in nanoseconds.
 
-Each interrupt check that finds messages incurs an LLM call — the LLM must evaluate the interrupts and decide how to respond. This cost is inherent and unavoidable; the agent cannot decide relevance without reasoning about the messages.
-
-However, interrupt checks that find an empty buffer incur zero cost — the check is a non-blocking channel read that completes in nanoseconds. Since most tool call cycles will produce empty buffers (discuss messages are infrequent relative to tool calls), the amortized cost of interrupt checking is low.
-
-The swarm operator can disable interrupt checking entirely by setting `interrupt_check: false` in the swarm manifest, reverting to the current deaf-execution model. This is a tradeoff: lower cost at the expense of adaptability.
+The swarm operator can disable interrupt checking entirely by setting `interrupt_check: false` in the swarm manifest, reverting to the current deaf-execution model. This is a tradeoff: lower token cost at the expense of adaptability.
 
 ---
 
 ## 5. Swarm Context
 
-Each agent maintains a personal, in-memory representation of the swarm's state. This representation — the **swarm context** — provides the agent with continuous awareness of what other agents are doing, what has been decided, and what work has been completed.
+Each agent maintains a personal, in-memory representation of the swarm's state. This representation — the **swarm context** — provides the agent with awareness of what other agents are doing, what has been decided, and what work has been completed.
 
 ### 5.1 Nature of Swarm Context
 
-Swarm context is **personal, ephemeral, and asynchronous.**
+Swarm context is **personal, ephemeral, and passively maintained.**
 
 **Personal.** Each agent maintains its own swarm context independently. There is no shared consensus state, no central authority, and no synchronization protocol. Agent A's understanding of the swarm may differ slightly from Agent B's — perhaps Agent A processed a heartbeat message that Agent B has not yet received.
 
@@ -254,13 +284,13 @@ The alternative — a shared consensus state — would require distributed conse
 
 This is appropriate because swarm context represents *current* state, not historical knowledge. "Agent X is currently executing task Y" is valuable now but meaningless after the swarm completes. Long-term knowledge — lessons learned, architectural decisions — belongs in the agent's persistent memory (BM25/semantic graph), not in ephemeral swarm context.
 
-**Asynchronous.** Swarm context is updated by a background goroutine that listens to NATS messages, independent of the executor's LLM loop. The executor reads from swarm context at specific injection points; it never writes to it. This separation ensures that context updates do not block execution and that the executor always has access to the latest available state without explicitly requesting it.
+**Passively maintained.** Swarm context is updated as a side effect of NATS message receipt. The message handler — a background goroutine that exists regardless of agent state — writes to the swarm context data structure whenever a relevant message arrives. The agent does not actively "update" its swarm context; the data structure stays current because the message handler keeps it current. This is analogous to a human's peripheral awareness: you do not actively decide to "update your understanding of the room" — you simply hear conversations happening around you, and your mental model updates automatically.
 
 ### 5.2 Contents
 
 Swarm context contains three categories of information, each maintained by a different NATS subscription:
 
-**Agent states** (from `heartbeat.*`). A map of agent name to current status: state (MONITORING, DELIBERATING, EXECUTING, PAUSED), capability, current task (if any), and last heartbeat timestamp. This is always current — each heartbeat overwrites the previous entry. The data is compact: one map entry per agent, no accumulation.
+**Agent states** (from `heartbeat.*`). A map of agent name to current status: state (MONITORING, DELIBERATING, EXECUTING), capability, current task (if any), and last heartbeat timestamp. This is always current — each heartbeat overwrites the previous entry. The data is compact: one map entry per agent, no accumulation.
 
 **Task discussions** (from `discuss.*`). A per-task log of discussion messages. When the log for a task exceeds the configured summary threshold (default: 10 messages), older messages are summarized by the small LLM and replaced with the summary. Recent messages are preserved verbatim. This sliding window ensures discussion context remains bounded while retaining the most current exchanges in full fidelity.
 
@@ -280,17 +310,17 @@ The goal is to answer: **does this information help the agent do its current job
 
 Swarm context is injected into the LLM's input at exactly two points:
 
-**During deliberation.** Every deliberation round includes the current swarm context snapshot. The agent needs to know what others are doing to decide its own role — who has already CLAIMed, what dependencies exist, what the overall swarm state is. This is essential for informed deliberation.
+**During deliberation.** Every deliberation cycle includes the current swarm context snapshot. The agent needs to know what others are doing to decide its own role — who has already CLAIMed, what dependencies exist, what the overall swarm state is. This is essential for informed deliberation.
 
 **During interrupt processing.** When an interrupts block is assembled (Section 4.3), the current swarm context snapshot is available as additional grounding. This helps the LLM evaluate whether an interrupt is relevant: if it knows that the frontend agent has CLAIMed the WebSocket migration, a message about WebSocket from that agent carries more weight than a speculative comment.
 
-Swarm context is **not** injected during normal execution turns (tool calls and result processing). When the agent is heads-down writing code, swarm awareness is noise. The interrupt mechanism handles the case where external developments require attention; swarm context is not needed when no interrupts are present.
+Swarm context is **not** injected during normal execution turns (tool calls and result processing without interrupts). When the agent is heads-down writing code, swarm awareness is noise. The interrupt mechanism handles the case where external developments require attention; swarm context is not needed when no interrupts are present.
 
 ---
 
 ## 6. Context Management
 
-Deliberation, interrupts, and swarm context all contribute to the token budget consumed by each LLM call. Without active management, a long deliberation with many participants or a task that accumulates many interrupts can exceed the model's context window. This section describes how context is kept bounded.
+Deliberation, interrupts, and swarm context all contribute to the token budget consumed by each LLM call. Without active management, a long discussion or a task that accumulates many interrupts can exceed the model's context window. This section describes how context is kept bounded.
 
 ### 6.1 Discussion Summarization
 
@@ -316,13 +346,13 @@ Compress consensus into brief statements. Preserve outliers verbatim.
 
 This approach ensures that summarization does not destroy the most valuable information. A discussion where five agents agree on REST and one suggests WebSocket should produce a summary that prominently features the WebSocket suggestion — it is the high-entropy signal. Repeated agreements ("sounds good," "I agree") compress into a single statement ("all agents agreed on REST for CRUD operations").
 
-Summarization is lazy: it runs only when the discussion log is needed (for a deliberation round or interrupt context) and has grown beyond the threshold since the last summarization. This avoids unnecessary LLM calls for discussions that are no longer active.
+Summarization is lazy: it runs only when the discussion log is needed (for a deliberation cycle or interrupt context) and has grown beyond the threshold since the last summarization. This avoids unnecessary LLM calls for discussions that are no longer active.
 
 ### 6.2 Interrupt History
 
-During execution, processed interrupts — those the LLM has already evaluated and decided on — accumulate. If many interrupts arrive over a long execution, the raw interrupt history can grow large.
+During execution, processed interrupts — those the LLM has already seen and responded to — accumulate in the conversation context. If many interrupts arrive over a long execution, the raw interrupt history can grow large.
 
-Processed interrupts are consolidated using the same summarization approach as discussions. The summary captures what interrupts arrived, what decisions the agent made (CONTINUE, ADJUST), and what adjustments were applied. New, unprocessed interrupts remain verbatim. This ensures the LLM has full context on recent interrupts while maintaining a compressed history of earlier ones.
+Processed interrupts are consolidated using the same summarization approach as discussions. The summary captures what interrupts arrived, what the agent decided, and what adjustments were applied. New, unprocessed interrupts remain verbatim. This ensures the LLM has full context on recent interrupts while maintaining a compressed history of earlier ones.
 
 ### 6.3 Deliberation-to-Execution Handoff
 
@@ -345,65 +375,63 @@ This section walks through concrete scenarios to illustrate how the collaboratio
 
 **Task submitted:** "Build a user registration system with email verification."
 
-1. Task arrives on `work.*`. All three agents pass the relevance threshold and enter DELIBERATING.
+1. Task arrives on `work.*`. All three agents pass the relevance threshold. Each transitions from MONITORING to DELIBERATING.
 
-2. **Backend** (first to respond): "I'll handle the registration API endpoint, user database schema, and email verification token generation. NEED_INFO: What email service are we using?"
+2. **Backend** (first to respond): "I'll handle the registration API endpoint, user database schema, and email verification token generation. NEED_INFO: What email service are we using?" Backend returns to MONITORING.
 
-3. **Frontend**: "I'll build the registration form and the email verification landing page. NEED_INFO: What fields does the registration form need?"
+3. **Frontend** (triggered by the discuss message): "I'll build the registration form and the email verification landing page. NEED_INFO: What fields does the registration form need?" Frontend returns to MONITORING.
 
-4. **Webserver**: "I'll set up the routes: POST /register → backend, GET /verify → backend, static assets → frontend build output. NEED_INFO: Are there any rate limiting requirements?"
+4. **Webserver** (triggered by the discuss messages): "I'll set up the routes: POST /register → backend, GET /verify → backend, static assets → frontend build output. NEED_INFO: Are there any rate limiting requirements?" Webserver returns to MONITORING.
 
-5. **Backend**: "Registration fields: email, password, display name. No specific rate limiting unless frontend wants it. CLAIM: Registration API, user schema, email token generation."
+5. **Backend** (triggered by frontend's question): "Registration fields: email, password, display name. No specific rate limiting unless frontend wants it. CLAIM: Registration API, user schema, email token generation." Backend transitions to EXECUTING.
 
-6. **Frontend**: "Got it — three fields plus a submit button. CLAIM: Registration form, verification landing page, client-side validation."
+6. **Frontend** (triggered by backend's response): "Got it — three fields plus a submit button. CLAIM: Registration form, verification landing page, client-side validation." Frontend transitions to EXECUTING.
 
-7. **Webserver**: "CLAIM: Route configuration, reverse proxy rules, static asset serving."
+7. **Webserver** (triggered by the discussion): "CLAIM: Route configuration, reverse proxy rules, static asset serving." Webserver transitions to EXECUTING.
 
-8. All three agents transition to EXECUTING. Each works on its claimed portion. No interrupts arise because the task was cleanly divided.
+8. All three agents execute their claimed portions independently. No interrupts arise because the task was cleanly divided.
 
-This scenario illustrates the simplest case: agents discuss briefly, divide work, and execute independently. Deliberation took four rounds and produced a clear division of responsibility.
+This scenario illustrates the simplest case: the discussion unfolds through reactive cycles of MONITORING → DELIBERATING → MONITORING, each triggered by the previous agent's discuss message. No agent "waits" in deliberation — each responds to a message and returns to MONITORING until the next message arrives. Convergence happens naturally.
 
 ### 7.2 Scenario: Mid-Execution Course Correction
 
 **Task submitted:** "Add real-time notifications to the dashboard."
 
-1. All three agents deliberate. Backend CLAIMs the notification API (REST), frontend CLAIMs the notification UI panel, webserver CLAIMs the routing.
+1. All three agents deliberate through several reactive cycles. Backend CLAIMs the notification API (REST), frontend CLAIMs the notification UI panel, webserver CLAIMs the routing.
 
 2. Frontend begins executing. After implementing the initial UI, it realizes REST polling will create a poor user experience for real-time updates. It publishes on `discuss.<task_id>`: "REST polling every 2 seconds is going to be janky. We should use WebSocket for the notification feed."
 
 3. Backend is mid-execution, writing REST notification endpoints. At the next interrupt check (after its current tool calls complete), it sees the frontend's message in the interrupts block.
 
-4. Backend's LLM evaluates: the REST endpoints it has written are for fetching notification history — those are still valid. But the "new notification" push mechanism needs to change from REST to WebSocket. Decision: **ADJUST**. The backend modifies its remaining plan to implement a WebSocket handler alongside the REST history endpoint.
+4. Backend's LLM evaluates: the REST endpoints it has written are for fetching notification history — those are still valid. But the "new notification" push mechanism needs to change from REST to WebSocket. The LLM adjusts its remaining plan to implement a WebSocket handler alongside the REST history endpoint. Execution continues.
 
-5. Webserver also receives the interrupt. It evaluates: WebSocket requires an upgrade-capable proxy configuration. Decision: **ADJUST**. It modifies its nginx config to support WebSocket upgrade headers on the `/ws/notifications` path.
+5. Webserver also receives the interrupt. It evaluates: WebSocket requires an upgrade-capable proxy configuration. It adjusts its nginx config to support WebSocket upgrade headers on the `/ws/notifications` path. Execution continues.
 
 6. All three agents complete execution with a coherent result — REST for history, WebSocket for real-time — despite the mid-execution design change.
 
-This scenario illustrates the interrupt mechanism's primary value: agents can adapt to discoveries made by other agents during execution, without requiring a full stop and restart.
+This scenario illustrates the interrupt mechanism's primary value: agents adapt to discoveries made by other agents during execution, without requiring a full stop and restart.
 
-### 7.3 Scenario: Pause and Resume
+### 7.3 Scenario: Execution with Discussion
 
 **Task submitted:** "Implement OAuth2 login with Google and GitHub providers."
 
-1. Agents deliberate. Backend CLAIMs the OAuth2 flow implementation, frontend CLAIMs the login UI, webserver CLAIMs the callback route configuration.
+1. Agents deliberate through reactive cycles. Backend CLAIMs the OAuth2 flow implementation, frontend CLAIMs the login UI, webserver CLAIMs the callback route configuration.
 
 2. Backend begins executing. It implements the Google OAuth2 flow. At the next interrupt check, it finds a message from the frontend: "The design team wants to support 'Sign in with Apple' too. Apple's OAuth is significantly different — they require server-side token validation and have a unique key rotation mechanism."
 
-3. Backend's LLM evaluates: Apple's OAuth2 implementation has security implications (key rotation, server-side validation) that it cannot resolve alone. It needs to discuss the approach with the swarm. Decision: **PAUSE**.
+3. Backend's LLM evaluates: Apple OAuth adds complexity but doesn't invalidate the current work. The Google flow is already complete. However, the LLM has a question about key management. It publishes on `discuss.<task_id>`: "Adding Apple OAuth. Question: Apple's JWKS endpoint has reliability concerns — should I add a caching layer, or will webserver handle that at the proxy level?" It then continues executing the GitHub OAuth flow, which is independent of the Apple question.
 
-4. Backend publishes on `discuss.<task_id>`: "PAUSED: Apple OAuth requires server-side JWT validation with rotating keys. This changes the token verification architecture. Do we add a dedicated key rotation service, or handle it in the main backend? Also, this adds a dependency on Apple's JWKS endpoint — reliability concern."
+4. Frontend responds on discuss: "From the UI side, Apple requires a specific button style. I'll need the callback URL format."
 
-5. Frontend responds: "From the UI side, Apple requires a specific button style and a different redirect flow. I'll need the callback URL format before I can finalize the login page."
+5. Webserver responds on discuss: "I can add a caching proxy for Apple's JWKS endpoint. 1-hour cache with background refresh."
 
-6. Webserver responds: "I can add a caching proxy for Apple's JWKS endpoint to handle reliability. Suggest a 1-hour cache with background refresh."
+6. Backend finishes GitHub OAuth. At the next interrupt check, it receives the webserver's and frontend's responses. The question is answered — webserver handles JWKS caching. Backend proceeds to implement Apple OAuth with JWT validation. It publishes the callback URL format on discuss, answering frontend's question.
 
-7. Backend evaluates the discussion. The webserver's caching proxy solution addresses the reliability concern. Backend can implement the JWT validation knowing the JWKS endpoint is reliably cached. Decision: Resume execution.
+7. All three agents complete with aligned understanding. The backend did not stop working — it asked its question, continued on independent work, and incorporated the answer when it arrived.
 
-8. Backend transitions from PAUSED back to EXECUTING, continuing from where it stopped (Google flow complete, now implementing Apple flow with JWT validation).
+This scenario illustrates a key property of the three-state model: an agent can participate in discussion *during* execution by publishing questions on discuss (via tool calls) and receiving answers as future interrupts. There is no need for a separate "paused" state — the agent keeps working on what it can and adapts when answers arrive.
 
-This scenario illustrates the PAUSE mechanism: the agent encounters a problem it cannot solve in isolation, pauses to discuss, and resumes once the swarm provides a solution. The key property is that execution state is preserved — the backend does not restart its Google OAuth implementation.
-
-### 7.4 Scenario: Abort and Re-engagement
+### 7.4 Scenario: Abandonment and Re-engagement
 
 **Task submitted:** "Set up CI/CD pipeline with automated testing."
 
@@ -413,40 +441,36 @@ This scenario illustrates the PAUSE mechanism: the agent encounters a problem it
 
 3. An interrupt arrives from the swarm operator (via `discuss.<task_id>`): "We're migrating from GitHub to GitLab next week. Don't invest in GitHub-specific CI."
 
-4. Backend's LLM evaluates: the entire GitHub Actions workflow it is building will be obsolete. Decision: **ABORT**. Backend publishes: "ABORT: GitHub Actions workflow no longer viable given GitLab migration. Partial work in .github/workflows/ may be useful as reference for GitLab CI syntax translation."
+4. Backend's LLM evaluates: the entire GitHub Actions workflow it is building will be obsolete. It decides to abandon execution. The executor transitions the agent to DELIBERATING, where it publishes: "Abandoning GitHub Actions workflow — not viable given GitLab migration. Partial work in .github/workflows/ may be useful as reference for GitLab CI syntax translation." Backend then transitions to MONITORING.
 
-5. Backend transitions to MONITORING. It continues watching `discuss.<task_id>`.
+5. Frontend finishes its test setup (framework-agnostic, not affected by the CI migration). Webserver evaluates the same interrupt and also abandons, publishing its own explanation.
 
-6. Frontend finishes its test setup (framework-agnostic, not affected by the CI migration). Webserver pauses its deployment pipeline work.
+6. Later, the swarm operator posts: "GitLab migration complete. Here are the repo URLs and CI runner details."
 
-7. Later, the swarm operator posts: "GitLab migration complete. Here are the repo URLs and CI runner details."
+7. Backend receives this message, enters DELIBERATING, reads the discussion history. It CLAIMs: "I'll set up the GitLab CI pipeline using the completed test suite. Can reference the GitHub Actions structure for pipeline design." Backend transitions to EXECUTING and begins fresh.
 
-8. Backend sees this message on `discuss.<task_id>`. The abort reason (GitHub → GitLab migration) is resolved. Backend re-enters DELIBERATING, reads the discussion history, and CLAIMs: "I'll set up the GitLab CI pipeline using the completed test suite. Can reference the GitHub Actions structure for pipeline design."
+8. Backend executes, now building for GitLab CI.
 
-9. Backend executes, now building for GitLab CI instead.
-
-This scenario illustrates abort as a reversible disengagement. The agent stops work that is no longer viable, communicates why, and remains available to re-engage when circumstances change.
+This scenario illustrates abandonment as a reversible disengagement. The agent stops work that is no longer viable, communicates why (so other agents can adapt), returns to MONITORING, and re-engages when circumstances change. The re-engagement is a fresh execution, not a resumption — there is no saved state to restore, which keeps the model simple.
 
 ### 7.5 Scenario: Dependency Chain
 
 **Task submitted:** "Build an API with tests and documentation."
 
-1. All three agents deliberate. This is a case where dependencies are inherent:
-   - **Backend**: "I'll build the API. Others will need my code before they can test or document."
-   - **Frontend**: "I have nothing to contribute to an API-only task. Withdrawing." Frontend returns to MONITORING.
-   - **Webserver**: "I'll write the API documentation once the endpoints are defined. NEED_INFO: waiting for backend to define the API."
+1. All three agents enter deliberation via reactive cycles:
+   - **Backend**: "I'll build the API. Others will need my code before they can test or document. CLAIM: API implementation — routes, handlers, models." Backend transitions to EXECUTING.
+   - **Frontend**: "I have nothing to contribute to an API-only task." Frontend returns to MONITORING silently.
+   - **Webserver**: "I'll write the API documentation once the endpoints are defined. NEED_INFO: waiting for backend to define the API." Webserver returns to MONITORING.
 
-2. Backend CLAIMs: "API implementation — routes, handlers, models." It begins executing.
+2. Backend executes, building the API. Webserver is in MONITORING — idle, but its swarm context updates as backend heartbeats arrive showing EXECUTING status.
 
-3. Webserver remains in DELIBERATING with NEED_INFO. It is not blocked — it is simply waiting for the information it needs. It continues updating its swarm context as backend heartbeats arrive showing EXECUTING status and progress.
+3. Backend completes and publishes its result on `done.*`. The result includes the API specification.
 
-4. Backend completes and publishes its result on `done.*`. The result includes the API specification.
+4. Webserver receives the `done.*` message, enters DELIBERATING. Its dependency is satisfied. It CLAIMs: "API documentation based on the implemented endpoints." Webserver transitions to EXECUTING.
 
-5. Webserver sees the `done.*` message. Its dependency is satisfied. It CLAIMs: "API documentation based on the implemented endpoints." It begins executing.
+5. If a tester agent existed, it would follow the same pattern — staying in MONITORING with NEED_INFO until the API is built, then CLAIMing test development when the `done.*` message triggers a new deliberation.
 
-6. If a tester agent existed, it would follow the same pattern — waiting in deliberation until the API is built, then CLAIMing test development.
-
-This scenario illustrates that NEED_INFO is not a failure state — it is a natural expression of dependency. Agents wait intelligently, maintaining awareness of progress, and engage when their prerequisites are met.
+This scenario illustrates that NEED_INFO followed by a return to MONITORING is a natural expression of dependency. The agent does not block or hold resources while waiting. It is genuinely idle in MONITORING, and the arrival of the dependency resolution (via `done.*`) triggers a new reactive cycle that leads to CLAIM and execution.
 
 ---
 
@@ -462,9 +486,9 @@ collaboration:
   context_summary_threshold: 10
 ```
 
-**straggler_timeout** (default: 30s). Maximum time to wait for an agent that has not participated in deliberation. After this timeout, other agents proceed without the straggler. The straggler may still join later if it comes online.
+**straggler_timeout** (default: 30s). Maximum time to wait for an agent that has not participated in deliberation for a given task. After this timeout, other agents proceed without the straggler. The straggler may still join later if it comes online.
 
-**max_deliberation_rounds** (default: 20). Maximum number of discuss message exchanges per task before the system forces agents to decide. This prevents infinite deliberation loops where agents keep asking questions without converging. When the limit is reached, each agent must either CLAIM or withdraw on its next turn.
+**max_deliberation_rounds** (default: 20). Maximum number of discuss message exchanges per task across all agents before the system forces a decision. This prevents runaway deliberation where agents keep exchanging NEED_INFO without converging. When the limit is reached, each agent must either CLAIM or withdraw on its next deliberation cycle.
 
 **interrupt_check** (default: true). Whether executing agents check the interrupt buffer between LLM turns. When false, agents execute in isolation (current behavior). When true, agents receive and evaluate interrupts from the discuss channel.
 
@@ -483,6 +507,7 @@ No new NATS subjects are required. The existing subject hierarchy — `work.*`, 
 - Deliberation occurs on `discuss.<task_id>` (existing)
 - CLAIMs are published on `discuss.<task_id>` (existing, new message type)
 - Interrupt sources are `discuss.<task_id>` messages (existing)
+- Abandonment explanations are published on `discuss.<task_id>` or `work.<name>.*` (existing)
 - Swarm context is built from `heartbeat.*` and `done.*` (existing)
 
 ### 9.2 Agentfile
@@ -509,6 +534,7 @@ Becomes:
 loop:
   send messages to LLM
   receive response (text + tool calls)
+  if abandonment signaled: exit loop → DELIBERATING
   execute tool calls
   collect results
   drain interrupt buffer
@@ -519,13 +545,13 @@ loop:
   add results to messages
 ```
 
-The change is minimal in code terms — an additional check between tool result collection and the next LLM invocation. The complexity lies not in the mechanism but in the prompt engineering: the interrupts block, the guidance framework, and the context management that keeps the conversation coherent.
+The changes are minimal in code terms: a buffer drain between tool result collection and the next LLM invocation, and an abandonment check on LLM responses. The complexity lies not in the mechanism but in the prompt engineering: the interrupts block, the guidance framework, and the context management that keeps the conversation coherent.
 
 **Solo agent compatibility.** When an agent runs outside a swarm (`agent run` with no NATS connection), the interrupt buffer is never created (nil), the swarm context goroutine is never started, and the deliberation loop is never entered. The buffer drain check short-circuits immediately on a nil buffer — zero overhead. The executor behaves identically to the pre-collaboration execution loop. The state machine collapses to a single state (EXECUTING) with no transitions. This is by design: the collaboration model is additive. It activates only when NATS subscriptions exist, which only happens in swarm mode.
 
 ### 9.4 Triage
 
-The current triage mechanism (similarity scoring + LLM decision) becomes the entry gate to deliberation rather than the entry gate to execution. Its role narrows: instead of deciding EXECUTE/COMMENT/SKIP, it decides only whether the task is relevant enough to enter deliberation. The richer decisions — what to do, what to claim, how to participate — are made during deliberation itself.
+The current triage mechanism (similarity scoring + LLM decision) becomes the entry gate to deliberation rather than the entry gate to execution. Its role narrows: instead of deciding EXECUTE/COMMENT/SKIP, it decides only whether the incoming message is relevant enough to trigger DELIBERATING. The richer decisions — what to say, what to claim, how to participate — are made during deliberation itself.
 
 ---
 
@@ -533,11 +559,11 @@ The current triage mechanism (similarity scoring + LLM decision) becomes the ent
 
 Several design questions remain unresolved. They are captured here for future consideration.
 
-**Sub-agent forking for sidequests.** When an interrupt reveals orthogonal work — work that is relevant but not part of the agent's current task — the agent currently has two options: ignore it (CONTINUE) or handle it by adjusting its plan (ADJUST). A third option — forking a sub-agent to handle the sidequest while the main agent continues — is architecturally appealing but adds significant complexity. The implications for state management, resource consumption, and swarm coordination need careful analysis before this is viable.
+**Sub-agent forking for sidequests.** When an interrupt reveals orthogonal work — work that is relevant but not part of the agent's current task — the agent currently has two options: ignore it or adjust its plan to incorporate it. A third option — forking a sub-agent to handle the sidequest while the main agent continues — is architecturally appealing but adds significant complexity. The implications for state management, resource consumption, and swarm coordination need careful analysis before this is viable.
 
-**Conflict resolution on duplicate CLAIMs.** If two agents CLAIM overlapping work, the current design has no explicit resolution mechanism. In practice, the discuss channel should surface this during deliberation — agents can see each other's CLAIMs and adjust. But if CLAIMs happen simultaneously, overlap may go undetected until results are published. A future extension might introduce CLAIM acknowledgment or NATS-based deduplication.
+**Conflict resolution on duplicate CLAIMs.** If two agents CLAIM overlapping work, the current design has no explicit resolution mechanism. In practice, the discuss channel should surface this during deliberation — agents can see each other's CLAIMs and adjust. But if CLAIMs happen simultaneously (two agents CLAIM in the same reactive cycle before seeing each other's messages), overlap may go undetected until results are published. A future extension might introduce CLAIM acknowledgment or NATS-based deduplication.
 
-**Interrupt batching vs. immediacy.** The current design processes all buffered interrupts at each check point. An alternative is to batch interrupts over a minimum interval (e.g., collect for 5 seconds before injecting) to reduce the frequency of LLM evaluations. The tradeoff is latency vs. cost, and the right balance likely depends on the task.
+**Interrupt batching vs. immediacy.** The current design processes all buffered interrupts at each check point. An alternative is to batch interrupts over a minimum interval (e.g., collect for 5 seconds before injecting) to reduce the token cost when many messages arrive in rapid succession. The tradeoff is latency vs. cost, and the right balance likely depends on the task.
 
 **Swarm context divergence detection.** While Section 5.1 argues that personal interpretation is acceptable, there may be cases where significant divergence causes problems that surface too late. A lightweight divergence detection mechanism — perhaps agents periodically publishing their key assumptions on `discuss.*` — could catch misalignment early. The cost-benefit of this is unclear.
 
