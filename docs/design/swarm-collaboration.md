@@ -138,13 +138,7 @@ Deliberation converges when all relevant agents have either CLAIMed their portio
 
 A practical consideration: some agents may depend on others' work. A tester cannot CLAIM until a coder has CLAIMed (and ideally completed). This is natural and expected. The tester publishes NEED_INFO ("waiting for code to test"), returns to MONITORING, and re-enters DELIBERATING when the `done.*` message from the coder arrives. It does not block other agents from CLAIMing and executing. Dependencies resolve naturally through the message-driven reactive loop.
 
-### 3.4 Straggler Handling
-
-If an agent fails to participate in deliberation within the configured straggler timeout (default: 30 seconds), other agents proceed without it. The non-responsive agent may still join later — if it enters deliberation after others have already CLAIMed, it can read the discussion history and decide whether there is unclaimed work for it.
-
-The straggler timeout is a swarm-level configuration parameter, not a per-agent setting. It represents the swarm operator's tolerance for waiting.
-
-### 3.5 Deliberation Context
+### 3.4 Deliberation Context
 
 Each deliberation is a single LLM call with the following context:
 
@@ -157,7 +151,7 @@ The LLM produces both a natural language contribution (the discussion content) a
 
 **Response channel selection.** Deliberation can be triggered by messages on either `discuss.*` (broadcast) or `work.<name>.*` (directed). The response channel is not determined by the source channel — it is determined by the content's relevance to the swarm. The deliberation prompt instructs the LLM: if the triggering message or the agent's response contains information that affects other agents' understanding of the task — decisions, constraints, architectural changes, discovered problems — the response must be published on `discuss.<task_id>` so the swarm stays aligned. If the exchange is narrowly scoped to this agent alone (credentials, agent-specific configuration, a clarification that does not affect others' work), the response may remain on the directed channel. The LLM makes this judgment based on the content, not the channel.
 
-### 3.6 Deliberation Limits
+### 3.5 Deliberation Limits
 
 While individual deliberation cycles are transient, the accumulated discussion for a task can grow unbounded if agents keep exchanging NEED_INFO messages without converging. The `max_deliberation_rounds` configuration parameter (default: 20) caps the total number of discuss messages per task across all agents. When the limit is reached, each agent must either CLAIM or withdraw on its next deliberation cycle.
 
@@ -482,13 +476,10 @@ The collaboration model introduces a new `collaboration` section in the swarm ma
 
 ```yaml
 collaboration:
-  straggler_timeout: 30s
   max_deliberation_rounds: 20
   interrupt_check: true
   context_summary_threshold: 10
 ```
-
-**straggler_timeout** (default: 30s). Maximum time to wait for an agent that has not participated in deliberation for a given task. After this timeout, other agents proceed without the straggler. The straggler may still join later if it comes online.
 
 **max_deliberation_rounds** (default: 20). Maximum number of discuss message exchanges per task across all agents before the system forces a decision. This prevents runaway deliberation where agents keep exchanging NEED_INFO without converging. When the limit is reached, each agent must either CLAIM or withdraw on its next deliberation cycle.
 
