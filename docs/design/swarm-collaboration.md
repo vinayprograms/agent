@@ -519,13 +519,13 @@ This is the natural idle behavior described in Section 2.1. It works correctly â
 
 2. Backend begins building a GitHub Actions workflow.
 
-3. Interrupt from the swarm operator: "We're migrating to GitLab next week. Don't invest in GitHub-specific CI."
+3. The swarm operator publishes on `discuss.<task_id>`: "We're migrating to GitLab next week. Don't invest in GitHub-specific CI." This arrives in each executing agent's interrupt buffer.
 
 4. Backend evaluates: the GitHub Actions work is obsolete. It abandons, publishing: "Abandoning GitHub Actions workflow â€” not viable given GitLab migration. Partial work in .github/workflows/ may be useful as reference." Transitions to MONITORING.
 
 5. Webserver evaluates the same interrupt, also abandons with explanation.
 
-6. Later, the operator posts: "GitLab migration complete. Here are the repo URLs." Backend re-enters DELIBERATING, CLAIMs the GitLab CI setup, and executes fresh.
+6. Later, the operator publishes on `discuss.<task_id>`: "GitLab migration complete. Here are the repo URLs." Backend re-enters DELIBERATING, CLAIMs the GitLab CI setup, and executes fresh.
 
 #### 7.4.2 Silent abandonment (less capable LLM)
 
