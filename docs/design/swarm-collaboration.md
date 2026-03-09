@@ -292,7 +292,7 @@ This is appropriate because swarm context represents *current* state, not histor
 
 Swarm context contains three categories of information, each maintained by a different NATS subscription:
 
-**Agent states** (from `heartbeat.*`). A map of agent name to current status: state (MONITORING, DELIBERATING, EXECUTING), capability, current task (if any), and last heartbeat timestamp. This is always current — each heartbeat overwrites the previous entry. The data is compact: one map entry per agent, no accumulation.
+**Agent states** (from `heartbeat.*`). A map of agent name to current status: state (MONITORING, DELIBERATING, EXECUTING), capability, current task (if any), and last heartbeat timestamp. This is always current — each heartbeat overwrites the previous entry. The data is compact: one map entry per agent, no accumulation. This map serves a dual purpose: it provides situational awareness (who is doing what) and it functions as the **live agent directory** — the authoritative list of agents available for directed messaging on `work.<name>.*`. When an agent needs to send a directed message to a specific peer (during execution or deliberation), it resolves the target name against this map. No separate discovery mechanism is needed.
 
 **Task discussions** (from `discuss.*`). A per-task log of discussion messages. When the log for a task exceeds the configured summary threshold (default: 10 messages), older messages are summarized by the small LLM and replaced with the summary. Recent messages are preserved verbatim. This sliding window ensures discussion context remains bounded while retaining the most current exchanges in full fidelity.
 
