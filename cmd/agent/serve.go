@@ -15,6 +15,7 @@ import (
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/swarm"
 	"github.com/vinayprograms/agentkit/bus"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/embedding"
@@ -373,8 +374,37 @@ func (a *serviceAgent) runBusMode() error {
 		}
 	}()
 
-	// Initialize swarm context for collaboration
-	a.swarmContext = executor.NewSwarmContext()
+	// === REPLAY PHASE ===
+	// Ensure JetStream stream exists, then replay history to build swarm context.
+	if a.heartbeat != nil {
+		a.heartbeat.SetStatus("replay")
+	}
+	js, err := swarm.EnsureStream(natsBus.Conn())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  JetStream unavailable: %v (continuing without replay)\n", err)
+		a.swarmContext = executor.NewSwarmContext()
+	} else {
+		catchupSeq, err := swarm.LastSequence(js)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Failed to get stream sequence: %v\n", err)
+			a.swarmContext = executor.NewSwarmContext()
+		} else {
+			result, err := swarm.Replay(js, catchupSeq, a.agentID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "⚠️  Replay failed: %v (starting with empty context)\n", err)
+				a.swarmContext = executor.NewSwarmContext()
+			} else {
+				a.swarmContext = result.SwarmContext
+				if result.MessagesRead > 0 {
+					fmt.Fprintf(os.Stderr, "📼 Replay complete: %d messages, caught up to seq %d\n",
+						result.MessagesRead, result.CatchupSeq)
+				}
+			}
+		}
+	}
+	if a.heartbeat != nil {
+		a.heartbeat.SetStatus("monitoring")
+	}
 
 	// Subscribe to discuss.* (regular sub — all agents see all messages)
 	discussSub, err := natsBus.Subscribe("discuss.*")
@@ -405,12 +435,83 @@ func (a *serviceAgent) runBusMode() error {
 	fmt.Fprintf(os.Stderr, "Listening on: discuss.* (collaborative)\n")
 	fmt.Fprintf(os.Stderr, "Heartbeat interval: %s\n", heartbeatInterval)
 
+	// === POST-REPLAY DELIBERATION ===
+	// After replay, the agent has full swarm context. Evaluate if there's
+	// unclaimed work or open questions this agent should address.
+	a.postReplayDeliberation(ctx)
+
 	// Main loop — multiplex work and discuss channels
 	a.runMainLoop(ctx, sigCh)
 	return nil
 }
 
 // runMainLoop multiplexes work and discuss subscriptions.
+// postReplayDeliberation evaluates the swarm state after replay and
+// determines if there is unclaimed work matching this agent's capability.
+// This is the REPLAY → DELIBERATING transition from §2.1.
+func (a *serviceAgent) postReplayDeliberation(ctx context.Context) {
+	if a.swarmContext == nil {
+		return
+	}
+
+	// Check if there are any open task discussions
+	states := a.swarmContext.GetAgentStates()
+	completed := a.swarmContext.GetCompleted()
+
+	// If no other agents are visible and nothing is completed,
+	// the swarm is either fresh or this agent is the first to join.
+	if len(states) == 0 && len(completed) == 0 {
+		fmt.Fprintf(os.Stderr, "🔍 Post-replay: no swarm activity found, entering MONITORING\n")
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "🔍 Post-replay: %d agents visible, %d tasks completed — checking for unclaimed work\n",
+		len(states), len(completed))
+
+	// Use the small LLM to evaluate the swarm state against this agent's capability.
+	if a.serviceRuntime == nil || a.serviceRuntime.smallLLM == nil {
+		return
+	}
+
+	swarmState := a.swarmContext.FormatForLLM("")
+	resumeSummary := a.capability.Name
+	if a.agentResume != nil {
+		resumeSummary = a.agentResume.ToText()
+	}
+
+	prompt := fmt.Sprintf(`You just joined an active swarm. Review the current state and determine if there is unclaimed work that matches your capability.
+
+YOUR PROFILE:
+%s
+
+CURRENT SWARM STATE:
+%s
+
+Is there unclaimed work you should take on? Reply with:
+CLAIM: <what you will work on>
+SKIP (if nothing needs your attention)`, resumeSummary, swarmState)
+
+	llmAdapter := &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
+	resp, err := llmAdapter.Complete(ctx, prompt)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠️  Post-replay deliberation failed: %v\n", err)
+		return
+	}
+
+	resp = strings.TrimSpace(resp)
+	if strings.HasPrefix(strings.ToUpper(resp), "CLAIM") {
+		msg := strings.TrimPrefix(resp, "CLAIM:")
+		msg = strings.TrimPrefix(msg, "CLAIM")
+		msg = strings.TrimSpace(msg)
+		fmt.Fprintf(os.Stderr, "  💬 Post-replay CLAIM: %s\n", msg)
+		// TODO: construct a TaskMessage from the CLAIM and trigger execution
+		// For now, log the intent — full task construction requires knowing
+		// which task ID to claim against, which needs more context.
+	} else {
+		fmt.Fprintf(os.Stderr, "  🔍 Post-replay: nothing to claim, entering MONITORING\n")
+	}
+}
+
 func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
 	// Merge all work subscription channels
 	workCh := make(chan *bus.Message, 16)
