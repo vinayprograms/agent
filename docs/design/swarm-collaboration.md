@@ -58,9 +58,9 @@ There is a subtlety when the capability segment is omitted or wildcarded. A mess
 
 **`work.<name>.<task_id>` — directed to a specific agent.** When an agent subscribes to `work.<name>.*` (where `name` is its unique agent name rather than a shared capability), messages on this subject reach that specific agent. This is the channel for agent-to-agent private communication: "hey backend, here's the callback URL format you asked about." The sending agent resolves the target name from the agent directory in swarm context (Section 5.2).
 
-**`done.<capability>.<task_id>` — completion-oriented integration seam.** Published when an agent finishes execution. Agents **write** to this subject but **never subscribe** to it. The separation is deliberate: `discuss.*` carries the collaborative flow of execution — deliberation, interrupts, CLAIMs, questions, and incidentally, completion announcements. It is noisy by design, optimized for agents that need full context to make decisions. `done.*` carries a fundamentally different signal: the fact that a unit of work is complete, with structured metadata about the outcome.
+**`done.<capability>.<task_id>` — outcome-oriented integration seam.** Published when an agent's execution terminates — whether through successful completion or abandonment. Agents **write** to this subject but **never subscribe** to it. The separation is deliberate: `discuss.*` carries the collaborative flow of execution — deliberation, interrupts, CLAIMs, questions, and incidentally, outcome announcements. It is noisy by design, optimized for agents that need full context to make decisions. `done.*` carries a fundamentally different signal: the fact that an agent's work on a task has concluded, with the agent's final output.
 
-This distinction exists because future software systems will care about task *completion* without caring about task *execution*. A billing system needs to know that a task finished and how many tokens it consumed. A webhook relay needs to notify an external service that a deliverable is ready. A cross-swarm orchestrator needs to know that a dependency was satisfied. An audit log needs a clean record of what was produced. None of these systems want to parse the collaborative discussion stream to extract completion events — they want a dedicated, structured, noise-free channel where every message means exactly one thing: a task finished.
+This distinction exists because future software systems will care about task *outcomes* without caring about task *execution*. A billing system needs to know that an agent's work concluded and how many tokens it consumed — regardless of whether the outcome was success or abandonment. A webhook relay needs to notify an external service when a task progresses. A cross-swarm orchestrator needs to know that a dependency was satisfied (or that it won't be). An audit log needs a clean record of what happened. None of these systems want to parse the collaborative discussion stream to extract outcome events — they want a dedicated, structured, noise-free channel where every message means exactly one thing: an agent concluded its work on a task.
 
 By having agents publish to `done.*` even though no agent subscribes to it, the swarm creates an integration point that can be consumed by any number of non-agent systems without coupling them to the agent collaboration protocol. The `done.*` stream is stable, structured, and self-contained — a clean API boundary between the swarm's internal collaboration and the external world's interest in its output.
 
@@ -116,11 +116,11 @@ The state machine has five transitions:
 
 **DELIBERATING → EXECUTING.** Triggered when the agent determines, during deliberation, that it has sufficient information to begin work. The agent publishes a CLAIM on `discuss.<task_id>` specifying what portion of the task it is taking responsibility for, initializes its interrupt buffer, and begins workflow execution.
 
-**EXECUTING → MONITORING.** Triggered on successful completion. The agent publishes a DONE message on `discuss.<task_id>` (so other agents learn about the completion) and simultaneously publishes structured completion metadata on `done.<capability>.<task_id>` (for infrastructure consumers). It then returns to MONITORING.
+**EXECUTING → MONITORING.** Triggered when the agentic loop terminates (the LLM produces a text response with no tool calls). The agent publishes the LLM's final output on both `discuss.<task_id>` (so other agents learn what happened) and `done.<capability>.<task_id>` (for infrastructure consumers). It then returns to MONITORING. Whether the termination represents successful completion or abandonment is conveyed by the content of the message, not the channel — other agents reading `discuss.*` understand from the text whether the agent delivered a result or explained why it stopped.
 
-**EXECUTING → DELIBERATING.** Triggered when the agent, during execution, determines its work is no longer viable or it must communicate something to the swarm before it can continue. The mechanism is natural: the LLM produces a text response (the explanation) with no tool calls. The executor's agentic loop already terminates on end_turn with no tool calls — the same way any completed execution stops. The executor takes the LLM's text output, publishes it to `discuss.<task_id>` as the abandonment explanation, and transitions to MONITORING. No special keyword or signal is needed — abandonment looks like completion to the loop machinery, with the difference being that the published message explains *why* the agent stopped rather than delivering a result.
+**EXECUTING → DELIBERATING.** Triggered when the agent, during execution, needs to communicate something to the swarm mid-task — a question, a constraint it discovered, or a dependency it needs resolved. The agent transitions to DELIBERATING, publishes its message on `discuss.<task_id>` (or `work.<name>.*` for a directed message), and returns to MONITORING. The agent does not resume its prior execution. If the situation resolves and the agent's capabilities are still relevant, a subsequent message will trigger a new MONITORING → DELIBERATING → EXECUTING cycle — a fresh execution, not a continuation.
 
-After publishing, the agent does not resume its prior execution. If the situation resolves and the agent's capabilities are still relevant, a subsequent message will trigger a new MONITORING → DELIBERATING → EXECUTING cycle — a fresh execution, not a continuation.
+Note that abandonment does not use this transition. When an agent decides to stop (whether due to completion or abandonment), the agentic loop terminates naturally (no tool calls) and the EXECUTING → MONITORING transition handles it. The EXECUTING → DELIBERATING path exists specifically for cases where the agent needs to *say something to the swarm* before stopping — and the message needs to be part of a deliberation cycle, not a final output.
 
 This transition deserves careful attention. When an agent abandons execution, it does not silently disappear. It communicates the reason for abandonment so that other agents can update their understanding of the problem. The abandon message might reveal a constraint that other agents have not encountered ("Apple's OAuth requires server-side JWT validation with rotating keys — this changes the token verification architecture"), flag a dependency ("I can't proceed until the database schema is finalized"), or declare that the work is no longer viable ("the migration to GitLab makes this GitHub Actions workflow obsolete"). Other agents, upon receiving this message, will enter their own DELIBERATING state and decide how to respond.
 
@@ -241,7 +241,7 @@ loop:
       format interrupts block, add to messages
       continue loop (LLM re-evaluates with interrupts before terminating)
     else:
-      break (execution complete or abandoned)
+      break
   execute tool calls
   collect results
   drain interrupt buffer
@@ -249,9 +249,12 @@ loop:
     format interrupts block
     add to messages
   add results to messages
+
+publish final output to discuss.<task_id> and done.<capability>.<task_id>
+transition to MONITORING
 ```
 
-The loop terminates when the LLM produces text with no tool calls and no interrupts are pending. Whether this represents successful completion or abandonment is determined by the content of the LLM's final text output — the executor publishes it accordingly (DONE on `discuss.*` + `done.*` for completion, explanation on `discuss.*` only for abandonment). The existing goal-satisfaction logic in the executor makes this distinction.
+The loop terminates when the LLM produces text with no tool calls and no interrupts are pending. The executor always publishes the final output to both `discuss.*` and `done.*`. Whether the termination represents completion or abandonment is conveyed by the content of the message — other agents and infrastructure consumers interpret it accordingly. No structural distinction is needed.
 
 **Solo agent compatibility.** When an agent runs outside a swarm (no NATS connection), the interrupt buffer is never created (nil) and the buffer drain check short-circuits in nanoseconds. No swarm context goroutine starts, no deliberation loop is entered, and the state machine collapses to a single state (EXECUTING). The executor produces identical behavior to a non-collaborative agent. The collaboration model is purely additive — it activates only when NATS subscriptions exist, which only happens in swarm mode.
 
@@ -306,9 +309,9 @@ When the LLM processes an interrupts block at the start of an iteration, it reas
 
 **Continue or adjust.** The LLM determines that the interrupt messages are either irrelevant to its current work or relevant but manageable. In the former case, it proceeds with its plan unchanged. In the latter, it modifies its approach for remaining steps — for example, switching from REST to WebSocket serialization after learning that the frontend changed the transport protocol. In both cases, execution continues within the same loop. The LLM may also publish a question or clarification on `discuss.<task_id>` during the same iteration (via tool calls), without interrupting its own execution.
 
-**Abandon.** The LLM determines that its work is no longer viable or that it cannot proceed without resolving a fundamental question. It produces an explanation of the problem — surfacing constraints, flagging architectural concerns, or declaring that the approach is obsolete. The executor detects the abandonment signal, transitions the agent to DELIBERATING (where the explanation is published to `discuss.<task_id>` or `work.<name>.*`), and then to MONITORING. The agent does not resume its prior execution. If the situation resolves and a new message triggers deliberation, the agent starts a fresh execution cycle.
+**Stop.** The LLM determines that its work is no longer viable, or that it has completed all it can given the new information. It produces a text response with no tool calls, and the agentic loop terminates normally. The executor publishes the LLM's final output to both `discuss.<task_id>` and `done.<capability>.<task_id>`, and the agent transitions to MONITORING. Whether this represents successful completion or abandonment is conveyed by the content of the message — other agents and infrastructure consumers interpret it from the text. No special signal or keyword is needed.
 
-The distinction between adjustment and abandonment is not categorical — it is a judgment the LLM makes based on the severity of the interrupt's implications. An interrupt that changes a detail (date format, endpoint path) warrants adjustment. An interrupt that invalidates the premise (technology migration, complete redesign) warrants abandonment. The LLM's reasoning, visible in its response, makes this judgment transparent and auditable.
+The distinction between adjustment and stopping is a judgment the LLM makes based on the severity of the interrupt's implications. An interrupt that changes a detail (date format, endpoint path) warrants adjustment. An interrupt that invalidates the premise (technology migration, complete redesign) warrants stopping. The LLM's reasoning, visible in its response, makes this judgment transparent and auditable.
 
 ### 4.5 The Degenerate Case
 
