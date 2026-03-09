@@ -61,6 +61,9 @@ type serviceAgent struct {
 
 	// Track tasks this agent has executed (context for revisions)
 	executedTasks map[string]*taskExecution
+
+	// Swarm collaboration context (nil in non-swarm mode)
+	swarmContext *executor.SwarmContext
 }
 
 // taskExecution tracks an agent's prior work on a task for discuss revisions.
@@ -370,6 +373,9 @@ func (a *serviceAgent) runBusMode() error {
 		}
 	}()
 
+	// Initialize swarm context for collaboration
+	a.swarmContext = executor.NewSwarmContext()
+
 	// Subscribe to discuss.* (regular sub — all agents see all messages)
 	discussSub, err := natsBus.Subscribe("discuss.*")
 	if err != nil {
@@ -598,8 +604,10 @@ func (a *serviceAgent) getCapabilities() []string {
 const discussSimilarityThreshold = 0.3
 
 // handleDiscussMessage processes a message from the discuss.* topic.
+// This is the DELIBERATING state: the agent evaluates the message and
+// decides whether to CLAIM (→ EXECUTING), respond with NEED_INFO, or stay silent.
 // Round 1: Embedding pre-filter (fast, cheap — skip irrelevant messages).
-// Round 2: Small LLM triage (decide: execute, comment, or skip).
+// Round 2: Small LLM deliberation (decide: CLAIM, NEED_INFO, or SKIP).
 func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Message) {
 	task, err := tasks.UnmarshalTaskMessage(msg.Data)
 	if err != nil {
@@ -623,61 +631,51 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 		fmt.Fprintf(os.Stderr, "  💬 Addressed to me: %s\n", task.TaskID)
 	}
 
-	// Convergence: cap agent-to-agent rounds at 3 per task.
-	// Human replies (type=human_reply) reset the counter — human steers the conversation.
-	isHumanMessage := task.Metadata != nil && task.Metadata["type"] == "human_reply"
-	prior := a.executedTasks[task.TaskID]
-	if prior != nil && prior.rounds >= 3 && !isHumanMessage {
-		fmt.Fprintf(os.Stderr, "  💬 Converged: max rounds reached for %s (round %d)\n", task.TaskID, prior.rounds)
-		return
-	}
-	if isHumanMessage && prior != nil {
-		// Human re-engaged — reset round counter to allow more agent work
-		prior.rounds = 0
-		fmt.Fprintf(os.Stderr, "  💬 Human re-engaged: reset rounds for %s\n", task.TaskID)
-	}
-
 	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
 
-	// Check for prior work — inject revision context if we've already contributed
-	if prior == nil {
-		prior = a.executedTasks[task.TaskID]
-	}
-	if prior != nil {
-		// Build XML discuss context using the standard builder
-		xmlBuilder := executor.NewXMLContextBuilder(a.wf.wf.Name)
-		xmlBuilder.SetDiscussTaskID(task.TaskID)
-
-		// Add this agent's prior output
-		xmlBuilder.AddDiscussContribution(a.agentID, a.capability.Name, prior.rounds, prior.output)
-
-		// Add the triggering agent's output
-		if task.Metadata != nil && task.Metadata["prior_output"] != "" {
-			xmlBuilder.AddDiscussContribution(
-				task.Metadata["agent_id"], task.Metadata["capability"], 0, task.Metadata["prior_output"])
+	// Update swarm context with the incoming message
+	if a.swarmContext != nil {
+		signal := ""
+		if task.Metadata != nil {
+			signal = task.Metadata["signal"]
 		}
-
-		if task.Metadata == nil {
-			task.Metadata = make(map[string]string)
-		}
-		task.Metadata["revision_context"] = xmlBuilder.Build()
-		fmt.Fprintf(os.Stderr, "  💬 Round %d revision for %s\n", prior.rounds+1, task.TaskID)
+		a.swarmContext.AddDiscussMessage(task.TaskID, executor.DiscussMessage{
+			From:      task.SubmittedBy,
+			Timestamp: time.Now(),
+			Content:   buildTaskText(task),
+			Signal:    signal,
+		})
 	}
+
+	// Enter DELIBERATING
+	if a.heartbeat != nil {
+		a.heartbeat.SetStatus("deliberating")
+		a.heartbeat.SetMetadata("current_task", task.TaskID)
+	}
+	defer func() {
+		if a.heartbeat != nil {
+			a.heartbeat.SetStatus("monitoring")
+			a.heartbeat.SetMetadata("current_task", "")
+		}
+	}()
 
 	// --- Round 1: Embedding pre-filter ---
 	if !a.discussEmbeddingFilter(ctx, task) {
 		return
 	}
 
-	// --- Round 2: Small LLM triage ---
-	decision := a.discussLLMTriage(ctx, task)
+	// --- Round 2: Small LLM deliberation ---
+	decision, response := a.deliberate(ctx, task)
 	switch decision {
-	case "EXECUTE":
-		fmt.Fprintf(os.Stderr, "  💬 Decision: EXECUTE — taking task %s\n", task.TaskID)
+	case "CLAIM":
+		fmt.Fprintf(os.Stderr, "  💬 Decision: CLAIM — taking task %s\n", task.TaskID)
+		// Publish CLAIM to discuss.* so other agents see it
+		a.publishDeliberationResponse(ctx, task, "CLAIM", response)
+		// Transition to EXECUTING
 		a.handleBusTask(ctx, msg)
-	case "COMMENT":
-		fmt.Fprintf(os.Stderr, "  💬 Decision: COMMENT — contributing to %s\n", task.TaskID)
-		a.publishDiscussComment(ctx, task)
+	case "NEED_INFO":
+		fmt.Fprintf(os.Stderr, "  💬 Decision: NEED_INFO — responding to %s\n", task.TaskID)
+		a.publishDeliberationResponse(ctx, task, "NEED_INFO", response)
 	default:
 		fmt.Fprintf(os.Stderr, "  💬 Decision: SKIP — not relevant to %s\n", a.capability.Name)
 	}
@@ -711,11 +709,11 @@ func (a *serviceAgent) discussEmbeddingFilter(ctx context.Context, task *tasks.T
 	return true
 }
 
-// discussLLMTriage asks the small LLM whether this agent should execute,
-// comment on, or skip a discuss message.
-func (a *serviceAgent) discussLLMTriage(ctx context.Context, task *tasks.TaskMessage) string {
+// deliberate evaluates a discuss message and decides the agent's response.
+// Returns (decision, response_text) where decision is CLAIM, NEED_INFO, or SKIP.
+func (a *serviceAgent) deliberate(ctx context.Context, task *tasks.TaskMessage) (string, string) {
 	if a.serviceRuntime == nil || a.serviceRuntime.smallLLM == nil {
-		return "EXECUTE" // No LLM available — default to execute
+		return "CLAIM", "" // No LLM available — default to claim
 	}
 
 	taskText := buildTaskText(task)
@@ -735,56 +733,116 @@ func (a *serviceAgent) discussLLMTriage(ctx context.Context, task *tasks.TaskMes
 		}
 	}
 
-	// Check for prior outputs from other agents
-	priorContext := ""
-	if task.Metadata != nil {
-		if prior, ok := task.Metadata["prior_output"]; ok && prior != "" {
-			priorContext = fmt.Sprintf("\n\nPRIOR WORK (by %s):\n%s", task.Metadata["capability"], prior)
-		}
+	// Build swarm context for deliberation
+	swarmCtx := ""
+	if a.swarmContext != nil {
+		swarmCtx = "\n\nSWARM STATE:\n" + a.swarmContext.FormatForLLM(task.TaskID)
 	}
 
-	// Include this agent's own prior work if it already contributed
-	ownPrior := ""
-	if exec := a.executedTasks[task.TaskID]; exec != nil {
-		ownPrior = fmt.Sprintf("\n\nYOUR PRIOR CONTRIBUTION (round %d):\n%s", exec.rounds, exec.output)
-	}
-
-	prompt := fmt.Sprintf(`You are deciding whether an agent should act on a collaborative task.
+	prompt := fmt.Sprintf(`You are deciding whether to participate in a collaborative task.
 
 AGENT PROFILE:
 %s
 
 TASK:
-%s%s%s
+%s%s
 
-Decide the agent's action. Reply with exactly one word:
-- EXECUTE — this task needs your capabilities AND either you haven't contributed yet, OR the feedback requires you to revise your prior work
-- COMMENT — you have relevant insights to share but don't need to do full work
-- SKIP — the task doesn't need your skills, OR your prior work is already sufficient and the feedback doesn't require changes
+Evaluate the task and the current swarm state. Decide your action:
+- CLAIM — this task needs your capabilities and you are ready to take responsibility for a specific portion
+- NEED_INFO — you have a question, insight, or need information before you can commit
+- SKIP — the task doesn't need your skills
 
-Your answer:`, resumeSummary, taskText, priorContext, ownPrior)
+Reply format — first line is the decision, remaining lines are your response to the swarm:
+CLAIM: <what specific portion of work you are taking responsibility for>
+NEED_INFO: <your question, insight, or dependency that needs resolution>
+SKIP
 
-	llm := &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
-	resp, err := llm.Complete(ctx, prompt)
+Examples:
+CLAIM: I'll handle the REST API routes, request validation, and database queries.
+NEED_INFO: What email service are we using? I need this before I can implement the verification flow.
+SKIP`, resumeSummary, taskText, swarmCtx)
+
+	llmAdapter := &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
+	resp, err := llmAdapter.Complete(ctx, prompt)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  ⚠️  Triage LLM failed: %v (defaulting to EXECUTE for single-capability agent)\n", err)
-		// For single-capability agents, default to EXECUTE on LLM error
-		// Multi-capability agents should be more selective
-		if a.agentResume == nil || len(a.agentResume.Capabilities) <= 1 {
-			return "EXECUTE"
-		}
-		return "SKIP"
+		fmt.Fprintf(os.Stderr, "  ⚠️  Deliberation LLM failed: %v (defaulting to CLAIM)\n", err)
+		return "CLAIM", ""
 	}
 
-	// Parse response — first word only
-	decision := strings.ToUpper(strings.TrimSpace(strings.SplitN(resp, "\n", 2)[0]))
-	switch decision {
-	case "EXECUTE", "COMMENT", "SKIP":
-		return decision
-	default:
-		fmt.Fprintf(os.Stderr, "  ⚠️  Unclear triage response: %q (defaulting to SKIP)\n", resp)
-		return "SKIP"
+	// Parse response — first line contains decision, rest is the message
+	resp = strings.TrimSpace(resp)
+	lines := strings.SplitN(resp, "\n", 2)
+	firstLine := strings.TrimSpace(lines[0])
+	responseText := ""
+	if len(lines) > 1 {
+		responseText = strings.TrimSpace(lines[1])
 	}
+
+	if strings.HasPrefix(strings.ToUpper(firstLine), "CLAIM") {
+		msg := strings.TrimPrefix(firstLine, "CLAIM:")
+		msg = strings.TrimPrefix(msg, "CLAIM")
+		msg = strings.TrimSpace(msg)
+		if responseText != "" {
+			msg = msg + "\n" + responseText
+		}
+		return "CLAIM", msg
+	}
+	if strings.HasPrefix(strings.ToUpper(firstLine), "NEED_INFO") {
+		msg := strings.TrimPrefix(firstLine, "NEED_INFO:")
+		msg = strings.TrimPrefix(msg, "NEED_INFO")
+		msg = strings.TrimSpace(msg)
+		if responseText != "" {
+			msg = msg + "\n" + responseText
+		}
+		return "NEED_INFO", msg
+	}
+	if strings.ToUpper(firstLine) == "SKIP" {
+		return "SKIP", ""
+	}
+
+	fmt.Fprintf(os.Stderr, "  ⚠️  Unclear deliberation response: %q (defaulting to SKIP)\n", firstLine)
+	return "SKIP", ""
+}
+
+// publishDeliberationResponse publishes a CLAIM or NEED_INFO message to discuss.*.
+func (a *serviceAgent) publishDeliberationResponse(ctx context.Context, task *tasks.TaskMessage, signal, message string) {
+	result := &tasks.TaskResult{
+		TaskID:      task.TaskID,
+		AgentID:     a.agentID,
+		Status:      tasks.ResultSuccess,
+		Outputs:     message,
+		CompletedAt: time.Now(),
+		Metadata: map[string]string{
+			"type":       "deliberation",
+			"signal":     signal,
+			"capability": a.capability.Name,
+			"name":       a.displayName,
+		},
+	}
+
+	resultData, err := result.Marshal()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Failed to marshal deliberation response: %v\n", err)
+		return
+	}
+
+	subject := fmt.Sprintf("discuss.%s", task.TaskID)
+	if err := a.bus.Publish(subject, resultData); err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Failed to publish deliberation response: %v\n", err)
+		return
+	}
+
+	// Update swarm context with our own response
+	if a.swarmContext != nil {
+		a.swarmContext.AddDiscussMessage(task.TaskID, executor.DiscussMessage{
+			From:      a.agentID,
+			Timestamp: time.Now(),
+			Content:   message,
+			Signal:    signal,
+		})
+	}
+
+	fmt.Fprintf(os.Stderr, "  💬 Published %s: %s\n", signal, message)
 }
 
 // publishDiscussComment generates a lightweight comment (single LLM call, no tools)
