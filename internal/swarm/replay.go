@@ -37,11 +37,13 @@ func Replay(js nats.JetStreamContext, catchupSeq uint64, agentID string) (*Repla
 	sc := executor.NewSwarmContext()
 	var messagesRead uint64
 
-	// Create an ephemeral consumer starting from the beginning
+	// Create an ephemeral consumer starting from the beginning,
+	// bound to the SWARM stream explicitly.
 	sub, err := js.SubscribeSync(
 		">", // All subjects in the stream
 		nats.DeliverAll(),
-		nats.AckNone(), // Read-only replay, no ack needed
+		nats.AckNone(),              // Read-only replay, no ack needed
+		nats.BindStream(StreamName), // Bind to SWARM stream explicitly
 	)
 	if err != nil {
 		return nil, fmt.Errorf("replay subscribe: %w", err)

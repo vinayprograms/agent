@@ -870,10 +870,13 @@ SKIP`, resumeSummary, taskText, swarmCtx)
 		return "CLAIM", ""
 	}
 
-	// Parse response — first line contains decision, rest is the message
+	// Parse response — first line contains decision, rest is the message.
+	// LLMs may wrap keywords in markdown (e.g., **CLAIM:**) — strip formatting.
 	resp = strings.TrimSpace(resp)
 	lines := strings.SplitN(resp, "\n", 2)
 	firstLine := strings.TrimSpace(lines[0])
+	firstLine = strings.ReplaceAll(firstLine, "*", "") // Strip markdown bold/italic
+	firstLine = strings.TrimSpace(firstLine)
 	responseText := ""
 	if len(lines) > 1 {
 		responseText = strings.TrimSpace(lines[1])
@@ -897,7 +900,7 @@ SKIP`, resumeSummary, taskText, swarmCtx)
 		}
 		return "NEED_INFO", msg
 	}
-	if strings.ToUpper(firstLine) == "SKIP" {
+	if strings.HasPrefix(strings.ToUpper(firstLine), "SKIP") {
 		return "SKIP", ""
 	}
 
