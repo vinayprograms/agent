@@ -66,6 +66,9 @@ type serviceAgent struct {
 	// Track tasks claimed by other agents (first-claim-wins dedup)
 	claimedTasks map[string]string // taskID → agent name
 
+	// Track tasks where we published NEED_INFO and are awaiting a response
+	pendingNeedInfo map[string]bool
+
 	// Swarm collaboration context (nil in non-swarm mode)
 	swarmContext *executor.SwarmContext
 }
@@ -774,13 +777,39 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 	// If another agent already CLAIMed this task, don't re-claim.
 	// The first CLAIM wins. Other agents should SKIP or provide NEED_INFO.
 	if task.Metadata != nil && task.Metadata["signal"] == "CLAIM" {
-		// This is another agent's CLAIM announcement — record it but don't re-deliberate
 		if a.claimedTasks == nil {
 			a.claimedTasks = make(map[string]string)
 		}
-		a.claimedTasks[task.TaskID] = task.Metadata["agent_id"]
-		fmt.Fprintf(os.Stderr, "  💬 Task %s already claimed by %s — skipping\n", task.TaskID, task.Metadata["name"])
+		a.claimedTasks[task.TaskID] = task.Metadata["name"]
+		fmt.Fprintf(os.Stderr, "  💬 Task %s claimed by %s — skipping\n", task.TaskID, task.Metadata["name"])
 		return
+	}
+
+	// If we already know this task is claimed by someone, skip.
+	if a.claimedTasks != nil {
+		if claimer, ok := a.claimedTasks[task.TaskID]; ok {
+			fmt.Fprintf(os.Stderr, "  💬 Task %s already claimed by %s — skipping\n", task.TaskID, claimer)
+			return
+		}
+	}
+
+	// --- NEED_INFO dedup ---
+	// If we already published NEED_INFO for this task and haven't received
+	// a response addressed to us, don't re-deliberate.
+	if a.pendingNeedInfo == nil {
+		a.pendingNeedInfo = make(map[string]bool)
+	}
+	if a.pendingNeedInfo[task.TaskID] {
+		// Only re-engage if someone addressed us directly
+		isAddressed := task.Metadata != nil && task.Metadata["target_agent"] != "" &&
+			(task.Metadata["target_agent"] == a.agentID ||
+				task.Metadata["target_agent"] == a.capability.Name ||
+				task.Metadata["target_agent"] == a.displayName)
+		if !isAddressed {
+			return // Still waiting for answer, don't repeat ourselves
+		}
+		// Someone answered our question — clear the pending state
+		delete(a.pendingNeedInfo, task.TaskID)
 	}
 
 	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
@@ -820,6 +849,13 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 	decision, response := a.deliberate(ctx, task)
 	switch decision {
 	case "CLAIM":
+		// Race check: did another agent claim this while we were deliberating?
+		if a.claimedTasks != nil {
+			if claimer, ok := a.claimedTasks[task.TaskID]; ok {
+				fmt.Fprintf(os.Stderr, "  💬 Decision: CLAIM — but %s already claimed %s, backing off\n", claimer, task.TaskID)
+				return
+			}
+		}
 		fmt.Fprintf(os.Stderr, "  💬 Decision: CLAIM — taking task %s\n", task.TaskID)
 		// Publish CLAIM to discuss.* so other agents see it
 		a.publishDeliberationResponse(ctx, task, "CLAIM", response)
@@ -843,6 +879,11 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 	case "NEED_INFO":
 		fmt.Fprintf(os.Stderr, "  💬 Decision: NEED_INFO — responding to %s\n", task.TaskID)
 		a.publishDeliberationResponse(ctx, task, "NEED_INFO", response)
+		// Mark as pending — don't re-deliberate until addressed
+		if a.pendingNeedInfo == nil {
+			a.pendingNeedInfo = make(map[string]bool)
+		}
+		a.pendingNeedInfo[task.TaskID] = true
 	default:
 		fmt.Fprintf(os.Stderr, "  💬 Decision: SKIP — not relevant to %s\n", a.capability.Name)
 	}
