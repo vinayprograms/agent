@@ -752,64 +752,65 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 		return
 	}
 
-	// Agent addressing: if target_agent is set, skip unless it matches us
+	// Agent addressing: if target_agent is set, skip unless it matches us.
+	// Addressed messages bypass all dedup guards (CLAIM, convergence, NEED_INFO).
+	isAddressedToMe := false
 	if task.Metadata != nil && task.Metadata["target_agent"] != "" {
 		target := task.Metadata["target_agent"]
 		if target != a.agentID && target != a.capability.Name && target != a.wf.wf.Name && target != a.displayName {
 			return
 		}
+		isAddressedToMe = true
 		fmt.Fprintf(os.Stderr, "  💬 Addressed to me: %s\n", task.TaskID)
+		// Clear any stale dedup state for this task — someone is talking to us directly
+		if a.pendingNeedInfo != nil {
+			delete(a.pendingNeedInfo, task.TaskID)
+		}
+		// Reset convergence counter
+		if prior := a.executedTasks[task.TaskID]; prior != nil {
+			prior.rounds = 0
+		}
 	}
 
-	// --- Convergence guard ---
-	// If we've already executed this task, don't re-deliberate unless
-	// the message is from a human or another agent (not our own result).
-	if prior := a.executedTasks[task.TaskID]; prior != nil && prior.rounds >= 3 {
-		isHuman := task.Metadata != nil && task.Metadata["type"] == "human_reply"
-		if !isHuman {
-			fmt.Fprintf(os.Stderr, "  💬 Converged: max rounds for %s (round %d)\n", task.TaskID, prior.rounds)
+	if !isAddressedToMe {
+		// --- Convergence guard ---
+		// If we've already executed this task, don't re-deliberate unless
+		// the message is from a human.
+		if prior := a.executedTasks[task.TaskID]; prior != nil && prior.rounds >= 3 {
+			isHuman := task.Metadata != nil && task.Metadata["type"] == "human_reply"
+			if !isHuman {
+				fmt.Fprintf(os.Stderr, "  💬 Converged: max rounds for %s (round %d)\n", task.TaskID, prior.rounds)
+				return
+			}
+			prior.rounds = 0 // Human re-engaged — reset
+		}
+
+		// --- CLAIM dedup ---
+		// If another agent already CLAIMed this task, record it.
+		if task.Metadata != nil && task.Metadata["signal"] == "CLAIM" {
+			if a.claimedTasks == nil {
+				a.claimedTasks = make(map[string]string)
+			}
+			a.claimedTasks[task.TaskID] = task.Metadata["name"]
+			fmt.Fprintf(os.Stderr, "  💬 Task %s claimed by %s — skipping\n", task.TaskID, task.Metadata["name"])
 			return
 		}
-		prior.rounds = 0 // Human re-engaged — reset
-	}
 
-	// --- CLAIM dedup ---
-	// If another agent already CLAIMed this task, don't re-claim.
-	// The first CLAIM wins. Other agents should SKIP or provide NEED_INFO.
-	if task.Metadata != nil && task.Metadata["signal"] == "CLAIM" {
-		if a.claimedTasks == nil {
-			a.claimedTasks = make(map[string]string)
+		// If we already know this task is claimed by someone, skip.
+		if a.claimedTasks != nil {
+			if claimer, ok := a.claimedTasks[task.TaskID]; ok {
+				fmt.Fprintf(os.Stderr, "  💬 Task %s already claimed by %s — skipping\n", task.TaskID, claimer)
+				return
+			}
 		}
-		a.claimedTasks[task.TaskID] = task.Metadata["name"]
-		fmt.Fprintf(os.Stderr, "  💬 Task %s claimed by %s — skipping\n", task.TaskID, task.Metadata["name"])
-		return
-	}
 
-	// If we already know this task is claimed by someone, skip.
-	if a.claimedTasks != nil {
-		if claimer, ok := a.claimedTasks[task.TaskID]; ok {
-			fmt.Fprintf(os.Stderr, "  💬 Task %s already claimed by %s — skipping\n", task.TaskID, claimer)
-			return
+		// --- NEED_INFO dedup ---
+		if a.pendingNeedInfo == nil {
+			a.pendingNeedInfo = make(map[string]bool)
 		}
-	}
-
-	// --- NEED_INFO dedup ---
-	// If we already published NEED_INFO for this task and haven't received
-	// a response addressed to us, don't re-deliberate.
-	if a.pendingNeedInfo == nil {
-		a.pendingNeedInfo = make(map[string]bool)
-	}
-	if a.pendingNeedInfo[task.TaskID] {
-		// Only re-engage if someone addressed us directly
-		isAddressed := task.Metadata != nil && task.Metadata["target_agent"] != "" &&
-			(task.Metadata["target_agent"] == a.agentID ||
-				task.Metadata["target_agent"] == a.capability.Name ||
-				task.Metadata["target_agent"] == a.displayName)
-		if !isAddressed {
+		if a.pendingNeedInfo[task.TaskID] {
 			return // Still waiting for answer, don't repeat ourselves
 		}
-		// Someone answered our question — clear the pending state
-		delete(a.pendingNeedInfo, task.TaskID)
 	}
 
 	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
