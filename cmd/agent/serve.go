@@ -63,6 +63,9 @@ type serviceAgent struct {
 	// Track tasks this agent has executed (context for revisions)
 	executedTasks map[string]*taskExecution
 
+	// Track tasks claimed by other agents (first-claim-wins dedup)
+	claimedTasks map[string]string // taskID → agent name
+
 	// Swarm collaboration context (nil in non-swarm mode)
 	swarmContext *executor.SwarmContext
 }
@@ -766,6 +769,19 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 		prior.rounds = 0 // Human re-engaged — reset
 	}
 
+	// --- CLAIM dedup ---
+	// If another agent already CLAIMed this task, don't re-claim.
+	// The first CLAIM wins. Other agents should SKIP or provide NEED_INFO.
+	if task.Metadata != nil && task.Metadata["signal"] == "CLAIM" {
+		// This is another agent's CLAIM announcement — record it but don't re-deliberate
+		if a.claimedTasks == nil {
+			a.claimedTasks = make(map[string]string)
+		}
+		a.claimedTasks[task.TaskID] = task.Metadata["agent_id"]
+		fmt.Fprintf(os.Stderr, "  💬 Task %s already claimed by %s — skipping\n", task.TaskID, task.Metadata["name"])
+		return
+	}
+
 	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
 
 	// Update swarm context with the incoming message
@@ -890,30 +906,29 @@ func (a *serviceAgent) deliberate(ctx context.Context, task *tasks.TaskMessage) 
 	}
 
 	prompt := fmt.Sprintf(`You are deciding whether to participate in a collaborative task.
+You work in a swarm of specialized agents. Each agent has a SPECIFIC capability.
+You must ONLY claim work that matches YOUR capability. Do NOT claim work that belongs to other specialists.
 
-AGENT PROFILE:
+YOUR AGENT PROFILE:
 %s
 
 TASK:
 %s%s
 
-Evaluate the task and the current swarm state. Decide ONE action:
+RULES:
+1. ONLY claim the portion of work that matches YOUR specific capability.
+2. If the task is primarily for a different type of agent (e.g., you are frontend but the task is backend), choose SKIP.
+3. If the task has BOTH frontend and backend components, only claim YOUR part — not the whole task.
+4. If another agent has already CLAIMed this task (visible in swarm state), choose SKIP.
+5. CLAIM means you start working IMMEDIATELY with zero open questions.
+6. If you have ANY questions, choose NEED_INFO, not CLAIM.
 
-- CLAIM — you are READY to start working RIGHT NOW. You have NO unanswered questions and NO unresolved dependencies. You will immediately begin executing after claiming.
-- NEED_INFO — you have questions, dependencies, or insights to share BEFORE you can commit to working. Use this if you need clarification on requirements, technology choices, or anything else before starting. Do NOT claim if you have questions.
-- SKIP — the task doesn't need your skills.
+Decide ONE action:
+- CLAIM: <what specific work YOU will do — must match YOUR capability>
+- NEED_INFO: <your question or dependency>
+- SKIP
 
-IMPORTANT: If your response contains ANY questions or "I need to know..." statements, you MUST choose NEED_INFO, not CLAIM. CLAIM means you start working immediately with zero open questions.
-
-Reply format — first line is EXACTLY the decision keyword followed by a colon and your message:
-CLAIM: <what specific work you are taking on — no questions allowed>
-NEED_INFO: <your question or dependency>
-SKIP
-
-Examples:
-CLAIM: I'll implement the REST API routes with JWT authentication and PostgreSQL queries.
-NEED_INFO: Which OAuth2 providers should I support? I need this before I can implement the auth flow.
-SKIP`, resumeSummary, taskText, swarmCtx)
+Reply with EXACTLY one line starting with CLAIM:, NEED_INFO:, or SKIP.`, resumeSummary, taskText, swarmCtx)
 
 	llmAdapter := &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
 	resp, err := llmAdapter.Complete(ctx, prompt)
@@ -973,6 +988,7 @@ func (a *serviceAgent) publishDeliberationResponse(ctx context.Context, task *ta
 			"signal":     signal,
 			"capability": a.capability.Name,
 			"name":       a.displayName,
+			"agent_id":   a.agentID,
 		},
 	}
 
