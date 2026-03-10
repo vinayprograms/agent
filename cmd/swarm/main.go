@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
+	"github.com/vinayprograms/agent/internal/swarm"
 	"github.com/vinayprograms/agentkit/tasks"
 )
 
@@ -40,6 +41,7 @@ type CLI struct {
 	UI           UICmd           `cmd:"" help:"Interactive TUI dashboard"`
 	Replay       ReplayCmd       `cmd:"" help:"Replay task execution"`
 	Chain        ChainCmd        `cmd:"" help:"Chain tasks through multiple agents"`
+	Purge        PurgeCmd        `cmd:"" help:"Purge NATS stream (clear all replay history)"`
 }
 
 type StatusCmd struct{}
@@ -88,6 +90,9 @@ type ReplayCmd struct {
 }
 type ChainCmd struct {
 	Spec string `arg:"" help:"Chain spec: <cap1> \"<task>\" -> <cap2> -> ..."`
+}
+type PurgeCmd struct {
+	Force bool `name:"force" short:"f" help:"Skip confirmation prompt"`
 }
 
 func main() {
@@ -1401,4 +1406,43 @@ func expandPath(path string) string {
 		return filepath.Join(getUserHome(), path[2:])
 	}
 	return path
+}
+
+func (p *PurgeCmd) Run(a *app) error {
+	nc, err := a.connect()
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		return fmt.Errorf("jetstream: %w", err)
+	}
+
+	streamName := swarm.StreamName
+
+	// Check if stream exists
+	info, err := js.StreamInfo(streamName)
+	if err != nil {
+		fmt.Printf("No stream '%s' found — nothing to purge.\n", streamName)
+		return nil
+	}
+
+	if !p.Force {
+		fmt.Printf("Stream '%s' has %d messages. Purge all? [y/N] ", streamName, info.State.Msgs)
+		var answer string
+		fmt.Scanln(&answer)
+		if answer != "y" && answer != "Y" {
+			fmt.Println("Aborted.")
+			return nil
+		}
+	}
+
+	if err := js.PurgeStream(streamName); err != nil {
+		return fmt.Errorf("purge stream: %w", err)
+	}
+
+	fmt.Printf("Purged %d messages from stream '%s'.\n", info.State.Msgs, streamName)
+	return nil
 }
