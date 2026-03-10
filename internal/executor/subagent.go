@@ -391,8 +391,24 @@ func (e *Executor) subAgentExecutePhaseWithProvider(ctx context.Context, provide
 
 	toolsUsedMap := make(map[string]bool)
 
+	// Sub-agent turn limit to prevent infinite loops.
+	const maxSubAgentTurns = 30
+	turn := 0
+
 	// Execute sub-agent loop
 	for {
+		turn++
+		if turn > maxSubAgentTurns {
+			e.logger.Warn("sub-agent hit turn limit", map[string]interface{}{
+				"role":  role,
+				"turns": maxSubAgentTurns,
+			})
+			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "turn_limit")
+			for tool := range toolsUsedMap {
+				toolsUsed = append(toolsUsed, tool)
+			}
+			return "Sub-agent reached maximum turn limit. Returning partial results.", toolsUsed, nil
+		}
 		llmStart := time.Now()
 		resp, err := provider.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
@@ -554,8 +570,23 @@ func (e *Executor) subAgentExecutePhase(ctx context.Context, role, systemPrompt,
 
 	toolsUsedMap := make(map[string]bool)
 
+	// Sub-agent turn limit to prevent infinite loops.
+	const maxSubAgentTurns = 30
+	turn := 0
+
 	// Execute sub-agent loop
 	for {
+		turn++
+		if turn > maxSubAgentTurns {
+			e.logger.Warn("sub-agent hit turn limit", map[string]interface{}{
+				"role":  role,
+				"turns": maxSubAgentTurns,
+			})
+			for tool := range toolsUsedMap {
+				toolsUsed = append(toolsUsed, tool)
+			}
+			return "Sub-agent reached maximum turn limit. Returning partial results.", toolsUsed, nil
+		}
 		resp, err := e.provider.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    toolDefs,
