@@ -958,10 +958,36 @@ func (a *serviceAgent) deliberate(ctx context.Context, task *tasks.TaskMessage) 
 		}
 	}
 
+	// Extract scope constraints from the Agentfile's goal description.
+	// This gives the small LLM the actual role definition, not just a generic resume.
+	scopeConstraints := ""
+	if a.wf != nil && a.wf.wf != nil {
+		for _, g := range a.wf.wf.Goals {
+			if g.Outcome != "" {
+				// Extract the role description (first paragraph before "Here is a task")
+				desc := g.Outcome
+				if idx := strings.Index(desc, "Here is a task"); idx > 0 {
+					desc = strings.TrimSpace(desc[:idx])
+				}
+				// Limit to first 500 chars to keep prompt lean
+				if len(desc) > 500 {
+					desc = desc[:500] + "..."
+				}
+				scopeConstraints = desc
+				break // Use the first (main) goal
+			}
+		}
+	}
+
 	// Build swarm context for deliberation
 	swarmCtx := ""
 	if a.swarmContext != nil {
 		swarmCtx = "\n\nSWARM STATE:\n" + a.swarmContext.FormatForLLM(task.TaskID)
+	}
+
+	scopeSection := ""
+	if scopeConstraints != "" {
+		scopeSection = fmt.Sprintf("\n\nYOUR ROLE & SCOPE (from your configuration — this defines what you can and cannot do):\n%s", scopeConstraints)
 	}
 
 	prompt := fmt.Sprintf(`You are deciding whether to participate in a collaborative task.
@@ -969,7 +995,7 @@ You work in a swarm of specialized agents. Each agent has a SPECIFIC capability.
 You must ONLY claim work that matches YOUR capability. Do NOT claim work that belongs to other specialists.
 
 YOUR AGENT PROFILE:
-%s
+%s%s
 
 TASK:
 %s%s
@@ -987,7 +1013,7 @@ Decide ONE action:
 - NEED_INFO: <your question or dependency>
 - SKIP
 
-Reply with EXACTLY one line starting with CLAIM:, NEED_INFO:, or SKIP.`, resumeSummary, taskText, swarmCtx)
+Reply with EXACTLY one line starting with CLAIM:, NEED_INFO:, or SKIP.`, resumeSummary, scopeSection, taskText, swarmCtx)
 
 	llmAdapter := &smallLLMAdapter{provider: a.serviceRuntime.smallLLM}
 	resp, err := llmAdapter.Complete(ctx, prompt)
