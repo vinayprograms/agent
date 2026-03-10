@@ -711,7 +711,12 @@ func (a *serviceAgent) getCapabilities() []string {
 // clearTaskState removes all dedup state for a task, returning the agent
 // to a clean slate. Called after task execution completes (success or failure).
 func (a *serviceAgent) clearTaskState(taskID string) {
-	delete(a.claimedTasks, taskID)
+	// Clear all claim entries for this task (keyed as taskID:agentName)
+	for key := range a.claimedTasks {
+		if strings.HasPrefix(key, taskID+":") {
+			delete(a.claimedTasks, key)
+		}
+	}
 	delete(a.pendingNeedInfo, taskID)
 }
 
@@ -801,23 +806,33 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 			fmt.Fprintf(os.Stderr, "  💬 Task %s completed by %s — state cleared\n", task.TaskID, task.Metadata["capability"])
 		}
 
-		// --- CLAIM dedup ---
-		// If another agent already CLAIMed this task, record it.
+		// --- CLAIM tracking ---
+		// Record other agents' CLAIMs for swarm context (the small LLM
+		// can see who claimed what and decide whether to also claim).
+		// Multi-agent tasks: multiple agents CAN claim different portions.
+		// We only block re-claiming by THIS agent.
 		if task.Metadata != nil && task.Metadata["signal"] == "CLAIM" {
 			if a.claimedTasks == nil {
 				a.claimedTasks = make(map[string]string)
 			}
-			a.claimedTasks[task.TaskID] = task.Metadata["name"]
-			fmt.Fprintf(os.Stderr, "  💬 Task %s claimed by %s — skipping\n", task.TaskID, task.Metadata["name"])
+			claimant := task.Metadata["name"]
+			a.claimedTasks[task.TaskID+":"+claimant] = claimant
+			fmt.Fprintf(os.Stderr, "  💬 Task %s: %s claimed their portion\n", task.TaskID, claimant)
+			// Don't return — other agents' CLAIMs are informational,
+			// this agent may still need to claim its own portion.
+			// But skip re-deliberation (the CLAIM is just a notification).
 			return
 		}
 
-		// If we already know this task is claimed by someone, skip.
+		// If THIS agent already claimed or executed this task, skip.
 		if a.claimedTasks != nil {
-			if claimer, ok := a.claimedTasks[task.TaskID]; ok {
-				fmt.Fprintf(os.Stderr, "  💬 Task %s already claimed by %s — skipping\n", task.TaskID, claimer)
-				return
+			myKey := task.TaskID + ":" + a.displayName
+			if _, ok := a.claimedTasks[myKey]; ok {
+				return // We already claimed our portion
 			}
+		}
+		if exec := a.executedTasks[task.TaskID]; exec != nil && exec.output != "" {
+			return // We already executed this task
 		}
 
 		// --- NEED_INFO dedup ---
@@ -866,14 +881,12 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 	decision, response := a.deliberate(ctx, task)
 	switch decision {
 	case "CLAIM":
-		// Race check: did another agent claim this while we were deliberating?
-		if a.claimedTasks != nil {
-			if claimer, ok := a.claimedTasks[task.TaskID]; ok {
-				fmt.Fprintf(os.Stderr, "  💬 Decision: CLAIM — but %s already claimed %s, backing off\n", claimer, task.TaskID)
-				return
-			}
-		}
 		fmt.Fprintf(os.Stderr, "  💬 Decision: CLAIM — taking task %s\n", task.TaskID)
+		// Record our own claim
+		if a.claimedTasks == nil {
+			a.claimedTasks = make(map[string]string)
+		}
+		a.claimedTasks[task.TaskID+":"+a.displayName] = a.displayName
 		// Publish CLAIM to discuss.* so other agents see it
 		a.publishDeliberationResponse(ctx, task, "CLAIM", response)
 		// Ensure the task has a "task" input for the workflow.
