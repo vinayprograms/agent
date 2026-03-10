@@ -111,6 +111,17 @@ func (sc *SwarmContext) GetDiscussion(taskID string) []DiscussMessage {
 	return msgs
 }
 
+// GetDiscussions returns all task IDs that have active discussions.
+func (sc *SwarmContext) GetDiscussions() []string {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	ids := make([]string, 0, len(sc.discussions))
+	for id := range sc.discussions {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // GetCompleted returns completed task IDs and their DONE messages.
 func (sc *SwarmContext) GetCompleted() map[string]DiscussMessage {
 	sc.mu.RLock()

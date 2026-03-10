@@ -457,19 +457,20 @@ func (a *serviceAgent) postReplayDeliberation(ctx context.Context) {
 		return
 	}
 
-	// Check if there are any open task discussions
+	// Check if there are any open task discussions worth evaluating
 	states := a.swarmContext.GetAgentStates()
 	completed := a.swarmContext.GetCompleted()
+	discussions := a.swarmContext.GetDiscussions()
 
-	// If no other agents are visible and nothing is completed,
-	// the swarm is either fresh or this agent is the first to join.
-	if len(states) == 0 && len(completed) == 0 {
+	// If no task discussions exist, there's nothing to claim.
+	// Agent heartbeats alone don't constitute unclaimed work.
+	if len(discussions) == 0 && len(completed) == 0 {
 		fmt.Fprintf(os.Stderr, "🔍 Post-replay: no swarm activity found, entering MONITORING\n")
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "🔍 Post-replay: %d agents visible, %d tasks completed — checking for unclaimed work\n",
-		len(states), len(completed))
+	fmt.Fprintf(os.Stderr, "🔍 Post-replay: %d agents visible, %d tasks discussed, %d completed — checking for unclaimed work\n",
+		len(states), len(discussions), len(completed))
 
 	// Use the small LLM to evaluate the swarm state against this agent's capability.
 	if a.serviceRuntime == nil || a.serviceRuntime.smallLLM == nil {
