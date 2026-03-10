@@ -701,25 +701,47 @@ func (a *serviceAgent) getCapabilities() []string {
 	return []string{a.wf.wf.Name}
 }
 
+// isOwnMessage checks if a discuss.* message was sent by this agent.
+// Messages can be TaskMessage (submitted_by) or TaskResult (agent_id).
+func (a *serviceAgent) isOwnMessage(data []byte) bool {
+	// Quick JSON field check — avoids full unmarshal
+	var raw struct {
+		SubmittedBy string            `json:"submitted_by"`
+		AgentID     string            `json:"agent_id"`
+		Metadata    map[string]string `json:"metadata"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	if raw.SubmittedBy == a.agentID || raw.AgentID == a.agentID {
+		return true
+	}
+	if raw.Metadata != nil && raw.Metadata["agent_id"] == a.agentID {
+		return true
+	}
+	return false
+}
+
 // Minimum cosine similarity for a discuss message to pass embedding pre-filter.
 const discussSimilarityThreshold = 0.3
 
 // handleDiscussMessage processes a message from the discuss.* topic.
 // This is the DELIBERATING state: the agent evaluates the message and
 // decides whether to CLAIM (→ EXECUTING), respond with NEED_INFO, or stay silent.
-// Round 1: Embedding pre-filter (fast, cheap — skip irrelevant messages).
-// Round 2: Small LLM deliberation (decide: CLAIM, NEED_INFO, or SKIP).
+// Round 1: Self-filter (skip own messages).
+// Round 2: Convergence guard (skip tasks we've already completed).
+// Round 3: Embedding pre-filter (fast, cheap — skip irrelevant messages).
+// Round 4: Small LLM deliberation (decide: CLAIM, NEED_INFO, or SKIP).
 func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Message) {
-	task, err := tasks.UnmarshalTaskMessage(msg.Data)
-	if err != nil {
+	// --- Self-filter ---
+	// Messages on discuss.* can be either TaskMessage or TaskResult.
+	// Check both formats for the sender's agent ID.
+	if a.isOwnMessage(msg.Data) {
 		return
 	}
 
-	// Filter own messages
-	if task.SubmittedBy == a.agentID {
-		return
-	}
-	if task.Metadata != nil && task.Metadata["agent_id"] == a.agentID {
+	task, err := tasks.UnmarshalTaskMessage(msg.Data)
+	if err != nil {
 		return
 	}
 
@@ -730,6 +752,18 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 			return
 		}
 		fmt.Fprintf(os.Stderr, "  💬 Addressed to me: %s\n", task.TaskID)
+	}
+
+	// --- Convergence guard ---
+	// If we've already executed this task, don't re-deliberate unless
+	// the message is from a human or another agent (not our own result).
+	if prior := a.executedTasks[task.TaskID]; prior != nil && prior.rounds >= 3 {
+		isHuman := task.Metadata != nil && task.Metadata["type"] == "human_reply"
+		if !isHuman {
+			fmt.Fprintf(os.Stderr, "  💬 Converged: max rounds for %s (round %d)\n", task.TaskID, prior.rounds)
+			return
+		}
+		prior.rounds = 0 // Human re-engaged — reset
 	}
 
 	fmt.Fprintf(os.Stderr, "  💬 Discussion: %s\n", task.TaskID)
@@ -772,8 +806,23 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 		fmt.Fprintf(os.Stderr, "  💬 Decision: CLAIM — taking task %s\n", task.TaskID)
 		// Publish CLAIM to discuss.* so other agents see it
 		a.publishDeliberationResponse(ctx, task, "CLAIM", response)
+		// Ensure the task has a "task" input for the workflow.
+		// Discuss messages may not have Inputs populated like work.* messages.
+		if task.Inputs == nil {
+			task.Inputs = make(map[string]string)
+		}
+		if task.Inputs["task"] == "" {
+			task.Inputs["task"] = buildTaskText(task)
+		}
+		// Re-marshal the task with the populated input
+		taskData, err := json.Marshal(task)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ Failed to marshal task for execution: %v\n", err)
+			return
+		}
+		execMsg := &bus.Message{Subject: msg.Subject, Data: taskData}
 		// Transition to EXECUTING
-		a.handleBusTask(ctx, msg)
+		a.handleBusTask(ctx, execMsg)
 	case "NEED_INFO":
 		fmt.Fprintf(os.Stderr, "  💬 Decision: NEED_INFO — responding to %s\n", task.TaskID)
 		a.publishDeliberationResponse(ctx, task, "NEED_INFO", response)
