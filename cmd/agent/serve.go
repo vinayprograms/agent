@@ -708,6 +708,13 @@ func (a *serviceAgent) getCapabilities() []string {
 	return []string{a.wf.wf.Name}
 }
 
+// clearTaskState removes all dedup state for a task, returning the agent
+// to a clean slate. Called after task execution completes (success or failure).
+func (a *serviceAgent) clearTaskState(taskID string) {
+	delete(a.claimedTasks, taskID)
+	delete(a.pendingNeedInfo, taskID)
+}
+
 // isOwnMessage checks if a discuss.* message was sent by this agent.
 // Messages can be TaskMessage (submitted_by) or TaskResult (agent_id).
 func (a *serviceAgent) isOwnMessage(data []byte) bool {
@@ -783,6 +790,15 @@ func (a *serviceAgent) handleDiscussMessage(ctx context.Context, msg *bus.Messag
 				return
 			}
 			prior.rounds = 0 // Human re-engaged — reset
+		}
+
+		// --- Task completion ---
+		// If another agent completed this task (prior_output in metadata),
+		// clear all dedup state. The task is done — agents should be ready
+		// for follow-up interactions on the same task ID.
+		if task.Metadata != nil && task.Metadata["prior_output"] != "" {
+			a.clearTaskState(task.TaskID)
+			fmt.Fprintf(os.Stderr, "  💬 Task %s completed by %s — state cleared\n", task.TaskID, task.Metadata["capability"])
 		}
 
 		// --- CLAIM dedup ---
@@ -1267,13 +1283,17 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 		}
 	}
 
-	// Track execution for revision context
+	// Task complete — clear all dedup state so agents return to clean slate.
+	// This allows the same task ID to be re-engaged for follow-ups.
+	a.clearTaskState(task.TaskID)
+
+	// Track execution for revision context (lightweight, doesn't block re-engagement)
 	exec := a.executedTasks[task.TaskID]
 	if exec == nil {
 		exec = &taskExecution{}
 		a.executedTasks[task.TaskID] = exec
 	}
-	exec.rounds++
+	exec.rounds = 0 // Reset — run is complete, fresh start for follow-ups
 	exec.output = fmt.Sprintf("%v", result.Outputs)
 
 	statusIcon := "✓"
