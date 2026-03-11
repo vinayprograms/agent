@@ -1385,21 +1385,32 @@ func discoverAgentsViaHeartbeat(nc *nats.Conn, timeout time.Duration) []discover
 }
 
 // getUserHome returns the current user's home directory.
-// prefixLines reads from r and writes each line to w with a [name] prefix.
+// prefixLines reads from r line-by-line and writes each line to w with a
+// [name] prefix. Uses bufio.Reader to stream without line-length limits —
+// bufio.Scanner silently dies on lines exceeding its buffer.
 // If nc is non-nil, also publishes each line to NATS on log.<name>.
 func prefixLines(name, capability string, r io.Reader, w io.Writer, nc *nats.Conn) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB buffer for large tool outputs
-	for scanner.Scan() {
-		line := scanner.Text()
-		fmt.Fprintf(w, "[%s] %s\n", name, line)
-		if nc != nil {
-			payload, _ := json.Marshal(map[string]string{
-				"agent":      name,
-				"capability": capability,
-				"line":       line,
-			})
-			nc.Publish(fmt.Sprintf("log.%s", name), payload)
+	br := bufio.NewReaderSize(r, 8192)
+	prefix := fmt.Sprintf("[%s] ", name)
+	natsSubject := fmt.Sprintf("log.%s", name)
+
+	for {
+		line, err := br.ReadString('\n')
+		if len(line) > 0 {
+			// Trim trailing newline for consistent formatting
+			text := strings.TrimRight(line, "\n\r")
+			fmt.Fprintf(w, "%s%s\n", prefix, text)
+			if nc != nil {
+				payload, _ := json.Marshal(map[string]string{
+					"agent":      name,
+					"capability": capability,
+					"line":       text,
+				})
+				nc.Publish(natsSubject, payload)
+			}
+		}
+		if err != nil {
+			break // EOF or pipe closed
 		}
 	}
 }
