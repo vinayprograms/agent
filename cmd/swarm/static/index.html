@@ -1108,7 +1108,7 @@
     placeholder='task frontend "Build OAuth2 login page"'
     autocomplete="off" autocorrect="off" autocapitalize="off"
     spellcheck="false" data-1p-ignore data-lpignore="true"
-    data-form-type="other" role="combobox">
+    data-form-type="other" role="combobox" readonly>
   <span class="command-hints">Enter to run · Esc to clear</span>
 </div>
 
@@ -1627,6 +1627,13 @@ function aggregateStats() {
 const cmdInput = document.getElementById('cmd-input');
 const autocomplete = document.getElementById('autocomplete');
 let acSelectedIdx = 0;
+
+// Remove readonly on first tap (prevents iOS Keychain autofill popup)
+cmdInput.addEventListener('pointerdown', () => {
+  if (cmdInput.hasAttribute('readonly')) {
+    cmdInput.removeAttribute('readonly');
+  }
+}, { once: true });
 
 cmdInput.addEventListener('focus', () => {
   if (cmdInput.value === '' || cmdInput.value.startsWith('/')) {
