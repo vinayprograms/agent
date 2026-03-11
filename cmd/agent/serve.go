@@ -127,6 +127,8 @@ func (cmd *ServeCmd) Run() error {
 	if err := serviceRt.setup(); err != nil {
 		return fmt.Errorf("setting up service runtime: %w", err)
 	}
+	// Session persists across tasks — Run() flushes, doesn't close
+	serviceRt.exec.SetPersistentSession(true)
 
 	// Agent ID uses session ID (or config if specified)
 	agentID := wf.cfg.Agent.ID

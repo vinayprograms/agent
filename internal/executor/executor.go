@@ -112,6 +112,7 @@ type Executor struct {
 	// Session logging
 	session               *session.Session
 	sessionManager        session.SessionManager
+	persistentSession     bool // When true, Run() does not close the session (serve mode)
 	currentGoal           string
 	currentGoalSupervised bool // Whether the current goal is supervised (inherited by sub-agents)
 
@@ -462,6 +463,13 @@ func (e *Executor) SetSession(sess *session.Session, mgr session.SessionManager)
 	}
 }
 
+// SetPersistentSession marks the session as long-lived (serve mode).
+// When set, Run() flushes but does not close the session — the caller
+// is responsible for closing it on shutdown.
+func (e *Executor) SetPersistentSession(persistent bool) {
+	e.persistentSession = persistent
+}
+
 // flushSession flushes buffered session events to disk.
 func (e *Executor) flushSession() {
 	if e.session != nil {
@@ -542,8 +550,13 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 		// Span will be ended by the return paths below
 	}()
 
-	// Ensure batched session writer is closed at the end of workflow execution
-	defer e.closeSession()
+	// Flush or close session at end of workflow execution.
+	// Persistent sessions (serve mode) stay open across tasks.
+	if e.persistentSession {
+		defer e.flushSession()
+	} else {
+		defer e.closeSession()
+	}
 
 	// Set main agent identity in context (workflow name as both name and role)
 	ctx = withAgentIdentity(ctx, workflowName, "main")

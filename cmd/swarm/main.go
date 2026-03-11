@@ -1389,6 +1389,7 @@ func discoverAgentsViaHeartbeat(nc *nats.Conn, timeout time.Duration) []discover
 // If nc is non-nil, also publishes each line to NATS on log.<name>.
 func prefixLines(name, capability string, r io.Reader, w io.Writer, nc *nats.Conn) {
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB buffer for large tool outputs
 	for scanner.Scan() {
 		line := scanner.Text()
 		fmt.Fprintf(w, "[%s] %s\n", name, line)
