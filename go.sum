@@ -245,6 +245,8 @@ github.com/vinayprograms/agentkit v0.2.1-0.20260311130648-9a5520f76567 h1:wZyAsY
 github.com/vinayprograms/agentkit v0.2.1-0.20260311130648-9a5520f76567/go.mod h1:TAZVm7gmnL28R+dolmy/X+p1Kamli2m3B+uqRmgEztQ=
 github.com/vinayprograms/agentkit v0.2.1-0.20260311145226-5507effd813f h1:6+YfZ+p0GWRWzZD6h+8vgOgUEQmM3iIHHN8/eLz5kao=
 github.com/vinayprograms/agentkit v0.2.1-0.20260311145226-5507effd813f/go.mod h1:TAZVm7gmnL28R+dolmy/X+p1Kamli2m3B+uqRmgEztQ=
+github.com/vinayprograms/agentkit v0.2.1-0.20260311150120-c34d33a0e9bc h1:0kqT58pR2rZecTEW3+rjnfcCt5GQXeO0dOiXlJi/q4Q=
+github.com/vinayprograms/agentkit v0.2.1-0.20260311150120-c34d33a0e9bc/go.mod h1:TAZVm7gmnL28R+dolmy/X+p1Kamli2m3B+uqRmgEztQ=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e h1:JVG44RsyaB9T2KIHavMF/ppJZNG9ZpyihvCd0w101no=
