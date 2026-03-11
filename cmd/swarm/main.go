@@ -608,73 +608,90 @@ func (u *UpCmd) Run(a *app) error {
 	// Load existing PID records and clean stale entries
 	existingPIDs := cleanStalePIDs(loadPIDRecords(a.dataDir))
 
-	// Start each agent
+	// Start each agent (with replicas for workers)
 	var newPIDs []pidRecord
 	for _, ag := range agents {
-		fmt.Printf("  → %s (%s)\n", ag.Name, ag.Capability)
-		args := []string{"serve", "--bus", m.NATS.URL}
-		if ag.Config != "" {
-			args = append(args, "--config", ag.Config)
+		replicas := ag.Replicas
+		if replicas < 1 {
+			replicas = 1
 		}
-		if ag.Policy != "" {
-			args = append(args, "--policy", ag.Policy)
-		}
-		if ag.Capability != "" {
-			args = append(args, "--capability", ag.Capability)
-		}
-		// Auto-isolate storage per agent under swarm storage root
-		agentStorage := ag.Storage
-		if agentStorage == "" {
-			agentStorage = filepath.Join(m.Storage.Root, "agents", ag.Name)
-		}
-		args = append(args, "--storage", agentStorage)
-		args = append(args, "--session-label", ag.Name)
-		if ag.Yolo {
-			args = append(args, "--yolo")
-		}
-		if ag.Agentfile != "" {
-			args = append(args, ag.Agentfile)
+		// Managers always have exactly 1 replica
+		if ag.Type == "manager" {
+			replicas = 1
 		}
 
-		cmd := exec.Command("agent", args...)
-		// Prefix each agent's output with its name for multi-agent clarity
-		stdoutPipe, _ := cmd.StdoutPipe()
-		stderrPipe, _ := cmd.StderrPipe()
-		if err := cmd.Start(); err != nil {
-			fmt.Printf("  ✗ Failed to start %s: %v\n", ag.Name, err)
-			continue
-		}
-		go prefixLines(ag.Name, ag.Capability, stdoutPipe, os.Stdout, nc)
-		go prefixLines(ag.Name, ag.Capability, stderrPipe, os.Stderr, nc)
-
-		// Brief pause to catch immediate crashes (missing binary, bad config, etc.)
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-		select {
-		case err := <-done:
-			// Process already exited — it crashed
-			fmt.Printf("  ✗ %s exited immediately: %v\n", ag.Name, err)
-			// Notify UI via NATS
-			if nc != nil {
-				payload, _ := json.Marshal(map[string]string{
-					"agent":  ag.Name,
-					"line":   fmt.Sprintf("FATAL: agent exited immediately: %v", err),
-					"capability": ag.Capability,
-				})
-				nc.Publish(fmt.Sprintf("log.%s", ag.Name), payload)
+		for replica := 0; replica < replicas; replica++ {
+			displayName := ag.Name
+			if replicas > 1 {
+				displayName = fmt.Sprintf("%s-%d", ag.Name, replica+1)
 			}
-			continue
-		case <-time.After(500 * time.Millisecond):
-			// Still running after 500ms — likely healthy
-		}
 
-		fmt.Printf("  ✓ Started %s (pid %d)\n", ag.Name, cmd.Process.Pid)
-		newPIDs = append(newPIDs, pidRecord{
-			Name:       ag.Name,
-			PID:        cmd.Process.Pid,
-			Capability: ag.Capability,
-			StartedAt:  time.Now().Format(time.RFC3339),
-		})
+			fmt.Printf("  → %s [%s] (%s)\n", displayName, ag.Type, ag.Capability)
+			args := []string{"serve", "--bus", m.NATS.URL}
+			if ag.Config != "" {
+				args = append(args, "--config", ag.Config)
+			}
+			if ag.Policy != "" {
+				args = append(args, "--policy", ag.Policy)
+			}
+			if ag.Capability != "" {
+				args = append(args, "--capability", ag.Capability)
+			}
+			// Auto-isolate storage per agent instance under swarm storage root
+			agentStorage := ag.Storage
+			if agentStorage == "" {
+				agentStorage = filepath.Join(m.Storage.Root, "agents", displayName)
+			}
+			args = append(args, "--storage", agentStorage)
+			args = append(args, "--session-label", displayName)
+			if ag.Yolo {
+				args = append(args, "--yolo")
+			}
+			if ag.Agentfile != "" {
+				args = append(args, ag.Agentfile)
+			}
+
+			cmd := exec.Command("agent", args...)
+			// Pass agent type via environment variable
+			cmd.Env = append(os.Environ(), fmt.Sprintf("AGENT_TYPE=%s", ag.Type))
+			// Prefix each agent's output with its name for multi-agent clarity
+			stdoutPipe, _ := cmd.StdoutPipe()
+			stderrPipe, _ := cmd.StderrPipe()
+			if err := cmd.Start(); err != nil {
+				fmt.Printf("  ✗ Failed to start %s: %v\n", displayName, err)
+				continue
+			}
+			go prefixLines(displayName, ag.Capability, stdoutPipe, os.Stdout, nc)
+			go prefixLines(displayName, ag.Capability, stderrPipe, os.Stderr, nc)
+
+			// Brief pause to catch immediate crashes (missing binary, bad config, etc.)
+			doneCh := make(chan error, 1)
+			go func() { doneCh <- cmd.Wait() }()
+			select {
+			case err := <-doneCh:
+				// Process already exited — it crashed
+				fmt.Printf("  ✗ %s exited immediately: %v\n", displayName, err)
+				if nc != nil {
+					payload, _ := json.Marshal(map[string]string{
+						"agent":      displayName,
+						"line":       fmt.Sprintf("FATAL: agent exited immediately: %v", err),
+						"capability": ag.Capability,
+					})
+					nc.Publish(fmt.Sprintf("log.%s", displayName), payload)
+				}
+				continue
+			case <-time.After(500 * time.Millisecond):
+				// Still running after 500ms — likely healthy
+			}
+
+			fmt.Printf("  ✓ Started %s (pid %d)\n", displayName, cmd.Process.Pid)
+			newPIDs = append(newPIDs, pidRecord{
+				Name:       displayName,
+				PID:        cmd.Process.Pid,
+				Capability: ag.Capability,
+				StartedAt:  time.Now().Format(time.RFC3339),
+			})
+		}
 	}
 
 	// Save merged PID records

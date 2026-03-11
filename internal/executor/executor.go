@@ -168,6 +168,11 @@ type Executor struct {
 
 	// Interrupt buffer for swarm collaboration (nil = non-swarm mode)
 	interruptBuffer *InterruptBuffer
+
+	// Discuss publisher for swarm collaboration (nil = non-swarm mode).
+	// Called with each non-tool-call LLM response during execution.
+	// The caller (serve.go) binds the task ID in the closure.
+	discussPublisher func(goalName, content string)
 }
 
 // Registry returns the tool registry.
@@ -185,6 +190,26 @@ func (e *Executor) SetInterruptBuffer(buf *InterruptBuffer) {
 // InterruptBuffer returns the current interrupt buffer (may be nil).
 func (e *Executor) InterruptBuffer() *InterruptBuffer {
 	return e.interruptBuffer
+}
+
+// SetDiscussPublisher attaches a callback that publishes non-tool-call
+// LLM responses to the swarm discuss channel. In non-swarm mode, leave
+// unset (nil) — the publish call short-circuits with zero overhead.
+// The caller typically binds the task ID in a closure.
+func (e *Executor) SetDiscussPublisher(fn func(goalName, content string)) {
+	e.discussPublisher = fn
+}
+
+// ClearDiscussPublisher removes the discuss publisher (e.g., after task completes).
+func (e *Executor) ClearDiscussPublisher() {
+	e.discussPublisher = nil
+}
+
+// publishToDiscuss calls the discuss publisher if set.
+func (e *Executor) publishToDiscuss(goalName, content string) {
+	if e.discussPublisher != nil && content != "" {
+		e.discussPublisher(goalName, content)
+	}
 }
 
 // NewExecutor creates a new executor.
@@ -1038,8 +1063,11 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 			continue
 		}
 
-		// No tool calls — check for pending interrupts before terminating
+		// No tool calls — publish to discuss and check for pending interrupts
 		if len(resp.ToolCalls) == 0 {
+			// Publish reasoning to discuss.* for swarm transparency
+			e.publishToDiscuss(goal.Name, resp.Content)
+
 			if interrupts := e.interruptBuffer.Drain(); len(interrupts) > 0 {
 				// Interrupts arrived — LLM must re-evaluate before terminating
 				messages = append(messages, llm.Message{
