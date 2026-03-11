@@ -39,6 +39,10 @@ The revised model accepts this limitation and designs around it.
 
 ### 1.3 NATS Subject Routing
 
+![Channel Topology](diagrams/channel-topology.png)
+
+*Authority (manager/human) assigns tasks and corrections downward. Workers post updates and completion upward. Solid lines = write, dashed lines = read/observe.*
+
 The swarm uses four NATS subject families with clearly separated read/write semantics.
 
 **`work.<capability>.<task_id>` — task assignment (manager/human → workers).**
@@ -128,6 +132,10 @@ The web UI surfaces worker updates, heartbeat status, and task completion in rea
 
 Workers operate in exactly two states. The previous three-state model (MONITORING, DELIBERATING, EXECUTING) is simplified — DELIBERATING is removed because workers no longer participate in peer deliberation.
 
+![Worker State Machine](diagrams/worker-state-machine.png)
+
+*Two-state lifecycle. IDLE is the resting state. EXECUTING runs the workflow with interrupt awareness. Corrections from the manager arrive as interrupts without leaving the EXECUTING state.*
+
 ### 3.1 States
 
 **IDLE.** The worker is waiting for a task. It is subscribed to `work.<capability>.*` and `work.<instance-id>.*`, emitting heartbeats, and taking no action. This is the resting state.
@@ -156,6 +164,10 @@ Once a worker begins executing, it is not completely deaf. The manager or human 
 ### 4.1 The Interrupt Buffer
 
 When a worker transitions to EXECUTING, it initializes an interrupt buffer — a thread-safe FIFO queue that collects messages arriving on `work.<instance-id>.*`. The NATS subscriber writes to this buffer; the executor reads from it.
+
+![Execution Loop](diagrams/execution-loop.png)
+
+*The execution loop. After each LLM turn, the worker checks for tool calls. Tool results and interrupt buffer contents feed the next turn. The loop exits when the LLM produces text-only output with no pending interrupts.*
 
 ### 4.2 Injection Point
 
