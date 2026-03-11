@@ -2249,8 +2249,14 @@ function renderEventContent(evt) {
     return `${agentTag}<span class="sec-tier">DECISION</span> <span class="${actionClass}">${esc(action)}</span> via ${esc(path)}${meta.reason ? ' — ' + esc(truncate(meta.reason, 100)) : ''}${taintHtml}`;
   }
   if (type === 'bash_security') {
-    const pass = evt.success === true ? '✓ allowed' : '✗ blocked';
-    return `${agentTag}<span class="sec-tier">BASH</span> ${pass}: <span class="tool-name">${esc(evt.content || '—')}</span>`;
+    const meta = evt.meta || {};
+    const allowed = meta.pass === true;
+    const pass = allowed ? '✓ allowed' : '✕ blocked';
+    const step = meta.check_name || 'check';
+    // Strip "[step] VERDICT:" prefix from content — we render those separately
+    const rawContent = evt.content || '—';
+    const command = rawContent.replace(/^\[[\w]+\]\s*(ALLOW|BLOCK):\s*/, '');
+    return `${agentTag}<span class="sec-tier">BASH</span> ${pass} <span class="sec-tier">${esc(step)}</span>: <span class="tool-name">${esc(command)}</span>`;
   }
 
   // ── Other ──
