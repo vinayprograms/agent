@@ -32,7 +32,6 @@ type runtime struct {
 	creds  *credentials.Credentials
 	inputs map[string]string
 	debug        bool
-	yolo         bool   // Enable bash tool with security guardrails
 	sessionLabel string // Override session directory name
 
 	// Components
@@ -66,7 +65,6 @@ func newRuntime(w *workflow, creds *credentials.Credentials) *runtime {
 		creds:        creds,
 		inputs:       w.inputs,
 		debug:        w.debug,
-		yolo:         w.yolo,
 		sessionLabel: w.sessionLabel,
 	}
 	rt.resolveStoragePath()
@@ -183,10 +181,9 @@ func (rt *runtime) createSmallLLM() error {
 func (rt *runtime) setupRegistry() {
 	rt.registry = tools.NewRegistry(rt.pol)
 
-	// Bash is opt-in via --yolo flag
-	if rt.yolo {
-		fmt.Println("⚠️  YOLO mode: bash enabled with security guardrails")
-		rt.registry.EnableBash()
+	// Bash is controlled by policy — set up security if enabled
+	if rt.pol.IsToolEnabled("bash") {
+		fmt.Println("⚠️  bash enabled by policy")
 		rt.setupBashChecker()
 		if rt.smallLLM != nil {
 			rt.bashLLMChecker = policy.NewSmallLLMChecker(&llmGenerateAdapter{rt.smallLLM})

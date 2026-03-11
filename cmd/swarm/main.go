@@ -644,9 +644,6 @@ func (u *UpCmd) Run(a *app) error {
 			}
 			args = append(args, "--storage", agentStorage)
 			args = append(args, "--session-label", displayName)
-			if ag.Yolo {
-				args = append(args, "--yolo")
-			}
 			if ag.Agentfile != "" {
 				args = append(args, ag.Agentfile)
 			}

@@ -41,7 +41,6 @@ type AgentSpec struct {
 	Policy     string `yaml:"policy"`
 	Capability string `yaml:"capability"`
 	Storage    string `yaml:"storage"`
-	Yolo       bool   `yaml:"yolo"`     // Enable bash with security guardrails
 	Type       string `yaml:"type"`     // "worker" (default) or "manager"
 	Replicas   int    `yaml:"replicas"` // Number of instances (default: 1, only for workers)
 }
@@ -58,15 +57,24 @@ func loadManifest(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("parse manifest: %w", err)
 	}
 
-	// Expand env vars
+	// Resolve relative paths against manifest directory
+	manifestDir := filepath.Dir(path)
+
+	// Expand env vars and resolve relative paths
 	m.NATS.URL = expandEnv(m.NATS.URL)
 	m.Storage.Root = expandEnv(m.Storage.Root)
+	if m.Storage.Root != "" && !filepath.IsAbs(m.Storage.Root) {
+		m.Storage.Root = filepath.Join(manifestDir, m.Storage.Root)
+	}
 	for i := range m.Agents {
-		m.Agents[i].Agentfile = expandEnv(m.Agents[i].Agentfile)
-		m.Agents[i].Config = expandEnv(m.Agents[i].Config)
-		m.Agents[i].Policy = expandEnv(m.Agents[i].Policy)
+		m.Agents[i].Agentfile = resolveRelPath(manifestDir, expandEnv(m.Agents[i].Agentfile))
+		m.Agents[i].Config = resolveRelPath(manifestDir, expandEnv(m.Agents[i].Config))
+		m.Agents[i].Policy = resolveRelPath(manifestDir, expandEnv(m.Agents[i].Policy))
 		m.Agents[i].Capability = expandEnv(m.Agents[i].Capability)
 		m.Agents[i].Storage = expandEnv(m.Agents[i].Storage)
+		if m.Agents[i].Storage != "" && !filepath.IsAbs(m.Agents[i].Storage) {
+			m.Agents[i].Storage = filepath.Join(manifestDir, m.Agents[i].Storage)
+		}
 	}
 
 	// Defaults
@@ -102,6 +110,15 @@ func loadManifest(path string) (*Manifest, error) {
 	}
 
 	return &m, nil
+}
+
+// resolveRelPath makes a relative path absolute by joining with baseDir.
+// Returns the path unchanged if it's empty or already absolute.
+func resolveRelPath(baseDir, path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(baseDir, path)
 }
 
 // expandEnv expands ${VAR}, $VAR, and ~ (home dir) in s.

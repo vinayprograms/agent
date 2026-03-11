@@ -122,7 +122,6 @@ func TestSecurity_BashCommandInjection(t *testing.T) {
 	}
 
 	registry := tools.NewRegistry(pol)
-	registry.EnableBash()
 	bashTool := registry.Get("bash")
 
 	tests := []struct {

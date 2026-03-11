@@ -21,7 +21,6 @@ type workflow struct {
 	policyPath    string
 	workspacePath string
 	debug         bool
-	yolo          bool   // Enable bash with security guardrails
 	sessionLabel  string // Override session directory name (default: Agentfile NAME)
 
 	// Loaded artifacts

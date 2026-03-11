@@ -70,7 +70,6 @@ func (cmd *ServeCmd) Run() error {
 		workspacePath: cmd.Workspace,
 		inputs:        make(map[string]string), // Will be set per-task
 		debug:         false,
-		yolo:          cmd.Yolo,
 	}
 
 	// Load config, policy, and agentfile

@@ -13,7 +13,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/muesli/reflow v0.3.0
 	github.com/nats-io/nats.go v1.49.0
-	github.com/vinayprograms/agentkit v0.2.1-0.20260310031226-21bb88e26cdf
+	github.com/vinayprograms/agentkit v0.2.1-0.20260311130648-9a5520f76567
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/trace v1.40.0
 	golang.org/x/net v0.51.0

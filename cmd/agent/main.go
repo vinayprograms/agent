@@ -64,7 +64,6 @@ func (c *RunCmd) Run(ctx *runContext) error {
 		policyPath:    c.Policy,
 		workspacePath: c.Workspace,
 		debug:         c.Debug,
-		yolo:          c.Yolo,
 	}
 
 	// Handle inline goal (skip Agentfile if provided)

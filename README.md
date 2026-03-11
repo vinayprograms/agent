@@ -577,7 +577,7 @@ deny = ["**/.env", "**/*.key"]
 enabled = true
 allow = ["$WORKSPACE/**"]
 
-# Bash policy only applies when --yolo flag is used
+# Bash is controlled by policy — set enabled = true to allow bash usage
 [tools.bash]
 enabled = true
 denylist = ["rm *", "sudo *"]
@@ -695,7 +695,7 @@ See `examples/agent/security-research/` for security research workflow examples.
 ### High-Risk Tools
 
 These tools receive extra scrutiny when untrusted content is in context:
-- `bash` - Shell command execution (opt-in via `--yolo` flag)
+- `bash` - Shell command execution (controlled by policy)
 - `write` - File system writes  
 - `web_fetch` - External HTTP requests
 - `spawn_agent` - Sub-agent creation
@@ -1064,7 +1064,7 @@ Set `provider` explicitly for custom or ambiguous model names.
 - `ls` — List directory contents
 
 ### Shell
-- `bash` — Execute shell commands (requires `--yolo` flag; policy-controlled when enabled)
+- `bash` — Execute shell commands (requires `[bash] enabled = true` in policy)
 
 ### Web
 - `web_search` — Search the web
@@ -1153,12 +1153,11 @@ Without `allow_domains`, all domains are allowed.
 
 ### Shell Command Security
 
-The bash tool requires the `--yolo` (`-y`) flag to activate. Without it, bash is not available regardless of policy settings.
+The bash tool is controlled by policy. Set `[bash] enabled = true` in `policy.toml` to make it available.
 
-When enabled, restrict shell commands with denylists:
+Restrict shell commands with denylists:
 
 ```toml
-# Only applies when agent is run with --yolo flag
 [bash]
 enabled = true
 denylist = ["rm -rf *", "sudo *", "curl * | bash"]

@@ -26,7 +26,6 @@ type RunCmd struct {
 	Workspace string            `help:"Workspace directory"`
 	Goal      string            `help:"Inline goal description (skips Agentfile)"`
 	Debug     bool              `help:"Enable verbose logging (prompts, responses, tool outputs)"`
-	Yolo      bool              `short:"y" name:"yolo" help:"Enable bash tool with security guardrails"`
 	File      string            `arg:"" optional:"" default:"Agentfile" help:"Agentfile path"`
 }
 
@@ -46,7 +45,6 @@ type ServeCmd struct {
 	QueueGroup   string `help:"Queue group name for load balancing"`
 	Capability   string `help:"Capability name (default: Agentfile NAME)"`
 	SessionLabel string `help:"Label for session directory (default: Agentfile NAME)"`
-	Yolo         bool   `short:"y" name:"yolo" help:"Enable bash tool with security guardrails"`
 }
 
 // ValidateCmd validates an Agentfile.

@@ -17,9 +17,9 @@
 
 | Tool | Description |
 |------|-------------|
-| bash | Execute shell commands (requires `--yolo` flag) |
+| bash | Execute shell commands (requires `[bash] enabled = true` in policy) |
 
-> **Note:** The bash tool is **opt-in only**. It is not registered in the tool registry unless the agent is launched with the `--yolo` (`-y`) flag. This is a deliberate safety gate — bash provides unrestricted system access that structured tools (read, write, glob, grep) do not. When enabled, bash is protected by a two-step security model (see [Bash Security](../security/10-bash-security.md)).
+> **Note:** The bash tool is **controlled by policy**. It is always registered in the tool registry but only available to the agent when `[bash] enabled = true` is set in `policy.toml`. Policy is the single source of truth. When enabled, bash is protected by a two-step security model (see [Bash Security](../security/10-bash-security.md)).
 
 ### Web
 
@@ -105,8 +105,7 @@ deny = ["**/.env", "**/*.key"]
 enabled = true
 allow = ["$WORKSPACE/**"]
 
-# Bash policy only applies when --yolo flag is used.
-# Without --yolo, bash is not available regardless of policy.
+# Bash is controlled by policy — set enabled = true to allow bash usage.
 [tools.bash]
 enabled = true
 denylist = ["rm *", "sudo *"]
