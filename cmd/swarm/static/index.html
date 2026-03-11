@@ -471,7 +471,11 @@
     font-family: 'JetBrains Mono', monospace;
     font-size: 14px;
     outline: none;
+    -webkit-appearance: none; /* suppress Safari search styling */
+    appearance: none;
   }
+  .command-input::-webkit-search-cancel-button,
+  .command-input::-webkit-search-decoration { display: none; }
   .command-input::placeholder { color: var(--dim); }
   .command-hints {
     font-size: 11px;
@@ -1100,7 +1104,7 @@
 <!-- Command Bar -->
 <div class="command-bar">
   <span class="slash">/</span>
-  <input type="text" class="command-input" id="cmd-input"
+  <input type="search" class="command-input" id="cmd-input"
     placeholder='task frontend "Build OAuth2 login page"'
     autocomplete="off" autocorrect="off" autocapitalize="off"
     spellcheck="false" data-1p-ignore data-lpignore="true"
