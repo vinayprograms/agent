@@ -808,6 +808,12 @@ func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 	// The subdirectory name varies (could be agent name, workflow name, or label).
 	sessRoot := filepath.Join(s.storageRoot, "agents", agentName, "sessions")
 	jsonlPath := ""
+
+	// First check: does sessRoot exist?
+	if _, err := os.Stat(sessRoot); os.IsNotExist(err) {
+		log.Printf("[web] sessions directory does not exist: %s", sessRoot)
+	}
+
 	if entries, err := os.ReadDir(sessRoot); err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
@@ -819,14 +825,26 @@ func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+	} else {
+		log.Printf("[web] failed to read sessions dir %s: %v", sessRoot, err)
 	}
 
 	if jsonlPath == "" {
+		// Debug: list what's actually in the storage tree for this agent
+		agentRoot := filepath.Join(s.storageRoot, "agents", agentName)
 		log.Printf("[web] session not found: storageRoot=%q agent=%q sessionID=%q sessRoot=%q",
 			s.storageRoot, agentName, sessionID, sessRoot)
+		if files, err := listTree(agentRoot, 3); err == nil && len(files) > 0 {
+			log.Printf("[web] agent storage tree (%s):", agentRoot)
+			for _, f := range files {
+				log.Printf("[web]   %s", f)
+			}
+		}
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
+
+	log.Printf("[web] serving session: %s", jsonlPath)
 
 	data, err := os.ReadFile(jsonlPath)
 	if err != nil {
@@ -846,6 +864,27 @@ func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(records)
+}
+
+// listTree lists files in a directory tree up to maxDepth levels.
+func listTree(root string, maxDepth int) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip inaccessible
+		}
+		rel, _ := filepath.Rel(root, path)
+		depth := strings.Count(rel, string(filepath.Separator))
+		if depth > maxDepth {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		files = append(files, rel)
+		return nil
+	})
+	return files, err
 }
 
 func classifySubject(subject string) string {

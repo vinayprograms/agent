@@ -1245,12 +1245,16 @@ function handleHeartbeat(hb) {
   const meta = hb.metadata || {};
   const name = meta.name || hb.agent_id;
   const cap = meta.capability || '—';
-  const newStatus = hb.status || 'idle';
+  // Normalize heartbeat status to UI status (idle/busy/draining/down)
+  const rawStatus = hb.status || 'idle';
+  const newStatus = (rawStatus === 'executing') ? 'busy' :
+                    (rawStatus === 'monitoring') ? 'idle' : rawStatus;
 
-  // Use server-reported busy_since (millis epoch) — authoritative, survives refresh
+  // Use server-reported busy_since / executing_since (millis epoch) — authoritative, survives refresh
   let busySince = null;
-  if (newStatus === 'busy' && meta.busy_since) {
-    busySince = parseInt(meta.busy_since, 10) || null;
+  const busySinceMs = meta.busy_since || meta.executing_since;
+  if (newStatus === 'busy' && busySinceMs) {
+    busySince = parseInt(busySinceMs, 10) || null;
   }
 
   state.agents[hb.agent_id] = {
