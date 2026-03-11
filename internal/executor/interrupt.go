@@ -85,15 +85,10 @@ func FormatInterruptsBlock(goalDescription string, interrupts []InterruptMessage
 	xml += "  </messages>\n\n"
 
 	xml += `  <guidance>
-    The above messages arrived while you were executing. Evaluate
-    them against your current work and decide how to proceed.
-    You may continue working if the messages are irrelevant,
-    adjust your approach if they affect your remaining work,
-    or stop execution if your work is no longer viable.
-
-    If you stop, explain the reason in your response. This
-    explanation will be published to the swarm so other agents
-    understand why work was stopped and can adapt accordingly.
+    The above messages are corrective guidance from the swarm
+    manager. Evaluate them against your current work and adjust
+    your approach for remaining steps. These messages take
+    priority over your current plan where they conflict.
   </guidance>
 `
 	xml += "</interrupts>"

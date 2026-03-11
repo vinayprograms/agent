@@ -10,11 +10,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// CollaborationConfig holds swarm-wide collaboration settings.
+type CollaborationConfig struct {
+	InterruptCheck *bool `yaml:"interrupt_check"` // default: true
+}
+
 // Manifest represents a swarm.yaml deployment descriptor.
 type Manifest struct {
-	NATS    NATSConfig    `yaml:"nats"`
-	Storage StorageConfig `yaml:"storage"`
-	Agents  []AgentSpec   `yaml:"agents"`
+	NATS          NATSConfig          `yaml:"nats"`
+	Storage       StorageConfig       `yaml:"storage"`
+	Collaboration CollaborationConfig `yaml:"collaboration"`
+	Agents        []AgentSpec         `yaml:"agents"`
 }
 
 // NATSConfig configures NATS connection.
@@ -35,7 +41,9 @@ type AgentSpec struct {
 	Policy     string `yaml:"policy"`
 	Capability string `yaml:"capability"`
 	Storage    string `yaml:"storage"`
-	Yolo       bool   `yaml:"yolo"` // Enable bash with security guardrails
+	Yolo       bool   `yaml:"yolo"`     // Enable bash with security guardrails
+	Type       string `yaml:"type"`     // "worker" (default) or "manager"
+	Replicas   int    `yaml:"replicas"` // Number of instances (default: 1, only for workers)
 }
 
 // loadManifest reads a swarm.yaml file.
@@ -68,6 +76,29 @@ func loadManifest(path string) (*Manifest, error) {
 	if m.Storage.Root == "" {
 		home, _ := os.UserHomeDir()
 		m.Storage.Root = filepath.Join(home, ".local", "share", "swarm")
+	}
+
+	// Agent type/replicas defaults and validation
+	managerCount := 0
+	for i := range m.Agents {
+		if m.Agents[i].Type == "" {
+			m.Agents[i].Type = "worker"
+		}
+		if m.Agents[i].Type != "worker" && m.Agents[i].Type != "manager" {
+			return nil, fmt.Errorf("agent %q: invalid type %q (must be \"worker\" or \"manager\")", m.Agents[i].Name, m.Agents[i].Type)
+		}
+		if m.Agents[i].Replicas < 1 {
+			m.Agents[i].Replicas = 1
+		}
+		if m.Agents[i].Type == "manager" {
+			managerCount++
+			if m.Agents[i].Replicas > 1 {
+				return nil, fmt.Errorf("agent %q: manager cannot have replicas > 1", m.Agents[i].Name)
+			}
+		}
+	}
+	if managerCount > 1 {
+		return nil, fmt.Errorf("manifest defines %d managers; at most one is allowed", managerCount)
 	}
 
 	return &m, nil
