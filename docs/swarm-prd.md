@@ -81,36 +81,37 @@ storage:
   root: ~/.local/share/swarm     # Unified storage root for all agent sessions
 
 agents:
-  - name: coder
-    agentfile: ./agents/coder.agent
+  - name: orchestrator
+    agentfile: ./agents/orchestrator.agent
+    config: ./agents/agent.toml
+    type: manager
+
+  - name: fullstack
+    agentfile: ./agents/fullstack.agent
     config: ./agents/agent.toml
     policy: ./agents/policy.toml
-    capability: coder
+    capability: fullstack
+    replicas: 3
 
-  - name: tester
-    agentfile: ./agents/tester.agent
-    config: ./agents/agent.toml
-    policy: ./agents/policy.toml
-    capability: tester
-
-  - name: documenter
-    agentfile: ./agents/documenter.agent
-    config: ./agents/agent.toml
-    capability: documenter
+collaboration:
+  interrupt_check: true
 ```
 
 ### Top-Level Fields
 
 - `nats.url` — NATS server URL (required)
 - `storage.root` — Unified storage root for session logs (default: `~/.local/share/swarm`)
+- `collaboration.interrupt_check` — Whether workers check interrupt buffer during execution (default: `true`)
 
 ### Agent Fields
 
-- `name` — Display name for the agent instance (required)
+- `name` — Display name for the agent instance (required). For replicated workers, runtime generates instance IDs as `<name>-<session-id>`.
 - `agentfile` — Path to Agentfile (required)
 - `config` — Path to agent.toml (uses agent defaults if omitted)
 - `policy` — Path to policy.toml
-- `capability` — Capability name override (defaults to Agentfile NAME)
+- `capability` — Capability name for work channel subscription (defaults to Agentfile NAME)
+- `type` — `worker` (default) or `manager`. At most one `manager` per swarm. A manager agent automatically subscribes to `discuss.*` to read all worker updates.
+- `replicas` — Number of instances to spawn (default: 1). Only meaningful for workers. Each replica subscribes to the same `work.<capability>.*` queue group for automatic load balancing.
 
 All string values support `${ENV_VAR}` expansion.
 

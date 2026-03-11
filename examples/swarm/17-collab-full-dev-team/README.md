@@ -1,34 +1,38 @@
-# 17 — Collaborative Full Dev Team
+# 17 — Managed Full Dev Team
 
-Same agents as [03-full-dev-team](../03-full-dev-team/), but using `discuss` mode. Three agents self-organize to implement, test, and document.
+An orchestrator agent decomposes tasks into features and assigns them to worker replicas. Workers execute in isolation — no peer awareness, no scope drift.
 
-**Compare with:** [03-full-dev-team](../03-full-dev-team/) (explicit chain)
+**Compare with:** [03-full-dev-team](../03-full-dev-team/) (explicit chain, capability-split agents)
 
 ## Agents
 
-- **coder** — writes Go implementation
-- **tester** — writes comprehensive tests
-- **documenter** — writes developer documentation
+- **orchestrator** (manager) — decomposes tasks into features, assigns to workers, monitors progress via `discuss.*`, sends corrections via `work.<instance-id>.*`
+- **developer** ×3 (worker replicas) — builds features end-to-end (code, tests, docs). Each replica handles one feature in complete isolation.
 
 ## Usage
 
 ```bash
 swarm up
-swarm submit --mode discuss "build an HTTP rate limiter using the token bucket algorithm in Go — implement it, write thorough tests, and create developer documentation"
+swarm submit develop "build an HTTP rate limiter using the token bucket algorithm in Go — implement it, write thorough tests, and create developer documentation"
 swarm history
 swarm down
 ```
 
 ## How It Works
 
-All three agents see the task. Each decides independently whether to EXECUTE, COMMENT, or SKIP based on their resume match. All three should EXECUTE — the task explicitly mentions implementation, testing, and documentation.
+1. The orchestrator receives the task and decomposes it into independent features.
+2. Each feature is published to `work.develop.*` where NATS queue groups deliver one feature per worker replica.
+3. Workers execute in isolation — they see only their assigned feature, not each other's work.
+4. Workers post progress updates to `discuss.*` (write-only — they never read it).
+5. The orchestrator monitors `discuss.*` and sends corrective guidance via `work.<instance-id>.*` if a worker drifts.
+6. Workers complete and post results to `done.develop.*`.
 
-## Pattern: Collaborative (All Contribute)
+## Pattern: Managed Parallel (Isolated Execution)
 
 ```
-         ┌─ coder      [likely EXECUTE]
-discuss ─┼─ tester     [likely EXECUTE]
-         └─ documenter [likely EXECUTE]
+                   ┌─ developer-a1b2  [feature 1]
+task → orchestrator┼─ developer-c3d4  [feature 2]
+                   └─ developer-e5f6  [feature 3]
 ```
 
-Unlike the chain (03), there's no guaranteed ordering. All three may work in parallel, or one may COMMENT while others EXECUTE.
+Unlike the old collaborative model (where agents self-organized via CLAIMs on `discuss.*`), workers here never see each other's output. The orchestrator handles all coordination. This prevents the "Ultron problem" where every agent builds the entire system regardless of agreed scope.
