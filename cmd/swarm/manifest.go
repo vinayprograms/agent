@@ -21,6 +21,14 @@ type Manifest struct {
 	State         StateConfig         `yaml:"state"`
 	Collaboration CollaborationConfig `yaml:"collaboration"`
 	Agents        []AgentSpec         `yaml:"agents"`
+
+	// Deprecated: use State instead. Parsed for backwards compat.
+	Storage *legacyStorageConfig `yaml:"storage,omitempty"`
+}
+
+// legacyStorageConfig supports the old storage.root YAML format.
+type legacyStorageConfig struct {
+	Root string `yaml:"root"`
 }
 
 // NATSConfig configures NATS connection.
@@ -45,6 +53,20 @@ type AgentSpec struct {
 	Replicas   int    `yaml:"replicas"` // Number of instances (default: 1, only for workers)
 }
 
+// migrateStorage handles backwards compat: storage.root → state.location.
+func (m *Manifest) migrateStorage() error {
+	if m.Storage == nil || m.Storage.Root == "" {
+		return nil
+	}
+	if m.State.Location != "" {
+		return fmt.Errorf("manifest has both 'state' and 'storage' sections — remove deprecated 'storage'")
+	}
+	fmt.Fprintf(os.Stderr, "WARNING: 'storage.root' is deprecated, use 'state.location' instead\n")
+	m.State.Location = m.Storage.Root
+	m.Storage = nil
+	return nil
+}
+
 // loadManifest reads a swarm.yaml file.
 func loadManifest(path string) (*Manifest, error) {
 	data, err := os.ReadFile(path)
@@ -55,6 +77,11 @@ func loadManifest(path string) (*Manifest, error) {
 	var m Manifest
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)
+	}
+
+	// Migrate deprecated storage → state
+	if err := m.migrateStorage(); err != nil {
+		return nil, err
 	}
 
 	// Resolve relative paths against manifest directory

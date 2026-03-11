@@ -891,8 +891,12 @@ func (u *UICmd) Run(a *app) error {
 		} else {
 			log.Printf("[ui] failed to load manifest %s: %v", manifestPath, err)
 		}
-	} else {
-		log.Printf("[ui] no manifest found — session logs will be unavailable")
+	}
+	// Fall back to default state location if manifest not found or had no state path
+	if storageRoot == "" {
+		home, _ := os.UserHomeDir()
+		storageRoot = filepath.Join(home, ".local", "share", "swarm")
+		log.Printf("[ui] using default state location: %s", storageRoot)
 	}
 
 	srv := newWebServer(a.natsURL, a.dataDir, storageRoot, nil, db)
