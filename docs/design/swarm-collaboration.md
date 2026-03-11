@@ -1,43 +1,32 @@
 # Swarm Collaboration: Isolated Execution with Managed Coordination
 
-*Design Document — March 2026 (Revised)*
+*Design Document — March 2026*
 
 ---
 
 ## 1. Introduction
 
-A swarm is a collection of autonomous agents working toward a common goal. Each agent brings a capability — writing code, running tests, generating documentation — and the swarm's power lies in parallel execution across those capabilities. However, **coordination between agents is not self-organizing.** Current LLMs cannot reliably collaborate as peers: they drift from agreed-upon scope, duplicate each other's work, and ignore their own commitments the moment completion bias takes over.
+A swarm is a collection of autonomous agents working toward a common goal. Each agent brings a capability — writing code, running tests, generating documentation — and the swarm's power lies in parallel execution across those capabilities.
 
-This document presents a collaboration model built on a hard-won lesson: **agents execute in isolation, and coordination flows through a central authority.** That authority is either a human (via the swarm CLI or web UI) or a dedicated manager agent. Workers never see each other's output during execution. The only external input a worker receives mid-task is corrective guidance from the manager or human, delivered through a dedicated channel.
+This document presents the collaboration model for swarm agents. The model is built on three principles:
 
-### 1.1 The Problem: Completion Bias and Scope Drift
+1. **Workers execute in isolation.** A worker receives one task and executes it without awareness of other workers or their tasks. The only external input during execution is corrective guidance from a central authority.
 
-The previous collaboration model attempted peer-to-peer coordination. Agents would deliberate on a shared `discuss.*` channel, publish CLAIMs describing what they would build, and self-organize into complementary roles. In theory, this produced clean task division through emergent consensus.
+2. **Coordination flows through a central authority.** That authority is either a human (via the swarm web UI) or a dedicated manager agent. The authority decomposes work, assigns tasks, monitors progress, and sends corrections.
 
-In practice, it failed consistently across all models — Opus, Qwen, MinMax, GPT variants, and others. The failure pattern was uniform:
+3. **Transparency without contamination.** Workers post their reasoning to a broadcast channel so the authority can monitor progress. Workers never subscribe to this channel — they talk into a one-way mirror.
 
-1. Agents deliberate and publish CLAIMs specifying narrow scope ("I'll handle the frontend only").
-2. Agents begin executing. Within their own context, the CLAIM is a distant memory.
-3. Each agent builds the complete system — frontend, backend, infrastructure — because every LLM has been trained on complete projects and the gravitational pull toward completeness is overwhelming.
-4. The swarm produces N independent implementations of the same feature instead of N complementary pieces.
+### 1.1 Design Principles
 
-This is not a prompting problem, a persona problem, or a model quality problem. It is a structural property of how LLMs process context: as the agent generates more code, its own output dominates the context window, the original scope constraint gets diluted, and completion bias takes over. An agent that has written 2000 lines of frontend code "knows" there should be a backend — and it will build one.
+**Isolation over collaboration.** Workers execute in isolation. They do not see each other's reasoning, output, or progress. The only external signal during execution comes from the manager or human via a dedicated channel. An agent cannot drift into building components outside its scope if it has no awareness that those components exist.
 
-**CLAIMs are unenforceable.** They are text. The LLM that wrote the CLAIM is the same LLM that ignores it. No amount of prompt engineering reliably prevents drift when the agent has the tools and context to build everything.
-
-The revised model accepts this limitation and designs around it.
-
-### 1.2 Design Principles
-
-**Isolation over collaboration.** Workers execute in isolation. They do not see each other's reasoning, output, or progress. The only external signal during execution comes from the manager or human via a dedicated channel. This eliminates the context that triggers completion bias — an agent cannot drift into building the backend if it has no awareness that a backend exists.
-
-**Authority-based coordination.** One entity — the manager agent or the human — has the full picture. It reads all worker updates, reasons about alignment and progress, and sends targeted corrections to specific workers. This is the only coordination mechanism. Workers never coordinate with each other directly.
+**Authority-based coordination.** One entity — the manager agent or the human — has the full picture. It reads all worker updates, reasons about alignment and progress, and sends targeted corrections to specific workers. Workers never coordinate with each other directly.
 
 **Wide capabilities, narrow tasks.** Agents are defined with broad capabilities (e.g., "fullstack development") rather than narrow specializations (e.g., "frontend only"). Tasks are decomposed into complete, independent features. Each worker receives one feature and builds it end-to-end. There is no scope overlap because there is no shared scope.
 
-**Transparency without contamination.** Workers post their reasoning to a broadcast channel (`discuss.*`) so the manager and UI can monitor progress. But workers never subscribe to this channel. They talk into a one-way mirror. This provides full observability without cross-agent context leakage.
+**Transparency without contamination.** Workers post their reasoning to a broadcast channel (`discuss.*`) so the manager and UI can monitor progress. But workers never subscribe to this channel. This provides full observability without cross-agent context leakage.
 
-### 1.3 NATS Subject Routing
+### 1.2 NATS Subject Routing
 
 ![Channel Topology](diagrams/channel-topology.png)
 
@@ -67,7 +56,7 @@ A broadcast channel where workers post their reasoning and progress. Every non-t
 - The manager agent (if present), which uses it to monitor progress and decide on corrections.
 - The swarm web UI, which displays worker activity to the human.
 
-This one-way design is critical. If workers subscribed to `discuss.*`, they would see each other's reasoning, gain context about the full system, and inevitably drift toward building parts they were not assigned. The one-way mirror preserves transparency while preventing contamination.
+This one-way design is critical. Workers seeing each other's reasoning would give them context about the full system, inevitably leading to scope drift. The one-way mirror preserves transparency while preventing contamination.
 
 **`done.<capability>.<task_id>` — completion metadata (workers → infrastructure).**
 
@@ -77,7 +66,7 @@ Published when a worker's execution terminates — whether through successful co
 
 Periodic status updates from each agent. The manager and UI consume these for liveness detection and status display. Workers emit heartbeats but do not consume others' heartbeats — they have no need for peer awareness.
 
-### 1.4 Channel Summary
+### 1.3 Channel Summary
 
 | Channel | Writers | Readers | Purpose |
 |---------|---------|---------|---------|
@@ -93,14 +82,14 @@ Periodic status updates from each agent. The manager and UI consume these for li
 
 ### 2.1 Workers
 
-Workers are the execution engines of the swarm. They receive tasks, execute them, and report results. A worker's lifecycle is simple:
+Workers are the execution engines of the swarm. They receive tasks, execute them, and report results. A worker's lifecycle is:
 
 1. **Start.** Subscribe to `work.<capability>.*` (queue group) and `work.<instance-id>.*` (direct). Begin emitting heartbeats.
 2. **Receive task.** A message arrives on `work.<capability>.*`. The worker transitions to EXECUTING.
 3. **Execute.** Run the workflow defined in the Agentfile. Post all non-tool-call LLM responses to `discuss.<task_id>`. Check interrupt buffer between LLM turns for corrective guidance from `work.<instance-id>.*`.
-4. **Complete.** Publish result to `discuss.<task_id>` and `done.<capability>.<task_id>`. Return to waiting.
+4. **Complete.** Publish result to `discuss.<task_id>` and `done.<capability>.<task_id>`. Return to IDLE.
 
-Workers have no awareness of other workers. They do not know how many peers exist, what tasks others are handling, or what progress others have made. This is by design — awareness enables drift.
+Workers have no awareness of other workers. They do not know how many peers exist, what tasks others are handling, or what progress others have made.
 
 ### 2.2 Manager
 
@@ -114,27 +103,27 @@ A manager automatically receives:
 
 The manager's Agentfile defines how it reasons about task decomposition, progress monitoring, and course correction. It sees the full picture — all worker output, all task status — and acts as the central coordinator.
 
-A swarm can have at most one manager. Multi-manager coordination is a Hive concern, not a swarm concern.
+A swarm has at most one manager. Multi-manager coordination is a Hive concern.
 
 ### 2.3 Human (No Manager)
 
-When no manager agent is defined in the swarm manifest, the human drives coordination directly through the swarm web UI (or CLI, in the future). The human:
+When no manager agent is defined in the swarm manifest, the human drives coordination directly through the swarm web UI. The human:
 
 - Monitors worker progress via `discuss.*` displayed in the web UI.
 - Assigns tasks by publishing to `work.<capability>.*`.
 - Sends corrections by publishing to `work.<instance-id>.*`.
 
-The web UI surfaces worker updates, heartbeat status, and task completion in real time. The human makes all coordination decisions. This is the simplest deployment model and may be sufficient for small swarms (2–5 workers).
+The web UI surfaces worker updates, heartbeat status, and task completion in real time. The human makes all coordination decisions. This is the simplest deployment model and is sufficient for small swarms (2–5 workers).
 
 ---
 
 ## 3. The Worker State Machine
 
-Workers operate in exactly two states. The previous three-state model (MONITORING, DELIBERATING, EXECUTING) is simplified — DELIBERATING is removed because workers no longer participate in peer deliberation.
-
 ![Worker State Machine](diagrams/worker-state-machine.png)
 
 *Two-state lifecycle. IDLE is the resting state. EXECUTING runs the workflow with interrupt awareness. Corrections from the manager arrive as interrupts without leaving the EXECUTING state.*
+
+Workers operate in exactly two states.
 
 ### 3.1 States
 
@@ -159,15 +148,15 @@ Each worker's current state is communicated via the heartbeat mechanism. The hea
 
 ## 4. Execution with Interrupts
 
-Once a worker begins executing, it is not completely deaf. The manager or human can send corrective guidance via `work.<instance-id>.*`, which feeds into the worker's interrupt buffer. This is the only external input during execution.
+![Execution Loop](diagrams/execution-loop.png)
+
+*The execution loop. After each LLM turn, the worker checks for tool calls. Tool results and interrupt buffer contents feed the next turn. The loop exits when the LLM produces text-only output with no pending interrupts.*
+
+During execution, a worker is not completely deaf. The manager or human can send corrective guidance via `work.<instance-id>.*`, which feeds into the worker's interrupt buffer. This is the only external input during execution.
 
 ### 4.1 The Interrupt Buffer
 
 When a worker transitions to EXECUTING, it initializes an interrupt buffer — a thread-safe FIFO queue that collects messages arriving on `work.<instance-id>.*`. The NATS subscriber writes to this buffer; the executor reads from it.
-
-![Execution Loop](diagrams/execution-loop.png)
-
-*The execution loop. After each LLM turn, the worker checks for tool calls. Tool results and interrupt buffer contents feed the next turn. The loop exits when the LLM produces text-only output with no pending interrupts.*
 
 ### 4.2 Injection Point
 
@@ -220,9 +209,7 @@ When the interrupt buffer contains messages, they are formatted into an XML bloc
 </interrupts>
 ```
 
-The **context** element states the worker's current goal (from the Agentfile). The **messages** element contains the raw guidance, preserving attribution and timestamps. The **guidance** element frames the messages as authoritative corrections, not suggestions.
-
-Note the difference from the previous design: interrupts now come exclusively from the manager or human, not from peer workers. The guidance framing reflects this — these are directives, not peer opinions to weigh.
+The **context** element states the worker's current goal (from the Agentfile, generated deterministically by the executor). The **messages** element contains the raw guidance, preserving attribution and timestamps. The **guidance** element frames the messages as authoritative corrections — these are directives from the coordination authority, not suggestions to weigh.
 
 ### 4.4 Solo Agent Compatibility
 
@@ -245,7 +232,7 @@ This provides the manager and human with a real-time stream of each worker's thi
 - Identify blockers ("Worker has been stuck on SMTP configuration for 10 minutes").
 - Coordinate dependencies ("Worker A finished the API; time to assign testing to Worker B").
 
-Workers publish to `discuss.*` but never subscribe. They are unaware that anyone is reading their updates. This is a logging mechanism from the worker's perspective — it simply externalizes its reasoning.
+Workers publish to `discuss.*` but never subscribe. They are unaware that anyone is reading their updates. From the worker's perspective, this is simply externalizing its reasoning.
 
 ### 5.1 Update Format
 
@@ -263,7 +250,7 @@ The structured metadata allows the manager and UI to filter, group, and display 
 
 ## 6. Context Management
 
-The revised model simplifies context management significantly. Workers execute in isolation, so there is no cross-agent context to manage. The only context concerns are:
+Workers execute in isolation, so there is no cross-agent context to manage. The only context concerns are:
 
 ### 6.1 Interrupt History
 
@@ -283,7 +270,7 @@ The manager's Agentfile should define summarization strategies — for example, 
 
 ## 7. Scenarios
 
-### 7.1 Scenario: Feature Development with Multiple Workers
+### 7.1 Feature Development with Multiple Workers
 
 **Setup:** Three `fullstack` worker replicas, one manager, building a web application.
 
@@ -316,7 +303,7 @@ The manager's Agentfile should define summarization strategies — for example, 
 
 **Key property:** No worker knows the other features exist. `fullstack-a1b2` cannot drift into building login because it has no awareness that login is a task.
 
-### 7.2 Scenario: Human-Driven Swarm (No Manager)
+### 7.2 Human-Driven Swarm (No Manager)
 
 **Setup:** Two `fullstack` worker replicas, no manager, human using web UI.
 
@@ -336,7 +323,7 @@ The manager's Agentfile should define summarization strategies — for example, 
 
 **Key property:** The web UI replaces the manager agent. Same channels, same flow, human intelligence instead of LLM intelligence for coordination.
 
-### 7.3 Scenario: Course Correction via Manager
+### 7.3 Course Correction via Manager
 
 **Setup:** Manager + workers building a microservices system.
 
@@ -352,7 +339,7 @@ The manager's Agentfile should define summarization strategies — for example, 
 
 6. Manager confirms alignment. No further correction needed.
 
-### 7.4 Scenario: Dependency Sequencing
+### 7.4 Dependency Sequencing
 
 **Setup:** Manager + `coder` and `tester` workers.
 
@@ -362,11 +349,11 @@ The manager's Agentfile should define summarization strategies — for example, 
 
 3. Coder completes. DONE message appears on `discuss.*` and `done.coder.*`.
 
-4. Manager sees completion. Now assigns "Write integration tests for the search API" to `work.tester.*`, including relevant context from coder's discuss output.
+4. Manager sees completion. Assigns "Write integration tests for the search API" to `work.tester.*`, including relevant context from coder's discuss output.
 
 5. Tester executes against coder's output.
 
-**Key property:** The manager sequences dependent work. Workers do not wait for each other — the manager handles timing. The tester does not start until the manager decides the code is ready.
+**Key property:** The manager sequences dependent work. Workers do not wait for each other — the manager handles timing.
 
 ---
 
@@ -385,8 +372,6 @@ If a worker crashes mid-execution (heartbeat goes stale), the manager detects th
 ---
 
 ## 9. Swarm Manifest
-
-The revised `swarm.yaml` format:
 
 ```yaml
 # swarm.yaml
@@ -408,6 +393,9 @@ agents:
     capability: fullstack
     type: worker          # default, can be omitted
     replicas: 3
+
+collaboration:
+  interrupt_check: true
 ```
 
 ### 9.1 Agent Fields
@@ -425,7 +413,7 @@ agents:
 Each agent instance gets a unique identifier: `<name>-<session-id>`. The session ID is generated at spawn time.
 
 - Instance IDs are used for directed channels (`work.<instance-id>.*`), heartbeat identification, and discuss message attribution.
-- The swarm CLI/UI supports tab completion: typing the agent name followed by the first few characters of the session ID resolves to the full instance ID.
+- The swarm web UI supports tab completion: typing the agent name followed by the first few characters of the session ID resolves to the full instance ID.
 
 ### 9.3 Collaboration Settings
 
@@ -436,13 +424,11 @@ collaboration:
 
 **interrupt_check** (default: true). Whether executing workers check the interrupt buffer between LLM turns. When false, workers execute in complete isolation — no mid-execution corrections possible. When true, workers process corrective guidance from `work.<instance-id>.*`.
 
-The previous `max_deliberation_rounds` and `context_summary_threshold` settings are removed. Workers do not deliberate, and context management follows the agent-level configuration in agent.toml.
-
 ---
 
 ## 10. Manager Agentfile Design
 
-The manager agent is defined by a standard Agentfile. Its effectiveness depends on the Agentfile's goals and persona. A typical manager Agentfile might include:
+The manager agent is defined by a standard Agentfile. Its effectiveness depends on the Agentfile's goals and persona. A typical manager Agentfile includes:
 
 **Persona:** "You are a technical project manager. You decompose tasks into independent features, assign them to workers, monitor progress, and send corrections when workers drift from requirements."
 
@@ -461,57 +447,11 @@ The manager does NOT need:
 - MCP connections for external services (unless it manages integrations).
 - The same tools as workers.
 
-This role separation — manager reasons and coordinates, workers execute — mirrors the SiteGPT/Mission Control model where different agent types have fundamentally different tool access and output domains.
+This role separation — manager reasons and coordinates, workers execute — ensures the manager cannot accidentally do workers' jobs, and workers cannot accidentally do each other's jobs.
 
 ---
 
-## 11. Design Rationale
-
-### 11.1 Why Not Peer Collaboration?
-
-The previous design attempted peer-to-peer coordination via shared discussion channels. Agents would deliberate, CLAIM work, and self-organize. This failed because:
-
-1. **CLAIMs are unenforceable.** An agent that CLAIMs "frontend only" will build a backend anyway. The CLAIM is text; the LLM that wrote it is the same LLM that ignores it.
-
-2. **Peer context enables drift.** When agents see each other's reasoning, they gain awareness of the full system. This awareness triggers completion bias — the agent cannot resist building parts it knows about.
-
-3. **The failure is model-independent.** Tested across Opus, Qwen, MinMax, GPT variants, and others. All exhibited the same drift pattern. This is not a model quality issue — it is a structural property of how LLMs process expanding context.
-
-4. **Simultaneous CLAIMs race.** Multiple agents processing a task simultaneously produce overlapping CLAIMs before seeing each other's, leading to duplicated work.
-
-The revised model accepts these limitations as fundamental rather than trying to engineer around them. Isolation is cheaper and more reliable than enforcement.
-
-### 11.2 Why discuss.* is Write-Only for Workers
-
-Making `discuss.*` write-only for workers is the key design decision. It provides:
-
-- **Full transparency** for the manager and human — every worker's reasoning is visible.
-- **Zero contamination** for workers — no peer context enters the execution loop.
-- **Natural logging** — workers externalize their reasoning as a side effect, not a deliberate action.
-
-The alternative — letting workers read `discuss.*` — reintroduces the exact problem that caused the previous design to fail. Even with "read-only" framing ("this is awareness, not a call to action"), LLMs cannot reliably ignore context that suggests incomplete work.
-
-### 11.3 Why Wide Capabilities
-
-The previous design used narrow capabilities (frontend, backend, webserver) to create scope boundaries. This failed because narrow-capability agents with broad tool access (bash, file write) can trivially exceed their declared scope.
-
-Wide capabilities (fullstack, developer) embrace the agent's nature. Instead of fighting the LLM's desire to build complete systems, we give it a complete feature to build. Completion bias becomes an asset — the agent completes its feature end-to-end, which is exactly what we want.
-
-Task decomposition shifts from the agent level (each agent does one layer) to the coordination level (each agent does one feature). The manager or human handles decomposition; workers handle execution.
-
-### 11.4 Comparison with Mission Control / SiteGPT Model
-
-The revised design mirrors the model demonstrated by Mission Control HQ (SiteGPT): a central orchestrator (Jarvis) that delegates tasks to specialist agents. That system works because:
-
-- Agent roles have non-overlapping output domains (PM produces specs, SEO produces keyword analysis, dev produces code).
-- The orchestrator assigns work; agents do not self-organize.
-- Discussion is cross-functional input, not competing implementations.
-
-Our model applies the same pattern to same-capability agents: the manager decomposes and assigns, workers execute in isolation, and the discuss channel provides transparency without enabling drift.
-
----
-
-## 12. Open Questions
+## 11. Open Questions
 
 **Integration across features.** When multiple workers build independent features, integration is needed: shared routing, consistent styling, compatible APIs. Options include a shared scaffold committed before workers start, a dedicated integration pass after features complete, or the manager including integration constraints in task descriptions. The right approach likely depends on the project.
 
@@ -522,3 +462,38 @@ Our model applies the same pattern to same-capability agents: the manager decomp
 **Task reassignment on failure.** When a worker crashes, the manager can reassign the task. But the new worker starts fresh — there is no mechanism to resume from the crashed worker's partial state. For long-running tasks, this means significant wasted compute. Checkpointing and resume are deferred as a future enhancement.
 
 **Manager failure.** If the manager crashes, workers continue executing their current tasks but no new coordination occurs. Workers complete and return to IDLE with no one to assign new work. The human must intervene via the web UI. Manager resilience (restart, state recovery) is a Hive concern.
+
+---
+
+## Appendix A: Why Not Peer Collaboration?
+
+An earlier iteration of this design attempted peer-to-peer coordination. Agents would deliberate on a shared `discuss.*` channel, publish CLAIMs describing what they would build, and self-organize into complementary roles. This approach was abandoned after consistent failures across all tested models.
+
+### The Failure Pattern
+
+1. Agents deliberate and publish CLAIMs specifying narrow scope ("I'll handle the frontend only").
+2. Agents begin executing. Within their own context, the CLAIM becomes a distant memory.
+3. Each agent builds the complete system — frontend, backend, infrastructure — because every LLM has been trained on complete projects and the gravitational pull toward completeness is overwhelming.
+4. The swarm produces N independent implementations of the same feature instead of N complementary pieces.
+
+### Root Causes
+
+**Completion bias is structural, not behavioral.** As an agent generates more code, its own output dominates the context window. The original scope constraint gets diluted. An agent that has written 2000 lines of frontend code "knows" there should be a backend — and it builds one. This is not a prompting problem or a model quality problem. It is a property of how LLMs process expanding context.
+
+**CLAIMs are unenforceable.** CLAIMs are text. The LLM that wrote the CLAIM is the same LLM that ignores it. No amount of prompt engineering reliably prevents drift when the agent has the tools and context to build everything.
+
+**Peer context enables drift.** When agents see each other's reasoning via a shared discussion channel, they gain awareness of the full system. This awareness triggers completion bias — the agent cannot resist building parts it knows about.
+
+**The failure is model-independent.** Tested across Opus, Qwen, MinMax, GPT variants, and others. All exhibited the same drift pattern.
+
+### Supervision Was Considered and Rejected
+
+A swarm supervisor — a separate agent or process that checks each worker's output against its CLAIM — was evaluated as an alternative to isolation. The supervisor would gate tool calls, file writes, or commits, rejecting anything outside the worker's declared scope.
+
+This approach fails for two reasons:
+
+1. **Scope drift is a semantic judgment.** Determining whether a file write is "in scope" requires understanding the full context of the task, the CLAIM, and the code being written. No static check or template match can catch "you're building the login API but that's another agent's job." Every check requires an LLM call.
+
+2. **The overhead is prohibitive.** Gating every write, bash call, or network call with an LLM supervisor call adds enormous latency and cost. Batching reduces frequency but not the fundamental expense. Per-commit gating only works for git-backed workflows, not general MCP-to-MCP pipelines.
+
+Isolation eliminates the need for supervision entirely. An agent cannot drift into building the backend if it has no awareness that a backend exists.
