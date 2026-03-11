@@ -461,6 +461,58 @@ func TestExecutor_GetAllToolDefinitions(t *testing.T) {
 	}
 }
 
+// Test that default_deny policy blocks tool execution at the executor level.
+// This is the enforcement gate — even if a model hallucinates a tool call
+// for a tool that exists in the registry, the executor must reject it.
+func TestExecutor_DefaultDenyBlocksToolExecution(t *testing.T) {
+	wf := &agentfile.Workflow{Name: "test"}
+	provider := llm.NewMockProvider()
+
+	// Create restrictive policy: default_deny=true, only "bash" enabled
+	pol := policy.NewRestrictive()
+	pol.Tools["bash"] = &policy.ToolPolicy{Enabled: true}
+
+	registry := tools.NewRegistry(pol)
+
+	exec := NewExecutor(wf, provider, registry, pol)
+
+	// Definitions should filter out disabled tools
+	defs := exec.getAllToolDefinitions()
+	for _, d := range defs {
+		if d.Name == "read" || d.Name == "write" || d.Name == "grep" {
+			t.Errorf("tool %q should not appear in definitions with default_deny", d.Name)
+		}
+	}
+
+	// Direct execution of a disabled tool must be rejected
+	tc := llm.ToolCallResponse{
+		ID:   "call_1",
+		Name: "read",
+		Args: map[string]interface{}{"path": "/tmp/test"},
+	}
+	_, err := exec.executeTool(context.Background(), tc)
+	if err == nil {
+		t.Fatal("expected error executing disabled tool 'read'")
+	}
+	if !strings.Contains(err.Error(), "not enabled by policy") {
+		t.Errorf("expected 'not enabled by policy' error, got: %v", err)
+	}
+
+	// pwd has no internal policy check — verify it's also blocked
+	tc2 := llm.ToolCallResponse{
+		ID:   "call_2",
+		Name: "pwd",
+		Args: map[string]interface{}{},
+	}
+	_, err = exec.executeTool(context.Background(), tc2)
+	if err == nil {
+		t.Fatal("expected error executing disabled tool 'pwd'")
+	}
+	if !strings.Contains(err.Error(), "not enabled by policy") {
+		t.Errorf("expected 'not enabled by policy' error for pwd, got: %v", err)
+	}
+}
+
 // Test skill activation check
 func TestExecutor_CheckSkillActivation(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}

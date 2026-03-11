@@ -113,6 +113,18 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 		return nil, fmt.Errorf("tool '%s' does not exist. Use one of: %s", tc.Name, strings.Join(names, ", "))
 	}
 
+	// Enforce policy: reject tool calls that aren't enabled.
+	// Definitions() filters the LLM's view, but models can hallucinate
+	// tool names from training data. This gate is the enforcement layer.
+	if e.policy != nil && !e.policy.IsToolEnabled(tc.Name) {
+		err := fmt.Errorf("tool %s is not enabled by policy", tc.Name)
+		e.logToolResult(ctx, tc.Name, tc.Args, corrID, nil, err, time.Since(start))
+		if e.OnToolError != nil {
+			e.OnToolError(tc.Name, tc.Args, err, agentID.Role)
+		}
+		return nil, err
+	}
+
 	result, err := tool.Execute(ctx, tc.Args)
 	duration := time.Since(start)
 
