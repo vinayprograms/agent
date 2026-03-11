@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/config"
@@ -66,6 +67,12 @@ func (w *workflow) loadConfig() error {
 	}
 	if w.cfg.Agent.Workspace == "" {
 		w.cfg.Agent.Workspace, _ = os.Getwd()
+	}
+	// Expand ~ to home directory before resolving absolute path
+	if strings.HasPrefix(w.cfg.Agent.Workspace, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			w.cfg.Agent.Workspace = filepath.Join(home, w.cfg.Agent.Workspace[2:])
+		}
 	}
 	if !filepath.IsAbs(w.cfg.Agent.Workspace) {
 		w.cfg.Agent.Workspace, _ = filepath.Abs(w.cfg.Agent.Workspace)
