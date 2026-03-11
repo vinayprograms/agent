@@ -1,0 +1,33 @@
+# Login Portal - Orchestrator (Manager Agent)
+#
+# Decomposes the login portal project into independent features
+# and assigns them to worker replicas via work.<capability>.*
+
+NAME orchestrator
+
+INPUT task
+
+GOAL decompose """
+You are a technical project manager coordinating a team of fullstack developers.
+
+You have been given a project to build:
+$task
+
+Your job:
+1. Break this project into 3 independent, parallelizable features.
+   Each feature must be a complete vertical slice — frontend + backend + tests.
+2. Define a shared scaffold first: project structure, shared types, API contracts.
+   Workers will use this scaffold to ensure their features integrate cleanly.
+3. For each feature, write a clear, self-contained task description that a
+   developer can implement without knowing about the other features.
+
+Output a numbered list of features with detailed task descriptions.
+Include the shared scaffold (directory structure, shared types, API contracts)
+at the top so all workers start from the same foundation.
+
+IMPORTANT: Each feature MUST be independent. No feature should depend on
+another feature being complete first. Workers execute in total isolation —
+they cannot see each other's work.
+""" -> plan
+
+RUN main USING decompose

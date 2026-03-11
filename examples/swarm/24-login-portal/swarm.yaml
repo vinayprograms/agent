@@ -1,0 +1,29 @@
+# Login Portal — Managed swarm with isolated worker replicas
+#
+# The orchestrator decomposes the project into features.
+# Three developer replicas each build one feature in isolation.
+# Workers post progress to discuss.* (write-only).
+# Orchestrator monitors discuss.* and sends corrections via work.<instance-id>.*.
+
+nats:
+  url: nats://localhost:4222
+
+storage:
+  root: ~/.local/share/swarm
+
+agents:
+  - name: orchestrator
+    agentfile: ./agents/orchestrator.agent
+    config: ./agents/agent.toml
+    type: manager
+
+  - name: developer
+    agentfile: ./agents/developer.agent
+    config: ./agents/agent.toml
+    policy: ./agents/policy.toml
+    capability: develop
+    type: worker
+    replicas: 3
+
+collaboration:
+  interrupt_check: true

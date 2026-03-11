@@ -1,0 +1,19 @@
+# Policy for login portal agents — allow bash for build/test
+
+[tools.bash]
+enabled = true
+allowlist = [
+  "go *",
+  "ls *",
+  "cat *",
+  "mkdir *",
+  "cd *",
+  "find *",
+  "grep *",
+]
+denylist = [
+  "rm -rf /*",
+  "sudo *",
+  "*;*",
+  "*&&*",
+]

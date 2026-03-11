@@ -1,0 +1,16 @@
+# Config for login portal agents
+
+[llm]
+model = "claude-sonnet-4-6"
+max_tokens = 8192
+
+[small_llm]
+model = "claude-haiku-4-5"
+max_tokens = 4096
+
+[storage]
+path = ""
+
+[security]
+mode = "default"
+user_trust = "untrusted"
