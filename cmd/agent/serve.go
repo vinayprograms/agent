@@ -889,4 +889,17 @@ func generateShortID() string {
 	return hex.EncodeToString(b)
 }
 
-
+// stripMarkdownFences removes ```lang ... ``` wrapping from LLM responses.
+func stripMarkdownFences(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if strings.HasPrefix(trimmed, "```") {
+		if idx := strings.Index(trimmed, "\n"); idx != -1 {
+			trimmed = trimmed[idx+1:]
+		}
+		if strings.HasSuffix(trimmed, "```") {
+			trimmed = trimmed[:len(trimmed)-3]
+		}
+		return strings.TrimSpace(trimmed)
+	}
+	return s
+}

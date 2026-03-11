@@ -30,7 +30,7 @@ func TestRunCmd_CustomFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = parser.Parse([]string{"run", "-f", "custom.agent"})
+	_, err = parser.Parse([]string{"run", "custom.agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
