@@ -17,7 +17,7 @@ type Config struct {
 	Profiles  map[string]Profile `toml:"profiles"`  // Capability profiles
 	Web       WebConfig          `toml:"web"`
 	Telemetry TelemetryConfig    `toml:"telemetry"`
-	Storage   StorageConfig      `toml:"storage"`   // Persistent storage settings
+	State     StateConfig         `toml:"state"`     // Persistent state settings
 	MCP       MCPConfig          `toml:"mcp"`       // MCP tool servers
 	Skills    SkillsConfig       `toml:"skills"`    // Agent Skills
 	Security  SecurityConfig     `toml:"security"`  // Security framework
@@ -69,9 +69,9 @@ type TelemetryConfig struct {
 	Headers  map[string]string `toml:"headers"`  // Auth headers (e.g., DD-API-KEY, x-honeycomb-team)
 }
 
-// StorageConfig contains storage settings.
-type StorageConfig struct {
-	Path string `toml:"path"` // Base directory for persistent data (BM25 memory)
+// StateConfig contains persistent state settings.
+type StateConfig struct {
+	Location string `toml:"location"` // Base directory for persistent data (BM25 memory)
 }
 
 // EmbeddingConfig holds embedding provider settings for resume vectors.
@@ -150,8 +150,8 @@ func New() *Config {
 		LLM: LLMConfig{
 			MaxTokens: 4096,
 		},
-		Storage: StorageConfig{
-			Path: "~/.local/grid",
+		State: StateConfig{
+			Location: "~/.local/grid",
 		},
 		Telemetry: TelemetryConfig{
 			Protocol: "noop",
@@ -170,12 +170,50 @@ func Default() *Config {
 }
 
 // LoadFile loads configuration from a TOML file.
+// Supports backwards-compatible [storage] → [state] migration.
 func LoadFile(path string) (*Config, error) {
 	cfg := New()
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
+	if err := migrateStorageToState(path, cfg); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// migrateStorageToState handles backwards compat: [storage] → [state].
+// If both exist → hard error. If only [storage] → use it with deprecation warning.
+func migrateStorageToState(path string, cfg *Config) error {
+	var raw map[string]interface{}
+	if _, err := toml.DecodeFile(path, &raw); err != nil {
+		return nil // already validated above
+	}
+	_, hasState := raw["state"]
+	_, hasStorage := raw["storage"]
+
+	if hasState && hasStorage {
+		return fmt.Errorf("config has both [state] and [storage]; remove deprecated [storage] section")
+	}
+	if hasStorage && !hasState {
+		// Fall back: parse legacy [storage] section
+		var legacy struct {
+			Storage struct {
+				Path     string `toml:"path"`
+				Location string `toml:"location"`
+			} `toml:"storage"`
+		}
+		toml.DecodeFile(path, &legacy)
+		loc := legacy.Storage.Location
+		if loc == "" {
+			loc = legacy.Storage.Path
+		}
+		if loc != "" {
+			fmt.Fprintf(os.Stderr, "WARN: [storage] is deprecated, rename to [state] with location = %q\n", loc)
+			cfg.State.Location = loc
+		}
+	}
+	return nil
 }
 
 // LoadDefault loads configuration from agent.toml in the current directory.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
@@ -73,7 +74,7 @@ func newRuntime(w *workflow, creds *credentials.Credentials) *runtime {
 
 // resolveStoragePath sets up storage and session paths.
 func (rt *runtime) resolveStoragePath() {
-	rt.storagePath = rt.cfg.Storage.Path
+	rt.storagePath = rt.cfg.State.Location
 	if rt.storagePath == "" {
 		home, _ := os.UserHomeDir()
 		rt.storagePath = filepath.Join(home, ".local", "grid")
@@ -211,8 +212,26 @@ func (rt *runtime) setupBashChecker() {
 		}
 		fmt.Printf("⚠️  No allowed_dirs configured for bash - defaulting to: %v (fail-close)\n", allowedDirs)
 	}
+
+	// Auto-include workspace in allowed_dirs if not already covered
+	allowedDirs = ensureWorkspaceInDirs(rt.pol.Workspace, allowedDirs)
+
 	bashChecker := policy.NewBashChecker(rt.pol.Workspace, allowedDirs, bashPolicy.Denylist)
 	rt.registry.SetBashChecker(bashChecker)
+}
+
+// ensureWorkspaceInDirs adds workspace to allowedDirs if not already covered.
+func ensureWorkspaceInDirs(workspace string, dirs []string) []string {
+	if workspace == "" {
+		return dirs
+	}
+	for _, d := range dirs {
+		// If workspace is already listed or is a subdirectory of an allowed dir
+		if d == workspace || strings.HasPrefix(workspace, d+string(filepath.Separator)) {
+			return dirs
+		}
+	}
+	return append(dirs, workspace)
 }
 
 // setupMemory configures scratchpad and semantic memory.

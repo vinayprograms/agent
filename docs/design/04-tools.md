@@ -93,8 +93,8 @@ my-skill/
 Restrict tool access with policy.toml:
 
 ```toml
+# Note: workspace is set in agent.toml ([agent].workspace), not here.
 default_deny = true
-workspace = "/path/to/workspace"
 
 [tools.read]
 enabled = true

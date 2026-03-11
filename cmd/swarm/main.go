@@ -578,7 +578,7 @@ func (u *UpCmd) Run(a *app) error {
 
 	fmt.Printf("Starting swarm from %s\n", manifestPath)
 	fmt.Printf("NATS: %s\n", m.NATS.URL)
-	fmt.Printf("Storage: %s\n", m.Storage.Root)
+	fmt.Printf("State: %s\n", m.State.Location)
 
 	// Connect to NATS for log forwarding to web UI
 	var nc *nats.Conn
@@ -637,12 +637,12 @@ func (u *UpCmd) Run(a *app) error {
 			if ag.Capability != "" {
 				args = append(args, "--capability", ag.Capability)
 			}
-			// Auto-isolate storage per agent instance under swarm storage root
-			agentStorage := ag.Storage
-			if agentStorage == "" {
-				agentStorage = filepath.Join(m.Storage.Root, "agents", displayName)
+			// Auto-isolate state per agent instance under swarm state location
+			agentState := ag.State
+			if agentState == "" {
+				agentState = filepath.Join(m.State.Location, "agents", displayName)
 			}
-			args = append(args, "--storage", agentStorage)
+			args = append(args, "--state", agentState)
 			args = append(args, "--session-label", displayName)
 			if ag.Agentfile != "" {
 				args = append(args, ag.Agentfile)
@@ -878,7 +878,7 @@ func (u *UICmd) Run(a *app) error {
 	}
 	defer db.Close()
 
-	// Discover storage root from manifest (for session JSONL access)
+	// Discover state location from manifest (for session JSONL access)
 	storageRoot := ""
 	manifestPath := u.Manifest
 	if manifestPath == "" {
@@ -886,8 +886,8 @@ func (u *UICmd) Run(a *app) error {
 	}
 	if manifestPath != "" {
 		if m, err := loadManifest(manifestPath); err == nil {
-			storageRoot = m.Storage.Root
-			log.Printf("[ui] storage root: %s (from %s)", storageRoot, manifestPath)
+			storageRoot = m.State.Location
+			log.Printf("[ui] state location: %s (from %s)", storageRoot, manifestPath)
 		} else {
 			log.Printf("[ui] failed to load manifest %s: %v", manifestPath, err)
 		}

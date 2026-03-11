@@ -144,9 +144,9 @@ path = "/data/grid"
 		t.Errorf("telemetry.protocol: expected 'otlp', got %s", cfg.Telemetry.Protocol)
 	}
 
-	// Storage section
-	if cfg.Storage.Path != "/data/grid" {
-		t.Errorf("storage.path: expected '/data/grid', got %s", cfg.Storage.Path)
+	// State section (loaded from legacy [storage] via backwards compat)
+	if cfg.State.Location != "/data/grid" {
+		t.Errorf("state.location: expected '/data/grid', got %s", cfg.State.Location)
 	}
 }
 
@@ -157,8 +157,8 @@ func TestConfig_Defaults(t *testing.T) {
 	if cfg.LLM.MaxTokens != 4096 {
 		t.Errorf("default max_tokens should be 4096, got %d", cfg.LLM.MaxTokens)
 	}
-	if cfg.Storage.Path != "~/.local/grid" {
-		t.Errorf("default storage.path should be '~/.local/grid', got %s", cfg.Storage.Path)
+	if cfg.State.Location != "~/.local/grid" {
+		t.Errorf("default state.location should be '~/.local/grid', got %s", cfg.State.Location)
 	}
 	if cfg.Telemetry.Protocol != "noop" {
 		t.Errorf("default telemetry protocol should be 'noop', got %s", cfg.Telemetry.Protocol)

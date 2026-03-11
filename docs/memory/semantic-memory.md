@@ -88,8 +88,8 @@ provider = "openai"
 model = "text-embedding-3-small"
 # base_url = "https://custom-endpoint.com"  # optional
 
-[storage]
-path = "~/.local/grid"              # Base directory for all persistent data
+[state]
+location = "~/.local/grid"              # Base directory for all persistent data
 persist_memory = true               # true = survives across runs
                                     # false = in-memory only (scratchpad)
 ```
@@ -99,7 +99,7 @@ persist_memory = true               # true = survives across runs
 When `persist_memory = true`:
 
 ```
-{storage.path}/
+{state.location}/
 ├── sessions/               # Session state (execution trace, checkpoints)
 ├── kv.json                 # Photographic memory (key-value)
 ├── observations.bleve/     # BM25 index directory
@@ -110,7 +110,7 @@ When `persist_memory = true`:
 When `persist_memory = false`:
 
 ```
-{storage.path}/
+{state.location}/
 ├── sessions/           # Session state (still persisted)
 └── logs/               # Audit logs (still persisted)
 
@@ -255,8 +255,8 @@ This enables the agent to learn from its own work automatically.
 For multi-tenant deployments, disable local memory and use MCP tools:
 
 ```toml
-[storage]
-path = "~/.local/grid"
+[state]
+location = "~/.local/grid"
 persist_memory = false              # Local memory disabled
 
 [mcp.servers.company_memory]

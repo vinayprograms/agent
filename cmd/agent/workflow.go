@@ -21,6 +21,7 @@ type workflow struct {
 	configPath    string
 	policyPath    string
 	workspacePath string
+	statePath     string // CLI --state override
 	debug         bool
 	sessionLabel  string // Override session directory name (default: Agentfile NAME)
 
@@ -61,21 +62,64 @@ func (w *workflow) loadConfig() error {
 		return err
 	}
 
-	// Apply CLI overrides
+	// Strict validation: workspace conflict
+	if err := w.validateWorkspaceConfig(); err != nil {
+		return err
+	}
+
+	// Strict validation: state location conflict
+	if err := w.validateStateConfig(); err != nil {
+		return err
+	}
+
+	// Apply CLI overrides (after validation)
 	if w.workspacePath != "" {
 		w.cfg.Agent.Workspace = w.workspacePath
 	}
 	if w.cfg.Agent.Workspace == "" {
 		w.cfg.Agent.Workspace, _ = os.Getwd()
 	}
-	// Expand ~ to home directory before resolving absolute path
-	if strings.HasPrefix(w.cfg.Agent.Workspace, "~/") {
+	w.cfg.Agent.Workspace = expandAbsPath(w.cfg.Agent.Workspace)
+	return nil
+}
+
+// expandAbsPath expands ~ and resolves to absolute path.
+func expandAbsPath(p string) string {
+	if strings.HasPrefix(p, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
-			w.cfg.Agent.Workspace = filepath.Join(home, w.cfg.Agent.Workspace[2:])
+			p = filepath.Join(home, p[2:])
 		}
 	}
-	if !filepath.IsAbs(w.cfg.Agent.Workspace) {
-		w.cfg.Agent.Workspace, _ = filepath.Abs(w.cfg.Agent.Workspace)
+	if !filepath.IsAbs(p) {
+		p, _ = filepath.Abs(p)
+	}
+	return p
+}
+
+// validateWorkspaceConfig checks for conflicting workspace settings.
+func (w *workflow) validateWorkspaceConfig() error {
+	if w.workspacePath == "" || w.cfg.Agent.Workspace == "" {
+		return nil
+	}
+	cliResolved := expandAbsPath(w.workspacePath)
+	cfgResolved := expandAbsPath(w.cfg.Agent.Workspace)
+	if cliResolved != cfgResolved {
+		return fmt.Errorf("workspace conflict: --workspace=%q resolves to %q, agent.toml has %q",
+			w.workspacePath, cliResolved, cfgResolved)
+	}
+	return nil
+}
+
+// validateStateConfig checks for conflicting state location settings.
+func (w *workflow) validateStateConfig() error {
+	if w.statePath == "" || w.cfg.State.Location == "" {
+		return nil
+	}
+	cliResolved := expandAbsPath(w.statePath)
+	cfgResolved := expandAbsPath(w.cfg.State.Location)
+	if cliResolved != cfgResolved {
+		return fmt.Errorf("state location conflict: --state=%q resolves to %q, agent.toml has %q",
+			w.statePath, cliResolved, cfgResolved)
 	}
 	return nil
 }
@@ -93,16 +137,26 @@ func (w *workflow) loadAgentfile() error {
 
 // loadPolicy loads the policy file.
 func (w *workflow) loadPolicy() error {
-	var err error
-	if w.policyPath != "" {
-		w.pol, err = policy.LoadFile(w.policyPath)
-	} else {
-		defaultPath := filepath.Join(w.baseDir, "policy.toml")
-		w.pol, err = policy.LoadFile(defaultPath)
-		if os.IsNotExist(err) {
-			w.pol = policy.New()
-			err = nil
+	policyPath := w.policyPath
+	if policyPath == "" {
+		policyPath = filepath.Join(w.baseDir, "policy.toml")
+	}
+
+	// Validate policy keys before parsing
+	if content, err := os.ReadFile(policyPath); err == nil {
+		if err := policy.ValidateKeys(string(content)); err != nil {
+			return fmt.Errorf("policy validation: %w", err)
 		}
+	} else if w.policyPath != "" {
+		// Explicit path specified but can't read — error
+		return fmt.Errorf("failed to read policy file: %w", err)
+	}
+
+	var err error
+	w.pol, err = policy.LoadFile(policyPath)
+	if os.IsNotExist(err) {
+		w.pol = policy.New()
+		err = nil
 	}
 	if err != nil {
 		return err

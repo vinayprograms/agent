@@ -68,6 +68,7 @@ func (cmd *ServeCmd) Run() error {
 		configPath:    cmd.Config,
 		policyPath:    cmd.Policy,
 		workspacePath: cmd.Workspace,
+		statePath:     cmd.State,
 		inputs:        make(map[string]string), // Will be set per-task
 		debug:         false,
 	}
@@ -90,8 +91,8 @@ func (cmd *ServeCmd) Run() error {
 	if cmd.Capability != "" {
 		wf.cfg.Service.Capability = cmd.Capability
 	}
-	if cmd.Storage != "" {
-		wf.cfg.Storage.Path = cmd.Storage
+	if cmd.State != "" {
+		wf.cfg.State.Location = cmd.State
 	}
 	if cmd.SessionLabel != "" {
 		wf.sessionLabel = cmd.SessionLabel

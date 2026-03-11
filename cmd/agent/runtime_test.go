@@ -30,7 +30,7 @@ func TestResolveStoragePath_Default(t *testing.T) {
 
 func TestResolveStoragePath_Custom(t *testing.T) {
 	rt := &runtime{
-		cfg: &config.Config{Storage: config.StorageConfig{Path: "/custom/path"}},
+		cfg: &config.Config{State: config.StateConfig{Location: "/custom/path"}},
 		wf:  &agentfile.Workflow{Name: "myworkflow"},
 	}
 	rt.resolveStoragePath()
@@ -43,7 +43,7 @@ func TestResolveStoragePath_Custom(t *testing.T) {
 func TestResolveStoragePath_TildeExpansion(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	rt := &runtime{
-		cfg: &config.Config{Storage: config.StorageConfig{Path: "~/mydata"}},
+		cfg: &config.Config{State: config.StateConfig{Location: "~/mydata"}},
 		wf:  &agentfile.Workflow{Name: "test"},
 	}
 	rt.resolveStoragePath()
@@ -51,6 +51,32 @@ func TestResolveStoragePath_TildeExpansion(t *testing.T) {
 	expected := filepath.Join(home, "mydata")
 	if rt.storagePath != expected {
 		t.Errorf("expected %q, got %q", expected, rt.storagePath)
+	}
+}
+
+func TestEnsureWorkspaceInDirs(t *testing.T) {
+	// Already covered
+	dirs := ensureWorkspaceInDirs("/workspace", []string{"/workspace"})
+	if len(dirs) != 1 {
+		t.Errorf("should not duplicate: %v", dirs)
+	}
+
+	// Parent covers workspace
+	dirs = ensureWorkspaceInDirs("/workspace/sub", []string{"/workspace"})
+	if len(dirs) != 1 {
+		t.Errorf("parent should cover sub: %v", dirs)
+	}
+
+	// Not covered — should append
+	dirs = ensureWorkspaceInDirs("/other", []string{"/workspace"})
+	if len(dirs) != 2 || dirs[1] != "/other" {
+		t.Errorf("should append: %v", dirs)
+	}
+
+	// Empty workspace — no change
+	dirs = ensureWorkspaceInDirs("", []string{"/workspace"})
+	if len(dirs) != 1 {
+		t.Errorf("empty workspace should not change dirs: %v", dirs)
 	}
 }
 

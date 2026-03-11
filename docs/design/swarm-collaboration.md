@@ -378,8 +378,8 @@ If a worker crashes mid-execution (heartbeat goes stale), the manager detects th
 nats:
   url: nats://localhost:4222
 
-storage:
-  root: ~/.local/share/swarm
+state:
+  location: ~/.local/share/swarm
 
 agents:
   - name: orchestrator

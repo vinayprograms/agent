@@ -77,8 +77,8 @@ Manifests use YAML. The manifest is a deployment descriptor ("what to run"), not
 nats:
   url: nats://localhost:4222
 
-storage:
-  root: ~/.local/share/swarm     # Unified storage root for all agent sessions
+state:
+  location: ~/.local/share/swarm     # Unified state location for all agent sessions
 
 agents:
   - name: orchestrator
@@ -100,7 +100,7 @@ collaboration:
 ### Top-Level Fields
 
 - `nats.url` — NATS server URL (required)
-- `storage.root` — Unified storage root for session logs (default: `~/.local/share/swarm`)
+- `state.location` — Unified state location for session logs (default: `~/.local/share/swarm`)
 - `collaboration.interrupt_check` — Whether workers check interrupt buffer during execution (default: `true`)
 
 ### Agent Fields
@@ -254,7 +254,7 @@ File location: `/tmp/swarm-replay-<task_id>.html`
 └── swarm.db                      # SQLite index for fast querying
 ```
 
-- **Agent sessions**: Written directly by agents into `<swarm-session>/<agent>/sessions/` (swarm overrides each agent's storage path at spawn time)
+- **Agent sessions**: Written directly by agents into `<swarm-session>/<agent>/sessions/` (swarm overrides each agent's state location at spawn time)
 - **SQLite**: Indexes task status, capability, timestamps, tags, duration
 - **Filesystem**: Raw task payloads, agent state snapshots
 - SQLite enables `swarm history --capability coder --status failed --since 2026-03-01` without scanning files
@@ -330,20 +330,20 @@ Minimal. NATS URL is the only required field.
 
 ### Session Log Access
 
-Shared filesystem. swarm configures a unified storage root via the manifest, and overrides each agent's `[storage].path` at spawn time:
+Shared filesystem. swarm configures a unified state location via the manifest, and overrides each agent's `[state].location` at spawn time:
 
 ```
-<storage_root>/<swarm-session>/<agent-name>/sessions/
+<state_location>/<swarm-session>/<agent-name>/sessions/
 ```
 
-Example with `storage_root: ~/.local/share/swarm`:
+Example with `storage_location: ~/.local/share/swarm`:
 ```
 ~/.local/share/swarm/abc123/coder/sessions/
 ~/.local/share/swarm/abc123/tester/sessions/
 ~/.local/share/swarm/abc123/documenter/sessions/
 ```
 
-This puts all logs in a single tree so the TUI and web replay can source everything from one place. swarm generates a per-session directory on `swarm up` and passes the appropriate storage path to each agent process.
+This puts all logs in a single tree so the TUI and web replay can source everything from one place. swarm generates a per-session directory on `swarm up` and passes the appropriate state location to each agent process.
 
 ### Agent Restart Behavior
 

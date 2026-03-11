@@ -18,7 +18,7 @@ type CollaborationConfig struct {
 // Manifest represents a swarm.yaml deployment descriptor.
 type Manifest struct {
 	NATS          NATSConfig          `yaml:"nats"`
-	Storage       StorageConfig       `yaml:"storage"`
+	State         StateConfig         `yaml:"state"`
 	Collaboration CollaborationConfig `yaml:"collaboration"`
 	Agents        []AgentSpec         `yaml:"agents"`
 }
@@ -28,9 +28,9 @@ type NATSConfig struct {
 	URL string `yaml:"url"`
 }
 
-// StorageConfig configures unified storage root.
-type StorageConfig struct {
-	Root string `yaml:"root"`
+// StateConfig configures unified state location.
+type StateConfig struct {
+	Location string `yaml:"location"`
 }
 
 // AgentSpec describes an agent to run.
@@ -40,7 +40,7 @@ type AgentSpec struct {
 	Config     string `yaml:"config"`
 	Policy     string `yaml:"policy"`
 	Capability string `yaml:"capability"`
-	Storage    string `yaml:"storage"`
+	State      string `yaml:"state"`
 	Type       string `yaml:"type"`     // "worker" (default) or "manager"
 	Replicas   int    `yaml:"replicas"` // Number of instances (default: 1, only for workers)
 }
@@ -62,18 +62,18 @@ func loadManifest(path string) (*Manifest, error) {
 
 	// Expand env vars and resolve relative paths
 	m.NATS.URL = expandEnv(m.NATS.URL)
-	m.Storage.Root = expandEnv(m.Storage.Root)
-	if m.Storage.Root != "" && !filepath.IsAbs(m.Storage.Root) {
-		m.Storage.Root = filepath.Join(manifestDir, m.Storage.Root)
+	m.State.Location = expandEnv(m.State.Location)
+	if m.State.Location != "" && !filepath.IsAbs(m.State.Location) {
+		m.State.Location = filepath.Join(manifestDir, m.State.Location)
 	}
 	for i := range m.Agents {
 		m.Agents[i].Agentfile = resolveRelPath(manifestDir, expandEnv(m.Agents[i].Agentfile))
 		m.Agents[i].Config = resolveRelPath(manifestDir, expandEnv(m.Agents[i].Config))
 		m.Agents[i].Policy = resolveRelPath(manifestDir, expandEnv(m.Agents[i].Policy))
 		m.Agents[i].Capability = expandEnv(m.Agents[i].Capability)
-		m.Agents[i].Storage = expandEnv(m.Agents[i].Storage)
-		if m.Agents[i].Storage != "" && !filepath.IsAbs(m.Agents[i].Storage) {
-			m.Agents[i].Storage = filepath.Join(manifestDir, m.Agents[i].Storage)
+		m.Agents[i].State = expandEnv(m.Agents[i].State)
+		if m.Agents[i].State != "" && !filepath.IsAbs(m.Agents[i].State) {
+			m.Agents[i].State = filepath.Join(manifestDir, m.Agents[i].State)
 		}
 	}
 
@@ -81,9 +81,9 @@ func loadManifest(path string) (*Manifest, error) {
 	if m.NATS.URL == "" {
 		m.NATS.URL = "nats://localhost:4222"
 	}
-	if m.Storage.Root == "" {
+	if m.State.Location == "" {
 		home, _ := os.UserHomeDir()
-		m.Storage.Root = filepath.Join(home, ".local", "share", "swarm")
+		m.State.Location = filepath.Join(home, ".local", "share", "swarm")
 	}
 
 	// Agent type/replicas defaults and validation
