@@ -106,6 +106,7 @@ func (s *webServer) start(ctx context.Context, addr string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/ws", websocket.Handler(s.handleWS))
+	mux.HandleFunc("/api/sessions", s.handleListSessions)
 	mux.HandleFunc("/api/sessions/", s.handleSessionLogs)
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
@@ -776,6 +777,72 @@ func disableTailscaleServe(localPort string) {
 	_ = lc.SetServeConfig(ctx, sc)
 }
 
+// handleListSessions lists all discoverable sessions under the storage root.
+// GET /api/sessions → returns array of {agent, label, session_id, path}.
+func (s *webServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	// Only match exact /api/sessions (not /api/sessions/<something>)
+	if r.URL.Path != "/api/sessions" {
+		http.NotFound(w, r)
+		return
+	}
+
+	if s.storageRoot == "" {
+		http.Error(w, "storage root not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	type sessionEntry struct {
+		Agent     string `json:"agent"`
+		Label     string `json:"label"`
+		SessionID string `json:"session_id"`
+		Path      string `json:"path"`
+	}
+
+	var sessions []sessionEntry
+	agentsDir := filepath.Join(s.storageRoot, "agents")
+	agentEntries, err := os.ReadDir(agentsDir)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sessions)
+		return
+	}
+
+	for _, ae := range agentEntries {
+		if !ae.IsDir() {
+			continue
+		}
+		sessRoot := filepath.Join(agentsDir, ae.Name(), "sessions")
+		labelEntries, err := os.ReadDir(sessRoot)
+		if err != nil {
+			continue
+		}
+		for _, le := range labelEntries {
+			if !le.IsDir() {
+				continue
+			}
+			fileEntries, err := os.ReadDir(filepath.Join(sessRoot, le.Name()))
+			if err != nil {
+				continue
+			}
+			for _, fe := range fileEntries {
+				if fe.IsDir() || !strings.HasSuffix(fe.Name(), ".jsonl") {
+					continue
+				}
+				sessID := strings.TrimSuffix(fe.Name(), ".jsonl")
+				sessions = append(sessions, sessionEntry{
+					Agent:     ae.Name(),
+					Label:     le.Name(),
+					SessionID: sessID,
+					Path:      filepath.Join(sessRoot, le.Name(), fe.Name()),
+				})
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sessions)
+}
+
 // handleSessionLogs serves JSONL session logs for an agent.
 // GET /api/sessions/<agent-name>/<session-id> → returns array of JSONL records.
 // Path on disk: <storageRoot>/agents/<name>/sessions/<label>/<session-id>.jsonl
@@ -827,6 +894,37 @@ func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		log.Printf("[web] failed to read sessions dir %s: %v", sessRoot, err)
+	}
+
+	if jsonlPath == "" {
+		// Fallback: scan ALL agent directories for the session ID.
+		// The agent name in the URL may not match the storage directory name
+		// (e.g., replica display names vs capability names).
+		agentsDir := filepath.Join(s.storageRoot, "agents")
+		if agentEntries, err := os.ReadDir(agentsDir); err == nil {
+			for _, ae := range agentEntries {
+				if !ae.IsDir() {
+					continue
+				}
+				altSessRoot := filepath.Join(agentsDir, ae.Name(), "sessions")
+				if subEntries, err := os.ReadDir(altSessRoot); err == nil {
+					for _, se := range subEntries {
+						if !se.IsDir() {
+							continue
+						}
+						candidate := filepath.Join(altSessRoot, se.Name(), sessionID+".jsonl")
+						if _, err := os.Stat(candidate); err == nil {
+							jsonlPath = candidate
+							log.Printf("[web] session found via fallback scan: %s (requested agent=%q)", jsonlPath, agentName)
+							break
+						}
+					}
+				}
+				if jsonlPath != "" {
+					break
+				}
+			}
+		}
 	}
 
 	if jsonlPath == "" {
