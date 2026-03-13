@@ -1,5 +1,12 @@
 default_deny = false
 
+# Allowed Directories (Universal Filesystem Boundary)
+# ---
+# All tools that touch the filesystem (read, write, edit, bash, glob, grep, ls)
+# are restricted to these directories. Paths outside are denied.
+# Supports $WORKSPACE expansion. If omitted, defaults to workspace only.
+# allowed_dirs = ["$WORKSPACE", "/tmp"]
+
 # MCP Tool Security
 # ---
 # default_deny = false (or omitted): All MCP tools allowed (development mode)

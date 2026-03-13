@@ -54,32 +54,6 @@ func TestResolveStoragePath_TildeExpansion(t *testing.T) {
 	}
 }
 
-func TestEnsureWorkspaceInDirs(t *testing.T) {
-	// Already covered
-	dirs := ensureWorkspaceInDirs("/workspace", []string{"/workspace"})
-	if len(dirs) != 1 {
-		t.Errorf("should not duplicate: %v", dirs)
-	}
-
-	// Parent covers workspace
-	dirs = ensureWorkspaceInDirs("/workspace/sub", []string{"/workspace"})
-	if len(dirs) != 1 {
-		t.Errorf("parent should cover sub: %v", dirs)
-	}
-
-	// Not covered — should append
-	dirs = ensureWorkspaceInDirs("/other", []string{"/workspace"})
-	if len(dirs) != 2 || dirs[1] != "/other" {
-		t.Errorf("should append: %v", dirs)
-	}
-
-	// Empty workspace — no change
-	dirs = ensureWorkspaceInDirs("", []string{"/workspace"})
-	if len(dirs) != 1 {
-		t.Errorf("empty workspace should not change dirs: %v", dirs)
-	}
-}
-
 func TestDetermineSecurityConfig_Default(t *testing.T) {
 	rt := &runtime{
 		cfg: &config.Config{},

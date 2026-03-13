@@ -1,6 +1,3 @@
 # Shared policy for swarm examples
 
-workspace = "."
-
-[tools.bash]
 allowed_dirs = ["."]

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
@@ -201,37 +200,21 @@ func (rt *runtime) setupRegistry() {
 // setupBashChecker configures bash security with fail-close defaults.
 func (rt *runtime) setupBashChecker() {
 	bashPolicy := rt.pol.GetToolPolicy("bash")
-	allowedDirs := bashPolicy.AllowedDirs
-	if len(allowedDirs) == 0 {
+
+	// Ensure policy has allowed_dirs — fall back to workspace if not set
+	if len(rt.pol.AllowedDirs) == 0 {
 		if rt.pol.Workspace != "" {
-			allowedDirs = []string{rt.pol.Workspace}
+			rt.pol.AllowedDirs = []string{rt.pol.Workspace}
 		} else if cwd, err := os.Getwd(); err == nil {
-			allowedDirs = []string{cwd}
+			rt.pol.AllowedDirs = []string{cwd}
 		} else {
-			allowedDirs = []string{"."}
+			rt.pol.AllowedDirs = []string{"."}
 		}
-		fmt.Printf("⚠️  No allowed_dirs configured for bash - defaulting to: %v (fail-close)\n", allowedDirs)
+		fmt.Printf("⚠️  No allowed_dirs configured - defaulting to: %v (fail-close)\n", rt.pol.AllowedDirs)
 	}
 
-	// Auto-include workspace in allowed_dirs if not already covered
-	allowedDirs = ensureWorkspaceInDirs(rt.pol.Workspace, allowedDirs)
-
-	bashChecker := policy.NewBashChecker(rt.pol.Workspace, allowedDirs, bashPolicy.Denylist)
+	bashChecker := policy.NewBashChecker(rt.pol, bashPolicy.Denylist)
 	rt.registry.SetBashChecker(bashChecker)
-}
-
-// ensureWorkspaceInDirs adds workspace to allowedDirs if not already covered.
-func ensureWorkspaceInDirs(workspace string, dirs []string) []string {
-	if workspace == "" {
-		return dirs
-	}
-	for _, d := range dirs {
-		// If workspace is already listed or is a subdirectory of an allowed dir
-		if d == workspace || strings.HasPrefix(workspace, d+string(filepath.Separator)) {
-			return dirs
-		}
-	}
-	return append(dirs, workspace)
 }
 
 // setupMemory configures scratchpad and semantic memory.
