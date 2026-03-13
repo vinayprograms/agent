@@ -40,6 +40,11 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 		systemPrompt = prefix + systemPrompt
 	}
 
+	// Inject workspace context so sub-agents know the project layout
+	if e.workspaceContext != "" {
+		systemPrompt += "\n\n" + e.workspaceContext
+	}
+
 	// Build XML task prompt for sub-agent
 	taskDescription := task
 	if len(outputs) > 0 {

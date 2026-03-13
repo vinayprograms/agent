@@ -319,6 +319,16 @@ func (rt *runtime) createExecutor() {
 	rt.exec.SetDebug(rt.debug)
 	rt.exec.SetTimeouts(rt.cfg.Timeouts.MCP, rt.cfg.Timeouts.WebSearch, rt.cfg.Timeouts.WebFetch)
 
+	// Inject workspace context into system prompt so agents skip discovery
+	workspace := rt.cfg.Agent.Workspace
+	if workspace == "" {
+		workspace = rt.pol.Workspace
+	}
+	if wsCtx := executor.BuildWorkspaceContext(workspace); wsCtx != "" {
+		rt.exec.SetWorkspaceContext(wsCtx)
+		fmt.Fprintf(os.Stderr, "📂 Workspace context: %s\n", workspace)
+	}
+
 	// Set HTTP client timeout to max of configured timeouts (context handles per-request)
 	maxTimeout := rt.cfg.Timeouts.MCP
 	if rt.cfg.Timeouts.WebSearch > maxTimeout {

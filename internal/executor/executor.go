@@ -174,6 +174,10 @@ type Executor struct {
 	// Called with each non-tool-call LLM response during execution.
 	// The caller (serve.go) binds the task ID in the closure.
 	discussPublisher func(goalName, content string)
+
+	// Workspace context injected into system prompt so the agent
+	// knows the project layout without needing to discover it.
+	workspaceContext string
 }
 
 // Registry returns the tool registry.
@@ -204,6 +208,21 @@ func (e *Executor) SetDiscussPublisher(fn func(goalName, content string)) {
 // ClearDiscussPublisher removes the discuss publisher (e.g., after task completes).
 func (e *Executor) ClearDiscussPublisher() {
 	e.discussPublisher = nil
+}
+
+// SetEventPublisher attaches a callback that fires for every session event.
+// Used by swarm mode to publish structured events to NATS in real time.
+func (e *Executor) SetEventPublisher(fn func(event session.Event)) {
+	if e.session != nil {
+		e.session.OnEvent = fn
+	}
+}
+
+// ClearEventPublisher removes the event publisher.
+func (e *Executor) ClearEventPublisher() {
+	if e.session != nil {
+		e.session.OnEvent = nil
+	}
 }
 
 // publishToDiscuss calls the discuss publisher if set.
@@ -264,6 +283,12 @@ func (e *Executor) SetSecurityResearchScope(scope string) {
 // When disabled (default), content is redacted to prevent PII leakage in production.
 func (e *Executor) SetDebug(debug bool) {
 	e.debug = debug
+}
+
+// SetWorkspaceContext sets pre-computed workspace context that gets injected
+// into the system prompt, so the agent knows the project layout without discovery.
+func (e *Executor) SetWorkspaceContext(ctx string) {
+	e.workspaceContext = ctx
 }
 
 // SetObservationExtraction enables observation extraction and storage for semantic memory.
@@ -1011,6 +1036,11 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 	// If scratchpad tools are available, inject guidance
 	if e.registry != nil && e.registry.Has("scratchpad_write") {
 		systemMsg = ScratchpadGuidancePrefix + systemMsg
+	}
+
+	// Inject workspace context so the agent knows the project layout
+	if e.workspaceContext != "" {
+		systemMsg += "\n\n" + e.workspaceContext
 	}
 
 	if len(e.skillRefs) > 0 {
