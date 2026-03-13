@@ -57,8 +57,9 @@ type serviceAgent struct {
 	heartbeat   *heartbeat.BusSender
 	reg         registry.Registry
 	taskSubs    []bus.Subscription // work.<cap>.* subscriptions (fallback)
-	workPullSub *nats.Subscription // JetStream pull consumer for work (preferred)
-	instanceSub bus.Subscription   // work.<instance-id>.* for corrections
+	workPullSub *nats.Subscription    // JetStream pull consumer for work (preferred)
+	instanceSub bus.Subscription      // work.<instance-id>.* for corrections
+	agentInfo   *registry.AgentInfo   // cached for re-registration on TTL expiry
 	discussSub  bus.Subscription   // discuss.* subscription (manager only — read)
 	controlSub  bus.Subscription   // control.<id>.shutdown subscription
 	queueGroup  string
@@ -347,11 +348,16 @@ func (a *serviceAgent) runBusMode() error {
 	})
 	defer a.serviceRuntime.exec.ClearEventPublisher()
 
-	// Add registry TTL touch to heartbeat callback
+	// Add registry TTL touch to heartbeat callback.
+	// If the entry expired (e.g., missed heartbeats under load), re-register.
 	if a.reg != nil {
 		hbSender.SetCallback(func() {
 			if err := a.reg.Touch(a.agentID); err != nil {
-				fmt.Fprintf(os.Stderr, "⚠️  Registry touch failed: %v\n", err)
+				if err == registry.ErrNotFound {
+					a.reRegister()
+				} else {
+					fmt.Fprintf(os.Stderr, "⚠️  Registry touch failed: %v\n", err)
+				}
 			}
 		})
 	}
@@ -672,9 +678,21 @@ func (a *serviceAgent) registerWithRegistry(natsBus *bus.NATSBus) error {
 	if err := natsReg.Register(info); err != nil {
 		return fmt.Errorf("registering agent: %w", err)
 	}
+	a.agentInfo = &info
 
 	fmt.Fprintf(os.Stderr, "📝 Registered with NATS KV registry\n")
 	return nil
+}
+
+// reRegister re-registers the agent after its KV entry expired.
+func (a *serviceAgent) reRegister() {
+	if a.reg == nil || a.agentInfo == nil {
+		return
+	}
+	a.agentInfo.LastSeen = time.Now()
+	if err := a.reg.Register(*a.agentInfo); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  Registry re-registration failed: %v\n", err)
+	}
 }
 
 // getCapabilities returns the single announced capability for NATS subjects and registry.
