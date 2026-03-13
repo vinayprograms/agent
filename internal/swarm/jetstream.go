@@ -64,7 +64,6 @@ func EnsureWorkConsumer(js nats.JetStreamContext, capability string) (*nats.Subs
 		nats.AckExplicit(),                   // Worker must ack after processing
 		nats.MaxDeliver(3),                   // Retry up to 3 times on nack/timeout
 		nats.AckWait(10*time.Minute),         // Long timeout — tasks can take minutes
-		nats.MaxAckPending(1),                // One task at a time per worker
 		nats.DeliverNew(),                    // Only new messages (not replayed history)
 	)
 	if err != nil {
