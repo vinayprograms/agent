@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/executor"
 	"github.com/vinayprograms/agent/internal/session"
@@ -52,9 +53,11 @@ type serviceAgent struct {
 
 	// Bus mode components
 	bus         bus.MessageBus
+	js          nats.JetStreamContext   // JetStream context (nil if unavailable)
 	heartbeat   *heartbeat.BusSender
 	reg         registry.Registry
-	taskSubs    []bus.Subscription // work.<cap>.* subscriptions
+	taskSubs    []bus.Subscription // work.<cap>.* subscriptions (fallback)
+	workPullSub *nats.Subscription // JetStream pull consumer for work (preferred)
 	instanceSub bus.Subscription   // work.<instance-id>.* for corrections
 	discussSub  bus.Subscription   // discuss.* subscription (manager only — read)
 	controlSub  bus.Subscription   // control.<id>.shutdown subscription
@@ -360,25 +363,45 @@ func (a *serviceAgent) runBusMode() error {
 	defer hbSender.Stop()
 
 	// Ensure JetStream stream exists for durable messaging
-	if _, err := swarm.EnsureStream(natsBus.Conn()); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  JetStream unavailable: %v (messages may be lost)\n", err)
+	js, jsErr := swarm.EnsureStream(natsBus.Conn())
+	if jsErr != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  JetStream unavailable: %v (falling back to queue groups)\n", jsErr)
 	}
+	a.js = js
 
-	// Determine queue group
+	// Determine queue group (used as fallback if JetStream unavailable)
 	a.queueGroup = a.wf.cfg.Service.QueueGroup
 	if a.queueGroup == "" {
 		a.queueGroup = a.capability.Name + "-workers"
 	}
 
-	// Subscribe to work.<capability>.* (task assignment via queue group)
+	// Subscribe to work.<capability>.* for task assignment.
+	// Prefer JetStream pull consumer (ack-based, guaranteed single delivery)
+	// with fallback to NATS queue groups (push-based, best-effort distribution).
 	cap := a.getCapabilities()[0]
-	workSubject := fmt.Sprintf("work.%s.*", cap)
-	workSub, err := natsBus.QueueSubscribe(workSubject, a.queueGroup)
-	if err != nil {
-		return fmt.Errorf("subscribing to %s: %w", workSubject, err)
+	if js != nil {
+		pullSub, err := swarm.EnsureWorkConsumer(js, cap)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  JetStream pull consumer failed: %v (falling back to queue groups)\n", err)
+		} else {
+			a.workPullSub = pullSub
+			fmt.Fprintf(os.Stderr, "✓ JetStream pull consumer: work.%s.* (ack-based delivery)\n", cap)
+		}
 	}
-	a.taskSubs = append(a.taskSubs, workSub)
+	if a.workPullSub == nil {
+		// Fallback: NATS queue groups (push-based)
+		workSubject := fmt.Sprintf("work.%s.*", cap)
+		workSub, err := natsBus.QueueSubscribe(workSubject, a.queueGroup)
+		if err != nil {
+			return fmt.Errorf("subscribing to %s: %w", workSubject, err)
+		}
+		a.taskSubs = append(a.taskSubs, workSub)
+		fmt.Fprintf(os.Stderr, "⚠️  Using queue group fallback: work.%s.* (push-based)\n", cap)
+	}
 	defer func() {
+		if a.workPullSub != nil {
+			a.workPullSub.Unsubscribe()
+		}
 		for _, sub := range a.taskSubs {
 			sub.Unsubscribe()
 		}
@@ -422,7 +445,11 @@ func (a *serviceAgent) runBusMode() error {
 	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s, instance: %s, type: %s, capability: %s)\n",
 		a.wf.wf.Name, a.agentID, a.instanceID, a.agentType, a.capability.Name)
 	fmt.Fprintf(os.Stderr, "Connected to bus: %s\n", a.wf.cfg.Service.BusURL)
-	fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (queue: %s)\n", cap, a.queueGroup)
+	if a.workPullSub != nil {
+		fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (JetStream pull consumer)\n", cap)
+	} else {
+		fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (queue: %s)\n", cap, a.queueGroup)
+	}
 	fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (corrections)\n", a.instanceID)
 	if a.agentType == "manager" {
 		fmt.Fprintf(os.Stderr, "Listening on: discuss.* (manager — monitoring workers)\n")
@@ -435,14 +462,21 @@ func (a *serviceAgent) runBusMode() error {
 }
 
 func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
-	// Merge all work subscription channels (capability + instance)
+	// Work channel — fed by either JetStream pull or queue group push
 	workCh := make(chan *bus.Message, 16)
-	for _, sub := range a.taskSubs {
-		go func(s bus.Subscription) {
-			for msg := range s.Messages() {
-				workCh <- msg
-			}
-		}(sub)
+
+	if a.workPullSub != nil {
+		// JetStream pull consumer: fetch one task at a time, ack after processing
+		go a.pullWorkLoop(ctx, workCh)
+	} else {
+		// Fallback: push-based queue group subscriptions
+		for _, sub := range a.taskSubs {
+			go func(s bus.Subscription) {
+				for msg := range s.Messages() {
+					workCh <- msg
+				}
+			}(sub)
+		}
 	}
 
 	// Instance channel (corrections → interrupt buffer during execution)
@@ -666,6 +700,60 @@ func buildTaskText(task *tasks.TaskMessage) string {
 		return task.TaskID
 	}
 	return strings.Join(parts, "\n")
+}
+
+// pullWorkLoop fetches tasks from the JetStream pull consumer one at a time.
+// Each message is acked only after the worker finishes processing it,
+// guaranteeing exactly-once delivery across the worker pool.
+func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *bus.Message) {
+	for {
+		// Fetch one message at a time (blocks until available or timeout)
+		msgs, err := a.workPullSub.Fetch(1, nats.MaxWait(5*time.Second))
+		if err != nil {
+			if err == nats.ErrTimeout {
+				// No messages available — check if context is done
+				if ctx.Err() != nil {
+					return
+				}
+				continue
+			}
+			if err == nats.ErrSubscriptionClosed || ctx.Err() != nil {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "  ⚠️  JetStream fetch error: %v\n", err)
+			continue
+		}
+
+		for _, natsMsg := range msgs {
+			// Convert to bus.Message for handleBusTask compatibility
+			busMsg := &bus.Message{
+				Subject: natsMsg.Subject,
+				Data:    natsMsg.Data,
+			}
+
+			// Send to work channel (blocks until main loop picks it up)
+			select {
+			case workCh <- busMsg:
+			case <-ctx.Done():
+				natsMsg.Nak()
+				return
+			}
+
+			// Wait for task processing to complete before acking.
+			// executeTask signals taskDone when it finishes.
+			select {
+			case <-a.taskDone:
+			case <-ctx.Done():
+				natsMsg.Nak()
+				return
+			}
+
+			// Ack the message — NATS won't redeliver to any worker
+			if err := natsMsg.Ack(); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠️  JetStream ack error: %v\n", err)
+			}
+		}
+	}
 }
 
 // handleBusTask processes a task received from the bus.

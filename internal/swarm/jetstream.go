@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/nats-io/nats.go"
 )
@@ -24,7 +25,9 @@ func EnsureStream(nc *nats.Conn) (nats.JetStreamContext, error) {
 		return js, nil // Already exists
 	}
 
-	// Create the stream covering all subject families
+	// Create the stream covering all subject families.
+	// LimitsPolicy retains messages until MaxAge, independent of consumer state.
+	// This supports both replay (catch-up) and durable pull consumers for work distribution.
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name: StreamName,
 		Subjects: []string{
@@ -33,9 +36,9 @@ func EnsureStream(nc *nats.Conn) (nats.JetStreamContext, error) {
 			"done.>",
 			"heartbeat.>",
 		},
-		Retention:  nats.InterestPolicy, // Messages retained while consumers exist
-		MaxAge:     0,                    // No age limit (swarm lifetime)
-		Storage:    nats.MemoryStorage,   // Ephemeral — swarm context doesn't persist across restarts
+		Retention:  nats.LimitsPolicy,  // Keep messages until MaxAge
+		MaxAge:     24 * time.Hour,     // Swarm lifetime (generous — cleaned by `swarm purge`)
+		Storage:    nats.MemoryStorage, // Ephemeral — doesn't persist across server restarts
 		Duplicates: 0,
 	})
 	if err != nil {
@@ -43,6 +46,32 @@ func EnsureStream(nc *nats.Conn) (nats.JetStreamContext, error) {
 	}
 
 	return js, nil
+}
+
+// EnsureWorkConsumer creates a durable pull consumer for a capability's work queue.
+// Each capability gets one consumer shared by all workers via pull-based delivery.
+// Workers call Fetch() to pull tasks — NATS tracks ack state per consumer,
+// guaranteeing each message is delivered to exactly one worker.
+func EnsureWorkConsumer(js nats.JetStreamContext, capability string) (*nats.Subscription, error) {
+	consumerName := fmt.Sprintf("work-%s", capability)
+	filterSubject := fmt.Sprintf("work.%s.*", capability)
+
+	// Create or bind to existing durable pull consumer
+	sub, err := js.PullSubscribe(
+		filterSubject,
+		consumerName,
+		nats.BindStream(StreamName),
+		nats.AckExplicit(),                   // Worker must ack after processing
+		nats.MaxDeliver(3),                   // Retry up to 3 times on nack/timeout
+		nats.AckWait(10*time.Minute),         // Long timeout — tasks can take minutes
+		nats.MaxAckPending(1),                // One task at a time per worker
+		nats.DeliverNew(),                    // Only new messages (not replayed history)
+	)
+	if err != nil {
+		return nil, fmt.Errorf("pull subscribe work.%s.*: %w", capability, err)
+	}
+
+	return sub, nil
 }
 
 // LastSequence returns the current last sequence number of the swarm stream.
