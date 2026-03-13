@@ -200,19 +200,6 @@ func (rt *runtime) setupRegistry() {
 // setupBashChecker configures bash security with fail-close defaults.
 func (rt *runtime) setupBashChecker() {
 	bashPolicy := rt.pol.GetToolPolicy("bash")
-
-	// Ensure policy has allowed_dirs — fall back to workspace if not set
-	if len(rt.pol.AllowedDirs) == 0 {
-		if rt.pol.Workspace != "" {
-			rt.pol.AllowedDirs = []string{rt.pol.Workspace}
-		} else if cwd, err := os.Getwd(); err == nil {
-			rt.pol.AllowedDirs = []string{cwd}
-		} else {
-			rt.pol.AllowedDirs = []string{"."}
-		}
-		fmt.Printf("⚠️  No allowed_dirs configured - defaulting to: %v (fail-close)\n", rt.pol.AllowedDirs)
-	}
-
 	bashChecker := policy.NewBashChecker(rt.pol, bashPolicy.Denylist)
 	rt.registry.SetBashChecker(bashChecker)
 }
@@ -304,9 +291,6 @@ func (rt *runtime) createExecutor() {
 
 	// Inject workspace context into system prompt so agents skip discovery
 	workspace := rt.cfg.Agent.Workspace
-	if workspace == "" {
-		workspace = rt.pol.Workspace
-	}
 	if wsCtx := executor.BuildWorkspaceContext(workspace); wsCtx != "" {
 		rt.exec.SetWorkspaceContext(wsCtx)
 		fmt.Fprintf(os.Stderr, "📂 Workspace context: %s\n", workspace)

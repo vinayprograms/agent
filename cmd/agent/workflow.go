@@ -166,9 +166,43 @@ func (w *workflow) loadPolicy() error {
 	}
 	w.pol.Workspace = w.cfg.Agent.Workspace
 
+	// Ensure workspace is always in allowed_dirs (universal filesystem boundary).
+	// If no allowed_dirs are configured, default to workspace.
+	// If allowed_dirs exist but don't include workspace, add it.
+	w.ensureWorkspaceInAllowedDirs()
+
 	// Register custom security patterns
 	w.registerSecurityExtensions()
 	return nil
+}
+
+// ensureWorkspaceInAllowedDirs guarantees the project workspace is always
+// in the policy's universal allowed_dirs list. The workspace comes from
+// agent.toml (cfg.Agent.Workspace), not from policy.toml.
+func (w *workflow) ensureWorkspaceInAllowedDirs() {
+	ws := w.cfg.Agent.Workspace
+	if ws == "" {
+		return
+	}
+
+	if len(w.pol.AllowedDirs) == 0 {
+		w.pol.AllowedDirs = []string{ws}
+		return
+	}
+
+	// Check if workspace is already covered (exact match or subdirectory of an allowed dir)
+	for _, d := range w.pol.AllowedDirs {
+		resolved := d
+		// Expand $WORKSPACE in existing entries
+		if resolved == "$WORKSPACE" {
+			return // already references workspace
+		}
+		if resolved == ws || strings.HasPrefix(ws, resolved+string(filepath.Separator)) {
+			return // workspace already covered
+		}
+	}
+
+	w.pol.AllowedDirs = append(w.pol.AllowedDirs, ws)
 }
 
 // registerSecurityExtensions registers custom patterns and keywords from policy.
