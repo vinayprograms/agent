@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/vinayprograms/agentkit/bus"
 	"github.com/vinayprograms/agentkit/tasks"
 )
@@ -71,7 +72,7 @@ func (t *DispatchTool) Execute(ctx context.Context, args map[string]interface{})
 		return nil, fmt.Errorf("task description is required")
 	}
 
-	taskID := fmt.Sprintf("t-%d", time.Now().UnixNano()/1e6)
+	taskID := fmt.Sprintf("t-%s", uuid.New().String()[:8])
 	subject := fmt.Sprintf("work.%s.%s", capability, taskID)
 
 	taskMsg := &tasks.TaskMessage{

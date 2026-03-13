@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/vinayprograms/agentkit/tasks"
 	"golang.org/x/net/websocket"
@@ -462,7 +463,7 @@ func (s *webServer) handleTaskCommand(args []string) {
 	capability := args[0]
 	task := strings.Trim(strings.Join(args[1:], " "), "\"")
 
-	taskID := fmt.Sprintf("t-%d", time.Now().UnixNano()/1e6)
+	taskID := fmt.Sprintf("t-%s", uuid.New().String()[:8])
 	subject := fmt.Sprintf("work.%s.%s", capability, taskID)
 
 	// Subscribe for result before publishing
@@ -505,7 +506,7 @@ func (s *webServer) handleDiscussCommand(args []string) {
 	capability := args[0]
 	topic := strings.Trim(strings.Join(args[1:], " "), "\"")
 
-	taskID := fmt.Sprintf("d-%d", time.Now().UnixNano()/1e6)
+	taskID := fmt.Sprintf("d-%s", uuid.New().String()[:8])
 	subject := fmt.Sprintf("discuss.%s", taskID)
 
 	taskMsg := &tasks.TaskMessage{
@@ -550,7 +551,7 @@ func (s *webServer) handleRetryCommand(args []string) {
 		return
 	}
 
-	newID := fmt.Sprintf("t-%d", time.Now().UnixNano()/1e6)
+	newID := fmt.Sprintf("t-%s", uuid.New().String()[:8])
 	subject := fmt.Sprintf("work.%s.%s", cap, newID)
 
 	payload := map[string]interface{}{

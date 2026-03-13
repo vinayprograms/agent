@@ -1732,7 +1732,7 @@ function renderActiveTasks() {
 
     return `<div class="task-row">
       <div class="dot"></div>
-      <div class="task-id" onclick="showTaskDetail('${esc(t.id)}')">${esc(t.id.substring(0, 10))}</div>
+      <div class="task-id" onclick="showTaskDetail('${esc(t.id)}')">${esc(t.id)}</div>
       <div class="task-type">${esc(t.type)}</div>
       <div class="task-agent">${agentDisplay}</div>
       <div class="task-elapsed">${elapsed}</div>
@@ -1756,7 +1756,7 @@ function renderHistory() {
     const statusClass = h.status === 'success' || h.status === 'converged' ? 'success' : 'failed';
     const icon = statusClass === 'success' ? '✓' : '✗';
     return `<div class="history-row" ondblclick="showTaskDetail('${esc(h.id)}')">
-      <div class="task-id" onclick="showTaskDetail('${esc(h.id)}')">${esc(h.id.substring(0, 10))}</div>
+      <div class="task-id" onclick="showTaskDetail('${esc(h.id)}')">${esc(h.id)}</div>
       <div class="task-type">${esc(h.capability)}</div>
       <div class="history-status ${statusClass}">${icon} ${esc(h.status)}</div>
       <div>${esc(h.duration)}</div>

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbletea"
@@ -260,7 +262,7 @@ func executeCmd(cmd, natsURL string) tea.Cmd {
 		}
 		defer nc.Close()
 
-		taskID := fmt.Sprintf("t-%d", time.Now().Unix())
+		taskID := fmt.Sprintf("t-%s", uuid.New().String()[:8])
 		subject := fmt.Sprintf("work.%s.%s", capability, taskID)
 
 		// Simple task payload
