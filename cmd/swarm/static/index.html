@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Swarm Mission Control</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 <style>
   :root {
     --bg: #201f26;
@@ -409,6 +410,12 @@
   .log-subject.heartbeat { color: var(--yellow); }
   .log-subject.warn { color: var(--red); }
   .log-subject.sup { color: var(--green); }
+  .log-subject.tool { color: var(--cyan); }
+  .log-subject.security { color: var(--yellow); }
+  .log-subject.supervise { color: var(--magenta); }
+  .log-subject.goal { color: var(--accent); }
+  .log-subject.llm { color: var(--text-secondary); }
+  .log-subject.subagent { color: var(--magenta); }
   .log-agent { color: var(--accent); }
   .log-msg { color: var(--dim); }
   .log-msg.success { color: var(--green); }
@@ -725,6 +732,16 @@
     background: var(--card);
     border-left: 3px solid var(--cyan);
   }
+  .thread-entry.result {
+    background: var(--green-soft);
+    border-left: 3px solid var(--green);
+    max-width: 100%;
+  }
+  .thread-entry.error {
+    background: var(--red-soft);
+    border-left: 3px solid var(--red);
+    max-width: 100%;
+  }
   .thread-header {
     display: flex;
     align-items: center;
@@ -748,6 +765,8 @@
   .thread-badge.comment { background: var(--cyan); color: var(--bg); }
   .thread-badge.topic { background: var(--accent); color: var(--bg); }
   .thread-badge.human { background: var(--accent); color: var(--bg); }
+  .thread-badge.result { background: var(--green); color: var(--bg); }
+  .thread-badge.error { background: var(--red); color: var(--bg); }
   .thread-time {
     color: var(--dim);
     margin-left: auto;
@@ -758,9 +777,10 @@
     color: var(--text-secondary);
     font-size: 13px;
     line-height: 1.6;
-    white-space: pre-wrap;
     word-break: break-word;
   }
+  .thread-content p { margin: 0 0 8px 0; }
+  .thread-content p:last-child { margin-bottom: 0; }
   .thread-content pre {
     margin-top: 6px;
     padding: 8px 12px;
@@ -771,6 +791,33 @@
     overflow-x: auto;
     max-height: 300px;
     white-space: pre-wrap;
+  }
+  .thread-content code {
+    background: var(--bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .thread-content pre code {
+    background: none;
+    padding: 0;
+  }
+  .thread-content ul, .thread-content ol {
+    margin: 4px 0;
+    padding-left: 20px;
+  }
+  .thread-content h1, .thread-content h2, .thread-content h3 {
+    color: var(--text);
+    margin: 8px 0 4px 0;
+    font-size: 14px;
+  }
+  .thread-content h1 { font-size: 16px; }
+  .thread-content blockquote {
+    border-left: 2px solid var(--dim);
+    margin: 4px 0;
+    padding-left: 10px;
+    color: var(--dim);
   }
   .thread-reply-bar {
     display: flex;
@@ -1195,6 +1242,7 @@ const state = {
   history: [],
   logEntries: [],
   agentLogs: {},        // keyed by agent name → array of lines
+  agentsWithEvents: {}, // agents sending structured events (suppress duplicate text logs)
   startTime: Date.now(),
   stats: {
     tokensIn: 0, tokensOut: 0,
@@ -1242,6 +1290,7 @@ function handleMessage(msg) {
     case 'discuss': handleDiscuss(msg.data, msg.subject); break;
     case 'control': handleControl(msg.data, msg.subject); break;
     case 'log': handleLog(msg.data); break;
+    case 'events': handleStructuredEvent(msg.data, msg.subject); break;
     case 'history': handleHistoryRecord(msg.data); break;
     default: console.log('Unknown message type:', msg.type);
   }
@@ -1393,6 +1442,13 @@ function handleLog(data) {
   state.agentLogs[agent].push(entry);
   if (state.agentLogs[agent].length > 500) state.agentLogs[agent].shift();
 
+  // If this agent is sending structured events, suppress text logs from the
+  // main event log (they'd be duplicates). Still stored in agentLogs for modal.
+  if (state.agentsWithEvents[agent]) {
+    updateModalIfOpen(agent);
+    return;
+  }
+
   // Classify the line for event log coloring
   let level = 'info';
   let subject = 'log';
@@ -1411,6 +1467,169 @@ function handleLog(data) {
 
   // Update modal if open for this agent
   updateModalIfOpen(agent);
+}
+
+function handleStructuredEvent(data, subject) {
+  const agent = data.agent || (subject ? subject.split('.')[1] : '') || 'unknown';
+  state.agentsWithEvents[agent] = true; // suppress duplicate text logs
+  const evtType = data.type || 'unknown';
+
+  // Map session event types to display categories and log levels
+  let label, level, display;
+  switch (evtType) {
+    case 'tool_call':
+      label = 'tool';
+      level = 'info';
+      display = `▶ ${data.tool || '—'}`;
+      if (data.args) {
+        // Show key hint for common tools
+        if (data.args.command) display += `: ${truncate(data.args.command, 80)}`;
+        else if (data.args.path || data.args.file_path) display += `: ${data.args.path || data.args.file_path}`;
+        else if (data.args.pattern) display += `: ${data.args.pattern}`;
+      }
+      break;
+    case 'tool_result':
+      label = 'tool';
+      if (data.error) {
+        level = 'error';
+        display = `✗ ${data.tool || '—'} FAILED: ${truncate(data.error, 80)}`;
+      } else {
+        level = 'success';
+        display = `✓ ${data.tool || '—'}`;
+        if (data.duration_ms) display += ` (${data.duration_ms}ms)`;
+      }
+      break;
+    case 'goal_start':
+      label = 'goal';
+      level = 'info';
+      display = `▶ ${data.goal || data.content || '—'}`;
+      break;
+    case 'goal_end':
+      label = 'goal';
+      level = 'success';
+      display = `✓ ${data.goal || '—'}`;
+      if (data.duration_ms) display += ` (${(data.duration_ms/1000).toFixed(1)}s)`;
+      break;
+    case 'workflow_start':
+      label = 'work';
+      level = 'info';
+      display = '▶ Workflow started';
+      break;
+    case 'workflow_end':
+      label = 'done';
+      level = 'success';
+      display = '✓ Workflow complete';
+      if (data.duration_ms) display += ` (${(data.duration_ms/1000).toFixed(1)}s)`;
+      break;
+    case 'subagent_start':
+      label = 'subagent';
+      level = 'info';
+      display = `⑂ ${(data.meta && data.meta.sub_agent_name) || data.agent || '—'} spawned`;
+      if (data.meta && data.meta.sub_agent_model) display += ` [${data.meta.sub_agent_model}]`;
+      break;
+    case 'subagent_end': {
+      label = 'subagent';
+      const ok = data.success === true || !data.error;
+      level = ok ? 'success' : 'error';
+      const name = (data.meta && data.meta.sub_agent_name) || data.agent || '—';
+      display = ok ? `✓ ${name} complete` : `✗ ${name} failed: ${truncate(data.error, 60)}`;
+      if (data.duration_ms) display += ` (${(data.duration_ms/1000).toFixed(1)}s)`;
+      break;
+    }
+    case 'phase_commit':
+      label = 'supervise';
+      level = 'info';
+      display = 'COMMIT';
+      if (data.meta && data.meta.confidence) display += ` [${data.meta.confidence}]`;
+      if (data.meta && data.meta.commitment) display += ` ${truncate(data.meta.commitment, 60)}`;
+      break;
+    case 'phase_execute':
+      label = 'supervise';
+      level = 'info';
+      display = 'EXECUTE';
+      if (data.meta && data.meta.result) display += ` [${data.meta.result}]`;
+      break;
+    case 'phase_reconcile': {
+      label = 'supervise';
+      const esc_ = data.meta && data.meta.escalate;
+      level = esc_ ? 'error' : 'info';
+      display = esc_ ? 'RECONCILE → ESCALATE' : 'RECONCILE pass';
+      if (data.meta && data.meta.triggers && data.meta.triggers.length) display += ` [${data.meta.triggers.join(', ')}]`;
+      break;
+    }
+    case 'phase_supervise': {
+      label = 'supervise';
+      const verdict = (data.meta && data.meta.verdict) || 'CONTINUE';
+      level = verdict === 'CONTINUE' ? 'success' : verdict === 'REORIENT' ? 'revision' : 'error';
+      display = `SUPERVISE ${verdict}`;
+      if (data.meta && data.meta.correction) display += `: ${truncate(data.meta.correction, 60)}`;
+      break;
+    }
+    case 'bash_security': {
+      const allowed = data.meta && data.meta.pass === true;
+      // Only show blocks — deterministic "allow" is noise (LLM step may still block)
+      if (allowed) return;
+      label = 'security';
+      level = 'error';
+      const step = (data.meta && data.meta.check_name) || 'check';
+      const cmd = (data.meta && data.meta.source) || data.content || '—';
+      display = `✗ bash BLOCKED [${step}]: ${truncate(cmd, 80)}`;
+      if (data.meta && data.meta.reason) display += ` — ${truncate(data.meta.reason, 60)}`;
+      break;
+    }
+    case 'security_block':
+      label = 'security';
+      level = 'info';
+      display = `block ${(data.meta && data.meta.block_id) || '—'} [${(data.meta && data.meta.trust) || '—'}]`;
+      if (data.meta && data.meta.source) display += ` from ${data.meta.source}`;
+      break;
+    case 'security_static': {
+      label = 'security';
+      const pass = data.meta && data.meta.pass;
+      level = pass ? 'info' : 'error';
+      display = pass ? '✓ static pass' : '✗ static fail';
+      if (data.meta && data.meta.flags && data.meta.flags.length) display += ` [${data.meta.flags.join(', ')}]`;
+      break;
+    }
+    case 'security_triage':
+      label = 'security';
+      level = (data.meta && data.meta.suspicious) ? 'error' : 'info';
+      display = (data.meta && data.meta.suspicious) ? '⚠ triage: suspicious' : '✓ triage: benign';
+      break;
+    case 'security_supervisor':
+    case 'security_decision': {
+      label = 'security';
+      const action = (data.meta && data.meta.action) || '—';
+      level = action === 'allow' ? 'success' : 'error';
+      display = `${action.toUpperCase()}`;
+      if (data.meta && data.meta.check_path) display += ` via ${data.meta.check_path}`;
+      if (data.meta && data.meta.reason) display += `: ${truncate(data.meta.reason, 60)}`;
+      break;
+    }
+    case 'warning':
+      label = 'warn';
+      level = 'error';
+      display = `⚠ ${data.content || '—'}`;
+      break;
+    case 'checkpoint':
+      label = 'supervise';
+      level = 'info';
+      display = `checkpoint saved`;
+      break;
+    case 'assistant':
+      // Skip assistant messages in the main log — too noisy
+      return;
+    case 'system':
+    case 'user':
+      // Skip system/user prompt events — internal
+      return;
+    default:
+      label = evtType.replace(/_/g, ' ');
+      level = 'info';
+      display = data.content ? truncate(data.content, 100) : evtType;
+  }
+
+  addLog(label, agent, display, level);
 }
 
 function handleHistoryRecord(data) {
@@ -1741,6 +1960,15 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function renderMarkdown(s) {
+  if (!s) return '';
+  if (typeof marked !== 'undefined' && marked.parse) {
+    try { return marked.parse(s, { breaks: true }); } catch (e) { /* fall through */ }
+  }
+  // Fallback: escape and preserve whitespace
+  return '<pre>' + esc(s) + '</pre>';
+}
+
 // ── Log Modal ──
 let modalAgent = null;
 let modalSessionId = null;
@@ -1827,19 +2055,39 @@ function renderClassicTaskDetail(data, body) {
   const result = data.result || {};
 
   body.style.padding = '16px';
-  const inputHtml = `<div class="task-input">
-    <span class="task-label">Input Parameters</span>
-    <pre class="task-json">${esc(JSON.stringify(input, null, 2))}</pre>
-  </div>`;
+
+  // Show task description from input
+  const taskDesc = (input.inputs && input.inputs.task) || '';
+  const inputHtml = taskDesc
+    ? `<div class="task-input">
+        <span class="task-label">Task</span>
+        <div class="thread-content">${renderMarkdown(taskDesc)}</div>
+      </div>`
+    : `<div class="task-input">
+        <span class="task-label">Input Parameters</span>
+        <pre class="task-json">${esc(JSON.stringify(input, null, 2))}</pre>
+      </div>`;
+
+  // Render output as markdown if it's a string, otherwise as JSON
+  let outputContent = '';
+  if (result.outputs) {
+    if (typeof result.outputs === 'string') {
+      outputContent = `<div class="thread-content">${renderMarkdown(result.outputs)}</div>`;
+    } else {
+      outputContent = `<pre class="task-json">${esc(JSON.stringify(result.outputs, null, 2))}</pre>`;
+    }
+  } else {
+    outputContent = `<div class="modal-empty" style="padding:8px 0;">No output yet</div>`;
+  }
 
   const resultHtml = `<div class="task-result">
     <span class="task-label">Result</span>
     <div class="task-status">
-      Status: <span class="${result.status === 'success' ? 'status-success' : 'status-failed'}">${esc(result.status || '—')}</span>
+      Status: <span class="${result.status === 'success' ? 'status-success' : 'status-failed'}">${esc(result.status || 'pending')}</span>
       ${result.error ? `<span class="error-msg">Error: ${esc(result.error)}</span>` : ''}
     </div>
     <span class="task-label">Output</span>
-    <pre class="task-json">${esc(JSON.stringify(result.outputs, null, 2))}</pre>
+    ${outputContent}
   </div>`;
 
   body.innerHTML = inputHtml + resultHtml;
@@ -1906,13 +2154,10 @@ function renderThreadEntry(entry) {
   let displayName = name || cap || agent;
   if (type === 'topic') displayName = '📋 Topic';
   else if (type === 'human') displayName = '👤 You';
+  else if (type === 'result') displayName = '✅ ' + (name || cap || agent);
+  else if (type === 'error') displayName = '❌ ' + (name || cap || agent);
 
-  // Detect code blocks and format content
-  let content = esc(entry.content || '');
-  // Wrap content that looks like code in pre tags
-  if (content.includes('```')) {
-    content = content.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre>$2</pre>');
-  }
+  const content = renderMarkdown(entry.content || '');
 
   return `<div class="thread-entry ${esc(type)}">
     <div class="thread-header">

@@ -651,6 +651,16 @@ func (u *UpCmd) Run(a *app) error {
 			cmd := exec.Command("agent", args...)
 			// Pass agent type via environment variable
 			cmd.Env = append(os.Environ(), fmt.Sprintf("AGENT_TYPE=%s", ag.Type))
+			// For managers: pass worker capabilities so the dispatch tool knows targets
+			if ag.Type == "manager" {
+				var caps []string
+				for _, other := range agents {
+					if other.Type == "worker" && other.Capability != "" {
+						caps = append(caps, fmt.Sprintf("%s:%d", other.Capability, other.Replicas))
+					}
+				}
+				cmd.Env = append(cmd.Env, fmt.Sprintf("SWARM_CAPABILITIES=%s", strings.Join(caps, ",")))
+			}
 			// Prefix each agent's output with its name for multi-agent clarity
 			stdoutPipe, _ := cmd.StdoutPipe()
 			stderrPipe, _ := cmd.StderrPipe()

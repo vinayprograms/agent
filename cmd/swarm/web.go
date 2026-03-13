@@ -87,7 +87,7 @@ func (s *webServer) start(ctx context.Context, addr string) error {
 	s.nc = nc
 
 	// Subscribe to all relevant subjects
-	subjects := []string{"heartbeat.>", "work.>", "done.>", "discuss.>", "control.>", "log.>"}
+	subjects := []string{"heartbeat.>", "work.>", "done.>", "discuss.>", "control.>", "log.>", "events.>"}
 	for _, subj := range subjects {
 		sub := subj
 		_, err := nc.Subscribe(sub, func(msg *nats.Msg) {
@@ -205,6 +205,35 @@ func (s *webServer) persistNATSMessage(msgType, subject string, data []byte) {
 			return
 		}
 		s.db.UpdateResult(&result)
+
+		// Also append result to thread so it shows in the task detail modal
+		taskID := result.TaskID
+		if taskID == "" {
+			// Extract from subject: done.<cap>.<task_id>
+			parts := strings.Split(subject, ".")
+			if len(parts) >= 3 {
+				taskID = parts[len(parts)-1]
+			}
+		}
+		if taskID != "" {
+			content := ""
+			if s, ok := result.Outputs.(string); ok {
+				content = s
+			} else {
+				b, _ := json.Marshal(result.Outputs)
+				content = string(b)
+			}
+			entryType := "result"
+			if result.Status == "failed" {
+				entryType = "error"
+			}
+			s.db.AppendThread(taskID, threadEntry{
+				AgentID:   result.AgentID,
+				Type:      entryType,
+				Content:   content,
+				Timestamp: result.CompletedAt,
+			})
+		}
 
 	case "discuss":
 		// Persist discuss contributions to thread
@@ -344,7 +373,7 @@ func (s *webServer) cacheMessage(msgType, subject string, data []byte) {
 		if len(parts) == 2 {
 			s.lastHeartbeats[parts[1]] = data
 		}
-	case "log":
+	case "log", "events":
 		s.recentLogs = append(s.recentLogs, data)
 		if len(s.recentLogs) > maxCachedLogs {
 			s.recentLogs = s.recentLogs[len(s.recentLogs)-maxCachedLogs:]
@@ -999,6 +1028,8 @@ func classifySubject(subject string) string {
 		return "control"
 	case strings.HasPrefix(subject, "log."):
 		return "log"
+	case strings.HasPrefix(subject, "events."):
+		return "events"
 	default:
 		return "unknown"
 	}

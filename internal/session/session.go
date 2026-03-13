@@ -103,6 +103,11 @@ type Session struct {
 	writerDone chan struct{}       // closed when writer exits
 	sessionMgr SessionManager     // for persisting batches
 	closeOnce  sync.Once          // ensures Close() is idempotent
+
+	// OnEvent is called synchronously for every event added via AddEvent.
+	// Used by swarm mode to publish structured events to NATS in real time.
+	// The callback receives the fully-sequenced event (with SeqID and Timestamp set).
+	OnEvent func(event Event)
 }
 
 // Event represents a single entry in the session log.
@@ -271,6 +276,11 @@ func (s *Session) AddEvent(event Event) uint64 {
 	event.SeqID = s.nextSeqID()
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
+	}
+
+	// Fire real-time callback (e.g., NATS publish) with fully-sequenced event
+	if s.OnEvent != nil {
+		s.OnEvent(event)
 	}
 
 	if s.eventCh != nil {

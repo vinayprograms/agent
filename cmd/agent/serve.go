@@ -15,6 +15,7 @@ import (
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/swarm"
 	"github.com/vinayprograms/agentkit/bus"
 	"github.com/vinayprograms/agentkit/credentials"
@@ -285,6 +286,17 @@ func (a *serviceAgent) runBusMode() error {
 	a.bus = natsBus
 	defer natsBus.Close()
 
+	// Manager-only: register dispatch tool so the orchestrator can assign tasks to workers
+	if a.agentType == "manager" {
+		caps := parseSwarmCapabilities(os.Getenv("SWARM_CAPABILITIES"))
+		dispatchTool := swarm.NewDispatchTool(natsBus, a.displayName, caps)
+		a.serviceRuntime.registry.Register(dispatchTool)
+		fmt.Fprintf(os.Stderr, "✓ Dispatch tool registered (manager-only)\n")
+		for _, c := range caps {
+			fmt.Fprintf(os.Stderr, "  capability: %s (%d workers)\n", c.Name, c.Replicas)
+		}
+	}
+
 	// Register with NATS KV registry (for discovery)
 	if err := a.registerWithRegistry(natsBus); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  Registry registration failed: %v (continuing without registry)\n", err)
@@ -319,6 +331,18 @@ func (a *serviceAgent) runBusMode() error {
 	// Wire metrics collector for dashboard reporting
 	mc := heartbeat.NewMetricsCollector(hbSender)
 	a.serviceRuntime.exec.SetMetricsCollector(mc)
+
+	// Wire event publisher — streams structured session events to NATS
+	// for the swarm UI's real-time event log.
+	evtSubject := fmt.Sprintf("events.%s", a.displayName)
+	a.serviceRuntime.exec.SetEventPublisher(func(evt session.Event) {
+		data, err := json.Marshal(evt)
+		if err != nil {
+			return
+		}
+		natsBus.Publish(evtSubject, data)
+	})
+	defer a.serviceRuntime.exec.ClearEventPublisher()
 
 	// Add registry TTL touch to heartbeat callback
 	if a.reg != nil {
@@ -551,6 +575,26 @@ func extractTaskIDFromSubject(subject string) string {
 		return parts[len(parts)-1]
 	}
 	return ""
+}
+
+// parseSwarmCapabilities parses the SWARM_CAPABILITIES env var (format: "develop:3,test:1").
+func parseSwarmCapabilities(env string) []swarm.WorkerCapability {
+	if env == "" {
+		return nil
+	}
+	var caps []swarm.WorkerCapability
+	for _, entry := range strings.Split(env, ",") {
+		parts := strings.SplitN(entry, ":", 2)
+		name := parts[0]
+		replicas := 1
+		if len(parts) == 2 {
+			if n, err := fmt.Sscanf(parts[1], "%d", &replicas); n == 0 || err != nil {
+				replicas = 1
+			}
+		}
+		caps = append(caps, swarm.WorkerCapability{Name: name, Replicas: replicas})
+	}
+	return caps
 }
 
 // truncateStr truncates a string to max length with ellipsis.
