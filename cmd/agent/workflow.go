@@ -113,17 +113,11 @@ func (w *workflow) validateWorkspaceConfig() error {
 // validateStateConfig checks for conflicting state location settings.
 // CLI state path may be a subdirectory of agent.toml's value (swarm isolates
 // per-agent state under a shared root), so we allow subdirectories.
+// When --state is provided, it always wins — swarm uses this to isolate
+// per-agent state and prevent Bleve index lock conflicts.
 func (w *workflow) validateStateConfig() error {
-	if w.statePath == "" || w.cfg.State.Location == "" {
-		return nil
-	}
-	cliResolved := expandAbsPath(w.statePath)
-	cfgResolved := expandAbsPath(w.cfg.State.Location)
-	if cliResolved != cfgResolved &&
-		!strings.HasPrefix(cliResolved, cfgResolved+"/") {
-		return fmt.Errorf("state location conflict: --state=%q resolves to %q, agent.toml has %q",
-			w.statePath, cliResolved, cfgResolved)
-	}
+	// --state always overrides config — no conflict check needed.
+	// The caller explicitly chose the state path.
 	return nil
 }
 
