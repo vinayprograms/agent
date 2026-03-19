@@ -45,6 +45,10 @@ type ServeCmd struct {
 	QueueGroup   string `help:"Queue group name for load balancing"`
 	Capability   string `help:"Capability name (default: Agentfile NAME)"`
 	SessionLabel string `help:"Label for session directory (default: Agentfile NAME)"`
+
+	// Swarm integration (replaces AGENT_TYPE and SWARM_CAPABILITIES env vars)
+	Type         string `help:"Agent type: worker or manager (default: worker)"`
+	Capabilities string `help:"Worker capabilities for manager dispatch (format: cap1:n,cap2:n)"`
 }
 
 // ValidateCmd validates an Agentfile.

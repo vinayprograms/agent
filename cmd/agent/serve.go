@@ -35,8 +35,9 @@ type serviceAgent struct {
 	agentID     string
 	instanceID  string // <name>-<session-id> for swarm addressing
 	displayName string // swarm agent name (or Agentfile NAME if standalone)
-	agentType   string // "worker" (default) or "manager"
-	capability  registry.CapabilitySchema
+	agentType      string // "worker" (default) or "manager"
+	capabilitiesStr string // "cap1:n,cap2:n" for manager dispatch
+	capability     registry.CapabilitySchema
 
 
 	// Service-level session (shared across all tasks)
@@ -148,8 +149,11 @@ func (cmd *ServeCmd) Run() error {
 		displayName = wf.sessionLabel
 	}
 
-	// Determine agent type from environment (set by swarm up)
-	agentType := os.Getenv("AGENT_TYPE")
+	// Determine agent type: CLI flag takes precedence, env var as fallback
+	agentType := cmd.Type
+	if agentType == "" {
+		agentType = os.Getenv("AGENT_TYPE")
+	}
 	if agentType == "" {
 		agentType = "worker"
 	}
@@ -157,19 +161,26 @@ func (cmd *ServeCmd) Run() error {
 	// Instance ID: <displayName>-<session-id> for swarm addressing
 	instanceID := fmt.Sprintf("%s-%s", displayName, serviceRt.sess.ID)
 
+	// Determine capabilities string: CLI flag takes precedence, env var as fallback
+	capabilitiesStr := cmd.Capabilities
+	if capabilitiesStr == "" {
+		capabilitiesStr = os.Getenv("SWARM_CAPABILITIES")
+	}
+
 	// Create service agent
 	agent := &serviceAgent{
-		wf:             wf,
-		creds:          creds,
-		agentID:        agentID,
-		instanceID:     instanceID,
-		displayName:    displayName,
-		agentType:      agentType,
-		capability:     capability,
-		serviceRuntime: serviceRt,
-		status:         "idle",
-		taskDone:       make(chan struct{}),
-		drainTimeout:   drainTimeout,
+		wf:              wf,
+		creds:           creds,
+		agentID:         agentID,
+		instanceID:      instanceID,
+		displayName:     displayName,
+		agentType:       agentType,
+		capabilitiesStr: capabilitiesStr,
+		capability:      capability,
+		serviceRuntime:  serviceRt,
+		status:          "idle",
+		taskDone:        make(chan struct{}),
+		drainTimeout:    drainTimeout,
 	}
 
 	// Ensure cleanup on exit
@@ -292,7 +303,7 @@ func (a *serviceAgent) runBusMode() error {
 
 	// Manager-only: register dispatch tool so the orchestrator can assign tasks to workers
 	if a.agentType == "manager" {
-		caps := parseSwarmCapabilities(os.Getenv("SWARM_CAPABILITIES"))
+		caps := parseSwarmCapabilities(a.capabilitiesStr)
 		dispatchTool := swarm.NewDispatchTool(natsBus, a.displayName, caps)
 		a.serviceRuntime.registry.Register(dispatchTool)
 		fmt.Fprintf(os.Stderr, "✓ Dispatch tool registered (manager-only)\n")
