@@ -735,12 +735,14 @@ func buildTaskText(task *tasks.TaskMessage) string {
 // Each message is acked only after the worker finishes processing it,
 // guaranteeing exactly-once delivery across the worker pool.
 func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *bus.Message) {
+	consecutiveErrors := 0
 	for {
 		// Fetch one message at a time (blocks until available or timeout)
 		msgs, err := a.workPullSub.Fetch(1, nats.MaxWait(5*time.Second))
 		if err != nil {
 			if err == nats.ErrTimeout {
-				// No messages available — check if context is done
+				// No messages available — normal idle state
+				consecutiveErrors = 0
 				if ctx.Err() != nil {
 					return
 				}
@@ -749,9 +751,25 @@ func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *bus.Mess
 			if err == nats.ErrSubscriptionClosed || ctx.Err() != nil {
 				return
 			}
-			fmt.Fprintf(os.Stderr, "  ⚠️  JetStream fetch error: %v\n", err)
+			// Check for invalid subscription (connection was reset)
+			if !a.workPullSub.IsValid() || err.Error() == "nats: invalid subscription" {
+				return
+			}
+			consecutiveErrors++
+			if consecutiveErrors <= 3 {
+				fmt.Fprintf(os.Stderr, "  ⚠️  JetStream fetch error: %v\n", err)
+			} else if consecutiveErrors == 4 {
+				fmt.Fprintf(os.Stderr, "  ⚠️  JetStream fetch errors suppressed (repeating)\n")
+			}
+			// Backoff on repeated errors to avoid tight spin loop
+			select {
+			case <-time.After(time.Duration(consecutiveErrors) * time.Second):
+			case <-ctx.Done():
+				return
+			}
 			continue
 		}
+		consecutiveErrors = 0
 
 		for _, natsMsg := range msgs {
 			// Convert to bus.Message for handleBusTask compatibility
