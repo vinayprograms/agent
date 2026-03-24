@@ -1,4 +1,5 @@
-// Package session provides session management and persistence.
+// Package session provides forensic session recording: every LLM call, tool
+// execution, and security decision is captured for replay and debugging.
 package session
 
 import (

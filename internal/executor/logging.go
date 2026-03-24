@@ -1,4 +1,3 @@
-// Session event logging functions for the executor.
 package executor
 
 import (
@@ -63,7 +62,7 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 	})
 
 	// Also log to structured logger
-	e.logger.Debug("bash security check", map[string]interface{}{
+	e.logger.Debug("bash security check", map[string]any{
 		"step":    step,
 		"allowed": allowed,
 		"command": command,
@@ -73,7 +72,7 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 
 // logToolCall logs a tool call event to the session.
 // Returns a correlation ID that should be passed to logToolResult.
-func (e *Executor) logToolCall(ctx context.Context, name string, args map[string]interface{}) string {
+func (e *Executor) logToolCall(ctx context.Context, name string, args map[string]any) string {
 	corrID := fmt.Sprintf("tool-%d", time.Now().UnixNano())
 
 	if e.session == nil {
@@ -97,7 +96,7 @@ func (e *Executor) logToolCall(ctx context.Context, name string, args map[string
 }
 
 // logToolResult logs a tool result event to the session.
-func (e *Executor) logToolResult(ctx context.Context, name string, args map[string]interface{}, corrID string, result interface{}, err error, duration time.Duration) {
+func (e *Executor) logToolResult(ctx context.Context, name string, args map[string]any, corrID string, result any, err error, duration time.Duration) {
 	// Structured logging to stdout
 	e.logger.ToolResult(name, duration, err)
 

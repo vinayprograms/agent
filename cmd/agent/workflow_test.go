@@ -2,18 +2,10 @@ package main
 
 import (
 	"testing"
-
-	"github.com/alecthomas/kong"
 )
 
 func TestRunCmd_Defaults(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"run"})
+	cli, err := parseArgs([]string{"run"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,13 +16,7 @@ func TestRunCmd_Defaults(t *testing.T) {
 }
 
 func TestRunCmd_CustomFile(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"run", "custom.agent"})
+	cli, err := parseArgs([]string{"run", "custom.agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,13 +27,7 @@ func TestRunCmd_CustomFile(t *testing.T) {
 }
 
 func TestRunCmd_Inputs(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"run", "-i", "key=value", "-i", "foo=bar"})
+	cli, err := parseArgs([]string{"run", "-i", "key=value", "-i", "foo=bar"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,13 +41,7 @@ func TestRunCmd_Inputs(t *testing.T) {
 }
 
 func TestRunCmd_AllFlags(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{
+	cli, err := parseArgs([]string{
 		"run",
 		"--config", "/path/to/config.toml",
 		"--policy", "/path/to/policy.toml",

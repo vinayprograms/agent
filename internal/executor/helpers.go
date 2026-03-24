@@ -1,4 +1,3 @@
-// Utility functions for the executor.
 package executor
 
 import (
@@ -35,7 +34,7 @@ func parseStructuredOutput(content string, expectedFields []string) (map[string]
 		jsonStr = content
 	}
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
 		// If JSON parsing fails, try to extract fields from plain text
 		result := make(map[string]string)
@@ -116,7 +115,7 @@ func (e *Executor) interpolate(text string) string {
 
 	// Warn about unresolved variables (both console and session for replay)
 	if len(unresolved) > 0 {
-		e.logger.Warn("unresolved variables in prompt (check Agentfile)", map[string]interface{}{
+		e.logger.Warn("unresolved variables in prompt (check Agentfile)", map[string]any{
 			"variables": unresolved,
 			"hint":      "ensure prior goals output these variables with -> syntax",
 		})
@@ -127,7 +126,6 @@ func (e *Executor) interpolate(text string) string {
 	return text
 }
 
-// findGoal finds a goal by name.
 func (e *Executor) findGoal(name string) *agentfile.Goal {
 	for i := range e.workflow.Goals {
 		if e.workflow.Goals[i].Name == name {
@@ -137,7 +135,6 @@ func (e *Executor) findGoal(name string) *agentfile.Goal {
 	return nil
 }
 
-// findAgent finds an agent by name.
 func (e *Executor) findAgent(name string) *agentfile.Agent {
 	for i := range e.workflow.Agents {
 		if e.workflow.Agents[i].Name == name {

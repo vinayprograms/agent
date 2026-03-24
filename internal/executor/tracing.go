@@ -1,4 +1,3 @@
-// Tracing instrumentation for the executor.
 package executor
 
 import (

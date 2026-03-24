@@ -1,4 +1,3 @@
-// Package supervision provides drift detection and course correction for agent execution.
 package supervision
 
 import (
@@ -33,54 +32,50 @@ const (
 	TriggerExcessAssumptions Trigger = "excess_assumptions"
 )
 
-// Supervisor evaluates agent execution for drift and provides corrections.
-type Supervisor struct {
+// LLMSupervisor evaluates agent execution for drift and provides corrections
+// using an LLM provider.
+type LLMSupervisor struct {
 	provider          llm.Provider
 	logger            *logging.Logger
-	originalGoal      string
 	humanAvailable    bool
 	humanInputChan    chan string
 	humanInputTimeout time.Duration
 }
 
+// Verify LLMSupervisor implements Supervisor.
+var _ Supervisor = (*LLMSupervisor)(nil)
+
 // Config holds supervisor configuration.
 type Config struct {
 	Provider          llm.Provider
-	OriginalGoal      string
 	HumanAvailable    bool
 	HumanInputChan    chan string
 	HumanInputTimeout time.Duration
 }
 
-// New creates a new supervisor.
-func New(cfg Config) *Supervisor {
+// NewLLMSupervisor creates a new LLM-based supervisor.
+func NewLLMSupervisor(cfg Config) *LLMSupervisor {
 	timeout := cfg.HumanInputTimeout
 	if timeout == 0 {
 		timeout = 5 * time.Minute
 	}
-	return &Supervisor{
+	return &LLMSupervisor{
 		provider:          cfg.Provider,
 		logger:            logging.New().WithComponent("supervisor"),
-		originalGoal:      cfg.OriginalGoal,
 		humanAvailable:    cfg.HumanAvailable,
 		humanInputChan:    cfg.HumanInputChan,
 		humanInputTimeout: timeout,
 	}
 }
 
-// SetOriginalGoal updates the original goal for supervision.
-func (s *Supervisor) SetOriginalGoal(goal string) {
-	s.originalGoal = goal
-}
-
 // SetHumanAvailable updates whether a human is available.
-func (s *Supervisor) SetHumanAvailable(available bool) {
+func (s *LLMSupervisor) SetHumanAvailable(available bool) {
 	s.humanAvailable = available
 }
 
 // Reconcile performs static pattern checks on checkpoint data.
 // Returns triggers that indicate need for supervision.
-func (s *Supervisor) Reconcile(pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint) *checkpoint.ReconcileResult {
+func (s *LLMSupervisor) Reconcile(pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint) *checkpoint.ReconcileResult {
 	start := time.Now()
 	result := &checkpoint.ReconcileResult{
 		StepID:    pre.StepID,
@@ -130,17 +125,23 @@ func (s *Supervisor) Reconcile(pre *checkpoint.PreCheckpoint, post *checkpoint.P
 }
 
 // Supervise evaluates the agent's work and decides whether to continue, reorient, or pause.
-func (s *Supervisor) Supervise(ctx context.Context, pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, decisionTrail []*checkpoint.Checkpoint, requiresHuman bool) (*checkpoint.SuperviseResult, error) {
+func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*checkpoint.SuperviseResult, error) {
+	pre := req.Pre
+	post := req.Post
+	triggers := req.Triggers
+	decisionTrail := req.DecisionTrail
+	requiresHuman := req.HumanRequired
+
 	start := time.Now()
 	s.logger.PhaseStart("SUPERVISE", "", pre.StepID)
-	
+
 	result := &checkpoint.SuperviseResult{
 		StepID:    pre.StepID,
 		Timestamp: time.Now(),
 	}
 
 	// Build prompt for supervisor
-	prompt := s.buildSupervisionPrompt(pre, post, triggers, decisionTrail)
+	prompt := s.buildSupervisionPrompt(req.OriginalGoal, pre, post, triggers, decisionTrail)
 
 	messages := []llm.Message{
 		{Role: "system", Content: supervisorSystemPrompt},
@@ -224,7 +225,7 @@ type autonomousDecision struct {
 	correction string
 }
 
-func (s *Supervisor) makeAutonomousDecision(ctx context.Context, pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, question string) (*autonomousDecision, error) {
+func (s *LLMSupervisor) makeAutonomousDecision(ctx context.Context, pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, question string) (*autonomousDecision, error) {
 	prompt := fmt.Sprintf(`You previously wanted to ask: %s
 
 But no human is available. You must make a decision autonomously.
@@ -265,10 +266,10 @@ CORRECTION: <your guidance>`, question)
 	return decision, nil
 }
 
-func (s *Supervisor) buildSupervisionPrompt(pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, decisionTrail []*checkpoint.Checkpoint) string {
+func (s *LLMSupervisor) buildSupervisionPrompt(originalGoal string, pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, decisionTrail []*checkpoint.Checkpoint) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("ORIGINAL GOAL: %s\n\n", s.originalGoal))
+	sb.WriteString(fmt.Sprintf("ORIGINAL GOAL: %s\n\n", originalGoal))
 
 	sb.WriteString("AGENT COMMITTED TO:\n")
 	sb.WriteString(fmt.Sprintf("- Interpretation: %s\n", pre.Interpretation))
@@ -323,7 +324,7 @@ Respond with ONE of:
 	return sb.String()
 }
 
-func (s *Supervisor) parseSupervisionResponse(content string) (Verdict, string, string) {
+func (s *LLMSupervisor) parseSupervisionResponse(content string) (Verdict, string, string) {
 	content = strings.TrimSpace(content)
 	lines := strings.Split(content, "\n")
 

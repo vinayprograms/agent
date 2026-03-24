@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/vinayprograms/agentkit/llm"
+	"github.com/vinayprograms/agentkit/policy"
 )
 
 // mockLLMProvider implements llm.Provider for testing.
@@ -22,9 +23,9 @@ func (m *mockLLMProvider) Chat(ctx context.Context, req llm.ChatRequest) (*llm.C
 
 func (m *mockLLMProvider) Name() string { return "mock" }
 
-func TestLLMGenerateAdapter(t *testing.T) {
+func TestLLMProviderAdapter(t *testing.T) {
 	mock := &mockLLMProvider{response: "test response"}
-	adapter := &llmGenerateAdapter{provider: mock}
+	adapter := policy.LLMProviderFromChatProvider(mock)
 
 	result, err := adapter.Generate(context.Background(), "test prompt")
 	if err != nil {
@@ -35,15 +36,12 @@ func TestLLMGenerateAdapter(t *testing.T) {
 	}
 }
 
-func TestLLMGenerateAdapter_Error(t *testing.T) {
+func TestLLMProviderAdapter_Error(t *testing.T) {
 	mock := &mockLLMProvider{err: context.Canceled}
-	adapter := &llmGenerateAdapter{provider: mock}
+	adapter := policy.LLMProviderFromChatProvider(mock)
 
 	_, err := adapter.Generate(context.Background(), "test prompt")
 	if err == nil {
 		t.Error("expected error")
 	}
 }
-
-// Note: semanticMemoryBridge tests would require mocking memory.ToolsAdapter
-// which is tested in the memory package itself.

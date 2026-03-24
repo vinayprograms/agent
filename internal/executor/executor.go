@@ -1,4 +1,5 @@
-// Package executor provides workflow and goal execution.
+// Package executor orchestrates workflow execution: parsing goals, dispatching
+// LLM calls, running tools, and coordinating sub-agents.
 package executor
 
 import (
@@ -11,8 +12,10 @@ import (
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/checkpoint"
+	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/skills"
+	"github.com/vinayprograms/agent/internal/step"
 	"github.com/vinayprograms/agent/internal/supervision"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/logging"
@@ -31,13 +34,13 @@ type MetricsCollector interface {
 
 // ObservationExtractor extracts observations from step outputs.
 type ObservationExtractor interface {
-	Extract(ctx context.Context, stepName, stepType, output string) (interface{}, error)
+	Extract(ctx context.Context, stepName, stepType, output string) (any, error)
 }
 
 // ObservationStore stores and retrieves observations.
 type ObservationStore interface {
-	StoreObservation(ctx context.Context, obs interface{}) error
-	QueryRelevantObservations(ctx context.Context, query string, limit int) ([]interface{}, error)
+	StoreObservation(ctx context.Context, obs any) error
+	QueryRelevantObservations(ctx context.Context, query string, limit int) ([]any, error)
 }
 
 // Context keys for agent identity (thread-safe via context propagation)
@@ -73,7 +76,6 @@ func getAgentIdentity(ctx context.Context) AgentIdentity {
 	return id
 }
 
-// Status represents the execution status.
 type Status string
 
 const (
@@ -82,7 +84,6 @@ const (
 	StatusFailed   Status = "failed"
 )
 
-// Result represents the execution result.
 type Result struct {
 	Status     Status
 	Outputs    map[string]string
@@ -90,7 +91,8 @@ type Result struct {
 	Error      string
 }
 
-// Executor executes workflows.
+// Executor is the central orchestrator: it runs the LLM loop, dispatches
+// tool calls, manages sub-agents, and coordinates supervision phases.
 type Executor struct {
 	workflow        *agentfile.Workflow
 	provider        llm.Provider        // Default provider (backward compat)
@@ -121,22 +123,14 @@ type Executor struct {
 	outputs map[string]string
 
 	// Supervision support
-	checkpointStore *checkpoint.Store
-	supervisor      *supervision.Supervisor
+	checkpointStore checkpoint.CheckpointStore
+	supervisor      supervision.Supervisor
 	humanAvailable  bool
 	humanInputChan  chan string
 
-	// Callbacks
-	OnGoalStart        func(name string)
-	OnGoalComplete     func(name string, output string)
-	OnToolCall         func(name string, args map[string]interface{}, result interface{}, agentRole string)
-	OnToolError        func(name string, args map[string]interface{}, err error, agentRole string)
-	OnLLMError         func(err error)
-	OnSkillLoaded      func(name string)
-	OnMCPToolCall      func(server, tool string, args map[string]interface{}, result interface{})
-	OnSubAgentStart    func(name string, input map[string]string)
-	OnSubAgentComplete func(name string, output string)
-	OnSupervisionEvent func(stepID string, phase string, data interface{})
+	// Hooks for cross-cutting concerns (logging, telemetry, metrics).
+	// Multiple listeners can subscribe to each event type.
+	hooks *hooks.Registry
 
 	// Security verifier
 	securityVerifier *security.Verifier
@@ -178,11 +172,36 @@ type Executor struct {
 	// Workspace context injected into system prompt so the agent
 	// knows the project layout without needing to discover it.
 	workspaceContext string
+
+	// Supervision pipeline for the four-phase flow (COMMIT->EXECUTE->RECONCILE->SUPERVISE).
+	pipeline *supervision.Pipeline
+}
+
+// phaseLoggerAdapter adapts the Executor's logging methods to the supervision.PhaseLogger interface.
+type phaseLoggerAdapter struct {
+	e *Executor
+}
+
+func (a *phaseLoggerAdapter) LogPhaseReconcile(goal, stepID string, triggers []string, escalate bool, durationMs int64) {
+	a.e.logPhaseReconcile(goal, stepID, triggers, escalate, durationMs)
+}
+
+func (a *phaseLoggerAdapter) LogPhaseSupervise(goal, stepID, verdict, correction string, humanRequired bool, durationMs int64) {
+	a.e.logPhaseSupervise(goal, stepID, verdict, correction, humanRequired, durationMs)
+}
+
+func (a *phaseLoggerAdapter) LogCheckpoint(checkpointType, goal, step, checkpointID string) {
+	a.e.logCheckpoint(checkpointType, goal, step, checkpointID)
 }
 
 // Registry returns the tool registry.
 func (e *Executor) Registry() *tools.Registry {
 	return e.registry
+}
+
+// Hooks returns the hook registry for registering event listeners.
+func (e *Executor) Hooks() *hooks.Registry {
+	return e.hooks
 }
 
 // SetInterruptBuffer attaches an interrupt buffer for swarm collaboration.
@@ -232,67 +251,107 @@ func (e *Executor) publishToDiscuss(goalName, content string) {
 	}
 }
 
-// NewExecutor creates a new executor.
-func NewExecutor(wf *agentfile.Workflow, provider llm.Provider, registry *tools.Registry, pol *policy.Policy) *Executor {
-	e := &Executor{
-		workflow:        wf,
-		provider:        provider,
-		providerFactory: llm.NewSingleProviderFactory(provider),
-		registry:        registry,
-		policy:          pol,
-		logger:          logging.New().WithComponent("executor"),
-		outputs:         make(map[string]string),
-		loadedSkills:    make(map[string]*skills.Skill),
-		goalStartTimes:  make(map[string]time.Time),
+// New creates an Executor from a Config struct. All dependencies are supplied
+// up front — no Set* methods needed after construction.
+func New(cfg Config) *Executor {
+	provider := cfg.Provider
+	factory := cfg.ProviderFactory
+
+	// Derive provider / factory from each other when only one is supplied.
+	if factory == nil && provider != nil {
+		factory = llm.NewSingleProviderFactory(provider)
 	}
+	if provider == nil && factory != nil {
+		provider, _ = factory.GetProvider("")
+	}
+
+	hk := cfg.Hooks
+	if hk == nil {
+		hk = hooks.NewRegistry()
+	}
+
+	e := &Executor{
+		workflow:              cfg.Workflow,
+		provider:              provider,
+		providerFactory:       factory,
+		registry:              cfg.Registry,
+		policy:                cfg.Policy,
+		logger:                logging.New().WithComponent("executor"),
+		debug:                 cfg.Debug,
+		mcpManager:            cfg.MCPManager,
+		skillRefs:             cfg.SkillRefs,
+		loadedSkills:          make(map[string]*skills.Skill),
+		session:               cfg.Session,
+		sessionManager:        cfg.SessionManager,
+		persistentSession:     cfg.PersistentSession,
+		outputs:               make(map[string]string),
+		checkpointStore:       cfg.CheckpointStore,
+		supervisor:            cfg.Supervisor,
+		humanAvailable:        cfg.HumanAvailable,
+		humanInputChan:        cfg.HumanInputChan,
+		hooks:                 hk,
+		securityVerifier:      cfg.SecurityVerifier,
+		securityResearchScope: cfg.SecurityResearchScope,
+		timeoutMCP:            cfg.TimeoutMCP,
+		timeoutWebSearch:      cfg.TimeoutWebSearch,
+		timeoutWebFetch:       cfg.TimeoutWebFetch,
+		goalStartTimes:        make(map[string]time.Time),
+		observationExtractor:  cfg.ObservationExtractor,
+		observationStore:      cfg.ObservationStore,
+		metricsCollector:      cfg.MetricsCollector,
+		interruptBuffer:       cfg.InterruptBuffer,
+		discussPublisher:      cfg.DiscussPublisher,
+		workspaceContext:      cfg.WorkspaceContext,
+	}
+
+	// Start session writer if session + manager provided.
+	if e.session != nil && e.sessionManager != nil {
+		e.session.Start(e.sessionManager)
+	}
+
+	// Build supervision pipeline if both store and supervisor are available.
+	if e.supervisor != nil && e.checkpointStore != nil {
+		e.pipeline = supervision.NewPipeline(supervision.PipelineConfig{
+			Store:      e.checkpointStore,
+			Supervisor: e.supervisor,
+			Logger:     e.logger,
+			Phase:      &phaseLoggerAdapter{e: e},
+			OnEvent: func(stepID string, phase string, data any) {
+				e.hooks.Fire(context.Background(), hooks.SupervisionEvent, map[string]any{
+					"step_id": stepID, "phase": phase, "data": data,
+				})
+			},
+		})
+	}
+
 	e.initSpawner()
 	return e
+}
+
+// NewExecutor creates an executor with a single provider.
+// Deprecated: use New(Config).
+func NewExecutor(wf *agentfile.Workflow, provider llm.Provider, registry *tools.Registry, pol *policy.Policy) *Executor {
+	return New(Config{
+		Workflow: wf,
+		Provider: provider,
+		Registry: registry,
+		Policy:   pol,
+	})
 }
 
 // NewExecutorWithFactory creates an executor with a provider factory for profile support.
+// Deprecated: use New(Config).
 func NewExecutorWithFactory(wf *agentfile.Workflow, factory llm.ProviderFactory, registry *tools.Registry, pol *policy.Policy) *Executor {
-	defaultProvider, _ := factory.GetProvider("")
-	e := &Executor{
-		workflow:        wf,
-		provider:        defaultProvider,
-		providerFactory: factory,
-		registry:        registry,
-		policy:          pol,
-		logger:          logging.New().WithComponent("executor"),
-		outputs:         make(map[string]string),
-		loadedSkills:    make(map[string]*skills.Skill),
-		goalStartTimes:  make(map[string]time.Time),
-	}
-	e.initSpawner()
-	return e
+	return New(Config{
+		Workflow:        wf,
+		ProviderFactory: factory,
+		Registry:        registry,
+		Policy:          pol,
+	})
 }
 
-// SetSecurityVerifier sets the security verifier for tool call verification.
-func (e *Executor) SetSecurityVerifier(v *security.Verifier) {
-	e.securityVerifier = v
-	e.logger.Info("security verifier attached", nil)
-}
-
-// SetSecurityResearchScope sets the security research scope for defensive framing.
-// When set, system prompts will include context indicating authorized security research.
-func (e *Executor) SetSecurityResearchScope(scope string) {
-	e.securityResearchScope = scope
-}
-
-// SetDebug enables verbose logging of prompts, responses, and tool outputs.
-// When disabled (default), content is redacted to prevent PII leakage in production.
-func (e *Executor) SetDebug(debug bool) {
-	e.debug = debug
-}
-
-// SetWorkspaceContext sets pre-computed workspace context that gets injected
-// into the system prompt, so the agent knows the project layout without discovery.
-func (e *Executor) SetWorkspaceContext(ctx string) {
-	e.workspaceContext = ctx
-}
-
-// SetObservationExtraction enables observation extraction and storage for semantic memory.
 // SetMetricsCollector sets the metrics collector for heartbeat reporting.
+// Used by serve mode to wire metrics after construction.
 func (e *Executor) SetMetricsCollector(mc MetricsCollector) {
 	e.metricsCollector = mc
 }
@@ -307,14 +366,6 @@ func (e *Executor) recordLLMMetrics(resp *llm.ChatResponse, latency time.Duratio
 		resp.CacheCreationInputTokens, resp.CacheReadInputTokens,
 		latency.Milliseconds(),
 	)
-}
-
-func (e *Executor) SetObservationExtraction(extractor ObservationExtractor, store ObservationStore) {
-	e.observationExtractor = extractor
-	e.observationStore = store
-	if extractor != nil && store != nil {
-		e.logger.Info("observation extraction enabled", nil)
-	}
 }
 
 // extractAndStoreObservations extracts observations from step output and stores them.
@@ -334,7 +385,7 @@ func (e *Executor) extractAndStoreObservations(ctx context.Context, stepName, st
 }
 
 // verifyToolCall checks a tool call against the security verifier if configured.
-func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map[string]interface{}) ([]string, error) {
+func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map[string]any) ([]string, error) {
 	if e.securityVerifier == nil {
 		return nil, nil // No security verifier configured
 	}
@@ -459,7 +510,7 @@ func (e *Executor) AddUntrustedContentWithTaint(ctx context.Context, content, so
 	e.logSecurityBlockWithTaint(block.ID, "untrusted", "data", source, xmlBlock, entropy, taintedBy)
 }
 
-// truncateForLog truncates a string for logging purposes.
+// initSpawner wires the tool registry's spawn callback to this executor.
 func (e *Executor) initSpawner() {
 	if e.registry == nil {
 		return
@@ -467,25 +518,6 @@ func (e *Executor) initSpawner() {
 	e.registry.SetSpawner(func(ctx context.Context, role, task string, outputs []string) (string, error) {
 		return e.spawnDynamicAgent(ctx, role, task, outputs)
 	})
-}
-
-// SetMCPManager sets the MCP manager for external tool access.
-func (e *Executor) SetMCPManager(m *mcp.Manager) {
-	e.mcpManager = m
-}
-
-// SetSkills sets available skills for the executor.
-func (e *Executor) SetSkills(refs []skills.SkillRef) {
-	e.skillRefs = refs
-}
-
-// SetSession sets the session for logging events and starts the batched writer.
-func (e *Executor) SetSession(sess *session.Session, mgr session.SessionManager) {
-	e.session = sess
-	e.sessionManager = mgr
-	if sess != nil && mgr != nil {
-		sess.Start(mgr)
-	}
 }
 
 // SetPersistentSession marks the session as long-lived (serve mode).
@@ -509,41 +541,6 @@ func (e *Executor) closeSession() {
 	}
 }
 
-// SetTimeouts configures timeouts for network operations.
-// Values are in seconds. Zero means use default (60s for MCP/WebFetch, 30s for WebSearch).
-func (e *Executor) SetTimeouts(mcp, webSearch, webFetch int) {
-	if mcp > 0 {
-		e.timeoutMCP = mcp
-	} else {
-		e.timeoutMCP = 60
-	}
-	if webSearch > 0 {
-		e.timeoutWebSearch = webSearch
-	} else {
-		e.timeoutWebSearch = 30
-	}
-	if webFetch > 0 {
-		e.timeoutWebFetch = webFetch
-	} else {
-		e.timeoutWebFetch = 60
-	}
-}
-
-// SetSupervision configures supervision for the executor.
-func (e *Executor) SetSupervision(store *checkpoint.Store, supervisorProvider llm.Provider, humanAvailable bool, humanInputChan chan string) {
-	e.checkpointStore = store
-	e.humanAvailable = humanAvailable
-	e.humanInputChan = humanInputChan
-
-	if supervisorProvider != nil {
-		e.supervisor = supervision.New(supervision.Config{
-			Provider:       supervisorProvider,
-			HumanAvailable: humanAvailable,
-			HumanInputChan: humanInputChan,
-		})
-	}
-}
-
 // PreFlight checks if the workflow can execute successfully.
 // Returns an error if SUPERVISED HUMAN steps exist but no human connection is available.
 func (e *Executor) PreFlight() error {
@@ -560,7 +557,7 @@ func (e *Executor) PreFlight() error {
 	return fmt.Errorf("workflow requires human supervision for steps [%s] but no human connection is available", strings.Join(names, ", "))
 }
 
-// logEvent logs an event to the session's chronological event stream.
+// Run executes the workflow: binds inputs, builds the step graph, and runs it.
 func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, error) {
 	startTime := time.Now()
 	workflowName := e.workflow.Name
@@ -600,27 +597,22 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 		return &Result{Status: StatusFailed, Error: err.Error()}, err
 	}
 
+	// Build and execute the step graph
+	graph := step.BuildGraph(e.workflow, e)
+	state := step.NewState(e.inputs)
+
+	if err := graph.Execute(ctx, state); err != nil {
+		e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
+		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
+		return &Result{Status: StatusFailed, Error: err.Error()}, err
+	}
+
+	// Collect outputs
 	result := &Result{
-		Status:     StatusRunning,
-		Outputs:    make(map[string]string),
-		Iterations: make(map[string]int),
+		Status:     StatusComplete,
+		Outputs:    state.Outputs,
+		Iterations: e.GetConvergenceFailures(),
 	}
-
-	// Execute steps in order
-	for _, step := range e.workflow.Steps {
-		if step.Type == agentfile.StepRUN {
-			if err := e.executeRunStep(ctx, step, result); err != nil {
-				result.Status = StatusFailed
-				result.Error = err.Error()
-				e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
-				e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
-				return result, err
-			}
-		}
-	}
-
-	result.Status = StatusComplete
-	result.Outputs = e.outputs
 	e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusComplete))
 	e.endWorkflowSpan(workflowSpan, string(StatusComplete), nil)
 	return result, nil
@@ -643,22 +635,33 @@ func (e *Executor) bindInputs(inputs map[string]string) error {
 	return nil
 }
 
-// executeRunStep executes a RUN step.
-func (e *Executor) executeRunStep(ctx context.Context, step agentfile.Step, result *Result) error {
-	for _, goalName := range step.UsingGoals {
-		goal := e.findGoal(goalName)
-		if goal == nil {
-			return fmt.Errorf("goal not found: %s", goalName)
-		}
-
-		gr, err := e.executeGoalWithTracking(ctx, goal)
-		if err != nil {
-			return err
-		}
-
-		e.outputs[goalName] = gr.Output
-		result.Iterations[goalName] = 1
+// ExecuteGoal executes a single goal by name, updating the given state.
+// This implements step.GoalExecutor.
+func (e *Executor) ExecuteGoal(ctx context.Context, goalName string, state *step.State) error {
+	goal := e.findGoal(goalName)
+	if goal == nil {
+		return fmt.Errorf("goal %q not found in workflow", goalName)
 	}
+
+	// Sync state from step.State to executor's internal state
+	for k, v := range state.Inputs {
+		if _, exists := e.inputs[k]; !exists {
+			e.inputs[k] = v
+		}
+	}
+	for k, v := range state.Outputs {
+		e.outputs[k] = v
+	}
+
+	result, err := e.executeGoalWithTracking(ctx, goal)
+	if err != nil {
+		return err
+	}
+
+	// Store output in step state
+	state.Outputs[goalName] = result.Output
+	e.outputs[goalName] = result.Output
+
 	return nil
 }
 
@@ -666,6 +669,19 @@ func (e *Executor) executeRunStep(ctx context.Context, step agentfile.Step, resu
 type GoalResult struct {
 	Output        string
 	ToolCallsMade bool
+}
+
+// getPipeline returns the supervision pipeline. If no pipeline is configured
+// (supervision not enabled), it returns a pipeline with no supervisor/store,
+// which will simply pass through to the execute function.
+func (e *Executor) getPipeline() *supervision.Pipeline {
+	if e.pipeline != nil {
+		return e.pipeline
+	}
+	// Return a passthrough pipeline (no store/supervisor means it just executes)
+	return supervision.NewPipeline(supervision.PipelineConfig{
+		Logger: e.logger,
+	})
 }
 
 // isSupervised determines if a goal should be supervised based on goal settings and workflow defaults.
@@ -699,9 +715,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	// Log goal start
 	e.logGoalStart(goal.Name)
 
-	if e.OnGoalStart != nil {
-		e.OnGoalStart(goal.Name)
-	}
+	e.hooks.Fire(ctx, hooks.GoalStart, map[string]any{"name": goal.Name})
 
 	// Check for convergence goal
 	if goal.IsConverge {
@@ -778,132 +792,52 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	// Track supervision status for sub-agents spawned during this goal
 	e.currentGoalSupervised = supervised
 
-	// ============================================
-	// PHASE 1: COMMIT - Agent declares intent (only for supervised goals)
-	// Unsupervised goals skip COMMIT+post-checkpoint; prior goal outputs in the XML
-	// context already provide sufficient history for any downstream supervisor.
-	// ============================================
-	var preCheckpoint *checkpoint.PreCheckpoint
-	if supervised && e.checkpointStore != nil {
-		preCheckpoint = e.commitPhase(ctx, goal, prompt)
-		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
-			e.logger.Warn("failed to save pre-checkpoint", map[string]interface{}{
-				"error": err.Error(),
-			})
-		} else {
-			e.logCheckpoint("pre", goal.Name, "", preCheckpoint.StepID)
-		}
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(goal.Name, "commit", preCheckpoint)
-		}
-	}
-
-	// ============================================
-	// PHASE 2: EXECUTE - Do the work
-	// ============================================
-	output, toolsUsed, toolCallsMade, err := e.executePhase(ctx, goal, prompt)
+	// Run through the supervision pipeline (or just execute if unsupervised)
+	pipelineResult, err := e.getPipeline().Run(
+		ctx,
+		supervision.PipelineRequest{
+			StepID:        goal.Name,
+			GoalName:      goalDescription,
+			Supervised:    supervised,
+			HumanRequired: humanRequired,
+		},
+		// COMMIT: declare intent
+		func(ctx context.Context) *checkpoint.PreCheckpoint {
+			return e.commitPhase(ctx, goal, prompt)
+		},
+		// EXECUTE: do the work
+		func(ctx context.Context) (*supervision.ExecuteResult, error) {
+			output, toolsUsed, toolCallsMade, err := e.executePhase(ctx, goal, prompt)
+			return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed, ToolCallsMade: toolCallsMade}, err
+		},
+		// POST-CHECKPOINT: self-assessment
+		func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
+			return e.createPostCheckpoint(ctx, goal, pre, output, toolsUsed)
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create post-checkpoint with self-assessment
-	var postCheckpoint *checkpoint.PostCheckpoint
-	if e.checkpointStore != nil && preCheckpoint != nil {
-		postCheckpoint = e.createPostCheckpoint(ctx, goal, preCheckpoint, output, toolsUsed)
-		if err := e.checkpointStore.SavePost(postCheckpoint); err != nil {
-			e.logger.Warn("failed to save post-checkpoint", map[string]interface{}{
-				"error": err.Error(),
-			})
-		} else {
-			e.logCheckpoint("post", goal.Name, "", postCheckpoint.StepID)
-		}
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(goal.Name, "execute", postCheckpoint)
-		}
-	}
+	output := pipelineResult.Output
+	toolCallsMade := pipelineResult.ToolCallsMade
 
-	// ============================================
-	// PHASE 3 & 4: RECONCILE & SUPERVISE (only for supervised steps)
-	// ============================================
-	if supervised && e.supervisor != nil && preCheckpoint != nil && postCheckpoint != nil {
-		// Scope the supervisor's goal context to this specific goal (use the already-interpolated description)
-		e.supervisor.SetOriginalGoal(goalDescription)
-		// RECONCILE: Static pattern checks
-		reconcileStart := time.Now()
-		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
-		reconcileDuration := time.Since(reconcileStart).Milliseconds()
-
-		if e.checkpointStore != nil {
-			if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
-				e.logger.Warn("failed to save reconcile result", map[string]interface{}{
-					"error": err.Error(),
-				})
-			} else {
-				e.logCheckpoint("reconcile", goal.Name, reconcileResult.StepID, reconcileResult.StepID)
-			}
-		}
-		// Log reconcile phase to session
-		e.logPhaseReconcile(goal.Name, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
-
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(goal.Name, "reconcile", reconcileResult)
+	// Handle supervision verdict
+	switch pipelineResult.Verdict {
+	case supervision.VerdictReorient:
+		e.logger.Info("reorienting execution", map[string]any{
+			"goal":       goal.Name,
+			"correction": pipelineResult.Correction,
+		})
+		xmlBuilder.SetCorrection(pipelineResult.Correction)
+		correctedPrompt := xmlBuilder.Build()
+		output, _, toolCallsMade, err = e.executePhase(ctx, goal, correctedPrompt)
+		if err != nil {
+			return nil, err
 		}
 
-		// SUPERVISE: LLM evaluation (only if reconcile triggered)
-		if reconcileResult.Supervise {
-			superviseStart := time.Now()
-			decisionTrail := e.checkpointStore.GetDecisionTrail()
-			superviseResult, err := e.supervisor.Supervise(
-				ctx,
-				preCheckpoint,
-				postCheckpoint,
-				reconcileResult.Triggers,
-				decisionTrail,
-				humanRequired,
-			)
-			superviseDuration := time.Since(superviseStart).Milliseconds()
-
-			if err != nil {
-				return nil, fmt.Errorf("supervision failed: %w", err)
-			}
-
-			if e.checkpointStore != nil {
-				if err := e.checkpointStore.SaveSupervise(superviseResult); err != nil {
-					e.logger.Warn("failed to save supervise result", map[string]interface{}{
-						"error": err.Error(),
-					})
-				} else {
-					e.logCheckpoint("supervise", goal.Name, superviseResult.StepID, superviseResult.StepID)
-				}
-			}
-			// Log supervise phase to session
-			e.logPhaseSupervise(goal.Name, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, humanRequired, superviseDuration)
-
-			if e.OnSupervisionEvent != nil {
-				e.OnSupervisionEvent(goal.Name, "supervise", superviseResult)
-			}
-
-			// Handle verdict
-			switch supervision.Verdict(superviseResult.Verdict) {
-			case supervision.VerdictReorient:
-				// Apply correction and re-execute
-				e.logger.Info("reorienting execution", map[string]interface{}{
-					"goal":       goal.Name,
-					"correction": superviseResult.Correction,
-				})
-				// Build corrected prompt with XML correction tag
-				xmlBuilder.SetCorrection(superviseResult.Correction)
-				correctedPrompt := xmlBuilder.Build()
-				output, _, toolCallsMade, err = e.executePhase(ctx, goal, correctedPrompt)
-				if err != nil {
-					return nil, err
-				}
-
-			case supervision.VerdictPause:
-				// This should have been handled in Supervise() - if we get here, something is wrong
-				return nil, fmt.Errorf("supervision paused but no resolution provided")
-			}
-		}
+	case supervision.VerdictPause:
+		return nil, fmt.Errorf("supervision paused but no resolution provided")
 	}
 
 	// Parse structured output if declared
@@ -918,9 +852,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		}
 	}
 
-	if e.OnGoalComplete != nil {
-		e.OnGoalComplete(goal.Name, output)
-	}
+	e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
 	e.logGoalEnd(goal.Name, output)
 	e.flushSession()
@@ -967,7 +899,7 @@ Respond with a JSON object:
 	}
 
 	if err != nil {
-		e.logger.Warn("commit phase LLM error", map[string]interface{}{"error": err.Error()})
+		e.logger.Warn("commit phase LLM error", map[string]any{"error": err.Error()})
 		pre.Confidence = "low"
 		pre.Assumptions = []string{"Failed to get commitment from agent"}
 		e.logger.PhaseComplete("COMMIT", goal.Name, "", time.Since(start), "error")
@@ -1063,7 +995,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 
 	// Get tool definitions (built-in + MCP)
 	toolDefs := e.getAllToolDefinitions()
-	e.logger.Debug("tools available", map[string]interface{}{
+	e.logger.Debug("tools available", map[string]any{
 		"count": len(toolDefs),
 	})
 
@@ -1079,9 +1011,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 		})
 		llmDuration := time.Since(llmStart)
 		if err != nil {
-			if e.OnLLMError != nil {
-				e.OnLLMError(err)
-			}
+			e.hooks.Fire(ctx, hooks.LLMError, map[string]any{"error": err})
 			e.logPhaseExecute(goal.Name, "error", time.Since(start).Milliseconds())
 			return "", nil, toolCallsMade, fmt.Errorf("LLM error: %w", err)
 		}
@@ -1207,7 +1137,7 @@ Respond with a JSON object:
 	}
 
 	if err != nil {
-		e.logger.Warn("post-checkpoint LLM error", map[string]interface{}{"error": err.Error()})
+		e.logger.Warn("post-checkpoint LLM error", map[string]any{"error": err.Error()})
 		post.MetCommitment = false
 		post.Concerns = []string{"Failed to get self-assessment from agent"}
 		return post
@@ -1299,15 +1229,13 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 	if supervised && e.checkpointStore != nil {
 		preCheckpoint = e.commitPhase(ctx, goal, prompt)
 		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
-			e.logger.Warn("failed to save pre-checkpoint", map[string]interface{}{
+			e.logger.Warn("failed to save pre-checkpoint", map[string]any{
 				"error": err.Error(),
 			})
 		} else {
 			e.logCheckpoint("pre", goal.Name, "", preCheckpoint.StepID)
 		}
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(goal.Name, "commit", preCheckpoint)
-		}
+		e.hooks.Fire(ctx, hooks.SupervisionEvent, map[string]any{"step_id": goal.Name, "phase": "commit", "data": preCheckpoint})
 	}
 
 	// ============================================
@@ -1331,70 +1259,66 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 	if e.checkpointStore != nil && preCheckpoint != nil {
 		postCheckpoint = e.createPostCheckpoint(ctx, goal, preCheckpoint, output, toolsUsed)
 		if err := e.checkpointStore.SavePost(postCheckpoint); err != nil {
-			e.logger.Warn("failed to save post-checkpoint", map[string]interface{}{
+			e.logger.Warn("failed to save post-checkpoint", map[string]any{
 				"error": err.Error(),
 			})
 		} else {
 			e.logCheckpoint("post", goal.Name, "", postCheckpoint.StepID)
 		}
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(goal.Name, "execute", postCheckpoint)
-		}
+		e.hooks.Fire(ctx, hooks.SupervisionEvent, map[string]any{"step_id": goal.Name, "phase": "execute", "data": postCheckpoint})
 	}
 
 	// RECONCILE & SUPERVISE (only for supervised goals)
 	if supervised && e.supervisor != nil && preCheckpoint != nil && postCheckpoint != nil {
 		humanRequired := e.requiresHuman(goal)
 
-		// Scope the supervisor's goal context to this specific goal (interpolate in case of variable references)
-		e.supervisor.SetOriginalGoal(e.interpolate(goal.Outcome))
+		goalDescription := e.interpolate(goal.Outcome)
 		reconcileStart := time.Now()
 		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
 		reconcileDuration := time.Since(reconcileStart).Milliseconds()
 
 		if e.checkpointStore != nil {
 			if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
-				e.logger.Warn("failed to save reconcile result", map[string]interface{}{
+				e.logger.Warn("failed to save reconcile result", map[string]any{
 					"error": err.Error(),
 				})
 			}
 		}
 		e.logPhaseReconcile(goal.Name, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
 
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(goal.Name, "reconcile", reconcileResult)
-		}
+		e.hooks.Fire(ctx, hooks.SupervisionEvent, map[string]any{"step_id": goal.Name, "phase": "reconcile", "data": reconcileResult})
 
 		if reconcileResult.Supervise {
 			superviseStart := time.Now()
 			decisionTrail := e.checkpointStore.GetDecisionTrail()
 			superviseResult, superviseErr := e.supervisor.Supervise(
 				ctx,
-				preCheckpoint,
-				postCheckpoint,
-				reconcileResult.Triggers,
-				decisionTrail,
-				humanRequired,
+				supervision.SuperviseRequest{
+					OriginalGoal:  goalDescription,
+					Pre:           preCheckpoint,
+					Post:          postCheckpoint,
+					Triggers:      reconcileResult.Triggers,
+					DecisionTrail: decisionTrail,
+					HumanRequired: humanRequired,
+				},
 			)
 			superviseDuration := time.Since(superviseStart).Milliseconds()
 
 			if superviseErr != nil {
-				e.logger.Warn("supervision failed", map[string]interface{}{
+				e.logger.Warn("supervision failed", map[string]any{
 					"error": superviseErr.Error(),
 				})
 			} else {
 				if e.checkpointStore != nil {
 					if err := e.checkpointStore.SaveSupervise(superviseResult); err != nil {
-						e.logger.Warn("failed to save supervise result", map[string]interface{}{
+						e.logger.Warn("failed to save supervise result", map[string]any{
 							"error": err.Error(),
 						})
 					}
 				}
 				e.logPhaseSupervise(goal.Name, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, humanRequired, superviseDuration)
 
-				if e.OnSupervisionEvent != nil {
-					e.OnSupervisionEvent(goal.Name, "supervise", superviseResult)
-				}
+				e.hooks.Fire(ctx, hooks.SupervisionEvent, map[string]any{"step_id": goal.Name, "phase": "supervise", "data": superviseResult})
 
 				// Handle supervision verdict
 				if superviseResult.Verdict == "PAUSE" {
@@ -1490,9 +1414,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		if len(parts) == 2 {
 			output = parts[1]
 		}
-		if e.OnGoalComplete != nil {
-			e.OnGoalComplete(goal.Name, output)
-		}
+		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
 		e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
 		return output, nil
 	}
@@ -1514,15 +1436,11 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	})
 	e.recordLLMMetrics(resp, time.Since(synthStart))
 	if err != nil {
-		if e.OnLLMError != nil {
-			e.OnLLMError(err)
-		}
+		e.hooks.Fire(ctx, hooks.LLMError, map[string]any{"error": err})
 		return "", err
 	}
 
-	if e.OnGoalComplete != nil {
-		e.OnGoalComplete(goal.Name, resp.Content)
-	}
+	e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": resp.Content})
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", resp.Content)
 
 	return resp.Content, nil

@@ -1,10 +1,11 @@
-// Skill handling functions for the executor.
 package executor
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 
+	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agent/internal/skills"
 )
 
@@ -31,9 +32,7 @@ func (e *Executor) checkSkillActivation(content string) *skills.Skill {
 				return nil
 			}
 			e.loadedSkills[skillName] = skill
-			if e.OnSkillLoaded != nil {
-				e.OnSkillLoaded(skillName)
-			}
+			e.hooks.Fire(context.Background(), hooks.SkillLoaded, map[string]any{"name": skillName})
 			return skill
 		}
 	}

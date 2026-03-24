@@ -3,18 +3,10 @@ package main
 import (
 	"os"
 	"testing"
-
-	"github.com/alecthomas/kong"
 )
 
 func TestKeygenCmd_Default(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"keygen"})
+	cli, err := parseArgs([]string{"keygen"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,13 +17,7 @@ func TestKeygenCmd_Default(t *testing.T) {
 }
 
 func TestKeygenCmd_CustomOutput(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"keygen", "-o", "custom-key"})
+	cli, err := parseArgs([]string{"keygen", "-o", "custom-key"})
 	if err != nil {
 		t.Fatal(err)
 	}

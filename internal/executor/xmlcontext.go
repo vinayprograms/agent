@@ -1,4 +1,3 @@
-// Package executor provides workflow execution with XML-structured context.
 package executor
 
 import (

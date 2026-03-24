@@ -2,18 +2,10 @@ package main
 
 import (
 	"testing"
-
-	"github.com/alecthomas/kong"
 )
 
 func TestVerifyCmd_NoKey(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"verify", "package.agent"})
+	cli, err := parseArgs([]string{"verify", "package.agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,13 +19,7 @@ func TestVerifyCmd_NoKey(t *testing.T) {
 }
 
 func TestVerifyCmd_WithKey(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"verify", "package.agent", "--key", "key.pub"})
+	cli, err := parseArgs([]string{"verify", "package.agent", "--key", "key.pub"})
 	if err != nil {
 		t.Fatal(err)
 	}

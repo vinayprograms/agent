@@ -1,4 +1,3 @@
-// Tool execution functions for the executor.
 package executor
 
 import (
@@ -10,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agentkit/llm"
 )
 
@@ -61,7 +61,7 @@ func (e *Executor) applyToolTimeout(ctx context.Context, toolName string) (conte
 	return ctx, cancel
 }
 
-func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (interface{}, error) {
+func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (any, error) {
 	start := time.Now()
 	
 	// Get agent identity early for error callbacks
@@ -77,9 +77,7 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	relatedBlocks, err := e.verifyToolCall(ctx, tc.Name, tc.Args)
 	if err != nil {
 		e.logToolResult(ctx, tc.Name, tc.Args, "", nil, err, time.Since(start))
-		if e.OnToolError != nil {
-			e.OnToolError(tc.Name, tc.Args, err, agentID.Role)
-		}
+		e.hooks.Fire(ctx, hooks.ToolError, map[string]any{"name": tc.Name, "args": tc.Args, "error": err, "agent_role": agentID.Role})
 		return nil, err
 	}
 
@@ -119,9 +117,7 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 	if e.policy != nil && !e.policy.IsToolEnabled(tc.Name) {
 		err := fmt.Errorf("tool %s is not enabled by policy", tc.Name)
 		e.logToolResult(ctx, tc.Name, tc.Args, corrID, nil, err, time.Since(start))
-		if e.OnToolError != nil {
-			e.OnToolError(tc.Name, tc.Args, err, agentID.Role)
-		}
+		e.hooks.Fire(ctx, hooks.ToolError, map[string]any{"name": tc.Name, "args": tc.Args, "error": err, "agent_role": agentID.Role})
 		return nil, err
 	}
 
@@ -136,13 +132,11 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (in
 		e.registerUntrustedResult(ctx, tc.Name, result, relatedBlocks)
 	}
 
-	if err != nil && e.OnToolError != nil {
-		e.OnToolError(tc.Name, tc.Args, err, agentID.Role)
+	if err != nil {
+		e.hooks.Fire(ctx, hooks.ToolError, map[string]any{"name": tc.Name, "args": tc.Args, "error": err, "agent_role": agentID.Role})
 	}
 
-	if e.OnToolCall != nil {
-		e.OnToolCall(tc.Name, tc.Args, result, agentID.Role)
-	}
+	e.hooks.Fire(ctx, hooks.ToolCall, map[string]any{"name": tc.Name, "args": tc.Args, "result": result, "agent_role": agentID.Role})
 
 	return result, err
 }
@@ -157,7 +151,7 @@ func isExternalTool(name string) bool {
 }
 
 // registerUntrustedResult registers tool result as untrusted content block.
-func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string, result interface{}, relatedBlocks []string) {
+func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string, result any, relatedBlocks []string) {
 	if e.securityVerifier == nil {
 		return
 	}
@@ -358,7 +352,7 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 func (e *Executor) executeAsyncTool(ctx context.Context, tc llm.ToolCallResponse) {
 	defer func() {
 		if r := recover(); r != nil {
-			e.logger.Error("async tool panic", map[string]interface{}{
+			e.logger.Error("async tool panic", map[string]any{
 				"tool":  tc.Name,
 				"panic": fmt.Sprintf("%v", r),
 			})
@@ -367,7 +361,7 @@ func (e *Executor) executeAsyncTool(ctx context.Context, tc llm.ToolCallResponse
 
 	_, err := e.executeTool(ctx, tc)
 	if err != nil {
-		e.logger.Warn("async tool failed (non-blocking)", map[string]interface{}{
+		e.logger.Warn("async tool failed (non-blocking)", map[string]any{
 			"tool":  tc.Name,
 			"error": err.Error(),
 		})
@@ -375,7 +369,7 @@ func (e *Executor) executeAsyncTool(ctx context.Context, tc llm.ToolCallResponse
 }
 
 // executeMCPTool executes an MCP tool call.
-func (e *Executor) executeMCPTool(ctx context.Context, tc llm.ToolCallResponse) (interface{}, error) {
+func (e *Executor) executeMCPTool(ctx context.Context, tc llm.ToolCallResponse) (any, error) {
 	if e.mcpManager == nil {
 		return nil, fmt.Errorf("no MCP manager configured")
 	}
@@ -392,7 +386,7 @@ func (e *Executor) executeMCPTool(ctx context.Context, tc llm.ToolCallResponse) 
 	if e.policy != nil {
 		allowed, reason, warning := e.policy.CheckMCPTool(server, toolName)
 		if warning != "" {
-			e.logger.SecurityWarning(warning, map[string]interface{}{
+			e.logger.SecurityWarning(warning, map[string]any{
 				"server": server,
 				"tool":   toolName,
 			})
@@ -407,9 +401,7 @@ func (e *Executor) executeMCPTool(ctx context.Context, tc llm.ToolCallResponse) 
 		return nil, err
 	}
 
-	if e.OnMCPToolCall != nil {
-		e.OnMCPToolCall(server, toolName, tc.Args, result)
-	}
+	e.hooks.Fire(ctx, hooks.MCPToolCall, map[string]any{"server": server, "tool": toolName, "args": tc.Args, "result": result})
 
 	// Extract text content
 	var output strings.Builder

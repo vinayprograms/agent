@@ -1,4 +1,3 @@
-// Package checkpoint provides checkpoint creation and management for supervised execution.
 package checkpoint
 
 import (
@@ -84,8 +83,12 @@ type Decision struct {
 type Store struct {
 	dir         string
 	checkpoints map[string]*Checkpoint
+	order       []string // tracks insertion order of step IDs
 	mu          sync.RWMutex
 }
+
+// Verify Store implements CheckpointStore.
+var _ CheckpointStore = (*Store)(nil)
 
 // NewStore creates a new checkpoint store.
 func NewStore(dir string) (*Store, error) {
@@ -105,6 +108,7 @@ func (s *Store) SavePre(cp *PreCheckpoint) error {
 
 	if _, ok := s.checkpoints[cp.StepID]; !ok {
 		s.checkpoints[cp.StepID] = &Checkpoint{}
+		s.order = append(s.order, cp.StepID)
 	}
 	s.checkpoints[cp.StepID].Pre = cp
 
@@ -118,6 +122,7 @@ func (s *Store) SavePost(cp *PostCheckpoint) error {
 
 	if _, ok := s.checkpoints[cp.StepID]; !ok {
 		s.checkpoints[cp.StepID] = &Checkpoint{}
+		s.order = append(s.order, cp.StepID)
 	}
 	s.checkpoints[cp.StepID].Post = cp
 
@@ -131,6 +136,7 @@ func (s *Store) SaveReconcile(r *ReconcileResult) error {
 
 	if _, ok := s.checkpoints[r.StepID]; !ok {
 		s.checkpoints[r.StepID] = &Checkpoint{}
+		s.order = append(s.order, r.StepID)
 	}
 	s.checkpoints[r.StepID].Reconcile = r
 
@@ -144,6 +150,7 @@ func (s *Store) SaveSupervise(r *SuperviseResult) error {
 
 	if _, ok := s.checkpoints[r.StepID]; !ok {
 		s.checkpoints[r.StepID] = &Checkpoint{}
+		s.order = append(s.order, r.StepID)
 	}
 	s.checkpoints[r.StepID].Supervise = r
 
@@ -157,14 +164,16 @@ func (s *Store) Get(stepID string) *Checkpoint {
 	return s.checkpoints[stepID]
 }
 
-// GetDecisionTrail returns all checkpoints in order for audit.
+// GetDecisionTrail returns all checkpoints in chronological order.
 func (s *Store) GetDecisionTrail() []*Checkpoint {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var trail []*Checkpoint
-	for _, cp := range s.checkpoints {
-		trail = append(trail, cp)
+	trail := make([]*Checkpoint, 0, len(s.order))
+	for _, id := range s.order {
+		if cp, ok := s.checkpoints[id]; ok {
+			trail = append(trail, cp)
+		}
 	}
 	return trail
 }
@@ -213,6 +222,7 @@ func (s *Store) Load() error {
 		// Extract step ID from filename
 		stepID := entry.Name()[:len(entry.Name())-5] // remove .json
 		s.checkpoints[stepID] = &cp
+		s.order = append(s.order, stepID)
 	}
 
 	return nil

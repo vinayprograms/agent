@@ -1,4 +1,3 @@
-// Package executor provides workflow execution.
 package executor
 
 import (

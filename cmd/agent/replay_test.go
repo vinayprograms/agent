@@ -2,18 +2,10 @@ package main
 
 import (
 	"testing"
-
-	"github.com/alecthomas/kong"
 )
 
 func TestReplayCmd_Basic(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"replay", "session.json"})
+	cli, err := parseArgs([]string{"replay", "session.json"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,13 +19,7 @@ func TestReplayCmd_Basic(t *testing.T) {
 }
 
 func TestReplayCmd_Verbose(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"replay", "-v", "session.json"})
+	cli, err := parseArgs([]string{"replay", "-v", "session.json"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,13 +30,7 @@ func TestReplayCmd_Verbose(t *testing.T) {
 }
 
 func TestReplayCmd_VeryVerbose(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"replay", "-vv", "session.json"})
+	cli, err := parseArgs([]string{"replay", "-vv", "session.json"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,13 +41,7 @@ func TestReplayCmd_VeryVerbose(t *testing.T) {
 }
 
 func TestReplayCmd_NoPager(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"replay", "--no-pager", "session.json"})
+	cli, err := parseArgs([]string{"replay", "--no-pager", "session.json"})
 	if err != nil {
 		t.Fatal(err)
 	}

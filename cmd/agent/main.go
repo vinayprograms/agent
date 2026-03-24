@@ -1,4 +1,4 @@
-// Package main is the entry point for the headless agent CLI.
+// Package main is the headless agent CLI: load credentials, parse CLI, dispatch.
 package main
 
 import (
@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/alecthomas/kong"
 	"github.com/joho/godotenv"
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agentkit/credentials"
@@ -39,15 +38,11 @@ func init() {
 }
 
 func main() {
-	var cli CLI
-	ctx := kong.Parse(&cli,
-		kong.Name("agent"),
-		kong.Description("Headless agent for running AI workflows"),
-		kong.UsageOnError(),
-		kong.Vars{"version": version},
-	)
-	err := ctx.Run(&runContext{creds: globalCreds})
-	ctx.FatalIfErrorf(err)
+	root, _ := newRootCmd()
+	if err := root.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // runContext provides shared dependencies to commands.

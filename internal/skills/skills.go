@@ -1,5 +1,6 @@
-// Package skills provides Agent Skills (agentskills.io) support.
-// Skills are folders containing SKILL.md with instructions for agents.
+// Package skills discovers and loads agent skills from the filesystem.
+// Each skill is a folder containing a SKILL.md with instructions that
+// get injected into agent context on activation.
 package skills
 
 import (

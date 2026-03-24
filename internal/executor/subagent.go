@@ -1,4 +1,3 @@
-// Sub-agent spawning and execution functions for the executor.
 package executor
 
 import (
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vinayprograms/agent/internal/checkpoint"
+	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/supervision"
 	"github.com/vinayprograms/agentkit/llm"
@@ -53,130 +53,57 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	userPrompt := BuildTaskContext(role, e.currentGoal, taskDescription)
 
 	// Log the spawn
-	if e.OnSubAgentStart != nil {
-		e.OnSubAgentStart(role, map[string]string{"task": task})
-	}
+	e.hooks.Fire(ctx, hooks.SubAgentStart, map[string]any{"name": role, "input": map[string]string{"task": task}})
 
 	// Sub-agents inherit supervision from their parent goal
-	// Only supervise if: parent goal is supervised AND supervision infrastructure is available
-	supervised := e.currentGoalSupervised && e.supervisor != nil && e.checkpointStore != nil
+	supervised := e.currentGoalSupervised
 
-	// ============================================
-	// PHASE 1: COMMIT - Sub-agent declares intent
-	// ============================================
-	var preCheckpoint *checkpoint.PreCheckpoint
-	if supervised {
-		preCheckpoint = e.subAgentCommitPhase(ctx, role, task)
-		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
-			e.logger.Warn("failed to save sub-agent pre-checkpoint", map[string]interface{}{
-				"role":  role,
-				"error": err.Error(),
-			})
-		} else {
-			e.logCheckpoint("pre", role, "", preCheckpoint.StepID)
-		}
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(role, "commit", preCheckpoint)
-		}
-	}
-
-	// ============================================
-	// PHASE 2: EXECUTE - Sub-agent does the work
-	// ============================================
-	output, toolsUsed, err := e.subAgentExecutePhase(ctx, role, systemPrompt, userPrompt)
+	// Run through the supervision pipeline
+	pipelineResult, err := e.getPipeline().Run(
+		ctx,
+		supervision.PipelineRequest{
+			StepID:        fmt.Sprintf("subagent:%s", role),
+			GoalName:      e.goalOutcome(e.currentGoal),
+			Supervised:    supervised,
+			HumanRequired: false, // Dynamic sub-agents don't require human approval
+		},
+		// COMMIT
+		func(ctx context.Context) *checkpoint.PreCheckpoint {
+			return e.subAgentCommitPhase(ctx, role, task)
+		},
+		// EXECUTE
+		func(ctx context.Context) (*supervision.ExecuteResult, error) {
+			output, toolsUsed, err := e.subAgentExecutePhaseWithProvider(ctx, e.provider, role, systemPrompt, userPrompt)
+			return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
+		},
+		// POST-CHECKPOINT
+		func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
+			return e.subAgentPostCheckpoint(ctx, role, pre, output, toolsUsed)
+		},
+	)
 	if err != nil {
 		return "", err
 	}
 
-	// ============================================
-	// PHASE 3 & 4: RECONCILE & SUPERVISE
-	// ============================================
-	if supervised && preCheckpoint != nil {
-		// Create post-checkpoint with self-assessment
-		postCheckpoint := e.subAgentPostCheckpoint(ctx, role, preCheckpoint, output, toolsUsed)
-		if err := e.checkpointStore.SavePost(postCheckpoint); err != nil {
-			e.logger.Warn("failed to save sub-agent post-checkpoint", map[string]interface{}{
-				"role":  role,
-				"error": err.Error(),
-			})
-		} else {
-			e.logCheckpoint("post", role, "", postCheckpoint.StepID)
+	output := pipelineResult.Output
+
+	// Handle supervision verdict
+	switch pipelineResult.Verdict {
+	case supervision.VerdictReorient:
+		e.logger.Info("reorienting sub-agent execution", map[string]any{
+			"role":       role,
+			"correction": pipelineResult.Correction,
+		})
+		correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, pipelineResult.Correction)
+		output, _, err = e.subAgentExecutePhaseWithProvider(ctx, e.provider, role, systemPrompt, correctedTask)
+		if err != nil {
+			return "", err
 		}
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(role, "execute", postCheckpoint)
-		}
-
-		// RECONCILE: Static pattern checks
-		reconcileStart := time.Now()
-		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
-		reconcileDuration := time.Since(reconcileStart).Milliseconds()
-
-		if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
-			e.logger.Warn("failed to save sub-agent reconcile result", map[string]interface{}{
-				"role":  role,
-				"error": err.Error(),
-			})
-		}
-		e.logPhaseReconcile(role, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
-
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(role, "reconcile", reconcileResult)
-		}
-
-		// SUPERVISE: LLM evaluation (only if reconcile triggered)
-		if reconcileResult.Supervise {
-			superviseStart := time.Now()
-			decisionTrail := e.checkpointStore.GetDecisionTrail()
-			superviseResult, err := e.supervisor.Supervise(
-				ctx,
-				preCheckpoint,
-				postCheckpoint,
-				reconcileResult.Triggers,
-				decisionTrail,
-				false, // Sub-agents don't require human approval
-			)
-			superviseDuration := time.Since(superviseStart).Milliseconds()
-
-			if err != nil {
-				return "", fmt.Errorf("sub-agent supervision failed: %w", err)
-			}
-
-			if err := e.checkpointStore.SaveSupervise(superviseResult); err != nil {
-				e.logger.Warn("failed to save sub-agent supervise result", map[string]interface{}{
-					"role":  role,
-					"error": err.Error(),
-				})
-			}
-			e.logPhaseSupervise(role, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, false, superviseDuration)
-
-			if e.OnSupervisionEvent != nil {
-				e.OnSupervisionEvent(role, "supervise", superviseResult)
-			}
-
-			// Handle verdict
-			switch supervision.Verdict(superviseResult.Verdict) {
-			case supervision.VerdictReorient:
-				// Re-execute with correction in XML format
-				e.logger.Info("reorienting sub-agent execution", map[string]interface{}{
-					"role":       role,
-					"correction": superviseResult.Correction,
-				})
-				correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, superviseResult.Correction)
-				output, _, err = e.subAgentExecutePhase(ctx, role, systemPrompt, correctedTask)
-				if err != nil {
-					return "", err
-				}
-
-			case supervision.VerdictPause:
-				// Sub-agents don't support human intervention - fail gracefully
-				return "", fmt.Errorf("sub-agent %s paused by supervisor: %s", role, superviseResult.Question)
-			}
-		}
+	case supervision.VerdictPause:
+		return "", fmt.Errorf("sub-agent %s paused by supervisor: %s", role, pipelineResult.Question)
 	}
 
-	if e.OnSubAgentComplete != nil {
-		e.OnSubAgentComplete(role, output)
-	}
+	e.hooks.Fire(ctx, hooks.SubAgentComplete, map[string]any{"name": role, "output": output})
 	e.extractAndStoreObservations(ctx, role, "AGENT", output)
 	return output, nil
 }
@@ -233,9 +160,7 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	}
 	e.logSubAgentStart(role, role, profile, task, inputs)
 
-	if e.OnSubAgentStart != nil {
-		e.OnSubAgentStart(role, map[string]string{"task": task})
-	}
+	e.hooks.Fire(ctx, hooks.SubAgentStart, map[string]any{"name": role, "input": map[string]string{"task": task}})
 
 	// Track active sub-agent count for metrics
 	count := atomic.AddInt32(&e.activeSubAgents, 1)
@@ -250,110 +175,50 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	}()
 
 	// Agent is supervised if: agent has SUPERVISED flag OR parent goal is supervised
-	// Infrastructure must also be available (supervisor + checkpoint store)
-	supervised := (agentSupervised || e.currentGoalSupervised) && e.supervisor != nil && e.checkpointStore != nil
+	supervised := agentSupervised || e.currentGoalSupervised
 
-	// PHASE 1: COMMIT
-	var preCheckpoint *checkpoint.PreCheckpoint
-	if supervised {
-		preCheckpoint = e.subAgentCommitPhase(ctx, role, task)
-		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
-			e.logger.Warn("failed to save sub-agent pre-checkpoint", map[string]interface{}{
-				"role":  role,
-				"error": err.Error(),
-			})
-		} else {
-			e.logCheckpoint("pre", role, "", preCheckpoint.StepID)
-		}
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(role, "commit", preCheckpoint)
-		}
-	}
-
-	// PHASE 2: EXECUTE (using the specified provider)
-	output, toolsUsed, err := e.subAgentExecutePhaseWithProvider(ctx, provider, role, systemPrompt, userPrompt)
+	// Run through the supervision pipeline
+	pipelineResult, err := e.getPipeline().Run(
+		ctx,
+		supervision.PipelineRequest{
+			StepID:        fmt.Sprintf("subagent:%s", role),
+			GoalName:      e.goalOutcome(e.currentGoal),
+			Supervised:    supervised,
+			HumanRequired: false,
+		},
+		// COMMIT
+		func(ctx context.Context) *checkpoint.PreCheckpoint {
+			return e.subAgentCommitPhase(ctx, role, task)
+		},
+		// EXECUTE
+		func(ctx context.Context) (*supervision.ExecuteResult, error) {
+			output, toolsUsed, err := e.subAgentExecutePhaseWithProvider(ctx, provider, role, systemPrompt, userPrompt)
+			return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
+		},
+		// POST-CHECKPOINT
+		func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
+			return e.subAgentPostCheckpoint(ctx, role, pre, output, toolsUsed)
+		},
+	)
 	if err != nil {
 		return "", err
 	}
 
-	// PHASE 3 & 4: RECONCILE & SUPERVISE (same as spawnDynamicAgent)
-	if supervised && preCheckpoint != nil {
-		postCheckpoint := e.subAgentPostCheckpoint(ctx, role, preCheckpoint, output, toolsUsed)
-		if err := e.checkpointStore.SavePost(postCheckpoint); err != nil {
-			e.logger.Warn("failed to save sub-agent post-checkpoint", map[string]interface{}{
-				"role":  role,
-				"error": err.Error(),
-			})
-		} else {
-			e.logCheckpoint("post", role, "", postCheckpoint.StepID)
+	output := pipelineResult.Output
+
+	// Handle supervision verdict
+	switch pipelineResult.Verdict {
+	case supervision.VerdictReorient:
+		correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, pipelineResult.Correction)
+		output, _, err = e.subAgentExecutePhaseWithProvider(ctx, provider, role, systemPrompt, correctedTask)
+		if err != nil {
+			return "", err
 		}
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(role, "execute", postCheckpoint)
-		}
-
-		// Scope the supervisor's goal context to the goal that owns this agent
-		e.supervisor.SetOriginalGoal(e.goalOutcome(e.currentGoal))
-		reconcileStart := time.Now()
-		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
-		reconcileDuration := time.Since(reconcileStart).Milliseconds()
-
-		if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
-			e.logger.Warn("failed to save sub-agent reconcile result", map[string]interface{}{
-				"role":  role,
-				"error": err.Error(),
-			})
-		}
-		e.logPhaseReconcile(role, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
-
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(role, "reconcile", reconcileResult)
-		}
-
-		if reconcileResult.Supervise {
-			superviseStart := time.Now()
-			decisionTrail := e.checkpointStore.GetDecisionTrail()
-			superviseResult, err := e.supervisor.Supervise(
-				ctx,
-				preCheckpoint,
-				postCheckpoint,
-				reconcileResult.Triggers,
-				decisionTrail,
-				false,
-			)
-			superviseDuration := time.Since(superviseStart).Milliseconds()
-
-			if err != nil {
-				return "", fmt.Errorf("sub-agent supervision failed: %w", err)
-			}
-
-			if err := e.checkpointStore.SaveSupervise(superviseResult); err != nil {
-				e.logger.Warn("failed to save sub-agent supervise result", map[string]interface{}{
-					"role":  role,
-					"error": err.Error(),
-				})
-			}
-			e.logPhaseSupervise(role, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, false, superviseDuration)
-
-			if e.OnSupervisionEvent != nil {
-				e.OnSupervisionEvent(role, "supervise", superviseResult)
-			}
-
-			switch supervision.Verdict(superviseResult.Verdict) {
-			case supervision.VerdictReorient:
-				correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, superviseResult.Correction)
-				output, _, err = e.subAgentExecutePhaseWithProvider(ctx, provider, role, systemPrompt, correctedTask)
-				if err != nil {
-					return "", err
-				}
-			case supervision.VerdictPause:
-				return "", fmt.Errorf("sub-agent %s paused by supervisor: %s", role, superviseResult.Question)
-			}
-		}
+	case supervision.VerdictPause:
+		return "", fmt.Errorf("sub-agent %s paused by supervisor: %s", role, pipelineResult.Question)
 	}
 
-	if e.OnSubAgentComplete != nil {
-		e.OnSubAgentComplete(role, output)
-	}
+	e.hooks.Fire(ctx, hooks.SubAgentComplete, map[string]any{"name": role, "output": output})
 	e.extractAndStoreObservations(ctx, role, "AGENT", output)
 	return output, nil
 }
@@ -404,7 +269,7 @@ func (e *Executor) subAgentExecutePhaseWithProvider(ctx context.Context, provide
 	for {
 		turn++
 		if turn > maxSubAgentTurns {
-			e.logger.Warn("sub-agent hit turn limit", map[string]interface{}{
+			e.logger.Warn("sub-agent hit turn limit", map[string]any{
 				"role":  role,
 				"turns": maxSubAgentTurns,
 			})
@@ -496,7 +361,7 @@ Respond with a JSON object:
 	}
 
 	if err != nil {
-		e.logger.Warn("sub-agent commit phase LLM error", map[string]interface{}{"role": role, "error": err.Error()})
+		e.logger.Warn("sub-agent commit phase LLM error", map[string]any{"role": role, "error": err.Error()})
 		pre.Confidence = "low"
 		pre.Assumptions = []string{"Failed to get commitment from sub-agent"}
 		e.logger.PhaseComplete("COMMIT", role, stepID, time.Since(start), "error")
@@ -537,95 +402,6 @@ Respond with a JSON object:
 	e.logger.PhaseComplete("COMMIT", role, stepID, time.Since(start), "ok")
 
 	return pre
-}
-
-// subAgentExecutePhase runs the sub-agent execution loop.
-func (e *Executor) subAgentExecutePhase(ctx context.Context, role, systemPrompt, userPrompt string) (output string, toolsUsed []string, err error) {
-	start := time.Now()
-	stepID := fmt.Sprintf("subagent:%s", role)
-	e.logger.PhaseStart("EXECUTE", role, stepID)
-
-	messages := []llm.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: userPrompt},
-	}
-
-	// Build tool definitions (excluding spawn_agent and spawn_agents to enforce depth=1)
-	var toolDefs []llm.ToolDef
-	for _, def := range e.registry.Definitions() {
-		if def.Name != "spawn_agent" && def.Name != "spawn_agents" {
-			toolDefs = append(toolDefs, llm.ToolDef{
-				Name:        def.Name,
-				Description: def.Description,
-				Parameters:  def.Parameters,
-			})
-		}
-	}
-
-	// Add MCP tools
-	if e.mcpManager != nil {
-		for _, t := range e.mcpManager.AllTools() {
-			toolDefs = append(toolDefs, llm.ToolDef{
-				Name:        fmt.Sprintf("mcp_%s_%s", t.Server, t.Tool.Name),
-				Description: fmt.Sprintf("[MCP:%s] %s", t.Server, t.Tool.Description),
-				Parameters:  t.Tool.InputSchema,
-			})
-		}
-	}
-
-	toolsUsedMap := make(map[string]bool)
-
-	// Sub-agent turn limit to prevent infinite loops.
-	const maxSubAgentTurns = 30
-	turn := 0
-
-	// Execute sub-agent loop
-	for {
-		turn++
-		if turn > maxSubAgentTurns {
-			e.logger.Warn("sub-agent hit turn limit", map[string]interface{}{
-				"role":  role,
-				"turns": maxSubAgentTurns,
-			})
-			for tool := range toolsUsedMap {
-				toolsUsed = append(toolsUsed, tool)
-			}
-			return "Sub-agent reached maximum turn limit. Returning partial results.", toolsUsed, nil
-		}
-		resp, err := e.provider.Chat(ctx, llm.ChatRequest{
-			Messages: messages,
-			Tools:    toolDefs,
-		})
-		if err != nil {
-			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "error")
-			return "", nil, fmt.Errorf("sub-agent LLM error: %w", err)
-		}
-
-		// No tool calls = sub-agent complete
-		if len(resp.ToolCalls) == 0 {
-			for tool := range toolsUsedMap {
-				toolsUsed = append(toolsUsed, tool)
-			}
-			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "complete")
-			return resp.Content, toolsUsed, nil
-		}
-
-		// Track tools used
-		for _, tc := range resp.ToolCalls {
-			toolsUsedMap[tc.Name] = true
-		}
-
-		// Add assistant message with tool calls
-		messages = append(messages, llm.Message{
-			Role:      "assistant",
-			Content:   resp.Content,
-			ToolCalls: resp.ToolCalls,
-		})
-
-		// Execute tool calls in parallel (security verification happens in executeTool)
-		toolMessages := e.executeToolsParallel(ctx, resp.ToolCalls)
-		messages = append(messages, toolMessages...)
-	}
 }
 
 // subAgentPostCheckpoint creates a post-checkpoint with self-assessment for sub-agents.
@@ -670,7 +446,7 @@ Respond with a JSON object:
 	}
 
 	if err != nil {
-		e.logger.Warn("sub-agent post-checkpoint LLM error", map[string]interface{}{"role": role, "error": err.Error()})
+		e.logger.Warn("sub-agent post-checkpoint LLM error", map[string]any{"role": role, "error": err.Error()})
 		post.MetCommitment = false
 		post.Concerns = []string{"Failed to get self-assessment from sub-agent"}
 		return post
@@ -818,5 +594,3 @@ EXAMPLES:
 The search uses KEYWORDS (BM25) — use distinctive terms, not sentences.
 
 `
-
-// Run executes the workflow.

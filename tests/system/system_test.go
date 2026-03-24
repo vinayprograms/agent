@@ -267,9 +267,10 @@ func TestSystem_UnknownCommand(t *testing.T) {
 	srcDir := getSrcDir(t); cmd.Dir = srcDir
 	output, _ := cmd.CombinedOutput()
 
-	// Kong reports unknown commands as "unexpected argument"
-	if !strings.Contains(string(output), "unexpected argument") {
-		t.Errorf("expected 'unexpected argument' error, got: %s", output)
+	// Cobra reports unknown commands as "unknown command"
+	out := string(output)
+	if !strings.Contains(out, "unknown command") && !strings.Contains(out, "unexpected argument") {
+		t.Errorf("expected unknown command error, got: %s", out)
 	}
 }
 

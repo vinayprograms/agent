@@ -1,4 +1,5 @@
-// Package main provides runtime execution for workflows.
+// Runtime execution: setup reads as a checklist (provider, registry, memory,
+// telemetry, executor), then run dispatches the workflow.
 package main
 
 import (
@@ -7,13 +8,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/checkpoint"
 	"github.com/vinayprograms/agent/internal/config"
 	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agent/internal/session"
+	"github.com/vinayprograms/agent/internal/supervision"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/mcp"
@@ -109,14 +113,9 @@ func (rt *runtime) setup() error {
 	if err := rt.setupTelemetry(); err != nil {
 		return err
 	}
-	rt.createExecutor()
-	rt.setupMCP()
-	if err := rt.setupSession(); err != nil {
+	if err := rt.createExecutor(); err != nil {
 		return err
 	}
-	rt.setupSecurity()
-	rt.setupSupervision()
-	rt.setupObservations()
 	rt.setupCallbacks()
 	return nil
 }
@@ -186,7 +185,7 @@ func (rt *runtime) setupRegistry() {
 		fmt.Println("⚠️  bash enabled by policy")
 		rt.setupBashChecker()
 		if rt.smallLLM != nil {
-			rt.bashLLMChecker = policy.NewSmallLLMChecker(&llmGenerateAdapter{rt.smallLLM})
+			rt.bashLLMChecker = policy.NewSmallLLMChecker(policy.LLMProviderFromChatProvider(rt.smallLLM))
 			rt.registry.SetBashLLMChecker(rt.bashLLMChecker)
 		}
 	}
@@ -223,7 +222,7 @@ func (rt *runtime) setupMemory() error {
 	}
 	rt.addCloser(func() { rt.bleveStore.Close() })
 	semanticMemory := memory.NewToolsAdapter(rt.bleveStore)
-	rt.registry.SetSemanticMemory(&semanticMemoryBridge{semanticMemory})
+	rt.registry.SetSemanticMemory(semanticMemory)
 
 	fmt.Println("🧠 Memory: scratchpad (session) + BM25 (persistent)")
 	return nil
@@ -277,26 +276,143 @@ func (rt *runtime) setupTelemetry() error {
 	return nil
 }
 
-// createExecutor creates the workflow executor.
-func (rt *runtime) createExecutor() {
-	// Create a profile-aware provider factory
+// createExecutor builds an executor.Config, wiring up MCP, session, security,
+// supervision, and observations, then creates the executor in one shot.
+func (rt *runtime) createExecutor() error {
+	// --- MCP ---
+	var mcpMgr *mcp.Manager
+	if len(rt.cfg.MCP.Servers) > 0 {
+		mcpMgr = mcp.NewManager()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		for name, serverCfg := range rt.cfg.MCP.Servers {
+			err := mcpMgr.Connect(ctx, name, mcp.ServerConfig{
+				Command: serverCfg.Command,
+				Args:    serverCfg.Args,
+				Env:     serverCfg.Env,
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to connect MCP server %q: %v\n", name, err)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "✓ Connected MCP server: %s\n", name)
+			if len(serverCfg.DeniedTools) > 0 {
+				mcpMgr.SetDeniedTools(name, serverCfg.DeniedTools)
+				fmt.Fprintf(os.Stderr, "  └─ Denied %d tools\n", len(serverCfg.DeniedTools))
+			}
+		}
+		rt.mcpManager = mcpMgr
+		rt.addCloser(func() { mcpMgr.Close() })
+	}
+
+	// --- Session ---
+	rt.sessionMgr = session.NewFileManager(rt.sessionPath)
+	var err error
+	rt.sess, err = rt.sessionMgr.Create(rt.wf.Name)
+	if err != nil {
+		return fmt.Errorf("creating session: %w", err)
+	}
+
+	// --- Security ---
+	var secVerifier *security.Verifier
+	var secResearchScope string
+	mode, scope, userTrust := rt.determineSecurityConfig()
+	triageProvider := rt.createTriageProvider()
+
+	verifier, verErr := security.NewVerifier(security.Config{
+		Mode:               mode,
+		ResearchScope:      scope,
+		UserTrust:          userTrust,
+		TriageProvider:     triageProvider,
+		SupervisorProvider: rt.provider,
+	}, rt.sess.ID)
+	if verErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to create security verifier: %v\n", verErr)
+	} else {
+		secVerifier = verifier
+		rt.secVerifier = verifier
+		rt.addCloser(func() { verifier.Destroy() })
+
+		if mode == security.ModeResearch {
+			fmt.Fprintf(os.Stderr, "🔓 Security: mode=research, scope=%q\n", scope)
+			secResearchScope = scope
+			if rt.bashLLMChecker != nil {
+				rt.bashLLMChecker.SetSecurityScope(scope)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "🔒 Security: mode=%s, user_trust=%s\n", mode, userTrust)
+		}
+	}
+
+	// --- Supervision ---
+	var checkpointStore checkpoint.CheckpointStore
+	var supervisor supervision.Supervisor
+	if rt.wf.HasSupervisedGoals() {
+		checkpointDir := filepath.Join(rt.sessionPath, "checkpoints", rt.sess.ID)
+		cs, csErr := checkpoint.NewStore(checkpointDir)
+		if csErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to create checkpoint store: %v\n", csErr)
+		} else {
+			checkpointStore = cs
+			supervisor = supervision.NewLLMSupervisor(supervision.Config{
+				Provider: rt.provider,
+			})
+			fmt.Fprintf(os.Stderr, "👁 Supervision: enabled (four-phase execution)\n")
+		}
+	}
+
+	// --- Observation extraction ---
+	var obsExtractor executor.ObservationExtractor
+	var obsStore executor.ObservationStore
+	if rt.smallLLM != nil && rt.bleveStore != nil {
+		obsExtractor = memory.NewObservationExtractor(rt.smallLLM)
+		obsStore = memory.NewBleveObservationStore(rt.bleveStore)
+		fmt.Fprintf(os.Stderr, "🔍 Observations: enabled (extracting insights after each step)\n")
+	}
+
+	// --- Workspace context ---
+	var wsCtx string
+	workspace := rt.cfg.Agent.Workspace
+	if wc := executor.BuildWorkspaceContext(workspace); wc != "" {
+		wsCtx = wc
+		fmt.Fprintf(os.Stderr, "📂 Workspace context: %s\n", workspace)
+	}
+
+	// --- Provider factory ---
 	factory := &profileProviderFactory{
 		cfg:      rt.cfg,
 		creds:    rt.creds,
 		fallback: rt.provider,
 	}
-	rt.exec = executor.NewExecutorWithFactory(rt.wf, factory, rt.registry, rt.pol)
-	rt.exec.SetDebug(rt.debug)
-	rt.exec.SetTimeouts(rt.cfg.Timeouts.MCP, rt.cfg.Timeouts.WebSearch, rt.cfg.Timeouts.WebFetch)
 
-	// Inject workspace context into system prompt so agents skip discovery
-	workspace := rt.cfg.Agent.Workspace
-	if wsCtx := executor.BuildWorkspaceContext(workspace); wsCtx != "" {
-		rt.exec.SetWorkspaceContext(wsCtx)
-		fmt.Fprintf(os.Stderr, "📂 Workspace context: %s\n", workspace)
+	// --- Build Config & create executor ---
+	cfg := executor.Config{
+		Workflow:              rt.wf,
+		ProviderFactory:       factory,
+		Registry:              rt.registry,
+		Policy:                rt.pol,
+		Debug:                 rt.debug,
+		MCPManager:            mcpMgr,
+		Session:               rt.sess,
+		SessionManager:        rt.sessionMgr,
+		SecurityVerifier:      secVerifier,
+		SecurityResearchScope: secResearchScope,
+		TimeoutMCP:            rt.cfg.Timeouts.MCP,
+		TimeoutWebSearch:      rt.cfg.Timeouts.WebSearch,
+		TimeoutWebFetch:       rt.cfg.Timeouts.WebFetch,
+		CheckpointStore:       checkpointStore,
+		Supervisor:            supervisor,
+		ObservationExtractor:  obsExtractor,
+		ObservationStore:      obsStore,
+		WorkspaceContext:      wsCtx,
 	}
+	rt.exec = executor.New(cfg)
 
-	// Set HTTP client timeout to max of configured timeouts (context handles per-request)
+	// Wire bash security callback (needs exec reference)
+	rt.registry.SetBashSecurityCallback(rt.exec.LogBashSecurity)
+
+	// Set HTTP client timeout to max of configured timeouts
 	maxTimeout := rt.cfg.Timeouts.MCP
 	if rt.cfg.Timeouts.WebSearch > maxTimeout {
 		maxTimeout = rt.cfg.Timeouts.WebSearch
@@ -307,10 +423,13 @@ func (rt *runtime) createExecutor() {
 	if maxTimeout > 0 {
 		tools.SetHTTPTimeout(time.Duration(maxTimeout) * time.Second)
 	}
+
+	return nil
 }
 
 // profileProviderFactory creates providers based on capability profiles.
 type profileProviderFactory struct {
+	mu       sync.Mutex
 	cfg      *config.Config
 	creds    *credentials.Credentials
 	fallback llm.Provider
@@ -318,10 +437,14 @@ type profileProviderFactory struct {
 }
 
 // GetProvider returns a provider for the given profile name.
+// It is safe for concurrent use by multiple goroutines (e.g. sub-agents).
 func (f *profileProviderFactory) GetProvider(profile string) (llm.Provider, error) {
 	if profile == "" {
 		return f.fallback, nil
 	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	if f.cache != nil {
 		if cached, ok := f.cache[profile]; ok {
@@ -359,82 +482,6 @@ func (f *profileProviderFactory) GetProvider(profile string) (llm.Provider, erro
 	f.cache[profile] = provider
 
 	return provider, nil
-}
-
-// setupMCP initializes MCP servers.
-func (rt *runtime) setupMCP() {
-	if len(rt.cfg.MCP.Servers) == 0 {
-		return
-	}
-
-	rt.mcpManager = mcp.NewManager()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	for name, serverCfg := range rt.cfg.MCP.Servers {
-		err := rt.mcpManager.Connect(ctx, name, mcp.ServerConfig{
-			Command: serverCfg.Command,
-			Args:    serverCfg.Args,
-			Env:     serverCfg.Env,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to connect MCP server %q: %v\n", name, err)
-			continue
-		}
-		fmt.Fprintf(os.Stderr, "✓ Connected MCP server: %s\n", name)
-		if len(serverCfg.DeniedTools) > 0 {
-			rt.mcpManager.SetDeniedTools(name, serverCfg.DeniedTools)
-			fmt.Fprintf(os.Stderr, "  └─ Denied %d tools\n", len(serverCfg.DeniedTools))
-		}
-	}
-	rt.exec.SetMCPManager(rt.mcpManager)
-	rt.addCloser(func() { rt.mcpManager.Close() })
-}
-
-// setupSession creates the session and session manager.
-func (rt *runtime) setupSession() error {
-	rt.sessionMgr = session.NewFileManager(rt.sessionPath)
-	var err error
-	rt.sess, err = rt.sessionMgr.Create(rt.wf.Name)
-	if err != nil {
-		return fmt.Errorf("creating session: %w", err)
-	}
-	rt.exec.SetSession(rt.sess, rt.sessionMgr)
-	rt.registry.SetBashSecurityCallback(rt.exec.LogBashSecurity)
-	return nil
-}
-
-// setupSecurity configures the security verifier.
-func (rt *runtime) setupSecurity() {
-	mode, scope, userTrust := rt.determineSecurityConfig()
-	triageProvider := rt.createTriageProvider()
-
-	verifier, err := security.NewVerifier(security.Config{
-		Mode:               mode,
-		ResearchScope:      scope,
-		UserTrust:          userTrust,
-		TriageProvider:     triageProvider,
-		SupervisorProvider: rt.provider,
-	}, rt.sess.ID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to create security verifier: %v\n", err)
-		return
-	}
-
-	rt.secVerifier = verifier
-	rt.exec.SetSecurityVerifier(verifier)
-	rt.addCloser(func() { verifier.Destroy() })
-
-	if mode == security.ModeResearch {
-		fmt.Fprintf(os.Stderr, "🔓 Security: mode=research, scope=%q\n", scope)
-		rt.exec.SetSecurityResearchScope(scope)
-		// Also set scope on bash LLM checker so it knows about research context
-		if rt.bashLLMChecker != nil {
-			rt.bashLLMChecker.SetSecurityScope(scope)
-		}
-	} else {
-		fmt.Fprintf(os.Stderr, "🔒 Security: mode=%s, user_trust=%s\n", mode, userTrust)
-	}
 }
 
 // determineSecurityConfig extracts security mode and settings.
@@ -479,82 +526,73 @@ func (rt *runtime) createTriageProvider() llm.Provider {
 	return rt.smallLLM // May be nil
 }
 
-// setupSupervision configures checkpoint-based supervision.
-func (rt *runtime) setupSupervision() {
-	if !rt.wf.HasSupervisedGoals() {
-		return
-	}
-	checkpointDir := filepath.Join(rt.sessionPath, "checkpoints", rt.sess.ID)
-	checkpointStore, err := checkpoint.NewStore(checkpointDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to create checkpoint store: %v\n", err)
-		return
-	}
-	rt.exec.SetSupervision(checkpointStore, rt.provider, false, nil)
-	fmt.Fprintf(os.Stderr, "👁 Supervision: enabled (four-phase execution)\n")
-}
-
-// setupObservations configures memory observation extraction.
-func (rt *runtime) setupObservations() {
-	if rt.smallLLM == nil || rt.bleveStore == nil {
-		return
-	}
-	obsExtractor := memory.NewObservationExtractor(rt.smallLLM)
-	obsStore := memory.NewBleveObservationStore(rt.bleveStore)
-	rt.exec.SetObservationExtraction(obsExtractor, obsStore)
-	fmt.Fprintf(os.Stderr, "🔍 Observations: enabled (extracting insights after each step)\n")
-}
-
-// setupCallbacks wires up telemetry and progress callbacks.
+// setupCallbacks wires up telemetry and progress callbacks via hooks.
 func (rt *runtime) setupCallbacks() {
-	rt.exec.OnSubAgentStart = func(name string, input map[string]string) {
+	rt.exec.Hooks().On(hooks.SubAgentStart, func(_ context.Context, evt hooks.Event) {
+		name := evt.Data["name"].(string)
 		fmt.Fprintf(os.Stderr, "  ⊕ Spawning sub-agent: %s\n", name)
 		rt.telem.LogEvent("subagent_start", map[string]interface{}{"role": name})
-	}
-	rt.exec.OnSubAgentComplete = func(name, output string) {
+	})
+	rt.exec.Hooks().On(hooks.SubAgentComplete, func(_ context.Context, evt hooks.Event) {
+		name := evt.Data["name"].(string)
 		fmt.Fprintf(os.Stderr, "  ⊖ Sub-agent complete: %s\n", name)
 		rt.telem.LogEvent("subagent_complete", map[string]interface{}{"role": name})
-	}
-	rt.exec.OnGoalStart = func(name string) {
+	})
+	rt.exec.Hooks().On(hooks.GoalStart, func(_ context.Context, evt hooks.Event) {
+		name := evt.Data["name"].(string)
 		fmt.Fprintf(os.Stderr, "▶ Starting goal: %s\n", name)
 		rt.telem.LogEvent("goal_started", map[string]interface{}{"goal": name})
-	}
-	rt.exec.OnGoalComplete = func(name, output string) {
+	})
+	rt.exec.Hooks().On(hooks.GoalComplete, func(_ context.Context, evt hooks.Event) {
+		name := evt.Data["name"].(string)
 		fmt.Fprintf(os.Stderr, "✓ Completed goal: %s\n", name)
 		rt.telem.LogEvent("goal_complete", map[string]interface{}{"goal": name})
-	}
-	rt.exec.OnToolCall = func(name string, args map[string]interface{}, result interface{}, agentRole string) {
+	})
+	rt.exec.Hooks().On(hooks.ToolCall, func(_ context.Context, evt hooks.Event) {
+		name := evt.Data["name"].(string)
+		args, _ := evt.Data["args"].(map[string]interface{})
+		agentRole, _ := evt.Data["agent_role"].(string)
 		if agentRole != "" && agentRole != "main" {
 			fmt.Fprintf(os.Stderr, "  → [%s] Tool: %s\n", agentRole, name)
 		} else {
 			fmt.Fprintf(os.Stderr, "  → Tool: %s\n", name)
 		}
 		rt.telem.LogEvent("tool_call", map[string]interface{}{"tool": name, "args": args, "agent": agentRole})
-	}
-	rt.exec.OnToolError = func(name string, args map[string]interface{}, err error, agentRole string) {
+	})
+	rt.exec.Hooks().On(hooks.ToolError, func(_ context.Context, evt hooks.Event) {
+		name := evt.Data["name"].(string)
+		err := evt.Data["error"].(error)
+		agentRole, _ := evt.Data["agent_role"].(string)
 		if agentRole != "" && agentRole != "main" {
 			fmt.Fprintf(os.Stderr, "  ✗ [%s] Tool error [%s]: %v\n", agentRole, name, err)
 		} else {
 			fmt.Fprintf(os.Stderr, "  ✗ Tool error [%s]: %v\n", name, err)
 		}
 		rt.telem.LogEvent("tool_error", map[string]interface{}{"tool": name, "error": err.Error(), "agent": agentRole})
-	}
-	rt.exec.OnMCPToolCall = func(server, tool string, args map[string]interface{}, result interface{}) {
+	})
+	rt.exec.Hooks().On(hooks.MCPToolCall, func(_ context.Context, evt hooks.Event) {
+		server := evt.Data["server"].(string)
+		tool := evt.Data["tool"].(string)
+		args, _ := evt.Data["args"].(map[string]interface{})
 		fmt.Fprintf(os.Stderr, "  → MCP Tool: %s/%s\n", server, tool)
 		rt.telem.LogEvent("mcp_tool_call", map[string]interface{}{"server": server, "tool": tool, "args": args})
-	}
-	rt.exec.OnSkillLoaded = func(name string) {
+	})
+	rt.exec.Hooks().On(hooks.SkillLoaded, func(_ context.Context, evt hooks.Event) {
+		name := evt.Data["name"].(string)
 		fmt.Fprintf(os.Stderr, "  → Skill loaded: %s\n", name)
 		rt.telem.LogEvent("skill_loaded", map[string]interface{}{"skill": name})
-	}
-	rt.exec.OnSupervisionEvent = func(stepID, phase string, data interface{}) {
+	})
+	rt.exec.Hooks().On(hooks.SupervisionEvent, func(_ context.Context, evt hooks.Event) {
+		stepID := evt.Data["step_id"].(string)
+		phase := evt.Data["phase"].(string)
 		fmt.Fprintf(os.Stderr, "  ⊙ Supervision [%s]: %s\n", stepID, phase)
 		rt.telem.LogEvent("supervision_"+phase, map[string]interface{}{"step": stepID})
-	}
-	rt.exec.OnLLMError = func(err error) {
+	})
+	rt.exec.Hooks().On(hooks.LLMError, func(_ context.Context, evt hooks.Event) {
+		err := evt.Data["error"].(error)
 		fmt.Fprintf(os.Stderr, "  ✗ LLM error: %v\n", err)
 		rt.telem.LogEvent("llm_error", map[string]interface{}{"error": err.Error()})
-	}
+	})
 }
 
 // run executes the workflow and returns exit code.

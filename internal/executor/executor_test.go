@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/policy"
 	"github.com/vinayprograms/agent/internal/skills"
@@ -127,9 +128,10 @@ func TestExecutor_StepOrder(t *testing.T) {
 	provider.SetResponse("Done")
 
 	exec := NewExecutor(wf, provider, nil, nil)
-	exec.OnGoalStart = func(name string) {
+	exec.Hooks().On(hooks.GoalStart, func(_ context.Context, evt hooks.Event) {
+		name := evt.Data["name"].(string)
 		executionOrder = append(executionOrder, name)
-	}
+	})
 
 	exec.Run(context.Background(), nil)
 
@@ -365,8 +367,8 @@ func TestExecutor_ResultContainsOutputs(t *testing.T) {
 	}
 }
 
-// Test MCP manager integration
-func TestExecutor_SetMCPManager(t *testing.T) {
+// Test MCP manager integration (nil MCPManager should not panic)
+func TestExecutor_NilMCPManager(t *testing.T) {
 	wf := &agentfile.Workflow{
 		Name: "test",
 		Steps: []agentfile.Step{
@@ -380,11 +382,11 @@ func TestExecutor_SetMCPManager(t *testing.T) {
 	provider := llm.NewMockProvider()
 	provider.SetResponse("Done")
 
-	exec := NewExecutor(wf, provider, nil, nil)
-	
-	// Should not panic with nil
-	exec.SetMCPManager(nil)
-	
+	exec := New(Config{
+		Workflow:  wf,
+		Provider:  provider,
+	})
+
 	result, err := exec.Run(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("run error: %v", err)
@@ -394,8 +396,8 @@ func TestExecutor_SetMCPManager(t *testing.T) {
 	}
 }
 
-// Test skills integration
-func TestExecutor_SetSkills(t *testing.T) {
+// Test skills integration via Config
+func TestExecutor_SkillsViaConfig(t *testing.T) {
 	wf := &agentfile.Workflow{
 		Name: "test",
 		Steps: []agentfile.Step{
@@ -409,14 +411,15 @@ func TestExecutor_SetSkills(t *testing.T) {
 	provider := llm.NewMockProvider()
 	provider.SetResponse("Done")
 
-	exec := NewExecutor(wf, provider, nil, nil)
-	
-	// Set some skill refs
-	exec.SetSkills([]skills.SkillRef{
-		{Name: "code-review", Description: "Review code", Path: "/path/to/skill"},
-		{Name: "testing", Description: "Write tests", Path: "/path/to/testing"},
+	exec := New(Config{
+		Workflow:  wf,
+		Provider:  provider,
+		SkillRefs: []skills.SkillRef{
+			{Name: "code-review", Description: "Review code", Path: "/path/to/skill"},
+			{Name: "testing", Description: "Write tests", Path: "/path/to/testing"},
+		},
 	})
-	
+
 	result, err := exec.Run(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("run error: %v", err)
@@ -424,7 +427,7 @@ func TestExecutor_SetSkills(t *testing.T) {
 	if result.Status != StatusComplete {
 		t.Errorf("expected status Complete, got %s", result.Status)
 	}
-	
+
 	// Verify skills are included in system message
 	req := provider.LastRequest()
 	if len(exec.skillRefs) > 0 && !strings.Contains(req.Messages[0].Content, "code-review") {
@@ -517,10 +520,12 @@ func TestExecutor_DefaultDenyBlocksToolExecution(t *testing.T) {
 func TestExecutor_CheckSkillActivation(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}
 	provider := llm.NewMockProvider()
-	exec := NewExecutor(wf, provider, nil, nil)
-	
-	exec.SetSkills([]skills.SkillRef{
-		{Name: "code-review", Description: "Review code", Path: "/nonexistent"},
+	exec := New(Config{
+		Workflow:  wf,
+		Provider:  provider,
+		SkillRefs: []skills.SkillRef{
+			{Name: "code-review", Description: "Review code", Path: "/nonexistent"},
+		},
 	})
 	
 	// No activation
@@ -536,23 +541,23 @@ func TestExecutor_CheckSkillActivation(t *testing.T) {
 	}
 }
 
-// Test callbacks for skill loading
-func TestExecutor_OnSkillLoadedCallback(t *testing.T) {
+// Test hooks for skill loading
+func TestExecutor_OnSkillLoadedHook(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}
 	provider := llm.NewMockProvider()
 	exec := NewExecutor(wf, provider, nil, nil)
-	
-	// Set callback
-	callbackCalled := false
-	exec.OnSkillLoaded = func(name string) {
-		callbackCalled = true
+
+	// Register hook
+	hookCalled := false
+	exec.Hooks().On(hooks.SkillLoaded, func(_ context.Context, evt hooks.Event) {
+		hookCalled = true
+	})
+
+	// Verify hooks registry is available
+	if exec.Hooks() == nil {
+		t.Error("expected Hooks() to return a registry")
 	}
-	
-	// Verify callback can be set
-	if exec.OnSkillLoaded == nil {
-		t.Error("expected OnSkillLoaded callback to be set")
-	}
-	_ = callbackCalled // would be used in real skill loading test
+	_ = hookCalled // would be used in real skill loading test
 }
 
 // Test MCP tool call parsing
@@ -594,12 +599,12 @@ func TestExecutor_AllCallbacks(t *testing.T) {
 	exec := NewExecutor(wf, provider, nil, nil)
 	
 	var goalStarted, goalCompleted string
-	exec.OnGoalStart = func(name string) {
-		goalStarted = name
-	}
-	exec.OnGoalComplete = func(name, output string) {
-		goalCompleted = name
-	}
+	exec.Hooks().On(hooks.GoalStart, func(_ context.Context, evt hooks.Event) {
+		goalStarted = evt.Data["name"].(string)
+	})
+	exec.Hooks().On(hooks.GoalComplete, func(_ context.Context, evt hooks.Event) {
+		goalCompleted = evt.Data["name"].(string)
+	})
 	
 	exec.Run(context.Background(), nil)
 	

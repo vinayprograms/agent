@@ -2,18 +2,10 @@ package main
 
 import (
 	"testing"
-
-	"github.com/alecthomas/kong"
 )
 
 func TestInstallCmd_Defaults(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"install", "package.agent"})
+	cli, err := parseArgs([]string{"install", "package.agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,13 +22,7 @@ func TestInstallCmd_Defaults(t *testing.T) {
 }
 
 func TestInstallCmd_AllFlags(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{
+	cli, err := parseArgs([]string{
 		"install", "package.agent",
 		"--target", "/opt/agents",
 		"--key", "key.pub",

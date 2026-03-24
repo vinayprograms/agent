@@ -1,4 +1,3 @@
-// Package executor provides convergence goal execution.
 package executor
 
 import (
@@ -6,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/checkpoint"
@@ -37,7 +35,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 		return nil, fmt.Errorf("CONVERGE goal %q: WITHIN limit must be > 0", goal.Name)
 	}
 
-	e.logger.Info("starting convergence goal", map[string]interface{}{
+	e.logger.Info("starting convergence goal", map[string]any{
 		"goal": goal.Name,
 	})
 
@@ -52,174 +50,103 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 	// Build initial prompt for COMMIT phase
 	initialPrompt := e.buildConvergePrompt(goal, nil, 1)
 
-	// ============================================
-	// PHASE 1: COMMIT - Declare intent to converge
-	// ============================================
-	var preCheckpoint *checkpoint.PreCheckpoint
-	if e.checkpointStore != nil {
-		preCheckpoint = e.commitPhase(ctx, goal, initialPrompt)
-		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
-			e.logger.Warn("failed to save pre-checkpoint", map[string]interface{}{
-				"error": err.Error(),
-			})
-		} else {
-			e.logCheckpoint("pre", goal.Name, "", preCheckpoint.StepID)
-		}
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(goal.Name, "commit", preCheckpoint)
-		}
-	}
-
-	// ============================================
-	// PHASE 2: EXECUTE - Convergence loop
-	// ============================================
+	// State captured by the execute closure and used by the post-checkpoint closure
 	var iterations []ConvergenceIteration
-	var lastOutput string
 	var converged bool
 	var iterationCount int
 
-	for i := 1; i <= maxIterations; i++ {
-		e.logger.Debug("convergence iteration", map[string]interface{}{
-			"goal":      goal.Name,
-			"iteration": i,
-		})
-
-		e.logEvent(session.EventSystem, fmt.Sprintf("Convergence iteration %d for goal %q", i, goal.Name))
-
-		prompt := e.buildConvergePrompt(goal, iterations, i)
-
-		output, err := e.executeConvergeIteration(ctx, goal, prompt)
-		if err != nil {
-			return nil, fmt.Errorf("convergence iteration %d failed: %w", i, err)
-		}
-
-		trimmed := strings.TrimSpace(output)
-		if trimmed == "CONVERGED" {
-			e.logger.Info("convergence achieved", map[string]interface{}{
-				"goal":       goal.Name,
-				"iterations": i,
-			})
-			e.logEvent(session.EventSystem, fmt.Sprintf("Goal %q converged after %d iterations", goal.Name, i))
-			converged = true
-			iterationCount = i
-			break
-		}
-
-		iterations = append(iterations, ConvergenceIteration{N: i, Output: output})
-		lastOutput = output
-		iterationCount = i
-	}
-
-	if !converged {
-		e.logger.Warn("convergence limit reached without converging", map[string]interface{}{
-			"goal":  goal.Name,
-			"limit": maxIterations,
-		})
-		e.logEvent(session.EventWarning, fmt.Sprintf("Goal %q did not converge within limit (used all iterations)", goal.Name))
-		e.trackConvergenceFailure(goal.Name, maxIterations)
-	}
-
-	// ============================================
-	// PHASE 3 & 4: RECONCILE & SUPERVISE (on final output)
-	// ============================================
-	finalOutput := lastOutput
-
-	// Create post-checkpoint with convergence results
-	var postCheckpoint *checkpoint.PostCheckpoint
-	if e.checkpointStore != nil && preCheckpoint != nil {
-		// For convergence, we don't track individual tools, but we note iteration count
-		toolsUsed := []string{fmt.Sprintf("converge:%d_iterations", iterationCount)}
-		if !converged {
-			toolsUsed = append(toolsUsed, "converge:limit_reached")
-		}
-		postCheckpoint = e.createPostCheckpoint(ctx, goal, preCheckpoint, finalOutput, toolsUsed)
-		if err := e.checkpointStore.SavePost(postCheckpoint); err != nil {
-			e.logger.Warn("failed to save post-checkpoint", map[string]interface{}{
-				"error": err.Error(),
-			})
-		} else {
-			e.logCheckpoint("post", goal.Name, "", postCheckpoint.StepID)
-		}
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(goal.Name, "execute", postCheckpoint)
-		}
-	}
-
-	// RECONCILE & SUPERVISE (only for supervised goals)
-	if supervised && e.supervisor != nil && preCheckpoint != nil && postCheckpoint != nil {
-		// RECONCILE: Static pattern checks on final output
-		reconcileStart := time.Now()
-		reconcileResult := e.supervisor.Reconcile(preCheckpoint, postCheckpoint)
-		reconcileDuration := time.Since(reconcileStart).Milliseconds()
-
-		if e.checkpointStore != nil {
-			if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
-				e.logger.Warn("failed to save reconcile result", map[string]interface{}{
-					"error": err.Error(),
+	// Run through the supervision pipeline
+	pipelineResult, err := e.getPipeline().Run(
+		ctx,
+		supervision.PipelineRequest{
+			StepID:        goal.Name,
+			GoalName:      e.goalOutcome(goal.Name),
+			Supervised:    supervised,
+			HumanRequired: humanRequired,
+		},
+		// COMMIT: declare intent to converge
+		func(ctx context.Context) *checkpoint.PreCheckpoint {
+			return e.commitPhase(ctx, goal, initialPrompt)
+		},
+		// EXECUTE: convergence loop
+		func(ctx context.Context) (*supervision.ExecuteResult, error) {
+			var lastOutput string
+			for i := 1; i <= maxIterations; i++ {
+				e.logger.Debug("convergence iteration", map[string]any{
+					"goal":      goal.Name,
+					"iteration": i,
 				})
-			} else {
-				e.logCheckpoint("reconcile", goal.Name, reconcileResult.StepID, reconcileResult.StepID)
-			}
-		}
-		e.logPhaseReconcile(goal.Name, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
 
-		if e.OnSupervisionEvent != nil {
-			e.OnSupervisionEvent(goal.Name, "reconcile", reconcileResult)
-		}
+				e.logEvent(session.EventSystem, fmt.Sprintf("Convergence iteration %d for goal %q", i, goal.Name))
 
-		// SUPERVISE: LLM evaluation (if reconcile triggered or SUPERVISED HUMAN)
-		if reconcileResult.Supervise || humanRequired {
-			superviseStart := time.Now()
-			decisionTrail := e.checkpointStore.GetDecisionTrail()
-			superviseResult, err := e.supervisor.Supervise(
-				ctx,
-				preCheckpoint,
-				postCheckpoint,
-				reconcileResult.Triggers,
-				decisionTrail,
-				humanRequired,
-			)
-			superviseDuration := time.Since(superviseStart).Milliseconds()
+				prompt := e.buildConvergePrompt(goal, iterations, i)
 
-			if err != nil {
-				return nil, fmt.Errorf("supervision failed: %w", err)
-			}
+				output, iterErr := e.executeConvergeIteration(ctx, goal, prompt)
+				if iterErr != nil {
+					return nil, fmt.Errorf("convergence iteration %d failed: %w", i, iterErr)
+				}
 
-			if e.checkpointStore != nil {
-				if err := e.checkpointStore.SaveSupervise(superviseResult); err != nil {
-					e.logger.Warn("failed to save supervise result", map[string]interface{}{
-						"error": err.Error(),
+				trimmed := strings.TrimSpace(output)
+				if trimmed == "CONVERGED" {
+					e.logger.Info("convergence achieved", map[string]any{
+						"goal":       goal.Name,
+						"iterations": i,
 					})
-				} else {
-					e.logCheckpoint("supervise", goal.Name, superviseResult.StepID, superviseResult.StepID)
+					e.logEvent(session.EventSystem, fmt.Sprintf("Goal %q converged after %d iterations", goal.Name, i))
+					converged = true
+					iterationCount = i
+					break
 				}
-			}
-			e.logPhaseSupervise(goal.Name, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, humanRequired, superviseDuration)
 
-			if e.OnSupervisionEvent != nil {
-				e.OnSupervisionEvent(goal.Name, "supervise", superviseResult)
+				iterations = append(iterations, ConvergenceIteration{N: i, Output: output})
+				lastOutput = output
+				iterationCount = i
 			}
 
-			// Handle verdict
-			switch supervision.Verdict(superviseResult.Verdict) {
-			case supervision.VerdictReorient:
-				// For convergence, reorient means run another iteration with correction
-				e.logger.Info("supervisor requested reorientation", map[string]interface{}{
-					"goal":       goal.Name,
-					"correction": superviseResult.Correction,
+			if !converged {
+				e.logger.Warn("convergence limit reached without converging", map[string]any{
+					"goal":  goal.Name,
+					"limit": maxIterations,
 				})
-				// Run one more iteration with correction context
-				correctionPrompt := e.buildConvergePromptWithCorrection(goal, iterations, iterationCount+1, superviseResult.Correction)
-				correctedOutput, err := e.executeConvergeIteration(ctx, goal, correctionPrompt)
-				if err != nil {
-					return nil, fmt.Errorf("correction iteration failed: %w", err)
-				}
-				finalOutput = correctedOutput
-
-			case supervision.VerdictPause:
-				return nil, fmt.Errorf("supervision paused: %s", superviseResult.Question)
+				e.logEvent(session.EventWarning, fmt.Sprintf("Goal %q did not converge within limit (used all iterations)", goal.Name))
+				e.trackConvergenceFailure(goal.Name, maxIterations)
 			}
+
+			// For convergence, we note iteration count instead of individual tools
+			toolsUsed := []string{fmt.Sprintf("converge:%d_iterations", iterationCount)}
+			if !converged {
+				toolsUsed = append(toolsUsed, "converge:limit_reached")
+			}
+
+			return &supervision.ExecuteResult{Output: lastOutput, ToolsUsed: toolsUsed}, nil
+		},
+		// POST-CHECKPOINT: self-assessment on final output
+		func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
+			return e.createPostCheckpoint(ctx, goal, pre, output, toolsUsed)
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	finalOutput := pipelineResult.Output
+
+	// Handle supervision verdict
+	switch pipelineResult.Verdict {
+	case supervision.VerdictReorient:
+		e.logger.Info("supervisor requested reorientation", map[string]any{
+			"goal":       goal.Name,
+			"correction": pipelineResult.Correction,
+		})
+		correctionPrompt := e.buildConvergePromptWithCorrection(goal, iterations, iterationCount+1, pipelineResult.Correction)
+		correctedOutput, corrErr := e.executeConvergeIteration(ctx, goal, correctionPrompt)
+		if corrErr != nil {
+			return nil, fmt.Errorf("correction iteration failed: %w", corrErr)
 		}
+		finalOutput = correctedOutput
+
+	case supervision.VerdictPause:
+		return nil, fmt.Errorf("supervision paused: %s", pipelineResult.Question)
 	}
 
 	return &ConvergenceResult{

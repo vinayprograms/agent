@@ -8,7 +8,7 @@ import (
 )
 
 func TestReconcile_NoTriggers(t *testing.T) {
-	sup := New(Config{OriginalGoal: "Test goal"})
+	sup := NewLLMSupervisor(Config{})
 
 	pre := &checkpoint.PreCheckpoint{
 		StepID:     "goal-001",
@@ -32,7 +32,7 @@ func TestReconcile_NoTriggers(t *testing.T) {
 }
 
 func TestReconcile_ConcernsRaised(t *testing.T) {
-	sup := New(Config{OriginalGoal: "Test goal"})
+	sup := NewLLMSupervisor(Config{})
 
 	pre := &checkpoint.PreCheckpoint{
 		StepID:     "goal-001",
@@ -56,7 +56,7 @@ func TestReconcile_ConcernsRaised(t *testing.T) {
 }
 
 func TestReconcile_CommitmentNotMet(t *testing.T) {
-	sup := New(Config{OriginalGoal: "Test goal"})
+	sup := NewLLMSupervisor(Config{})
 
 	pre := &checkpoint.PreCheckpoint{
 		StepID:     "goal-001",
@@ -95,7 +95,7 @@ func TestReconcile_CommitmentNotMet(t *testing.T) {
 }
 
 func TestReconcile_LowConfidence(t *testing.T) {
-	sup := New(Config{OriginalGoal: "Test goal"})
+	sup := NewLLMSupervisor(Config{})
 
 	pre := &checkpoint.PreCheckpoint{
 		StepID:     "goal-001",
@@ -125,7 +125,7 @@ func TestReconcile_LowConfidence(t *testing.T) {
 }
 
 func TestReconcile_ExcessAssumptions(t *testing.T) {
-	sup := New(Config{OriginalGoal: "Test goal"})
+	sup := NewLLMSupervisor(Config{})
 
 	pre := &checkpoint.PreCheckpoint{
 		StepID:     "goal-001",
@@ -161,7 +161,7 @@ func TestReconcile_ExcessAssumptions(t *testing.T) {
 }
 
 func TestReconcile_MultipleTriggers(t *testing.T) {
-	sup := New(Config{OriginalGoal: "Test goal"})
+	sup := NewLLMSupervisor(Config{})
 
 	pre := &checkpoint.PreCheckpoint{
 		StepID:     "goal-001",
@@ -191,7 +191,7 @@ func TestReconcile_MultipleTriggers(t *testing.T) {
 }
 
 func TestParseSupervisionResponse_Continue(t *testing.T) {
-	sup := New(Config{})
+	sup := NewLLMSupervisor(Config{})
 
 	tests := []string{
 		"CONTINUE",
@@ -212,7 +212,7 @@ func TestParseSupervisionResponse_Continue(t *testing.T) {
 }
 
 func TestParseSupervisionResponse_Reorient(t *testing.T) {
-	sup := New(Config{})
+	sup := NewLLMSupervisor(Config{})
 
 	verdict, correction, _ := sup.parseSupervisionResponse(`REORIENT: Focus on consumer EVs only`)
 	if verdict != VerdictReorient {
@@ -233,7 +233,7 @@ func TestParseSupervisionResponse_Reorient(t *testing.T) {
 }
 
 func TestParseSupervisionResponse_Pause(t *testing.T) {
-	sup := New(Config{})
+	sup := NewLLMSupervisor(Config{})
 
 	verdict, _, question := sup.parseSupervisionResponse(`PAUSE: Should we include commercial vehicles?`)
 	if verdict != VerdictPause {
@@ -245,7 +245,7 @@ func TestParseSupervisionResponse_Pause(t *testing.T) {
 }
 
 func TestParseSupervisionResponse_DefaultToContinue(t *testing.T) {
-	sup := New(Config{})
+	sup := NewLLMSupervisor(Config{})
 
 	// Unclear response should default to continue
 	verdict, _, _ := sup.parseSupervisionResponse(`The agent seems to be doing fine.`)
@@ -254,21 +254,8 @@ func TestParseSupervisionResponse_DefaultToContinue(t *testing.T) {
 	}
 }
 
-func TestSupervisor_SetOriginalGoal(t *testing.T) {
-	sup := New(Config{OriginalGoal: "Initial goal"})
-
-	if sup.originalGoal != "Initial goal" {
-		t.Error("original goal not set")
-	}
-
-	sup.SetOriginalGoal("Updated goal")
-	if sup.originalGoal != "Updated goal" {
-		t.Error("original goal not updated")
-	}
-}
-
-func TestSupervisor_SetHumanAvailable(t *testing.T) {
-	sup := New(Config{HumanAvailable: false})
+func TestLLMSupervisor_SetHumanAvailable(t *testing.T) {
+	sup := NewLLMSupervisor(Config{HumanAvailable: false})
 
 	if sup.humanAvailable {
 		t.Error("expected human not available")
@@ -281,7 +268,7 @@ func TestSupervisor_SetHumanAvailable(t *testing.T) {
 }
 
 func TestSupervisor_DefaultTimeout(t *testing.T) {
-	sup := New(Config{})
+	sup := NewLLMSupervisor(Config{})
 
 	if sup.humanInputTimeout != 5*time.Minute {
 		t.Errorf("expected 5 minute default timeout, got %v", sup.humanInputTimeout)
@@ -289,7 +276,7 @@ func TestSupervisor_DefaultTimeout(t *testing.T) {
 }
 
 func TestSupervisor_CustomTimeout(t *testing.T) {
-	sup := New(Config{HumanInputTimeout: 10 * time.Second})
+	sup := NewLLMSupervisor(Config{HumanInputTimeout: 10 * time.Second})
 
 	if sup.humanInputTimeout != 10*time.Second {
 		t.Errorf("expected 10 second timeout, got %v", sup.humanInputTimeout)

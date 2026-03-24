@@ -2,18 +2,10 @@ package main
 
 import (
 	"testing"
-
-	"github.com/alecthomas/kong"
 )
 
 func TestPackCmd_AllFlags(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{
+	cli, err := parseArgs([]string{
 		"pack", "mydir",
 		"--output", "output.agent",
 		"--sign", "key.pem",
@@ -46,13 +38,7 @@ func TestPackCmd_AllFlags(t *testing.T) {
 }
 
 func TestPackCmd_ShortOutput(t *testing.T) {
-	var cli CLI
-	parser, err := kong.New(&cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = parser.Parse([]string{"pack", "src", "-o", "out.zip"})
+	cli, err := parseArgs([]string{"pack", "src", "-o", "out.zip"})
 	if err != nil {
 		t.Fatal(err)
 	}

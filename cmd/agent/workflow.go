@@ -1,4 +1,5 @@
-// Package main provides workflow configuration loading.
+// Workflow loading: gathers everything the agent needs before execution —
+// config, Agentfile, and policy.
 package main
 
 import (
@@ -15,7 +16,7 @@ import (
 
 // workflow handles the configuration phase of a run.
 type workflow struct {
-	// Parsed from CLI (populated by kong via RunCmd)
+	// Parsed from CLI (populated via RunCmd)
 	agentfilePath string
 	inputs        map[string]string
 	configPath    string
