@@ -526,6 +526,12 @@ DO NOT spawn sub-agents when:
 - Delegation would add overhead without meaningful benefit
 - You're tempted to spawn just to "be thorough" — thoroughness doesn't require sub-agents
 
+WHEN SPAWNING for large or complex input:
+- ASSESS FIRST: Read/inspect the input to understand its size and structure before spawning. Identify natural split boundaries (files, sections, records, time ranges).
+- SELF-CONTAINED PROMPTS: Each sub-agent must receive everything it needs — the specific data chunk (or path to it), the exact task, and the expected output format. Sub-agents cannot see each other or your conversation.
+- MERGE CAREFULLY: Sub-agent results may have boundary artifacts — duplicates, split entities, missing cross-references. Verify and reconcile before synthesizing the final result.
+- DO NOT pass the entire input to a single sub-agent. If the input is too large for you, it is too large for one sub-agent.
+
 IMPORTANT: When you do spawn multiple agents, use unique descriptive role names (e.g., "market-researcher", "competitor-analyst" not multiple "researcher" agents).
 
 `
