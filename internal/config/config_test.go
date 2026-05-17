@@ -7,6 +7,84 @@ import (
 	"testing"
 )
 
+func writeConfigFile(t *testing.T, path, tomlBody string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(tomlBody), 0644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+}
+
+func TestConfig_LoadWithPrecedence_Order(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, "project")
+	homeDir := filepath.Join(tmpDir, "home")
+	envPath := filepath.Join(tmpDir, "env.toml")
+	cliPath := filepath.Join(tmpDir, "cli.toml")
+	globalPath := filepath.Join(homeDir, ".config", "grid", "agent.toml")
+	projectPath := filepath.Join(projectDir, "agent.toml")
+
+	t.Setenv("HOME", homeDir)
+	t.Setenv(EnvConfigPath, envPath)
+
+	writeConfigFile(t, globalPath, `
+[agent]
+id = "global-id"
+workspace = "/global-workspace"
+
+[llm]
+model = "global-model"
+max_tokens = 111
+`)
+	writeConfigFile(t, projectPath, `
+[agent]
+workspace = "/project-workspace"
+
+[llm]
+model = "project-model"
+`)
+	writeConfigFile(t, envPath, `
+[llm]
+model = "env-model"
+max_tokens = 222
+`)
+	writeConfigFile(t, cliPath, `
+[llm]
+model = "cli-model"
+`)
+
+	cfg, err := LoadWithPrecedence(LoadOptions{
+		ProjectDir: projectDir,
+		CLIPath:    cliPath,
+	})
+	if err != nil {
+		t.Fatalf("load with precedence failed: %v", err)
+	}
+
+	if cfg.Agent.ID != "global-id" {
+		t.Fatalf("expected global agent.id to persist, got %q", cfg.Agent.ID)
+	}
+	if cfg.Agent.Workspace != "/project-workspace" {
+		t.Fatalf("expected project workspace override, got %q", cfg.Agent.Workspace)
+	}
+	if cfg.LLM.Model != "cli-model" {
+		t.Fatalf("expected CLI model override, got %q", cfg.LLM.Model)
+	}
+	if cfg.LLM.MaxTokens != 222 {
+		t.Fatalf("expected env max_tokens override, got %d", cfg.LLM.MaxTokens)
+	}
+}
+
+func TestConfig_LoadWithPrecedence_EnvPathMissing(t *testing.T) {
+	t.Setenv(EnvConfigPath, "/missing/config.toml")
+	_, err := LoadWithPrecedence(LoadOptions{ProjectDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("expected error for missing env config path")
+	}
+}
+
 // R10.1.1: Load config from TOML file
 func TestConfig_LoadFromFile(t *testing.T) {
 	tmpDir := t.TempDir()

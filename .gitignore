@@ -9,6 +9,12 @@ src/agent
 # Test binaries
 *.test
 
+# Go coverage output
+*.out
+
+# Agent example run outputs (convention: *-output.md)
+examples/**/*-output.md
+
 # Build output
 /bin/
 /dist/

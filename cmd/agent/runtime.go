@@ -14,11 +14,12 @@ import (
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/checkpoint"
 	"github.com/vinayprograms/agent/internal/config"
+	"github.com/vinayprograms/agent/internal/credentials"
 	"github.com/vinayprograms/agent/internal/executor"
 	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/supervision"
-	"github.com/vinayprograms/agentkit/credentials"
+	agentkitcredentials "github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/mcp"
 	"github.com/vinayprograms/agentkit/memory"
@@ -30,11 +31,11 @@ import (
 
 // runtime handles the execution phase of a workflow.
 type runtime struct {
-	wf     *agentfile.Workflow
-	cfg    *config.Config
-	pol    *policy.Policy
-	creds  *credentials.Credentials
-	inputs map[string]string
+	wf           *agentfile.Workflow
+	cfg          *config.Config
+	pol          *policy.Policy
+	creds        credentials.Store
+	inputs       map[string]string
 	debug        bool
 	sessionLabel string // Override session directory name
 
@@ -61,7 +62,7 @@ type runtime struct {
 }
 
 // newRuntime creates a runtime from loaded workflow configuration.
-func newRuntime(w *workflow, creds *credentials.Credentials) *runtime {
+func newRuntime(w *workflow, creds credentials.Store) *runtime {
 	rt := &runtime{
 		wf:           w.wf,
 		cfg:          w.cfg,
@@ -193,7 +194,21 @@ func (rt *runtime) setupRegistry() {
 	if rt.smallLLM != nil {
 		rt.registry.SetSummarizer(llm.NewSummarizer(rt.smallLLM))
 	}
-	rt.registry.SetCredentials(rt.creds)
+	rt.registry.SetCredentials(toAgentkitCredentials(rt.creds))
+}
+
+func toAgentkitCredentials(c credentials.Store) *agentkitcredentials.Credentials {
+	if c == nil {
+		return nil
+	}
+	out := &agentkitcredentials.Credentials{}
+	for provider, key := range c.ProviderAPIKeys() {
+		out.SetAPIKey(provider, key)
+	}
+	if c.GetLLMKey() != "" {
+		out.LLM = &agentkitcredentials.ProviderCreds{APIKey: c.GetLLMKey()}
+	}
+	return out
 }
 
 // setupBashChecker configures bash security with fail-close defaults.
@@ -431,7 +446,7 @@ func (rt *runtime) createExecutor() error {
 type profileProviderFactory struct {
 	mu       sync.Mutex
 	cfg      *config.Config
-	creds    *credentials.Credentials
+	creds    credentials.Store
 	fallback llm.Provider
 	cache    map[string]llm.Provider
 }

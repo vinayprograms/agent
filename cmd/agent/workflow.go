@@ -50,15 +50,9 @@ func (w *workflow) load() error {
 // loadConfig loads and applies configuration.
 func (w *workflow) loadConfig() error {
 	var err error
-	if w.configPath != "" {
-		w.cfg, err = config.LoadFile(w.configPath)
-	} else {
-		w.cfg, err = config.LoadFile("agent.toml")
-		if os.IsNotExist(err) {
-			w.cfg = config.Default()
-			err = nil
-		}
-	}
+	w.cfg, err = config.LoadWithPrecedence(config.LoadOptions{
+		CLIPath: w.configPath,
+	})
 	if err != nil {
 		return err
 	}

@@ -15,11 +15,11 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/credentials"
 	"github.com/vinayprograms/agent/internal/executor"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/swarm"
 	"github.com/vinayprograms/agentkit/bus"
-	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/heartbeat"
 	"github.com/vinayprograms/agentkit/registry"
 	"github.com/vinayprograms/agentkit/tasks"
@@ -29,16 +29,15 @@ import (
 type serviceAgent struct {
 	// Reuse workflow loading infrastructure
 	wf    *workflow
-	creds *credentials.Credentials
+	creds credentials.Store
 
 	// Agent identity (uses session ID)
-	agentID     string
-	instanceID  string // <name>-<session-id> for swarm addressing
-	displayName string // swarm agent name (or Agentfile NAME if standalone)
-	agentType      string // "worker" (default) or "manager"
+	agentID         string
+	instanceID      string // <name>-<session-id> for swarm addressing
+	displayName     string // swarm agent name (or Agentfile NAME if standalone)
+	agentType       string // "worker" (default) or "manager"
 	capabilitiesStr string // "cap1:n,cap2:n" for manager dispatch
-	capability     registry.CapabilitySchema
-
+	capability      registry.CapabilitySchema
 
 	// Service-level session (shared across all tasks)
 	serviceRuntime *runtime
@@ -54,15 +53,15 @@ type serviceAgent struct {
 
 	// Bus mode components
 	bus         bus.MessageBus
-	js          nats.JetStreamContext   // JetStream context (nil if unavailable)
+	js          nats.JetStreamContext // JetStream context (nil if unavailable)
 	heartbeat   *heartbeat.BusSender
 	reg         registry.Registry
-	taskSubs    []bus.Subscription // work.<cap>.* subscriptions (fallback)
-	workPullSub *nats.Subscription    // JetStream pull consumer for work (preferred)
-	instanceSub bus.Subscription      // work.<instance-id>.* for corrections
-	agentInfo   *registry.AgentInfo   // cached for re-registration on TTL expiry
-	discussSub  bus.Subscription   // discuss.* subscription (manager only — read)
-	controlSub  bus.Subscription   // control.<id>.shutdown subscription
+	taskSubs    []bus.Subscription  // work.<cap>.* subscriptions (fallback)
+	workPullSub *nats.Subscription  // JetStream pull consumer for work (preferred)
+	instanceSub bus.Subscription    // work.<instance-id>.* for corrections
+	agentInfo   *registry.AgentInfo // cached for re-registration on TTL expiry
+	discussSub  bus.Subscription    // discuss.* subscription (manager only — read)
+	controlSub  bus.Subscription    // control.<id>.shutdown subscription
 	queueGroup  string
 }
 
@@ -122,7 +121,7 @@ func (cmd *ServeCmd) Run() error {
 	}
 
 	// Load credentials (same as run mode)
-	creds, _, err := credentials.Load()
+	creds, _, err := loadCredentials()
 	if err != nil {
 		// Credentials are optional, continue with nil
 		creds = nil
@@ -656,8 +655,6 @@ func truncateStr(s string, max int) string {
 	return s[:max] + "..."
 }
 
-
-
 // registerWithRegistry registers the agent's resume with NATS KV.
 func (a *serviceAgent) registerWithRegistry(natsBus *bus.NATSBus) error {
 	conn := natsBus.Conn()
@@ -714,7 +711,6 @@ func (a *serviceAgent) getCapabilities() []string {
 	}
 	return []string{a.wf.wf.Name}
 }
-
 
 // buildTaskText extracts a readable text representation from a task message.
 func buildTaskText(task *tasks.TaskMessage) string {

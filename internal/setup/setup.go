@@ -13,17 +13,17 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/vinayprograms/agentkit/credentials"
+	"github.com/vinayprograms/agent/internal/credentials"
 	"github.com/vinayprograms/agentkit/mcp"
 )
 
 // Deployment scenarios
 const (
-	ScenarioLocal      = "local"       // Personal machine, experimenting
-	ScenarioDev        = "dev"         // Development/testing with cloud LLMs
-	ScenarioTeam       = "team"        // Small team, shared proxy (LiteLLM)
-	ScenarioProduction = "production"  // Production with full features
-	ScenarioDocker     = "docker"      // Container deployment
+	ScenarioLocal      = "local"      // Personal machine, experimenting
+	ScenarioDev        = "dev"        // Development/testing with cloud LLMs
+	ScenarioTeam       = "team"       // Small team, shared proxy (LiteLLM)
+	ScenarioProduction = "production" // Production with full features
+	ScenarioDocker     = "docker"     // Container deployment
 )
 
 // Provider options
@@ -67,10 +67,10 @@ type Config struct {
 	Profiles    map[string]ProfileConfig
 
 	// Security
-	DefaultDeny   bool
-	AllowBash     bool
-	AllowWeb      bool
-	SecurityMode  string // "default" or "paranoid"
+	DefaultDeny  bool
+	AllowBash    bool
+	AllowWeb     bool
+	SecurityMode string // "default" or "paranoid"
 
 	// Features
 	EnableMCP       bool
@@ -81,7 +81,7 @@ type Config struct {
 	MCPServers map[string]MCPServerSetup
 
 	// Credentials
-	CredentialMethod string // "file", "env", "claude-cli"
+	CredentialMethod string // "file", "env"
 }
 
 // MCPServerSetup holds MCP server configuration during setup
@@ -205,16 +205,16 @@ func New() Model {
 		step:      StepWelcome,
 		textInput: ti,
 		config: Config{
-			Workspace:         ".",
-			ConfigDir:         getDefaultConfigDir(),
-			Profiles:          make(map[string]ProfileConfig),
-			MCPServers:        make(map[string]MCPServerSetup),
-			AllowBash:         true,
-			AllowWeb:          true,
-			EnableMemory:      true,
-			SecurityMode:      "default",
-			Thinking:          "auto",
-			CredentialMethod:  "file",
+			Workspace:        ".",
+			ConfigDir:        getDefaultConfigDir(),
+			Profiles:         make(map[string]ProfileConfig),
+			MCPServers:       make(map[string]MCPServerSetup),
+			AllowBash:        true,
+			AllowWeb:         true,
+			EnableMemory:     true,
+			SecurityMode:     "default",
+			Thinking:         "auto",
+			CredentialMethod: "file",
 		},
 		selected: make(map[int]bool),
 	}
@@ -404,7 +404,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.step = StepMCPDenySelect
 		m.cursor = 0
-		
+
 		// Pre-select previously denied tools (for edit mode)
 		m.selected = make(map[int]bool)
 		if existingSrv, exists := m.config.MCPServers[m.currentMCPName]; exists {
@@ -494,7 +494,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-
 
 	return m, nil
 }
@@ -761,7 +760,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	case StepMCPAdd:
 		serverNames := m.getSortedMCPServerNames()
 		numServers := len(serverNames)
-		
+
 		if m.cursor < numServers {
 			// Edit existing server - re-probe and allow deny selection
 			m.currentMCPName = serverNames[m.cursor]
@@ -822,13 +821,13 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 				deniedTools = append(deniedTools, tool)
 			}
 		}
-		
+
 		// Parse args
 		var args []string
 		if m.currentMCPArgs != "" {
 			args = strings.Fields(m.currentMCPArgs)
 		}
-		
+
 		// Save server config
 		m.config.MCPServers[m.currentMCPName] = MCPServerSetup{
 			Command:         m.currentMCPCommand,
@@ -836,7 +835,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			DeniedTools:     deniedTools,
 			DiscoveredTools: m.probedTools,
 		}
-		
+
 		// Reset state and go back to add more
 		m.currentMCPName = ""
 		m.currentMCPCommand = ""
@@ -1371,7 +1370,7 @@ func (m Model) viewModel() string {
 func (m Model) viewCustomModel() string {
 	var s strings.Builder
 	s.WriteString(titleStyle.Render("Model Name") + "\n")
-	
+
 	switch m.config.Provider {
 	case ProviderOllamaCloud, ProviderOllamaLocal:
 		s.WriteString(subtitleStyle.Render("Enter the Ollama model to use") + "\n\n")
@@ -1637,7 +1636,7 @@ func (m Model) viewMCPAdd() string {
 
 	// Build menu options
 	var options []string
-	
+
 	// Add existing servers as editable options
 	serverNames := m.getSortedMCPServerNames()
 	for _, name := range serverNames {
@@ -1649,7 +1648,7 @@ func (m Model) viewMCPAdd() string {
 			options = append(options, fmt.Sprintf("Edit %s (all tools allowed)", name))
 		}
 	}
-	
+
 	options = append(options, "Add new MCP server")
 	options = append(options, "Done - continue to next step")
 
@@ -1785,30 +1784,16 @@ func (m Model) viewCredentialMethod() string {
 		s.WriteString(cursor + style.Render(opt.name) + " - " + dimStyle.Render(opt.desc) + "\n")
 	}
 
-	// Show hint about Claude CLI if Anthropic is selected but no CLI credentials found
-	if m.config.Provider == ProviderAnthropic && !credentials.HasClaudeCliCredentials() {
-		s.WriteString("\n" + dimStyle.Render("💡 Tip: Install Claude CLI and run 'claude login' for easier auth"))
-	}
-
 	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
 	return s.String()
 }
 
 // getCredentialMethods returns available credential methods for the current provider.
 func (m Model) getCredentialMethods() []struct{ name, desc string } {
-	methods := []struct{ name, desc string }{}
-
-	// For Anthropic, check if Claude CLI credentials exist
-	if m.config.Provider == ProviderAnthropic && credentials.HasClaudeCliCredentials() {
-		methods = append(methods, struct{ name, desc string }{
-			"claude-cli", "Use Claude CLI credentials (already authenticated)",
-		})
-	}
-
-	methods = append(methods,
+	methods := []struct{ name, desc string }{
 		struct{ name, desc string }{"file", "API key in ~/.config/grid/credentials.toml"},
 		struct{ name, desc string }{"env", "Environment variables only"},
-	)
+	}
 
 	return methods
 }
@@ -1856,17 +1841,15 @@ func (m Model) viewConfirm() string {
 }
 
 func (m Model) viewWriting() string {
-	return (
-		titleStyle.Render("Writing Files...") + "\n\n" +
-			normalStyle.Render("Creating configuration files..."))
+	return (titleStyle.Render("Writing Files...") + "\n\n" +
+		normalStyle.Render("Creating configuration files..."))
 }
 
 func (m Model) viewComplete() string {
 	if m.err != nil {
-		return (
-			errorStyle.Render("Error") + "\n\n" +
-				normalStyle.Render(m.err.Error()) + "\n\n" +
-				dimStyle.Render("Press q to exit"))
+		return (errorStyle.Render("Error") + "\n\n" +
+			normalStyle.Render(m.err.Error()) + "\n\n" +
+			dimStyle.Render("Press q to exit"))
 	}
 
 	var s strings.Builder
@@ -1975,10 +1958,8 @@ func (m Model) writeFiles() tea.Cmd {
 			if err := m.writeCredentials(); err != nil {
 				return errMsg{err}
 			}
-			files = append(files, credentials.DefaultPath())
+			files = append(files, defaultCredentialPath())
 		}
-
-		// claude-cli method doesn't need to write anything - credentials are read from Claude CLI
 
 		return filesWrittenMsg{files}
 	}
@@ -2168,18 +2149,27 @@ func (m Model) generatePolicyTOML() string {
 	return sb.String()
 }
 
+// defaultCredentialPath returns the default credentials file path.
+func defaultCredentialPath() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "grid", "credentials.toml")
+	}
+	return "credentials.toml"
+}
+
 // writeCredentials saves API key to ~/.config/grid/credentials.toml
 func (m Model) writeCredentials() error {
+	path := defaultCredentialPath()
 	// Load existing credentials or create new
-	creds, _, _ := credentials.Load()
-	if creds == nil {
-		creds = &credentials.Credentials{}
+	creds, err := credentials.LoadFile(path)
+	if err != nil {
+		creds = credentials.NewFileStore()
 	}
 
 	// Set the API key for the provider
 	creds.SetAPIKey(m.config.Provider, m.config.APIKey)
 
-	return creds.Save()
+	return creds.SaveFile(path)
 }
 
 // Run starts the setup wizard

@@ -9,6 +9,25 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+const (
+	// EnvConfigPath is an optional env var that points to a TOML config file.
+	EnvConfigPath = "AGENT_CONFIG"
+)
+
+// LoadOptions controls layered config loading.
+type LoadOptions struct {
+	// ProjectDir is where project-local agent.toml is searched.
+	// Empty means current working directory.
+	ProjectDir string
+
+	// EnvVar is the environment variable that may contain a config path.
+	// Defaults to EnvConfigPath when empty.
+	EnvVar string
+
+	// CLIPath is the highest-priority config file path (for --config).
+	CLIPath string
+}
+
 // Config represents the agent configuration.
 type Config struct {
 	Agent     AgentConfig        `toml:"agent"`
@@ -17,7 +36,7 @@ type Config struct {
 	Profiles  map[string]Profile `toml:"profiles"`  // Capability profiles
 	Web       WebConfig          `toml:"web"`
 	Telemetry TelemetryConfig    `toml:"telemetry"`
-	State     StateConfig         `toml:"state"`     // Persistent state settings
+	State     StateConfig        `toml:"state"`     // Persistent state settings
 	MCP       MCPConfig          `toml:"mcp"`       // MCP tool servers
 	Skills    SkillsConfig       `toml:"skills"`    // Agent Skills
 	Security  SecurityConfig     `toml:"security"`  // Security framework
@@ -151,7 +170,7 @@ func New() *Config {
 			MaxTokens: 4096,
 		},
 		State: StateConfig{
-			Location: "~/.local/grid",
+			Location: "~/.local/agent",
 		},
 		Telemetry: TelemetryConfig{
 			Protocol: "noop",
@@ -173,12 +192,50 @@ func Default() *Config {
 // Supports backwards-compatible [storage] → [state] migration.
 func LoadFile(path string) (*Config, error) {
 	cfg := New()
-	if _, err := toml.DecodeFile(path, cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
-	}
-	if err := migrateStorageToState(path, cfg); err != nil {
+	if err := mergeFile(cfg, path); err != nil {
 		return nil, err
 	}
+	return cfg, nil
+}
+
+// LoadWithPrecedence loads layered config with this priority order:
+// global file, project file, env-provided file, and finally CLI file.
+// Missing optional files are ignored; explicitly provided env/CLI files must exist.
+func LoadWithPrecedence(opts LoadOptions) (*Config, error) {
+	cfg := New()
+
+	if err := mergeIfExists(cfg, globalConfigPath()); err != nil {
+		return nil, err
+	}
+
+	projectDir := opts.ProjectDir
+	if projectDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current directory: %w", err)
+		}
+		projectDir = cwd
+	}
+	if err := mergeIfExists(cfg, filepath.Join(projectDir, "agent.toml")); err != nil {
+		return nil, err
+	}
+
+	envVar := opts.EnvVar
+	if envVar == "" {
+		envVar = EnvConfigPath
+	}
+	if envPath := os.Getenv(envVar); envPath != "" {
+		if err := mergeFile(cfg, envPath); err != nil {
+			return nil, fmt.Errorf("failed to load config from %s (%s): %w", envVar, envPath, err)
+		}
+	}
+
+	if opts.CLIPath != "" {
+		if err := mergeFile(cfg, opts.CLIPath); err != nil {
+			return nil, err
+		}
+	}
+
 	return cfg, nil
 }
 
@@ -224,6 +281,33 @@ func LoadDefault() (*Config, error) {
 	}
 
 	return LoadFile(filepath.Join(cwd, "agent.toml"))
+}
+
+func mergeIfExists(cfg *Config, path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return mergeFile(cfg, path)
+}
+
+func mergeFile(cfg *Config, path string) error {
+	if _, err := toml.DecodeFile(path, cfg); err != nil {
+		return fmt.Errorf("failed to parse config: %w", err)
+	}
+	if err := migrateStorageToState(path, cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func globalConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".config", "grid", "agent.toml")
+	}
+	return filepath.Join(home, ".config", "grid", "agent.toml")
 }
 
 // GetAPIKey returns the API key from the configured environment variable.
