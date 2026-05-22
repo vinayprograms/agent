@@ -1,62 +1,55 @@
-# Web Search Providers
+# Web Search
 
-The `web_search` tool supports multiple backends with automatic fallback.
+The `web_search` tool supports three backends with automatic fallback. Credentials are resolved from `~/.config/grid/credentials.toml` first, then environment variables.
 
-## Priority Order
+## Backend Priority
 
-SearXNG -> Brave -> Tavily -> DuckDuckGo (fallback)
+Brave → Tavily → DuckDuckGo (fallback)
 
-| Priority | Provider | API Key Required | Notes |
-|----------|----------|------------------|-------|
-| 1 | SearXNG | None (self-hosted) | Free, no API limits |
-| 2 | Brave Search | `BRAVE_API_KEY` | Best quality |
-| 3 | Tavily | `TAVILY_API_KEY` | Good for research |
-| 4 | DuckDuckGo | None | Zero-config fallback |
+| Priority | Provider | Key source | Notes |
+|----------|----------|------------|-------|
+| 1 | Brave Search | `credentials.toml` or `BRAVE_API_KEY` | Best result quality |
+| 2 | Tavily | `credentials.toml` or `TAVILY_API_KEY` | Good for research |
+| 3 | DuckDuckGo | None required | Zero-config fallback; rate limited |
 
-Configure in `~/.config/grid/credentials.toml`.
-
-## SearXNG (Recommended — Free, Self-Hosted)
-
-[SearXNG](https://github.com/searxng/searxng) is a privacy-respecting meta-search engine you can self-host. Zero cost, no API limits.
-
-**Quick setup with Docker:**
-
-```bash
-docker run -d --name searxng -p 8080:8080 \
-  -v searxng-data:/etc/searxng \
-  -e SEARXNG_BASE_URL=http://localhost:8080 \
-  searxng/searxng
-```
-
-**Configure the agent:**
+## Brave Search
 
 ```toml
 # ~/.config/grid/credentials.toml
-[searxng]
-api_key = "http://localhost:8080"  # This is the URL, not an actual key
-```
-
-Or set `SEARXNG_URL=http://localhost:8080` in your environment.
-
-**Security note:** SearXNG has no authentication by default. Either run it on localhost only, or put it behind a VPN/Tailscale.
-
-## Brave Search (Paid)
-
-```toml
 [brave]
 api_key = "BSA..."
 ```
 
-## Tavily (Free tier: 1000/month)
+Or set `BRAVE_API_KEY` in the environment.
+
+## Tavily
 
 ```toml
 [tavily]
 api_key = "tvly-..."
 ```
 
-## DuckDuckGo (Fallback)
+Or set `TAVILY_API_KEY` in the environment.
 
-Used automatically if no other provider is configured. Subject to rate limiting.
+## DuckDuckGo
+
+Used automatically when no API key is configured. Subject to rate limiting under concurrent sub-agent workloads.
+
+### Tuning the cooldown
+
+A configurable inter-query cooldown serializes DuckDuckGo requests across all sub-agents in a session and prevents 202 rate-limit responses. The default is 2000 ms.
+
+```toml
+# agent.toml
+[timeouts]
+  search_cooldown_ms = 2000  # milliseconds between DDG queries (default: 2000)
+```
+
+Increase this if you still see rate-limit errors with large sub-agent pipelines.
+
+### Session cache
+
+Results from all backends are cached in memory for 5 minutes per session. Sub-agents querying the same or overlapping topics share cached results, reducing total search volume regardless of which backend is active.
 
 ---
 

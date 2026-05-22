@@ -2,8 +2,6 @@
 
 A Go-based headless agent for workflow automation using LLMs.
 
-> **Disclaimer:** This code was **gramcoded** — 12 days of texting an AI via Telegram, whenever inspiration hit. No IDE, no terminal — just a phone and [OpenClaw](https://github.com/openclaw/openclaw) + Claude Opus 4.5. **Review before production use**.
-
 ## Quick Start
 
 ### Option A: Interactive Setup (Recommended)
@@ -64,7 +62,7 @@ The `provider` field is optional — it is inferred from the model name (`claude
 | **Supervision** | Four-phase execution with drift detection and human approval | [Execution](docs/execution/README.md) |
 | **Packaging** | Signed, distributable agent packages | [Packaging](docs/usage/packaging.md) |
 | **MCP / ACP** | External tool servers and editor integration | [Protocols](docs/configuration/protocols.md) |
-| **Web Search** | SearXNG, Brave, Tavily, DuckDuckGo with auto-fallback | [Web Search](docs/configuration/web-search.md) |
+| **Web Search** | Brave, Tavily, DuckDuckGo with configurable rate limiting and session cache | [Web Search](docs/configuration/web-search.md) |
 | **Sub-Agents** | Static (AGENT/USING) and dynamic (spawn_agent) sub-agents | [Design](docs/design/05-subagents.md) |
 | **Agent Skills** | Load reusable skills from SKILL.md directories | [Protocols](docs/configuration/protocols.md) |
 | **Docker** | CGO-free builds for minimal container images | [Docker](docs/usage/docker.md) |
