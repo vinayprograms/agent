@@ -113,9 +113,10 @@ type SecurityConfig struct {
 
 // TimeoutsConfig contains timeout settings for network operations.
 type TimeoutsConfig struct {
-	MCP       int `toml:"mcp"`        // MCP tool call timeout in seconds (default 60)
-	WebSearch int `toml:"web_search"` // web_search timeout in seconds (default 30)
-	WebFetch  int `toml:"web_fetch"`  // web_fetch timeout in seconds (default 60)
+	MCP              int `toml:"mcp"`               // MCP tool call timeout in seconds (default 60)
+	WebSearch        int `toml:"web_search"`        // web_search timeout in seconds (default 30)
+	WebFetch         int `toml:"web_fetch"`         // web_fetch timeout in seconds (default 60)
+	SearchCooldownMS int `toml:"search_cooldown_ms"` // minimum ms between DDG queries (default 2000)
 }
 
 // ServiceConfig contains settings for service agent mode (`agent serve`).
@@ -157,9 +158,10 @@ func New() *Config {
 			Protocol: "noop",
 		},
 		Timeouts: TimeoutsConfig{
-			MCP:       60, // 60 seconds for MCP calls
-			WebSearch: 30, // 30 seconds for web search
-			WebFetch:  60, // 60 seconds for web fetch
+			MCP:              60,   // 60 seconds for MCP calls
+			WebSearch:        30,   // 30 seconds for web search
+			WebFetch:         60,   // 60 seconds for web fetch
+			SearchCooldownMS: 2000, // 2 seconds between DDG queries
 		},
 	}
 }

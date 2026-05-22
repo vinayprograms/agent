@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
+	localtools "github.com/vinayprograms/agent/internal/tools"
 	"github.com/vinayprograms/agent/internal/checkpoint"
 	"github.com/vinayprograms/agent/internal/config"
 	"github.com/vinayprograms/agent/internal/executor"
@@ -190,9 +191,13 @@ func (rt *runtime) setupRegistry() {
 		}
 	}
 
+	var summarizer *llm.Summarizer
 	if rt.smallLLM != nil {
-		rt.registry.SetSummarizer(llm.NewSummarizer(rt.smallLLM))
+		summarizer = llm.NewSummarizer(rt.smallLLM)
+		rt.registry.SetSummarizer(summarizer)
 	}
+	rt.registry.Register(localtools.NewWebFetch(rt.pol, summarizer))
+	rt.registry.Register(localtools.NewWebSearch(rt.pol, rt.cfg.Timeouts.SearchCooldownMS, rt.creds))
 	rt.registry.SetCredentials(rt.creds)
 }
 
