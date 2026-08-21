@@ -6,7 +6,12 @@
 // install a global provider itself. The provider setup below was copied
 // verbatim from agentkit v0.2.1 telemetry/provider.go (InitProvider) so that
 // endpoint resolution, protocol selection, sampling, resource attributes and
-// shutdown behave exactly as before. The legacy event exporter
+// shutdown behave exactly as before, with one deliberate deviation: the
+// service resource is built with the schema URL of resource.Default() rather
+// than a pinned semconv version. The original pinned semconv v1.26.0, which
+// conflicts with the SDK's default schema and made resource.Merge — and hence
+// InitProvider — fail on every call, so tracing never actually started.
+// The legacy event exporter
 // (Exporter.LogEvent) was dropped deliberately (migration decision A-G4);
 // callers that need a tracer should use otel.Tracer directly.
 package telemetry
@@ -86,7 +91,7 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 	res, err := resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
-			semconv.SchemaURL,
+			resource.Default().SchemaURL(),
 			semconv.ServiceName(serviceName),
 			semconv.ServiceVersion(cfg.ServiceVersion),
 		),
