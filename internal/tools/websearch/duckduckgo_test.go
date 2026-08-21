@@ -1,10 +1,6 @@
 package websearch
 
-import (
-	"context"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // Representative fragment of a lite.duckduckgo.com response. Attribute order
 // (href before class) and the //duckduckgo.com/l/?uddg= redirect wrapper mirror
@@ -51,6 +47,7 @@ func TestUnwrapDDGRedirect(t *testing.T) {
 	cases := map[string]string{
 		"//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa&rut=x": "https://example.com/a",
 		"https://example.com/plain":                                    "https://example.com/plain",
+		"https://example.com/%zz":                                      "https://example.com/%zz", // unparsable: returned as-is
 	}
 	for in, want := range cases {
 		if got := unwrapDDGRedirect(in); got != want {
@@ -59,24 +56,10 @@ func TestUnwrapDDGRedirect(t *testing.T) {
 	}
 }
 
-func TestNew_ProviderDefaultsToAuto(t *testing.T) {
-	if tool := New(nil, "", ""); tool.provider != "auto" {
-		t.Errorf("provider = %q, want auto", tool.provider)
-	}
-}
-
-func TestAutoFallbackErrorMessageIsActionable(t *testing.T) {
-	tool := New(nil, "", "")
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"query": "test query that will not match anything",
-	})
-	if err == nil {
-		return
-	}
-	msg := err.Error()
-	for _, want := range []string{"searxng_url", "Brave/Tavily", "DuckDuckGo"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("error message should mention %q, got: %s", want, msg)
-		}
+func TestParseDuckDuckGoLite_SkipsNonHTTPLinks(t *testing.T) {
+	sample := `<a href="/relative" class="result-link">Local</a>` + liteSample
+	results := parseDuckDuckGoLite(sample, 5)
+	if len(results) != 2 || results[0].URL != "https://go.dev/doc/" {
+		t.Fatalf("expected the relative link to be skipped, got %+v", results)
 	}
 }

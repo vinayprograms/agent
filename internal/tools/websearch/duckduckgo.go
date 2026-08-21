@@ -35,7 +35,7 @@ var (
 )
 
 // searchDuckDuckGo searches via DuckDuckGo's lite endpoint (no API key needed).
-func searchDuckDuckGo(ctx context.Context, query string, count int) ([]SearchResult, error) {
+func (t *Tool) searchDuckDuckGo(ctx context.Context, query string, count int) ([]SearchResult, error) {
 	ddgMutex.Lock()
 	elapsed := time.Since(ddgLastSearch)
 	if elapsed < ddgCooldown {
@@ -70,7 +70,7 @@ func searchDuckDuckGo(ctx context.Context, query string, count int) ([]SearchRes
 		// The lite endpoint takes the query as POST form data.
 		form := url.Values{}
 		form.Set("q", query)
-		req, err := http.NewRequestWithContext(ctx, "POST", ddgLiteURL, strings.NewReader(form.Encode()))
+		req, err := http.NewRequestWithContext(ctx, "POST", t.ddgURL, strings.NewReader(form.Encode()))
 		if err != nil {
 			return nil, err
 		}
@@ -80,7 +80,7 @@ func searchDuckDuckGo(ctx context.Context, query string, count int) ([]SearchRes
 		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 		req.Header.Set("Referer", ddgLiteURL)
 
-		resp, err := httpClient.Do(req)
+		resp, err := t.client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("duckduckgo search failed: %w", err)
 			continue
