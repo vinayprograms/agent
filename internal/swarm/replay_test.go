@@ -5,15 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vinayprograms/agentkit/heartbeat"
-	"github.com/vinayprograms/agentkit/tasks"
 	"github.com/vinayprograms/agent/internal/executor"
 )
 
 func TestProcessReplayHeartbeat(t *testing.T) {
 	sc := executor.NewSwarmContext()
 
-	hb := &heartbeat.Heartbeat{
+	hb := &Heartbeat{
 		AgentID:   "backend",
 		Timestamp: time.Now(),
 		Status:    "executing",
@@ -41,7 +39,7 @@ func TestProcessReplayHeartbeat(t *testing.T) {
 func TestProcessReplayDiscuss(t *testing.T) {
 	sc := executor.NewSwarmContext()
 
-	result := tasks.TaskResult{
+	result := TaskResult{
 		TaskID:      "task-123",
 		AgentID:     "backend",
 		Outputs:     "CLAIM: I'll handle the API",
@@ -64,7 +62,7 @@ func TestProcessReplayDiscuss(t *testing.T) {
 func TestProcessReplayDiscuss_SkipsSelf(t *testing.T) {
 	sc := executor.NewSwarmContext()
 
-	result := tasks.TaskResult{
+	result := TaskResult{
 		TaskID:  "task-123",
 		AgentID: "backend",
 		Outputs: "my own message",
@@ -83,7 +81,7 @@ func TestProcessReplayDiscuss_SkipsSelf(t *testing.T) {
 func TestProcessReplayDone(t *testing.T) {
 	sc := executor.NewSwarmContext()
 
-	result := tasks.TaskResult{
+	result := TaskResult{
 		TaskID:      "task-123",
 		AgentID:     "backend",
 		Outputs:     "API complete",
@@ -106,17 +104,17 @@ func TestProcessReplayMessage_Routing(t *testing.T) {
 	sc := executor.NewSwarmContext()
 
 	// Heartbeat
-	hb := &heartbeat.Heartbeat{AgentID: "agent1", Status: "monitoring", Timestamp: time.Now()}
+	hb := &Heartbeat{AgentID: "agent1", Status: "monitoring", Timestamp: time.Now()}
 	hbData, _ := hb.Marshal()
 	processReplayMessage(sc, "heartbeat.agent1", hbData, "self")
 
 	// Discuss
-	result := tasks.TaskResult{AgentID: "agent2", TaskID: "t1", Outputs: "test", CompletedAt: time.Now()}
+	result := TaskResult{AgentID: "agent2", TaskID: "t1", Outputs: "test", CompletedAt: time.Now()}
 	discData, _ := json.Marshal(result)
 	processReplayMessage(sc, "discuss.t1", discData, "self")
 
 	// Done
-	doneResult := tasks.TaskResult{AgentID: "agent3", TaskID: "t2", Outputs: "done", CompletedAt: time.Now()}
+	doneResult := TaskResult{AgentID: "agent3", TaskID: "t2", Outputs: "done", CompletedAt: time.Now()}
 	doneData, _ := json.Marshal(doneResult)
 	processReplayMessage(sc, "done.cap.t2", doneData, "self")
 
@@ -136,5 +134,40 @@ func TestProcessReplayMessage_Routing(t *testing.T) {
 	completed := sc.GetCompleted()
 	if len(completed) != 1 {
 		t.Errorf("Expected 1 completed, got %d", len(completed))
+	}
+}
+
+func TestProcessReplayMalformed(t *testing.T) {
+	sc := executor.NewSwarmContext()
+
+	processReplayHeartbeat(sc, []byte("nope"))
+	processReplayDiscuss(sc, "discuss", []byte("{}"), "self")      // no task id in subject
+	processReplayDiscuss(sc, "discuss.t1", []byte("nope"), "self") // neither result nor task
+	processReplayDone(sc, "done.t1", []byte("{}"))                 // too few subject tokens
+	processReplayDone(sc, "done.cap.t1", []byte("nope"))           // malformed result
+
+	if len(sc.GetAgentStates()) != 0 || len(sc.GetDiscussion("t1")) != 0 || len(sc.GetCompleted()) != 0 {
+		t.Error("malformed input must not mutate swarm context")
+	}
+}
+
+func TestProcessReplayDiscuss_TaskMessage(t *testing.T) {
+	sc := executor.NewSwarmContext()
+
+	own := NewTaskMessage("t1", "golang", map[string]string{"goal": "mine"})
+	own.SubmittedBy = "self"
+	ownData, _ := own.Marshal()
+	processReplayDiscuss(sc, "discuss.t1", ownData, "self")
+	if len(sc.GetDiscussion("t1")) != 0 {
+		t.Fatal("own task submission must be skipped")
+	}
+
+	other := NewTaskMessage("t1", "golang", map[string]string{"goal": "build the API"})
+	other.SubmittedBy = "orchestrator"
+	otherData, _ := other.Marshal()
+	processReplayDiscuss(sc, "discuss.t1", otherData, "self")
+	msgs := sc.GetDiscussion("t1")
+	if len(msgs) != 1 || msgs[0].From != "orchestrator" || msgs[0].Content != "build the API" {
+		t.Errorf("discussion = %+v", msgs)
 	}
 }
