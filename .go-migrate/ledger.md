@@ -52,7 +52,7 @@ Wave A (independent, parallel, each green in isolation):
 1. [x] U1 internal/testutil/llmmock — copy old llm/mock.go verbatim (A-C7)
 2. [x] U2 internal/telemetry — copy InitProvider verbatim (A-G4); otel deps
 3. [ ] U3 internal/swarm — in-source envelopes/metrics (A-S2); dispatch tool → new tools.Tool; replay test
-4. [ ] U4 internal/tools/websearch — new tools.Tool shape, credentials.Lookup
+4. [x] U4 internal/tools/websearch — new tools.Tool shape, credentials.Lookup
 5. [ ] U5 internal/setup — policy generator to new schema (A-C1), credentials FileStore
 Wave B:
 6. [ ] U6 internal/supervision — llm.Model, slog (A-G5), tests on llmmock
@@ -78,3 +78,6 @@ parked-smells: no mutex on callCount/lastRequest; receiver `p` fossil; exported 
 API: Config{ServiceName,ServiceVersion,Endpoint,Protocol,Insecure,Headers,BatchTimeout,ExportTimeout}; Init(ctx, Config) (shutdown, error). No GetTracer — executor uses otel.Tracer directly (U8).
 DEVIATION (verified by verifier): old kit InitProvider ALWAYS failed (semconv v1.26.0 schema conflict with sdk resource.Default) — tracing never worked; now uses resource.Default().SchemaURL(). coverage 97.8% — sole uncovered stmt is resource.Merge error return, unreachable by construction (accepted).
 parked-smells: ServiceName doc says required but defaults; fmt.Errorf without verbs; batch/export timeouts not surfaced in internal/config.
+### U4 internal/tools/websearch — DONE (224f059, verifier PASS)
+API: websearch.New(creds credentials.Lookup, searxngURL, provider string) *Tool; register via tools.New(...) INSTEAD of tools.Search. Params query/count identical to v1.2.0 built-in. creds resolved at construction (config > lookup > env). coverage 100%.
+parked-smells: rate-limiter state is package-global (t.Parallel hazard) → move onto Tool in refactor phase; no WithHTTPTimeout option; Referer uses const not t.ddgURL; package-doc wording on env fallback.
