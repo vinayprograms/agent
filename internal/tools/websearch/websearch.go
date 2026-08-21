@@ -1,21 +1,27 @@
 // Package websearch provides an in-tree replacement for agentkit's built-in
 // web_search tool.
 //
-// It exists because the pinned agentkit version's DuckDuckGo fallback hits the
-// aggressively rate-limited https://duckduckgo.com/html/ endpoint with a
-// bot-identifying User-Agent, which returns HTTP 403 the majority of the time.
-// This implementation keeps agentkit's provider cascade
+// It exists because agentkit's DuckDuckGo fallback hits the aggressively
+// rate-limited https://duckduckgo.com/html/ endpoint with a bot-identifying
+// User-Agent, which returns HTTP 403 the majority of the time. This
+// implementation keeps agentkit's provider cascade
 // (SearXNG > Brave > Tavily > DuckDuckGo) but routes the keyless DuckDuckGo
 // path through the scraper-tolerant lite.duckduckgo.com endpoint with a
-// browser User-Agent.
+// browser User-Agent. It also lets config pin a single provider.
 //
-// The tool is registered over agentkit's built-in by calling
-// registry.Register(websearch.New(...)) after tools.NewRegistry — Register
-// overwrites by Name(), and this tool reports Name() == "web_search".
+// Registration: agentkit v1.2.0's Registry.Register returns an error on a
+// duplicate name, so this tool must be registered INSTEAD of tools.Search,
+// never over it:
 //
-// Credentials are taken via the constructor rather than the registry's
-// SetCredentials, because that setter type-asserts to agentkit's unexported
-// *webSearchTool and therefore cannot reach a replacement tool.
+//	reg.Register(tools.New(websearch.New(creds, cfg.SearxngURL, cfg.SearchProvider)))
+//
+// The tool reports Name() == "web_search" and accepts the same arguments
+// ("query", "count") and returns the same text format as the built-in, so
+// prompts written against the built-in keep working.
+//
+// Credentials are resolved through credentials.Lookup exactly as tools.Search
+// does (providers "searxng", "brave", "tavily"); the SEARXNG_URL, BRAVE_API_KEY
+// and TAVILY_API_KEY environment variables remain a final fallback.
 //
 // Note: The DuckDuckGo lite parser (parseDuckDuckGoLite) is unit-tested against
 // representative HTML samples but has not been verified against live
@@ -36,13 +42,10 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-// CredProvider supplies API keys/URLs for search providers. *credentials.Credentials
-// from agentkit satisfies this interface.
-type CredProvider interface {
-	GetAPIKey(provider string) string
-}
+	"github.com/vinayprograms/agentkit/credentials"
+	"github.com/vinayprograms/agentkit/tools"
+)
 
 // SearchResult is a single web search result.
 type SearchResult struct {
@@ -51,55 +54,87 @@ type SearchResult struct {
 	Snippet string `json:"snippet"`
 }
 
+// Provider endpoints. Fields on Tool so tests can point them at httptest servers.
+const (
+	braveSearchURL  = "https://api.search.brave.com/res/v1/web/search"
+	tavilySearchURL = "https://api.tavily.com/search"
+)
+
 // Tool implements agentkit's tools.Tool interface for web_search.
 type Tool struct {
-	creds      CredProvider
-	searxngURL string // resolved at construction (config value, else SEARXNG_URL env)
+	searxngURL string // config value > credentials "searxng" > SEARXNG_URL env
+	braveKey   string // credentials "brave" > BRAVE_API_KEY env
+	tavilyKey  string // credentials "tavily" > TAVILY_API_KEY env
 	provider   string // "auto" (cascade) or a pinned provider name
+
+	// client has a defensive timeout; the caller's context (driven by the
+	// web_search timeout config) is the primary deadline.
+	client    *http.Client
+	braveURL  string
+	tavilyURL string
+	ddgURL    string
 }
+
+var _ tools.Tool = (*Tool)(nil)
 
 // New constructs the replacement web_search tool.
 //
-// searxngURL and provider come from config ([web].searxng_url / search_provider).
-// Resolution order for the SearXNG URL is config-value-then-env, matching the
-// rest of the codebase: if searxngURL is empty, SEARXNG_URL is consulted.
-func New(creds CredProvider, searxngURL, provider string) *Tool {
-	if searxngURL == "" {
-		searxngURL = os.Getenv("SEARXNG_URL")
-	}
+// creds may be nil. searxngURL and provider come from config
+// ([web].searxng_url / search_provider). Credentials are resolved once, at
+// construction, like agentkit's tools.Search: an explicit config value wins,
+// then the credential store, then the provider's environment variable.
+func New(creds credentials.Lookup, searxngURL, provider string) *Tool {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
 		provider = "auto"
 	}
-	return &Tool{creds: creds, searxngURL: searxngURL, provider: provider}
+	if searxngURL == "" {
+		searxngURL = resolve(creds, "searxng", "SEARXNG_URL")
+	}
+	return &Tool{
+		searxngURL: searxngURL,
+		braveKey:   resolve(creds, "brave", "BRAVE_API_KEY"),
+		tavilyKey:  resolve(creds, "tavily", "TAVILY_API_KEY"),
+		provider:   provider,
+		client:     &http.Client{Timeout: 30 * time.Second},
+		braveURL:   braveSearchURL,
+		tavilyURL:  tavilySearchURL,
+		ddgURL:     ddgLiteURL,
+	}
+}
+
+// resolve returns the credential for provider, falling back to envVar.
+func resolve(creds credentials.Lookup, provider, envVar string) string {
+	if creds != nil {
+		if v := string(creds.Get(provider)); v != "" {
+			return v
+		}
+	}
+	return os.Getenv(envVar)
 }
 
 func (t *Tool) Name() string { return "web_search" }
 
 func (t *Tool) Description() string {
-	return "Search the web. Returns titles, URLs, and short snippets. IMPORTANT: Snippets are brief previews only - use web_fetch on relevant URLs to get the full content needed for research. The standard flow is: web_search to discover sources, then web_fetch on 2-4 most relevant URLs."
+	return "Search the web. Returns titles, URLs, and short snippets. " +
+		"IMPORTANT: Snippets are brief previews only — use web_fetch on relevant URLs " +
+		"to get the full content needed for research. The standard flow is: web_search " +
+		"to discover sources, then web_fetch on 2-4 most relevant URLs."
 }
 
-func (t *Tool) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"query": map[string]interface{}{
-				"type":        "string",
-				"description": "Search query",
-			},
-			"count": map[string]interface{}{
-				"type":        "integer",
-				"description": "Number of results (1-10, default 5)",
-			},
+func (t *Tool) Parameters() map[string]tools.Param {
+	return map[string]tools.Param{
+		"query": {
+			Type:        tools.StringParam,
+			Description: "Search query",
+			Required:    true,
 		},
-		"required": []string{"query"},
+		"count": {
+			Type:        tools.IntParam,
+			Description: "Number of results (1-10, default 5)",
+		},
 	}
 }
-
-// httpClient is shared across searches with a defensive timeout; the caller's
-// context (driven by the web_search timeout config) is the primary deadline.
-var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // Global rate limiter to avoid hammering search backends.
 var (
@@ -108,42 +143,16 @@ var (
 	searchCooldown = 500 * time.Millisecond
 )
 
-func (t *Tool) brave() string {
-	if t.creds == nil {
-		return os.Getenv("BRAVE_API_KEY")
-	}
-	if k := t.creds.GetAPIKey("brave"); k != "" {
-		return k
-	}
-	return os.Getenv("BRAVE_API_KEY")
-}
-
-func (t *Tool) tavily() string {
-	if t.creds == nil {
-		return os.Getenv("TAVILY_API_KEY")
-	}
-	if k := t.creds.GetAPIKey("tavily"); k != "" {
-		return k
-	}
-	return os.Getenv("TAVILY_API_KEY")
-}
-
 // Execute runs the search, honoring the configured provider selection.
-func (t *Tool) Execute(ctx context.Context, rawArgs map[string]interface{}) (interface{}, error) {
-	query, _ := rawArgs["query"].(string)
+func (t *Tool) Execute(ctx context.Context, args tools.Args) (string, error) {
+	query, err := args.String("query")
+	if err != nil {
+		return "", fmt.Errorf("web_search: %w", err)
+	}
 	if strings.TrimSpace(query) == "" {
-		return nil, fmt.Errorf("web_search: query is required")
+		return "", fmt.Errorf("web_search: query is required")
 	}
-
-	count := 5
-	if c, ok := toInt(rawArgs["count"]); ok {
-		count = c
-	}
-	if count < 1 {
-		count = 1
-	} else if count > 10 {
-		count = 10
-	}
+	count := min(max(args.IntOr("count", 5), 1), 10)
 
 	// Rate limiting: serialize requests with a cooldown.
 	searchMutex.Lock()
@@ -153,7 +162,7 @@ func (t *Tool) Execute(ctx context.Context, rawArgs map[string]interface{}) (int
 		searchMutex.Unlock()
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return "", ctx.Err()
 		case <-time.After(wait):
 		}
 		searchMutex.Lock()
@@ -161,41 +170,47 @@ func (t *Tool) Execute(ctx context.Context, rawArgs map[string]interface{}) (int
 	lastSearchTime = time.Now()
 	searchMutex.Unlock()
 
-	braveKey, tavilyKey := t.brave(), t.tavily()
+	results, err := t.search(ctx, query, count)
+	if err != nil {
+		return "", err
+	}
+	return formatResults(results), nil
+}
 
+func (t *Tool) search(ctx context.Context, query string, count int) ([]SearchResult, error) {
 	switch t.provider {
 	case "searxng":
 		if t.searxngURL == "" {
-			return nil, fmt.Errorf("web_search: search_provider=searxng but no searxng_url ([web].searxng_url or SEARXNG_URL) is set")
+			return nil, fmt.Errorf("web_search: search_provider=searxng but no searxng_url ([web].searxng_url, credentials [searxng] or SEARXNG_URL) is set")
 		}
-		return searchSearXNG(ctx, query, count, t.searxngURL)
+		return t.searchSearXNG(ctx, query, count)
 	case "brave":
-		if braveKey == "" {
+		if t.braveKey == "" {
 			return nil, fmt.Errorf("web_search: search_provider=brave but no Brave API key (credentials [brave] or BRAVE_API_KEY) is set")
 		}
-		return searchBrave(ctx, query, count, braveKey)
+		return t.searchBrave(ctx, query, count)
 	case "tavily":
-		if tavilyKey == "" {
+		if t.tavilyKey == "" {
 			return nil, fmt.Errorf("web_search: search_provider=tavily but no Tavily API key (credentials [tavily] or TAVILY_API_KEY) is set")
 		}
-		return searchTavily(ctx, query, count, tavilyKey)
+		return t.searchTavily(ctx, query, count)
 	case "duckduckgo":
-		return searchDuckDuckGo(ctx, query, count)
+		return t.searchDuckDuckGo(ctx, query, count)
 	case "auto":
 		// Cascade: SearXNG (self-hosted) > Brave > Tavily > DuckDuckGo.
 		if t.searxngURL != "" {
-			return searchSearXNG(ctx, query, count, t.searxngURL)
+			return t.searchSearXNG(ctx, query, count)
 		}
-		if braveKey != "" {
-			return searchBrave(ctx, query, count, braveKey)
+		if t.braveKey != "" {
+			return t.searchBrave(ctx, query, count)
 		}
-		if tavilyKey != "" {
-			return searchTavily(ctx, query, count, tavilyKey)
+		if t.tavilyKey != "" {
+			return t.searchTavily(ctx, query, count)
 		}
 		// No configured provider — DuckDuckGo is the keyless fallback, but it
 		// is rate-limited and may fail. Warn the caller with actionable guidance
 		// so failures aren't a silent mystery.
-		results, err := searchDuckDuckGo(ctx, query, count)
+		results, err := t.searchDuckDuckGo(ctx, query, count)
 		if err != nil {
 			return nil, fmt.Errorf("web_search: %w — no search provider configured. Set [web].searxng_url, or provide a Brave/Tavily API key (credentials [brave]/[tavily] or BRAVE_API_KEY/TAVILY_API_KEY) for reliable results. DuckDuckGo is a best-effort fallback subject to rate limiting", err)
 		}
@@ -208,25 +223,30 @@ func (t *Tool) Execute(ctx context.Context, rawArgs map[string]interface{}) (int
 	}
 }
 
-func toInt(v interface{}) (int, bool) {
-	switch n := v.(type) {
-	case int:
-		return n, true
-	case int64:
-		return int(n), true
-	case float64:
-		return int(n), true
-	default:
-		return 0, false
+// formatResults renders results in the same text layout as agentkit's built-in
+// web_search, so prompts tuned against the built-in keep working.
+func formatResults(results []SearchResult) string {
+	if len(results) == 0 {
+		return "No results found."
 	}
+	var b strings.Builder
+	for i, r := range results {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "%d. %s\n   %s", i+1, r.Title, r.URL)
+		if r.Snippet != "" {
+			fmt.Fprintf(&b, "\n   %s", r.Snippet)
+		}
+	}
+	return b.String()
 }
 
 // searchSearXNG queries a SearXNG instance's JSON API. The instance must have
 // `format=json` enabled.
-func searchSearXNG(ctx context.Context, query string, count int, baseURL string) ([]SearchResult, error) {
-	baseURL = strings.TrimSuffix(baseURL, "/")
+func (t *Tool) searchSearXNG(ctx context.Context, query string, count int) ([]SearchResult, error) {
 	searchURL := fmt.Sprintf("%s/search?q=%s&format=json&categories=general",
-		baseURL, url.QueryEscape(query))
+		strings.TrimSuffix(t.searxngURL, "/"), url.QueryEscape(query))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
@@ -235,7 +255,7 @@ func searchSearXNG(ctx context.Context, query string, count int, baseURL string)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", browserUserAgent)
 
-	resp, err := httpClient.Do(req)
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("searxng search failed: %w", err)
 	}
@@ -268,18 +288,17 @@ func searchSearXNG(ctx context.Context, query string, count int, baseURL string)
 }
 
 // searchBrave queries the Brave Search API.
-func searchBrave(ctx context.Context, query string, count int, apiKey string) ([]SearchResult, error) {
-	u := fmt.Sprintf("https://api.search.brave.com/res/v1/web/search?q=%s&count=%d",
-		url.QueryEscape(query), count)
+func (t *Tool) searchBrave(ctx context.Context, query string, count int) ([]SearchResult, error) {
+	u := fmt.Sprintf("%s?q=%s&count=%d", t.braveURL, url.QueryEscape(query), count)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-Subscription-Token", apiKey)
+	req.Header.Set("X-Subscription-Token", t.braveKey)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := httpClient.Do(req)
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("brave search failed: %w", err)
 	}
@@ -311,21 +330,21 @@ func searchBrave(ctx context.Context, query string, count int, apiKey string) ([
 }
 
 // searchTavily queries the Tavily API.
-func searchTavily(ctx context.Context, query string, count int, apiKey string) ([]SearchResult, error) {
-	reqBody := map[string]interface{}{
-		"api_key":     apiKey,
+func (t *Tool) searchTavily(ctx context.Context, query string, count int) ([]SearchResult, error) {
+	reqBody := map[string]any{
+		"api_key":     t.tavilyKey,
 		"query":       query,
 		"max_results": count,
 	}
 	bodyBytes, _ := json.Marshal(reqBody)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.tavily.com/search", bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", t.tavilyURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := httpClient.Do(req)
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("tavily search failed: %w", err)
 	}
