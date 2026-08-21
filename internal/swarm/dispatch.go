@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/vinayprograms/agentkit/bus"
-	"github.com/vinayprograms/agentkit/tasks"
+	"github.com/vinayprograms/agentkit/tools"
+	"github.com/vinayprograms/swarmkit/messaging"
 )
 
 // WorkerCapability describes a worker pool available for dispatch.
@@ -20,14 +20,14 @@ type WorkerCapability struct {
 // DispatchTool allows a manager agent to dispatch tasks to worker capabilities.
 // This tool is ONLY registered for agents with type=manager — workers never see it.
 type DispatchTool struct {
-	bus          bus.MessageBus
+	bus          messaging.Bus
 	managerName  string
 	capabilities []WorkerCapability
 }
 
 // NewDispatchTool creates a dispatch tool bound to the given message bus.
 // capabilities lists the worker pools available for dispatch.
-func NewDispatchTool(b bus.MessageBus, managerName string, capabilities []WorkerCapability) *DispatchTool {
+func NewDispatchTool(b messaging.Bus, managerName string, capabilities []WorkerCapability) *DispatchTool {
 	return &DispatchTool{bus: b, managerName: managerName, capabilities: capabilities}
 }
 
@@ -44,38 +44,36 @@ func (t *DispatchTool) Description() string {
 	return desc
 }
 
-func (t *DispatchTool) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"capability": map[string]interface{}{
-				"type":        "string",
-				"description": "The worker capability to route this task to (e.g., \"develop\", \"test\", \"review\").",
-			},
-			"task": map[string]interface{}{
-				"type":        "string",
-				"description": "Complete, self-contained task description for the worker. Must include everything the worker needs — workers execute in isolation and cannot see other tasks.",
-			},
+func (t *DispatchTool) Parameters() map[string]tools.Param {
+	return map[string]tools.Param{
+		"capability": {
+			Type:        tools.StringParam,
+			Description: "The worker capability to route this task to (e.g., \"develop\", \"test\", \"review\").",
+			Required:    true,
 		},
-		"required": []string{"capability", "task"},
+		"task": {
+			Type:        tools.StringParam,
+			Description: "Complete, self-contained task description for the worker. Must include everything the worker needs — workers execute in isolation and cannot see other tasks.",
+			Required:    true,
+		},
 	}
 }
 
-func (t *DispatchTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	capability, _ := args["capability"].(string)
-	task, _ := args["task"].(string)
+func (t *DispatchTool) Execute(ctx context.Context, args tools.Args) (string, error) {
+	capability := args.StringOr("capability", "")
+	task := args.StringOr("task", "")
 
 	if capability == "" {
-		return nil, fmt.Errorf("capability is required")
+		return "", fmt.Errorf("capability is required")
 	}
 	if task == "" {
-		return nil, fmt.Errorf("task description is required")
+		return "", fmt.Errorf("task description is required")
 	}
 
 	taskID := fmt.Sprintf("t-%s", uuid.New().String()[:8])
 	subject := fmt.Sprintf("work.%s.%s", capability, taskID)
 
-	taskMsg := &tasks.TaskMessage{
+	taskMsg := &TaskMessage{
 		TaskID:      taskID,
 		Capability:  capability,
 		Inputs:      map[string]string{"task": task},
@@ -85,11 +83,11 @@ func (t *DispatchTool) Execute(ctx context.Context, args map[string]interface{})
 	}
 	data, err := taskMsg.Marshal()
 	if err != nil {
-		return nil, fmt.Errorf("marshaling task: %w", err)
+		return "", fmt.Errorf("marshaling task: %w", err)
 	}
 
 	if err := t.bus.Publish(subject, data); err != nil {
-		return nil, fmt.Errorf("publishing to %s: %w", subject, err)
+		return "", fmt.Errorf("publishing to %s: %w", subject, err)
 	}
 
 	return fmt.Sprintf("Dispatched task %s to capability %q", taskID, capability), nil

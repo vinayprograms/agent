@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/vinayprograms/agentkit/heartbeat"
-	"github.com/vinayprograms/agentkit/tasks"
 	"github.com/vinayprograms/agent/internal/executor"
 )
 
@@ -30,7 +28,7 @@ func Replay(js nats.JetStreamContext, catchupSeq uint64, agentID string) (*Repla
 		// Empty stream — nothing to replay
 		return &ReplayResult{
 			SwarmContext: executor.NewSwarmContext(),
-			CatchupSeq:  0,
+			CatchupSeq:   0,
 		}, nil
 	}
 
@@ -72,7 +70,7 @@ func Replay(js nats.JetStreamContext, catchupSeq uint64, agentID string) (*Repla
 	}
 
 	return &ReplayResult{
-		SwarmContext:  sc,
+		SwarmContext: sc,
 		MessagesRead: messagesRead,
 		CatchupSeq:   catchupSeq,
 	}, nil
@@ -97,7 +95,7 @@ func processReplayMessage(sc *executor.SwarmContext, subject string, data []byte
 
 // processReplayHeartbeat updates agent state from a heartbeat message.
 func processReplayHeartbeat(sc *executor.SwarmContext, data []byte) {
-	hb, err := heartbeat.Unmarshal(data)
+	hb, err := UnmarshalHeartbeat(data)
 	if err != nil {
 		return
 	}
@@ -120,7 +118,7 @@ func processReplayDiscuss(sc *executor.SwarmContext, subject string, data []byte
 	taskID := parts[1]
 
 	// Try to parse as TaskResult (structured discuss message)
-	var result tasks.TaskResult
+	var result TaskResult
 	if err := json.Unmarshal(data, &result); err == nil && result.AgentID != "" {
 		// Skip own messages
 		if result.AgentID == selfID {
@@ -141,7 +139,7 @@ func processReplayDiscuss(sc *executor.SwarmContext, subject string, data []byte
 	}
 
 	// Try to parse as TaskMessage (initial task submission)
-	task, err := tasks.UnmarshalTaskMessage(data)
+	task, err := UnmarshalTaskMessage(data)
 	if err != nil {
 		return
 	}
@@ -164,7 +162,7 @@ func processReplayDone(sc *executor.SwarmContext, subject string, data []byte) {
 	}
 	taskID := parts[2]
 
-	var result tasks.TaskResult
+	var result TaskResult
 	if err := json.Unmarshal(data, &result); err != nil {
 		return
 	}

@@ -61,10 +61,10 @@ func EnsureWorkConsumer(js nats.JetStreamContext, capability string) (*nats.Subs
 		filterSubject,
 		consumerName,
 		nats.BindStream(StreamName),
-		nats.AckExplicit(),                   // Worker must ack after processing
-		nats.MaxDeliver(3),                   // Retry up to 3 times on nack/timeout
-		nats.AckWait(10*time.Minute),         // Long timeout — tasks can take minutes
-		nats.DeliverNew(),                    // Only new messages (not replayed history)
+		nats.AckExplicit(),           // Worker must ack after processing
+		nats.MaxDeliver(3),           // Retry up to 3 times on nack/timeout
+		nats.AckWait(10*time.Minute), // Long timeout — tasks can take minutes
+		nats.DeliverNew(),            // Only new messages (not replayed history)
 	)
 	if err != nil {
 		return nil, fmt.Errorf("pull subscribe work.%s.*: %w", capability, err)
