@@ -1,0 +1,24 @@
+# Agent Configuration — Ollama Cloud
+
+[llm]
+provider = "ollama-cloud"
+model = "deepseek-v4-pro:cloud"
+max_tokens = 65536
+
+[small_llm]
+provider = "ollama-cloud"
+model = "qwen3.5:cloud"
+max_tokens = 4096
+
+
+[timeouts]
+web_fetch = 120
+web_search = 60
+
+[web]
+# Backend: "auto" (SearXNG > Brave > Tavily > DuckDuckGo) or a pinned provider.
+search_provider = "auto"
+# searxng_url = "https://searxng.example.com"  # else SEARXNG_URL env is used
+
+[security]
+level = "default"

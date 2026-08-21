@@ -41,3 +41,12 @@ sessions/
 *.pem
 /agent
 replay
+
+# Local design worksheet (not repo docs)
+DESIGN-DEBT.md
+
+# Runtime state written by local agent runs
+/storage/
+
+# Outputs from ad-hoc example/system-test runs
+/test-results/
