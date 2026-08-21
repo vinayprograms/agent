@@ -15,11 +15,11 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/vinayprograms/agent/internal/agentfile"
-	"github.com/vinayprograms/agent/internal/credentials"
 	"github.com/vinayprograms/agent/internal/executor"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/swarm"
 	"github.com/vinayprograms/agentkit/bus"
+	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/heartbeat"
 	"github.com/vinayprograms/agentkit/registry"
 	"github.com/vinayprograms/agentkit/tasks"
@@ -29,7 +29,7 @@ import (
 type serviceAgent struct {
 	// Reuse workflow loading infrastructure
 	wf    *workflow
-	creds credentials.Store
+	creds *credentials.Credentials
 
 	// Agent identity (uses session ID)
 	agentID         string
@@ -121,7 +121,7 @@ func (cmd *ServeCmd) Run() error {
 	}
 
 	// Load credentials (same as run mode)
-	creds, _, err := loadCredentials()
+	creds, _, err := credentials.Load()
 	if err != nil {
 		// Credentials are optional, continue with nil
 		creds = nil

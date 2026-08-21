@@ -13,7 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/vinayprograms/agent/internal/credentials"
+	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/mcp"
 )
 
@@ -81,7 +81,7 @@ type Config struct {
 	MCPServers map[string]MCPServerSetup
 
 	// Credentials
-	CredentialMethod string // "file", "env"
+	CredentialMethod string // "file", "env", "claude-cli"
 }
 
 // MCPServerSetup holds MCP server configuration during setup
@@ -1784,16 +1784,30 @@ func (m Model) viewCredentialMethod() string {
 		s.WriteString(cursor + style.Render(opt.name) + " - " + dimStyle.Render(opt.desc) + "\n")
 	}
 
+	// Show hint about Claude CLI if Anthropic is selected but no CLI credentials found
+	if m.config.Provider == ProviderAnthropic && !credentials.HasClaudeCliCredentials() {
+		s.WriteString("\n" + dimStyle.Render("💡 Tip: Install Claude CLI and run 'claude login' for easier auth"))
+	}
+
 	s.WriteString("\n" + dimStyle.Render("↑/↓ to move, Enter to select"))
 	return s.String()
 }
 
 // getCredentialMethods returns available credential methods for the current provider.
 func (m Model) getCredentialMethods() []struct{ name, desc string } {
-	methods := []struct{ name, desc string }{
+	methods := []struct{ name, desc string }{}
+
+	// For Anthropic, check if Claude CLI credentials exist
+	if m.config.Provider == ProviderAnthropic && credentials.HasClaudeCliCredentials() {
+		methods = append(methods, struct{ name, desc string }{
+			"claude-cli", "Use Claude CLI credentials (already authenticated)",
+		})
+	}
+
+	methods = append(methods,
 		struct{ name, desc string }{"file", "API key in ~/.config/grid/credentials.toml"},
 		struct{ name, desc string }{"env", "Environment variables only"},
-	}
+	)
 
 	return methods
 }
@@ -1958,8 +1972,10 @@ func (m Model) writeFiles() tea.Cmd {
 			if err := m.writeCredentials(); err != nil {
 				return errMsg{err}
 			}
-			files = append(files, defaultCredentialPath())
+			files = append(files, credentials.DefaultPath())
 		}
+
+		// claude-cli method doesn't need to write anything - credentials are read from Claude CLI
 
 		return filesWrittenMsg{files}
 	}
@@ -2149,27 +2165,18 @@ func (m Model) generatePolicyTOML() string {
 	return sb.String()
 }
 
-// defaultCredentialPath returns the default credentials file path.
-func defaultCredentialPath() string {
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".config", "grid", "credentials.toml")
-	}
-	return "credentials.toml"
-}
-
 // writeCredentials saves API key to ~/.config/grid/credentials.toml
 func (m Model) writeCredentials() error {
-	path := defaultCredentialPath()
 	// Load existing credentials or create new
-	creds, err := credentials.LoadFile(path)
-	if err != nil {
-		creds = credentials.NewFileStore()
+	creds, _, _ := credentials.Load()
+	if creds == nil {
+		creds = &credentials.Credentials{}
 	}
 
 	// Set the API key for the provider
 	creds.SetAPIKey(m.config.Provider, m.config.APIKey)
 
-	return creds.SaveFile(path)
+	return creds.Save()
 }
 
 // Run starts the setup wizard

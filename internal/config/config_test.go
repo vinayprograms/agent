@@ -235,8 +235,8 @@ func TestConfig_Defaults(t *testing.T) {
 	if cfg.LLM.MaxTokens != 4096 {
 		t.Errorf("default max_tokens should be 4096, got %d", cfg.LLM.MaxTokens)
 	}
-	if cfg.State.Location != "~/.local/grid" {
-		t.Errorf("default state.location should be '~/.local/grid', got %s", cfg.State.Location)
+	if cfg.State.Location != "~/.local/agent" {
+		t.Errorf("default state.location should be '~/.local/agent', got %s", cfg.State.Location)
 	}
 	if cfg.Telemetry.Protocol != "noop" {
 		t.Errorf("default telemetry protocol should be 'noop', got %s", cfg.Telemetry.Protocol)

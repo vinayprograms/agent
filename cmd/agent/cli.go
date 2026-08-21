@@ -7,15 +7,12 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/vinayprograms/agent/cmd/agent/subcommands"
 )
-
-type RunCmd = subcommands.RunCmd
 
 // CLI holds the parsed state for all subcommands.
 // Tests can call parseArgs to populate it.
 type CLI struct {
-	Run      *RunCmd
+	Run      RunCmd
 	Serve    ServeCmd
 	Validate ValidateCmd
 	Inspect  InspectCmd
@@ -26,6 +23,17 @@ type CLI struct {
 	Setup    SetupCmd
 	Replay   ReplayCmd
 	Version  VersionCmd
+}
+
+// RunCmd executes a workflow from an Agentfile.
+type RunCmd struct {
+	Input     map[string]string
+	Config    string
+	Policy    string
+	Workspace string
+	Goal      string
+	Debug     bool
+	File      string
 }
 
 // ServeCmd runs the agent as a long-running service.
@@ -106,6 +114,32 @@ type VersionCmd struct{}
 
 // setPositionalArgs sets positional args on a CLI from cobra args in RunE callbacks.
 // Each command builder calls this pattern: set struct field from args[0] if present.
+
+// buildRunCmd creates the run subcommand and binds flags to cli.Run.
+func buildRunCmd(cli *CLI, action func() error) *cobra.Command {
+	cli.Run.File = "Agentfile"
+	cmd := &cobra.Command{
+		Use:   "run [file]",
+		Short: "Run a workflow (one-shot, ephemeral)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				cli.Run.File = args[0]
+			}
+			if action != nil {
+				return action()
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringToStringVarP(&cli.Run.Input, "input", "i", nil, "Input key=value (repeatable)")
+	cmd.Flags().StringVar(&cli.Run.Config, "config", "", "Config file path")
+	cmd.Flags().StringVar(&cli.Run.Policy, "policy", "", "Policy file path")
+	cmd.Flags().StringVar(&cli.Run.Workspace, "workspace", "", "Workspace directory")
+	cmd.Flags().StringVar(&cli.Run.Goal, "goal", "", "Inline goal description (skips Agentfile)")
+	cmd.Flags().BoolVar(&cli.Run.Debug, "debug", false, "Enable verbose logging (prompts, responses, tool outputs)")
+	return cmd
+}
 
 // buildServeCmd creates the serve subcommand and binds flags to cli.Serve.
 func buildServeCmd(cli *CLI, action func() error) *cobra.Command {
@@ -319,11 +353,8 @@ func newRootCmd() (*cobra.Command, *CLI) {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	runCmd, runConfig := subcommands.BuildRunCmd(func() error { return cli.Run.Run(rctx.creds) })
-	root.AddCommand(runCmd)
-	cli.Run = runConfig
-
 	root.AddCommand(
+		buildRunCmd(cli, func() error { return cli.Run.Run(rctx) }),
 		buildServeCmd(cli, func() error { return cli.Serve.Run() }),
 		buildValidateCmd(cli, func() error { return cli.Validate.Run(rctx) }),
 		buildInspectCmd(cli, func() error { return cli.Inspect.Run(rctx) }),
@@ -347,12 +378,8 @@ func parseTestRoot() (*cobra.Command, *CLI) {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-
-	runCmd, runConfig := subcommands.BuildRunCmd(nil)
-	root.AddCommand(runCmd)
-	cli.Run = runConfig
-
 	root.AddCommand(
+		buildRunCmd(cli, nil),
 		buildServeCmd(cli, nil),
 		buildValidateCmd(cli, nil),
 		buildInspectCmd(cli, nil),

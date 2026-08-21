@@ -72,31 +72,31 @@ func TestIsPackageFile_NonExistent(t *testing.T) {
 
 func TestParseRetryConfig(t *testing.T) {
 	tests := []struct {
-		name       string
-		maxRetries int
-		backoffStr string
-		wantMax    int
+		name        string
+		maxRetries  int
+		backoffStr  string
+		wantMax     int
 		wantBackoff time.Duration
 	}{
 		{
-			name:       "defaults",
-			maxRetries: 3,
-			backoffStr: "",
-			wantMax:    3,
+			name:        "defaults",
+			maxRetries:  3,
+			backoffStr:  "",
+			wantMax:     3,
 			wantBackoff: 0,
 		},
 		{
-			name:       "with backoff",
-			maxRetries: 5,
-			backoffStr: "30s",
-			wantMax:    5,
+			name:        "with backoff",
+			maxRetries:  5,
+			backoffStr:  "30s",
+			wantMax:     5,
 			wantBackoff: 30 * time.Second,
 		},
 		{
-			name:       "invalid backoff",
-			maxRetries: 2,
-			backoffStr: "invalid",
-			wantMax:    2,
+			name:        "invalid backoff",
+			maxRetries:  2,
+			backoffStr:  "invalid",
+			wantMax:     2,
 			wantBackoff: 0,
 		},
 	}

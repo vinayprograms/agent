@@ -7,9 +7,8 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
-	"github.com/vinayprograms/agent/cmd/agent/subcommands"
 	"github.com/vinayprograms/agent/internal/agentfile"
-	"github.com/vinayprograms/agent/internal/credentials"
+	"github.com/vinayprograms/agentkit/credentials"
 )
 
 // Build-time variables (set via ldflags)
@@ -20,30 +19,22 @@ var (
 )
 
 // globalCreds holds loaded credentials (file > env fallback happens in GetAPIKey)
-var globalCreds credentials.Store
+var globalCreds *credentials.Credentials
 
-// init runs before main and performs one-time startup wiring.
-// Startup order is:
-// 1) load .env so env-based config/credential references are available,
-// 2) load credentials from standard locations,
-// 3) register run subcommand factories.
-//
-// Config TOML precedence is resolved later (after CLI parsing) inside workflow
-// loading, so --config can take highest priority over global/project/env files.
 func init() {
-	// Load .env first so env-provided config and key references are visible.
-	godotenv.Load()
-
 	// Load credentials from standard locations
-	// Priority: CLI args > environment variables > current directory > home directory
-	creds, path, err := loadCredentials()
+	// Priority: credentials.toml > env vars (handled by GetAPIKey)
+	creds, path, err := credentials.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: failed to load credentials from %s: %v\n", path, err)
 		os.Exit(1)
 	}
-	globalCreds = creds
-	subcommands.SetRunWorkflowFactory(newRunWorkflow)
-	subcommands.SetRunRuntimeFactory(newRunRuntime)
+	if creds != nil {
+		globalCreds = creds
+	}
+
+	// Load .env for any additional env vars
+	_ = godotenv.Load()
 }
 
 func main() {
@@ -56,74 +47,61 @@ func main() {
 
 // runContext provides shared dependencies to commands.
 type runContext struct {
-	creds credentials.Store
+	creds *credentials.Credentials
 }
 
-type runWorkflowAdapter struct {
-	w *workflow
-}
-
-func newRunWorkflow(c *subcommands.RunCmd) (subcommands.RunWorkflow, error) {
-	return &runWorkflowAdapter{w: &workflow{
+// Run executes the run command.
+func (c *RunCmd) Run(ctx *runContext) error {
+	w := &workflow{
 		agentfilePath: c.File,
 		inputs:        c.Input,
 		configPath:    c.Config,
 		policyPath:    c.Policy,
 		workspacePath: c.Workspace,
 		debug:         c.Debug,
-	}}, nil
-}
-
-func (a *runWorkflowAdapter) AgentfilePath() string {
-	return a.w.agentfilePath
-}
-
-func (a *runWorkflowAdapter) SetInlineGoal(goal string) {
-	a.w.wf = &agentfile.Workflow{
-		Name: "inline-goal",
-		Goals: []agentfile.Goal{
-			{Name: "goal", Outcome: goal},
-		},
-		Steps: []agentfile.Step{
-			{Type: agentfile.StepRUN, Name: "run-goal", UsingGoals: []string{"goal"}},
-		},
 	}
-}
 
-func (a *runWorkflowAdapter) Load() error {
-	return a.w.load()
-}
+	// Handle inline goal (skip Agentfile if provided)
+	if c.Goal != "" {
+		w.wf = &agentfile.Workflow{
+			Name: "inline-goal",
+			Goals: []agentfile.Goal{
+				{Name: "goal", Outcome: c.Goal},
+			},
+			Steps: []agentfile.Step{
+				{Type: agentfile.StepRUN, Name: "run-goal", UsingGoals: []string{"goal"}},
+			},
+		}
+		// Still load config and policy, but skip Agentfile
+		if err := w.loadConfig(); err != nil {
+			return fmt.Errorf("loading config: %w", err)
+		}
+		if err := w.loadPolicy(); err != nil {
+			return fmt.Errorf("loading policy: %w", err)
+		}
+	} else {
+		if _, err := os.Stat(w.agentfilePath); os.IsNotExist(err) {
+			return fmt.Errorf("%s not found", w.agentfilePath)
+		}
 
-func (a *runWorkflowAdapter) LoadConfig() error {
-	return a.w.loadConfig()
-}
-
-func (a *runWorkflowAdapter) LoadPolicy() error {
-	return a.w.loadPolicy()
-}
-
-type runRuntimeAdapter struct {
-	rt *runtime
-}
-
-func newRunRuntime(w subcommands.RunWorkflow, creds credentials.Store) (subcommands.RunRuntime, error) {
-	wa, ok := w.(*runWorkflowAdapter)
-	if !ok {
-		return nil, fmt.Errorf("invalid run workflow adapter")
+		if err := w.load(); err != nil {
+			return err
+		}
 	}
-	return &runRuntimeAdapter{rt: newRuntime(wa.w, creds)}, nil
-}
 
-func (a *runRuntimeAdapter) Setup() error {
-	return a.rt.setup()
-}
+	rt := newRuntime(w, ctx.creds)
+	defer rt.cleanup()
 
-func (a *runRuntimeAdapter) Run(ctx context.Context) int {
-	return a.rt.run(ctx)
-}
+	if err := rt.setup(); err != nil {
+		return err
+	}
 
-func (a *runRuntimeAdapter) Cleanup() {
-	a.rt.cleanup()
+	bgCtx := context.Background()
+	code := rt.run(bgCtx)
+	if code != 0 {
+		os.Exit(code)
+	}
+	return nil
 }
 
 // Run executes the validate command.
