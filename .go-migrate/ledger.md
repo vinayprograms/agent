@@ -51,7 +51,7 @@ Maps: `maps/map-core.md` (llm/tools/policy/mcp/memory/credentials), `maps/map-gu
 Wave A (independent, parallel, each green in isolation):
 1. [x] U1 internal/testutil/llmmock — copy old llm/mock.go verbatim (A-C7)
 2. [x] U2 internal/telemetry — copy InitProvider verbatim (A-G4); otel deps
-3. [ ] U3 internal/swarm — in-source envelopes/metrics (A-S2); dispatch tool → new tools.Tool; replay test
+3. [x] U3 internal/swarm — in-source envelopes/metrics (A-S2); dispatch tool → new tools.Tool; replay test
 4. [x] U4 internal/tools/websearch — new tools.Tool shape, credentials.Lookup
 5. [ ] U5 internal/setup — policy generator to new schema (A-C1), credentials FileStore
 Wave B:
@@ -89,3 +89,6 @@ Merged to main: U1, U2, U4 (records above). In flight on branches (worktrees und
 - U6 `mig/u6` — worker running (supervision → llm.Model + slog, 100% cov target); not yet committed.
 Next after these: U7 cmd/swarm (needs U3 merged), U8 internal/executor (needs U1,U3,U6), U9 cmd/agent, U10 agentmem, U11 tests/*, U12 examples policy.toml + docs; then verify.md gate, parked-smells cleanup, refactor phase per diagnosis.md, 100% coverage phase, system tests with examples/agent via agent.ollama.toml.
 Process note: append ledger records on main only (worktree-side edits conflict on merge).
+### U3 internal/swarm — DONE (774f1e2, verifier PASS)
+in-sourced verbatim: task.go (TaskMessage/TaskResult…), heartbeat.go (Heartbeat/BusSender on messaging.Bus), metrics.go (MetricsCollector). Re-point map: tasks.X→swarm.X, heartbeat.X→swarm.X, heartbeat.Unmarshal→swarm.UnmarshalHeartbeat. JSON tags pinned by TestTaskWireTags. DispatchTool on v1.2.0 tools.Tool. coverage 98.3% (4 unreachable marshal/JetStream error returns, verified). nats-server/v2 test dep (already in graph).
+parked-smells: BusSender.run swallows initial-beat error; Replay swallows NextMsg errors + hard-coded 5s drain (make injectable post-green); Validate mutates receiver; Sprintf("%d")→strconv; Sender iface could narrow; tests use Sleep polling + context.Background.
