@@ -81,3 +81,11 @@ parked-smells: ServiceName doc says required but defaults; fmt.Errorf without ve
 ### U4 internal/tools/websearch — DONE (224f059, verifier PASS)
 API: websearch.New(creds credentials.Lookup, searxngURL, provider string) *Tool; register via tools.New(...) INSTEAD of tools.Search. Params query/count identical to v1.2.0 built-in. creds resolved at construction (config > lookup > env). coverage 100%.
 parked-smells: rate-limiter state is package-global (t.Parallel hazard) → move onto Tool in refactor phase; no WithHTTPTimeout option; Referer uses const not t.ddgURL; package-doc wording on env fallback.
+
+## Checkpoint 2026-08-21 (usage-limit pause)
+Merged to main: U1, U2, U4 (records above). In flight on branches (worktrees under ../agent-wt/):
+- U3 `mig/u3` @774f1e2 — worker done (98.3% cov, 4 listed unreachable blocks); adversarial verifier was running, result not yet recorded → re-run verifier, then merge + record.
+- U5 `mig/u5` @cec0391 — worker done (99.7% cov); verifier running with an explicit check of assumption (a) "v1.2.0 policy can't disable a single tool when default_deny=false" and of whether the restrictive policy now leaves edit/grep/ls disabled → re-run verifier, then merge + record.
+- U6 `mig/u6` — worker running (supervision → llm.Model + slog, 100% cov target); not yet committed.
+Next after these: U7 cmd/swarm (needs U3 merged), U8 internal/executor (needs U1,U3,U6), U9 cmd/agent, U10 agentmem, U11 tests/*, U12 examples policy.toml + docs; then verify.md gate, parked-smells cleanup, refactor phase per diagnosis.md, 100% coverage phase, system tests with examples/agent via agent.ollama.toml.
+Process note: append ledger records on main only (worktree-side edits conflict on merge).
