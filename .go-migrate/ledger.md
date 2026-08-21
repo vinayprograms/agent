@@ -49,7 +49,7 @@ Maps: `maps/map-core.md` (llm/tools/policy/mcp/memory/credentials), `maps/map-gu
 
 ## Units (consumer package granularity) and waves
 Wave A (independent, parallel, each green in isolation):
-1. [ ] U1 internal/testutil/llmmock — copy old llm/mock.go verbatim (A-C7)
+1. [x] U1 internal/testutil/llmmock — copy old llm/mock.go verbatim (A-C7)
 2. [ ] U2 internal/telemetry — copy InitProvider verbatim (A-G4); otel deps
 3. [ ] U3 internal/swarm — in-source envelopes/metrics (A-S2); dispatch tool → new tools.Tool; replay test
 4. [ ] U4 internal/tools/websearch — new tools.Tool shape, credentials.Lookup
@@ -71,3 +71,6 @@ Final: verify.md gate (gofmt/vet/build/test -race), then parked-smells cleanup, 
 worker (migrate.unit.md) → adversarial verifier (critique.md lens + functional check vs invariants) → worker fixes → re-verify, bounded 2 rounds → orchestrator mechanical check (error count shrank, scope guard, unit tests green) → commit (unit + ledger).
 
 ## Per-unit records (append-only)
+### U1 internal/testutil/llmmock — DONE (e0963c1, verifier PASS)
+copied verbatim from OLD llm/provider.go:135-249 (not mock.go). API: llmmock.New() *Model, method set unchanged. coverage 100%.
+parked-smells: no mutex on callCount/lastRequest; receiver `p` fossil; exported ChatFunc field + setters mix; Reset only clears callCount; stringly "tool"/"end_turn"; SetToolCall hard-codes "tc-1".
