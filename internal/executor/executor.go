@@ -130,7 +130,7 @@ type Executor struct {
 	outputs map[string]string
 
 	// Supervision support
-	checkpointStore checkpoint.CheckpointStore
+	checkpointStore supervision.Store
 	supervisor      supervision.Supervisor
 	humanAvailable  bool
 	humanInputChan  chan string
@@ -1168,7 +1168,7 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 
 		if reconcileResult.Supervise {
 			superviseStart := time.Now()
-			decisionTrail := e.checkpointStore.GetDecisionTrail()
+			decisionTrail := e.checkpointStore.Trail()
 			superviseResult, superviseErr := e.supervisor.Supervise(
 				ctx,
 				supervision.SuperviseRequest{

@@ -3,7 +3,6 @@ package executor
 import (
 	"log/slog"
 
-	"github.com/vinayprograms/agent/internal/checkpoint"
 	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/skills"
@@ -85,7 +84,7 @@ type Config struct {
 	PersistentSession bool
 
 	// Supervision
-	CheckpointStore checkpoint.CheckpointStore
+	CheckpointStore supervision.Store
 	Supervisor      supervision.Supervisor
 	HumanAvailable  bool
 	HumanInputChan  chan string

@@ -305,7 +305,7 @@ CORRECTION: <your guidance>`, question)
 	return decision, nil
 }
 
-func (s *LLMSupervisor) buildSupervisionPrompt(originalGoal string, pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, decisionTrail []*checkpoint.Checkpoint) string {
+func (s *LLMSupervisor) buildSupervisionPrompt(originalGoal string, pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, decisionTrail []checkpoint.Checkpoint) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("ORIGINAL GOAL: %s\n\n", originalGoal))

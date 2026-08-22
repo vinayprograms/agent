@@ -38,9 +38,20 @@ type PostCheckpointResult struct {
 	Post *checkpoint.PostCheckpoint
 }
 
+// Store is what the pipeline needs from a checkpoint store; *checkpoint.Store
+// satisfies it. Implementations must be safe for concurrent use.
+type Store interface {
+	SavePre(*checkpoint.PreCheckpoint) error
+	SavePost(*checkpoint.PostCheckpoint) error
+	SaveReconcile(*checkpoint.ReconcileResult) error
+	SaveSupervise(*checkpoint.SuperviseResult) error
+	// Trail returns every checkpoint saved so far, in step order.
+	Trail() []checkpoint.Checkpoint
+}
+
 // PipelineConfig configures a supervision pipeline instance.
 type PipelineConfig struct {
-	Store      checkpoint.CheckpointStore
+	Store      Store
 	Supervisor Supervisor
 	Logger     *slog.Logger // warnings (store failures); nil means slog.Default()
 	Phase      PhaseLogger  // phase-level session logging
@@ -196,7 +207,7 @@ func (p *Pipeline) Run(
 	}
 
 	superviseStart := time.Now()
-	decisionTrail := p.cfg.Store.GetDecisionTrail()
+	decisionTrail := p.cfg.Store.Trail()
 	superviseResult, err := p.cfg.Supervisor.Supervise(
 		ctx,
 		SuperviseRequest{

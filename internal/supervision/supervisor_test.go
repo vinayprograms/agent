@@ -182,7 +182,7 @@ func TestBuildSupervisionPrompt(t *testing.T) {
 		Unexpected:    []string{"u1"},
 		ToolsUsed:     []string{"bash", "read"},
 	}
-	trail := []*checkpoint.Checkpoint{
+	trail := []checkpoint.Checkpoint{
 		{Pre: &checkpoint.PreCheckpoint{StepID: "s0", Interpretation: "earlier"}},
 		{Pre: nil},
 	}

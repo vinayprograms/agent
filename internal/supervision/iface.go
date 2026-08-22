@@ -14,7 +14,7 @@ type SuperviseRequest struct {
 	Pre           *checkpoint.PreCheckpoint
 	Post          *checkpoint.PostCheckpoint
 	Triggers      []string
-	DecisionTrail []*checkpoint.Checkpoint
+	DecisionTrail []checkpoint.Checkpoint
 	HumanRequired bool
 }
 

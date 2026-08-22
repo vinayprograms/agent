@@ -15,7 +15,7 @@ import (
 type fakeStore struct {
 	failPre, failPost, failReconcile, failSupervise bool
 	saved                                           []string
-	trail                                           []*checkpoint.Checkpoint
+	trail                                           []checkpoint.Checkpoint
 }
 
 func (s *fakeStore) save(kind string, fail bool) error {
@@ -34,8 +34,7 @@ func (s *fakeStore) SaveReconcile(*checkpoint.ReconcileResult) error {
 func (s *fakeStore) SaveSupervise(*checkpoint.SuperviseResult) error {
 	return s.save("supervise", s.failSupervise)
 }
-func (s *fakeStore) Get(string) *checkpoint.Checkpoint          { return nil }
-func (s *fakeStore) GetDecisionTrail() []*checkpoint.Checkpoint { return s.trail }
+func (s *fakeStore) Trail() []checkpoint.Checkpoint { return s.trail }
 
 // fakeSupervisor returns canned reconcile/supervise outcomes.
 type fakeSupervisor struct {
@@ -202,7 +201,7 @@ func TestPipelineRun(t *testing.T) {
 		},
 		{
 			name:       "human required forces supervise without triggers",
-			store:      &fakeStore{trail: []*checkpoint.Checkpoint{{Pre: testPre}}},
+			store:      &fakeStore{trail: []checkpoint.Checkpoint{{Pre: testPre}}},
 			sup:        &fakeSupervisor{result: &checkpoint.SuperviseResult{StepID: "s1", Verdict: "PAUSE", Question: "ok?"}},
 			req:        PipelineRequest{StepID: "s1", GoalName: "the goal", Supervised: true, HumanRequired: true},
 			commit:     commitPre,
@@ -294,7 +293,7 @@ func TestPipelineRun(t *testing.T) {
 }
 
 func TestPipelineRun_SuperviseRequest(t *testing.T) {
-	trail := []*checkpoint.Checkpoint{{Pre: testPre}}
+	trail := []checkpoint.Checkpoint{{Pre: testPre}}
 	sup := &fakeSupervisor{triggers: []string{"low_confidence"}, result: &checkpoint.SuperviseResult{StepID: "s1", Verdict: "CONTINUE"}}
 	p := NewPipeline(PipelineConfig{Store: &fakeStore{trail: trail}, Supervisor: sup})
 
