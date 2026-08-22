@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -369,9 +370,30 @@ func (rt *runtime) securityConfig() *executor.SecurityConfig {
 	return sec
 }
 
+// unmetRequirements lists the capability profiles the Agentfile's agents
+// REQUIRE that the configuration does not define, in first-mention order.
+// Such a profile silently falls back to the default model, so the run is
+// nothing like what the Agentfile asked for; the caller reports them.
+func (rt *runtime) unmetRequirements() []string {
+	var missing []string
+	for _, agent := range rt.wf.Agents {
+		if agent.Requires == "" || slices.Contains(missing, agent.Requires) {
+			continue
+		}
+		if rt.cfg.Profile(agent.Requires).Model == "" {
+			missing = append(missing, agent.Requires)
+		}
+	}
+	return missing
+}
+
 // createExecutor builds an executor.Config, wiring up MCP, session, security,
 // supervision, and observations, then creates the executor in one shot.
 func (rt *runtime) createExecutor() error {
+	for _, profile := range rt.unmetRequirements() {
+		fmt.Fprintf(os.Stderr, "⚠️  Profile %q is not configured — using the default model\n", profile)
+	}
+
 	mcpMgr := rt.connectMCP()
 
 	// --- Session ---

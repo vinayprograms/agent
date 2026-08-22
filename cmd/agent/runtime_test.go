@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -399,5 +400,55 @@ func TestRuntimeSetup_ResearchScopeReachesGate(t *testing.T) {
 	}
 	if rt.secMode != executor.SecurityResearch || rt.secScope != "OWASP" {
 		t.Errorf("mode=%q scope=%q", rt.secMode, rt.secScope)
+	}
+}
+
+// A REQUIRES profile the config does not define silently falls back to the
+// default model, so it must be reported at startup.
+func TestUnmetRequirements(t *testing.T) {
+	tests := []struct {
+		name     string
+		agents   []agentfile.Agent
+		profiles map[string]config.LLMConfig
+		want     []string
+	}{
+		{name: "no requirements", agents: []agentfile.Agent{{Name: "a"}}},
+		{
+			name:     "profile configured",
+			agents:   []agentfile.Agent{{Name: "a", Requires: "creative"}},
+			profiles: map[string]config.LLMConfig{"creative": {Model: "m"}},
+		},
+		{
+			name:   "profile missing",
+			agents: []agentfile.Agent{{Name: "a", Requires: "creative"}},
+			want:   []string{"creative"},
+		},
+		{
+			name: "each missing profile reported once, in order",
+			agents: []agentfile.Agent{
+				{Name: "a", Requires: "creative"},
+				{Name: "b", Requires: "reasoning-heavy"},
+				{Name: "c", Requires: "creative"},
+			},
+			profiles: map[string]config.LLMConfig{"fast": {Model: "m"}},
+			want:     []string{"creative", "reasoning-heavy"},
+		},
+		{
+			name:     "profile declared without a model is not configured",
+			agents:   []agentfile.Agent{{Name: "a", Requires: "creative"}},
+			profiles: map[string]config.LLMConfig{"creative": {}},
+			want:     []string{"creative"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := &runtime{
+				cfg: &config.Config{Profiles: tt.profiles},
+				wf:  &agentfile.Workflow{Name: "test", Agents: tt.agents},
+			}
+			if got := rt.unmetRequirements(); !slices.Equal(got, tt.want) {
+				t.Errorf("unmetRequirements() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
