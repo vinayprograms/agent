@@ -171,7 +171,7 @@ CONVERGE <name> "<description>" [-> outputs] [USING agents] WITHIN <limit|$var> 
 
 ### Key features
 
-- **Same capabilities as GOAL**: tools, USING, spawn_agent, supervision all work
+- **Same capabilities as GOAL**: tools, USING, spawn_agents, supervision all work
 - **Safety limit**: WITHIN prevents infinite loops
 - **Limit is hidden**: The LLM never sees the max iteration count (prevents gaming)
 - **Graceful degradation**: If limit is hit, returns last output with a warning

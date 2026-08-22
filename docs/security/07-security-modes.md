@@ -12,7 +12,7 @@ The system operates in one of three security modes:
 |--------|---------|----------|----------|
 | Tier 1 (deterministic) | Always | Always | Always |
 | Tier 2 (triage) | When Tier 1 escalates | Always | When Tier 1 escalates |
-| Tier 3 (full supervisor) | When Tier 2 escalates | Always | Research-aware prompts |
+| Tier 3 (full supervisor) | When Tier 2 escalates | Always (both stages run; any deny wins) | Research-aware prompts |
 | Vetted content | Trusted | Re-verified by supervisor | Trusted |
 | Encoded content | Escalate to Tier 2 | Escalate to Tier 3 | Escalate to Tier 2 |
 | Security research activities | May be blocked | Will be blocked | Allowed within scope |
@@ -109,7 +109,7 @@ SECURITY research "your authorized scope description"
 
 3. **Boundary enforcement** - Actions targeting systems outside the declared scope are still blocked
 
-4. **Full audit trail** - All actions remain logged and signed for accountability
+4. **Full event trail** - All actions remain logged in the session log for accountability
 
 **Example scopes:**
 
@@ -131,11 +131,11 @@ These rules apply regardless of mode:
    - Minimum: Tier 2 in default/research mode
    - Minimum: Tier 3 in paranoid mode
 
-3. **All security decisions are signed**
-   - Audit trail is always active
+3. **All security decisions are logged**
+   - Every decision is written to the session JSONL log (see [Chapter 6](06-audit-trail.md)); there is no separate signed trail
 
 4. **Tool restrictions are always enforced**
-   - Policy.toml allowlists/denylists apply in all modes
+   - `policy.toml` tool tables, `allow`/`deny` patterns and `allowed_dirs` apply in all modes
 
 5. **Research mode scope is enforced**
    - Actions outside declared scope are blocked even in research mode
@@ -184,4 +184,4 @@ In research mode:
 
 ---
 
-Next: [Testing Your Model](08-model-testing.md)
+Next: [Taint Lineage](08-taint-lineage.md)

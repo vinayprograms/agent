@@ -37,11 +37,11 @@ MCP servers run with the agent's permissions. For production, restrict which too
 ```toml
 # policy.toml
 [mcp]
-default_deny = true  # Block all MCP tools by default
-allowed_tools = [
+enabled = true   # false disables every MCP tool
+allow = [        # only these "server:tool" patterns may be called
   "filesystem:read_file",
   "filesystem:list_directory",
-  "memory:*",  # Allow all tools from memory server
+  "memory:*",    # Allow all tools from memory server
 ]
 ```
 

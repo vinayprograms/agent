@@ -28,10 +28,9 @@ base_url = "http://localhost:11434"  # optional, this is the default
 
 ### simple-memory.agent
 
-Basic demonstration of the three memory tools:
+Basic demonstration of the two memory tools:
 - `remember` - Store insights semantically
 - `recall` - Search for relevant memories
-- `memory_forget` - Delete memories by ID
 
 ```bash
 agent run examples/memory/simple-memory.agent
@@ -63,11 +62,6 @@ Unlike key-value storage, semantic memory uses embeddings to store content:
 |------|---------|
 | `remember` | Store content with importance and tags |
 | `recall` | Semantic search for relevant memories |
-| `memory_forget` | Delete a memory by ID |
-| `memory_read` | Get value by exact key (legacy) |
-| `memory_write` | Store key-value pair (legacy) |
-| `memory_list` | List keys by prefix (legacy) |
-| `memory_search` | Substring search (legacy) |
 
 ### Consolidation
 

@@ -215,8 +215,9 @@ setup-dev: ## Create development config files
 		echo '# Development policy - permissive' > policy.toml; \
 		echo 'default_deny = false' >> policy.toml; \
 		echo '' >> policy.toml; \
+		echo '' >> policy.toml; \
+		echo '# A [tools.<name>] table enables a tool; no per-tool enabled flag.' >> policy.toml; \
 		echo '[tools.bash]' >> policy.toml; \
-		echo 'enabled = true' >> policy.toml; \
 		echo "Created: policy.toml"; \
 	else \
 		echo "policy.toml already exists, skipping."; \

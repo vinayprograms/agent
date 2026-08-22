@@ -5,7 +5,7 @@
 | Approach | Declaration | When Decided |
 |----------|-------------|--------------|
 | Static | AGENT/USING in Agentfile | Design time |
-| Dynamic | spawn_agent tool | Runtime (LLM decides) |
+| Dynamic | spawn_agents tool | Runtime (LLM decides) |
 
 Both use the **same execution path** and have identical capabilities.
 
@@ -22,7 +22,7 @@ GOAL evaluate "Analyze this decision" USING optimist, critic
 
 When the goal runs:
 1. Spawns both agents in parallel
-2. Each gets the parent's tool registry (minus spawn_agent/spawn_agents)
+2. Each gets the parent's tool registry (minus spawn_agents)
 3. Each runs a full agentic loop with tool calls
 4. Waits for both to complete
 5. Synthesizes their outputs
@@ -35,11 +35,10 @@ The `REQUIRES` profile selects which LLM provider to use (defined in config).
 
 ## Dynamic Sub-Agents
 
-The LLM can spawn sub-agents at runtime using the `spawn_agent` tool:
+The LLM can spawn sub-agents at runtime using the `spawn_agents` tool:
 
 ```
-spawn_agent(role: "researcher", task: "Find facts about {topic}")
-spawn_agent(role: "critic", task: "Identify biases")
+spawn_agents(agents: [{role: "researcher", task: "Find facts about {topic}"}])
 ```
 
 Or spawn multiple in parallel:
@@ -57,14 +56,14 @@ The optional `outputs` parameter enables structured output parsing.
 
 Both static and dynamic sub-agents use the same execution path:
 
-| Feature | Static (AGENT) | Dynamic (spawn_agent) |
+| Feature | Static (AGENT) | Dynamic (spawn_agents) |
 |---------|---------------|----------------------|
 | Tool access | Parent's registry | Parent's registry |
 | MCP tools | Yes | Yes |
 | Agentic loop | Yes | Yes |
 | Security verification | Yes | Yes |
 | Supervision phases | Yes (if enabled) | Yes (if enabled) |
-| spawn_agent excluded | Yes | Yes |
+| spawn_agents excluded | Yes | Yes |
 | Session logging | Yes | Yes |
 
 The only differences:
@@ -83,13 +82,13 @@ Sub-agents inherit the parent's security context but cannot escalate privileges.
 
 ## Depth = 1
 
-Sub-agents cannot spawn their own sub-agents. The `spawn_agent` and `spawn_agents` tools are excluded from their tool set:
+Sub-agents cannot spawn their own sub-agents. The `spawn_agents` tool is excluded from their tool set:
 
 ```
-Orchestrator (has spawn_agent)
-    ├── researcher (no spawn_agent)
-    ├── critic (no spawn_agent)
-    └── synthesizer (no spawn_agent)
+Orchestrator (has spawn_agents)
+    ├── researcher (no spawn_agents)
+    ├── critic (no spawn_agents)
+    └── synthesizer (no spawn_agents)
 ```
 
 This prevents infinite recursion and keeps execution predictable.
@@ -107,7 +106,7 @@ Sub-agents inherit supervision from their parent goal. If the parent goal is uns
 
 ## When to Use Each
 
-| Static (AGENT/USING) | Dynamic (spawn_agent) |
+| Static (AGENT/USING) | Dynamic (spawn_agents) |
 |---------------------|----------------------|
 | Known agents at design time | LLM decides what's needed |
 | Persona defined in files | Ad-hoc specialists |

@@ -11,8 +11,9 @@ This documentation describes the security architecture of the headless agent sys
 | 3 | [The Block System](03-block-system.md) | Structural separation of instruction and data |
 | 4 | [Encoded Content Detection](04-encoded-content.md) | Detecting obfuscated payloads |
 | 5 | [Tiered Verification](05-tiered-verification.md) | Efficient security checks |
-| 6 | [Cryptographic Audit Trail](06-audit-trail.md) | Non-repudiable supervision records |
+| 6 | [Security Events](06-audit-trail.md) | Session-log record of every security decision |
 | 7 | [Security Modes](07-security-modes.md) | Default vs Paranoid configuration |
+| 10 | [Bash Security](10-bash-security.md) | shellguard: deny list + LLM review |
 | 8 | [Taint Lineage](08-taint-lineage.md) | Tracking the origin of untrusted content |
 | 9 | [Testing Your Model](09-model-testing.md) | Evaluating LLM security compliance |
 
@@ -32,7 +33,7 @@ This documentation references a "security supervisor" in Tier 3 verification. Th
 
 | Term | What It Is | When It Runs |
 |------|------------|--------------|
-| Security supervisor | On-demand LLM call | Per tool call when Tier 1+2 escalate |
+| Security supervisor | On-demand LLM call | Per tool call when Tier 1+2 escalate (always in paranoid mode) |
 | Execution supervisor | On-demand LLM call | Per goal when RECONCILE flags issues |
 
 Both are stateless verification calls, not persistent agents. A workflow does not spawn additional sub-agents for supervision.

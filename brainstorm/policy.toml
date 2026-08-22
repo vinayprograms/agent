@@ -1,62 +1,50 @@
-# policy.toml
+# policy.toml (agentkit v1.2.0 schema)
+#
+# A tool is enabled by the presence of a [tools.<name>] table. There is no
+# per-tool "enabled" flag: with default_deny = true, unlisted tools are off.
 
 # Global defaults
 default_deny = true
 
-[read]
-enabled = true
+[tools.read]
 allow = ["$WORKSPACE/**"]
 deny = ["~/.ssh/*", "~/.aws/*", "~/.gnupg/*"]
 
-[write]
-enabled = true
+[tools.write]
 allow = ["$WORKSPACE/**"]
 deny = ["~/.ssh/*", "~/.aws/*", "/etc/*"]
 
-[edit]
-enabled = true
+[tools.edit]
 allow = ["$WORKSPACE/**"]
 deny = ["~/.ssh/*", "~/.aws/*"]
 
-[glob]
-enabled = true
+[tools.glob]
 allow = ["**"]
 
-[grep]
-enabled = true
+[tools.grep]
 allow = ["**"]
 deny = ["/etc/shadow", "/etc/passwd"]
 
-[ls]
-enabled = true
+[tools.ls]
 allow = ["**"]
 
-[bash]
-enabled = true
-allowlist = [
-  "ls *", "pwd", "cat *", "head *", "tail *",
-  "git status", "git log *", "git diff *",
-  "go build *", "go test *", "go run *",
-  "npm test *", "npm run *",
-  "make *",
-]
-denylist = [
-  "rm -rf /", "rm -rf /*",
-  "sudo *", "su *",
-  "curl * | bash", "wget * | bash",
-]
+# Shell. The legacy `allowlist` is gone: bash is guarded by shellguard, which
+# combines a built-in banned-command list (sudo, su, curl, wget, ...) and
+# dangerous-pipe detection with the command names listed in `deny` below, then
+# an optional small-LLM review. Entries in `deny` are bare command names
+# (matched against the first word of every pipe/chain segment), not globs.
+[tools.bash]
+# shellguard deny matches base command names; destructive argument patterns (rm -rf, chmod 777) are caught by its LLM review step
+deny = ["sudo", "su"]
 
-[web_fetch]
-enabled = true
-allow_domains = ["*"]
-rate_limit = 10
+# Web. `allow` holds domain patterns (was `allow_domains`). The legacy
+# `rate_limit` key has no equivalent and was dropped.
+[tools.web_fetch]
+allow = ["*"]
 
-[web_search]
-enabled = true
-rate_limit = 5
+[tools.web_search]
 
-[memory_read]
-enabled = true
+# Memory (v1.2.0 tool names; were memory_read / memory_write).
+[tools.recall]
 
-[memory_write]
-enabled = true
+[tools.remember]

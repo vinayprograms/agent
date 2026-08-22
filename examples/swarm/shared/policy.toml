@@ -1,3 +1,6 @@
-# Shared policy for swarm examples
+# Shared policy for swarm examples (agentkit v1.2.0 schema)
+
+# All tools available; only the filesystem boundary is restricted.
+default_deny = false
 
 allowed_dirs = ["."]
