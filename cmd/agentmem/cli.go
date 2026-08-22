@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -12,7 +13,7 @@ import (
 // cobra's generic "accepts N arg(s)" wording.
 func requireStoragePath(cmd *cobra.Command, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("storage path required")
+		return errors.New("storage path required")
 	}
 	return nil
 }
@@ -20,7 +21,7 @@ func requireStoragePath(cmd *cobra.Command, args []string) error {
 // requireSearchArgs validates `search <query> <storage-path>`.
 func requireSearchArgs(cmd *cobra.Command, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("query and storage path required\nUsage: agentmem search <query> <storage-path>")
+		return errors.New("query and storage path required\nUsage: agentmem search <query> <storage-path>")
 	}
 	return nil
 }
@@ -81,7 +82,7 @@ func NewRootCmd() *cobra.Command {
 // errNoCommand signals "no subcommand given" without printing an extra
 // "Error: ..." line (main only cares about the exit code here; the usage
 // text was already written to stdout).
-var errNoCommand = fmt.Errorf("no command given")
+var errNoCommand = errors.New("no command given")
 
 func newListCmd() *cobra.Command {
 	var category string

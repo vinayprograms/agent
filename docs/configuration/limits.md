@@ -37,3 +37,12 @@ The goal **ends**; the run does not. The executor:
 
 Supervision still reconciles the partial output, so a supervised goal that runs
 out of budget is reviewed like any other.
+
+## Background work after Ctrl-C
+
+Separately from `[limits]`, work the executor detaches from the run's own
+context — observation extraction and async tools started right before the run
+is cancelled — gets its own 2-minute deadline (`context.WithTimeout` over a
+`context.WithoutCancel`'d parent) rather than running unbounded. This keeps a
+Ctrl-C from hanging on an LLM/tool call that no longer has a caller waiting on
+it; it is not configurable via `[limits]`.

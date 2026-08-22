@@ -41,9 +41,10 @@ type budget struct {
 	limits Budget
 	start  time.Time
 
-	mu    sync.Mutex
-	turns int
-	tools int
+	mu     sync.Mutex
+	turns  int
+	tools  int
+	warned bool // one budget-exhausted warning per goal, even with parallel sub-agents
 }
 
 // spend records one LLM turn and the tool calls it requested, returning a
@@ -84,11 +85,21 @@ func budgetOf(ctx context.Context) *budget {
 
 // noteBudget reports whether err is a spent budget, recording it as a warning
 // and a session event. A spent budget ends its goal with whatever it produced
-// so far; the run continues.
-func (e *Executor) noteBudget(err error) bool {
+// so far; the run continues. Parallel sub-agents share one goal's budget and
+// can all hit the limit at once, so only the first to notice logs it.
+func (e *Executor) noteBudget(ctx context.Context, err error) bool {
 	var spent *budgetError
 	if !errors.As(err, &spent) {
 		return false
+	}
+	if b := budgetOf(ctx); b != nil {
+		b.mu.Lock()
+		alreadyWarned := b.warned
+		b.warned = true
+		b.mu.Unlock()
+		if alreadyWarned {
+			return true
+		}
 	}
 	e.logger.Warn("goal budget exhausted", "goal", spent.goal, "limit", spent.limit)
 	e.logEvent(session.EventWarning, spent.Error())

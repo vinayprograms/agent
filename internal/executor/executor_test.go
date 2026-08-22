@@ -839,7 +839,7 @@ func TestExecutor_GoalWithStructuredOutput(t *testing.T) {
 	registry, _ := newTestRegistry(t, t.TempDir())
 
 	exec := mustNewExecutor(t, wf, provider, registry, pol)
-	_, err := exec.Run(context.Background(), RunOptions{})
+	result, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -860,6 +860,12 @@ func TestExecutor_GoalWithStructuredOutput(t *testing.T) {
 	// Check that outputs were stored as variables
 	if exec.outputs["summary"] != "Test summary" {
 		t.Errorf("expected summary='Test summary', got %q", exec.outputs["summary"])
+	}
+
+	// Declared `-> var` outputs must also reach the printed Result.Outputs,
+	// not just the internal e.outputs map used for prompt interpolation.
+	if result.Outputs["summary"] != "Test summary" {
+		t.Errorf("expected Result.Outputs[summary]='Test summary', got %q", result.Outputs["summary"])
 	}
 }
 

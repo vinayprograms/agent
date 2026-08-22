@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,7 +25,7 @@ func run(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	root.SetErr(&errb)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
-		if err != errNoCommand {
+		if !errors.Is(err, errNoCommand) {
 			fmt.Fprintln(&errb, err)
 		}
 		code = 1
@@ -352,4 +353,52 @@ func TestTitle(t *testing.T) {
 	if got := title("finding"); got != "Finding" {
 		t.Errorf("title(\"finding\") = %q, want \"Finding\"", got)
 	}
+}
+
+func TestDirSize(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks are bypassed running as root")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "b"), []byte("world!!"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	size, err := dirSize(dir)
+	if err != nil {
+		t.Fatalf("dirSize() unexpected error: %v", err)
+	}
+	if want := int64(len("hello") + len("world!!")); size != want {
+		t.Errorf("dirSize() = %d, want %d", size, want)
+	}
+
+	// WalkDir error path: an unreadable subdirectory makes the walk fail
+	// instead of silently under-reporting the size.
+	if err := os.Chmod(sub, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(sub, 0o755) //nolint:errcheck // best-effort cleanup so t.TempDir() can remove it
+
+	if _, err := dirSize(dir); err == nil {
+		t.Error("dirSize() with unreadable subdirectory: expected error, got nil")
+	}
+}
+
+func TestGraph_TermUnmarshalError(t *testing.T) {
+	dir := t.TempDir()
+	writeJSON(t, filepath.Join(dir, "semantic_graph.json"), map[string]any{
+		"terms": map[string]any{"bad": 42}, // related must be an object, not a number
+	})
+	out, errs, code := run(t, "graph", "--term=bad", dir)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1; stdout=%s", code, out)
+	}
+	wantContains(t, errs, `Error parsing term "bad"`)
 }

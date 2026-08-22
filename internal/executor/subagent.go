@@ -194,7 +194,7 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 			// EXECUTE
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
 				output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt)
-				if e.noteBudget(err) {
+				if e.noteBudget(ctx, err) {
 					err = nil
 				}
 				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
