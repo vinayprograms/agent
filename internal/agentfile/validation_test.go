@@ -118,7 +118,7 @@ RUN setup USING analyze, run_tests`
 	}
 
 	// We skip FROM path validation in this test
-	err = ValidateWithoutPaths(wf)
+	err = Validate(wf)
 	if err != nil {
 		t.Errorf("should be valid: %v", err)
 	}
@@ -266,7 +266,7 @@ RUN step USING analyze`,
 				t.Fatalf("parse error: %v", err)
 			}
 
-			err = ValidateWithoutPaths(wf)
+			err = Validate(wf)
 			if tt.shouldError {
 				if err == nil {
 					t.Fatal("expected validation error")

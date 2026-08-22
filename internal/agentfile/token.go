@@ -28,11 +28,11 @@ const (
 	TokenSECURITY
 
 	// Literals
-	TokenIdent   // identifier
-	TokenString  // "quoted string"
-	TokenNumber  // 123
-	TokenPath    // path/to/file.md
-	TokenVar     // $variable
+	TokenIdent  // identifier
+	TokenString // "quoted string"
+	TokenNumber // 123
+	TokenPath   // path/to/file.md
+	TokenVar    // $variable
 
 	// Punctuation
 	TokenComma // ,
@@ -124,8 +124,8 @@ var keywords = map[string]TokenType{
 	"SECURITY":     TokenSECURITY,
 }
 
-// LookupIdent checks if an identifier is a keyword.
-func LookupIdent(ident string) TokenType {
+// lookupIdent checks if an identifier is a keyword.
+func lookupIdent(ident string) TokenType {
 	if tok, ok := keywords[ident]; ok {
 		return tok
 	}

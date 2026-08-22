@@ -437,7 +437,7 @@ func (e *Executor) PreFlight() error {
 	}
 
 	// Get names of steps requiring human supervision
-	names := e.workflow.GetHumanRequiredStepNames()
+	names := e.workflow.HumanRequiredStepNames()
 	return fmt.Errorf("workflow requires human supervision for steps [%s] but no human connection is available", strings.Join(names, ", "))
 }
 
