@@ -27,7 +27,7 @@ type LoadOptions struct {
 	Goal          string            // inline goal; when set no Agentfile is read
 	Inputs        map[string]string // workflow inputs
 	Debug         bool
-	SessionLabel  string    // session directory name; empty uses the workflow name
+	SessionLabel  string    // deployment label recorded in the session header
 	Home          string    // home directory for ~ expansion; empty asks the OS
 	Stderr        io.Writer // warnings (deprecations, missing policy); nil discards
 }
@@ -41,6 +41,7 @@ type Loaded struct {
 	Policy       *policy.Policy
 	Inputs       map[string]string
 	Debug        bool
+	Agentfile    string // absolute Agentfile path; empty for an inline goal
 	SessionLabel string
 
 	home string
@@ -97,6 +98,7 @@ func Load(opts LoadOptions) (*Loaded, error) {
 			return nil, fmt.Errorf("loading Agentfile: %w", err)
 		}
 		l.Workflow = wf
+		l.Agentfile, _ = filepath.Abs(path)
 		baseDir = filepath.Dir(path)
 	}
 
@@ -137,17 +139,9 @@ func (l *Loaded) loadConfig(opts LoadOptions, warn io.Writer) error {
 	return nil
 }
 
-// expandHome replaces a leading ~ in p with home.
-func expandHome(p, home string) string {
-	if home == "" || p == "" || p[0] != '~' {
-		return p
-	}
-	return filepath.Join(home, p[1:])
-}
-
 // absPath expands ~ and resolves p against the working directory.
 func (l *Loaded) absPath(p string) string {
-	p = expandHome(p, l.home)
+	p = config.ExpandHome(p, l.home)
 	if !filepath.IsAbs(p) {
 		p, _ = filepath.Abs(p)
 	}

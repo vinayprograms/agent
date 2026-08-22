@@ -35,7 +35,7 @@ func TestResolveStoragePath_Default(t *testing.T) {
 	if rt.storagePath != expected {
 		t.Errorf("expected %q, got %q", expected, rt.storagePath)
 	}
-	if rt.sessionPath != filepath.Join(expected, "sessions", "test") {
+	if rt.sessionPath != filepath.Join(expected, "sessions") {
 		t.Errorf("unexpected session path: %q", rt.sessionPath)
 	}
 }

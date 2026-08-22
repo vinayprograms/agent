@@ -60,17 +60,18 @@ type Deps struct {
 // Runtime executes a loaded workflow. New returns one ready to Run; Close
 // releases everything it opened.
 type Runtime struct {
-	wf           *agentfile.Workflow
-	cfg          *config.Config
-	pol          *policy.Policy
-	creds        credentials.Lookup
-	inputs       map[string]string
-	debug        bool
-	sessionLabel string // Override session directory name
-	home         string
-	stdout       io.Writer
-	stderr       io.Writer
-	version      string
+	wf            *agentfile.Workflow
+	cfg           *config.Config
+	pol           *policy.Policy
+	creds         credentials.Lookup
+	inputs        map[string]string
+	debug         bool
+	agentfilePath string // absolute Agentfile path; empty for an inline goal
+	sessionLabel  string // deployment label recorded in the session header
+	home          string
+	stdout        io.Writer
+	stderr        io.Writer
+	version       string
 
 	// Components
 	logger            *slog.Logger
@@ -125,6 +126,7 @@ func newRuntime(l *Loaded, deps Deps) *Runtime {
 		metrics:           deps.Metrics,
 		inputs:            l.Inputs,
 		debug:             l.Debug,
+		agentfilePath:     l.Agentfile,
 		sessionLabel:      l.SessionLabel,
 		home:              l.home,
 		stdout:            orDiscard(deps.Stdout),
@@ -173,17 +175,8 @@ func newLogger(debug bool, w io.Writer) *slog.Logger {
 
 // resolveStoragePath sets up storage and session paths.
 func (rt *Runtime) resolveStoragePath() {
-	rt.storagePath = rt.cfg.State.Location
-	if rt.storagePath == "" {
-		rt.storagePath = config.DefaultStateDir(rt.home)
-	}
-	rt.storagePath = expandHome(rt.storagePath, rt.home)
-	// Use sessionLabel if provided (swarm passes agent name), otherwise workflow name
-	sessDir := rt.wf.Name
-	if rt.sessionLabel != "" {
-		sessDir = rt.sessionLabel
-	}
-	rt.sessionPath = filepath.Join(rt.storagePath, "sessions", sessDir)
+	rt.storagePath = rt.cfg.StateDir(rt.home)
+	rt.sessionPath = filepath.Join(rt.storagePath, "sessions")
 }
 
 // setup initializes all runtime components. Returns error on failure.
@@ -463,7 +456,12 @@ func (rt *Runtime) createExecutor(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	rt.sess, err = rt.sessionMgr.Create(rt.wf.Name)
+	rt.sess, err = rt.sessionMgr.Create(session.Meta{
+		Name:      rt.wf.Name,
+		Agentfile: rt.agentfilePath,
+		Label:     rt.sessionLabel,
+		Inputs:    rt.inputs,
+	})
 	if err != nil {
 		return fmt.Errorf("creating session: %w", err)
 	}
@@ -472,7 +470,7 @@ func (rt *Runtime) createExecutor(ctx context.Context) error {
 	var checkpointStore supervision.Store
 	var supervisor supervision.Supervisor
 	if rt.wf.HasSupervisedGoals() {
-		checkpointDir := filepath.Join(rt.sessionPath, "checkpoints", rt.sess.ID)
+		checkpointDir := filepath.Join(rt.storagePath, "checkpoints", rt.sess.ID)
 		cs, csErr := checkpoint.NewStore(checkpointDir)
 		if csErr != nil {
 			fmt.Fprintf(rt.stderr, "warning: failed to create checkpoint store: %v\n", csErr)

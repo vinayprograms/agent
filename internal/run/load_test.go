@@ -247,6 +247,12 @@ func TestLoad(t *testing.T) {
 	if l.Workflow.Name != "pkg-test" || l.Config.Agent.Workspace != src || l.Policy == nil {
 		t.Errorf("loaded: wf=%v ws=%q pol=%v", l.Workflow, l.Config.Agent.Workspace, l.Policy)
 	}
+	if want, _ := filepath.Abs(opts.AgentfilePath); l.Agentfile != want || !filepath.IsAbs(l.Agentfile) {
+		t.Errorf("Agentfile = %q, want absolute %q", l.Agentfile, want)
+	}
+	if l.SessionLabel != "" {
+		t.Errorf("SessionLabel = %q, want empty without --session-label", l.SessionLabel)
+	}
 
 	// Conflicting --workspace vs agent.toml is an error.
 	conflict := opts
@@ -290,6 +296,9 @@ func TestLoad_InlineGoalSkipsAgentfile(t *testing.T) {
 	if len(l.Workflow.Steps) != 1 || l.Workflow.Steps[0].UsingGoals[0] != "goal" {
 		t.Errorf("inline goal steps = %+v", l.Workflow.Steps)
 	}
+	if l.Agentfile != "" {
+		t.Errorf("Agentfile = %q, want empty for an inline goal", l.Agentfile)
+	}
 }
 
 func TestLoad_WarningsReachStderr(t *testing.T) {
@@ -300,18 +309,6 @@ func TestLoad_WarningsReachStderr(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "no policy file at") {
 		t.Errorf("missing policy warning: %q", buf.String())
-	}
-}
-
-func TestExpandHome(t *testing.T) {
-	cases := map[string]string{"~/x": "/home/u/x", "~": "/home/u", "rel": "rel", "/abs": "/abs", "": ""}
-	for in, want := range cases {
-		if got := expandHome(in, "/home/u"); got != want {
-			t.Errorf("expandHome(%q) = %q want %q", in, got, want)
-		}
-	}
-	if got := expandHome("~/x", ""); got != "~/x" {
-		t.Errorf("no home: %q", got)
 	}
 }
 

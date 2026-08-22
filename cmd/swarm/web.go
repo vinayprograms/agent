@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
+	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/swarm"
 	"golang.org/x/net/websocket"
 	tsclient "tailscale.com/client/local"
@@ -873,9 +874,34 @@ func (s *webServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(sessions)
 }
 
+// findSessionFile returns the file recording sessionID under root, or ""
+// when root holds no such session. Sessions carry their id in the header,
+// so the layout on disk does not matter; label picks the winner in the
+// (id-collision) case where several match.
+func findSessionFile(root, sessionID, label string) string {
+	sessions, err := session.Find(root)
+	if err != nil {
+		log.Printf("[web] skipped unreadable session files under %s: %v", root, err)
+	}
+	found := ""
+	for _, sum := range sessions {
+		if sum.ID != sessionID {
+			continue
+		}
+		if sum.Label == label {
+			return sum.Path
+		}
+		if found == "" {
+			found = sum.Path
+		}
+	}
+	return found
+}
+
 // handleSessionLogs serves JSONL session logs for an agent.
 // GET /api/sessions/<agent-name>/<session-id> → returns array of JSONL records.
-// Path on disk: <storageRoot>/agents/<name>/sessions/<label>/<session-id>.jsonl
+// Path on disk: <storageRoot>/agents/<name>/sessions/<session-id>.jsonl
+// (older runs nested the file under a per-label directory).
 func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 	if s.storageRoot == "" {
 		http.Error(w, "storage root not configured", http.StatusServiceUnavailable)
@@ -901,58 +927,29 @@ func (s *webServer) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Find session JSONL by scanning all subdirs under <storageRoot>/agents/<name>/sessions/
-	// The subdirectory name varies (could be agent name, workflow name, or label).
+	// Locate the session file under <storageRoot>/agents/<name>/sessions.
+	// session.Find recurses, so both the flat <id>.jsonl layout and the
+	// older <label>/<id>.jsonl one are found.
 	sessRoot := filepath.Join(s.storageRoot, "agents", agentName, "sessions")
-	jsonlPath := ""
-
-	// First check: does sessRoot exist?
-	if _, err := os.Stat(sessRoot); os.IsNotExist(err) {
-		log.Printf("[web] sessions directory does not exist: %s", sessRoot)
-	}
-
-	if entries, err := os.ReadDir(sessRoot); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			candidate := filepath.Join(sessRoot, entry.Name(), sessionID+".jsonl")
-			if _, err := os.Stat(candidate); err == nil {
-				jsonlPath = candidate
-				break
-			}
-		}
-	} else {
-		log.Printf("[web] failed to read sessions dir %s: %v", sessRoot, err)
-	}
+	jsonlPath := findSessionFile(sessRoot, sessionID, agentName)
 
 	if jsonlPath == "" {
 		// Fallback: scan ALL agent directories for the session ID.
 		// The agent name in the URL may not match the storage directory name
 		// (e.g., replica display names vs capability names).
 		agentsDir := filepath.Join(s.storageRoot, "agents")
-		if agentEntries, err := os.ReadDir(agentsDir); err == nil {
-			for _, ae := range agentEntries {
-				if !ae.IsDir() {
-					continue
-				}
-				altSessRoot := filepath.Join(agentsDir, ae.Name(), "sessions")
-				if subEntries, err := os.ReadDir(altSessRoot); err == nil {
-					for _, se := range subEntries {
-						if !se.IsDir() {
-							continue
-						}
-						candidate := filepath.Join(altSessRoot, se.Name(), sessionID+".jsonl")
-						if _, err := os.Stat(candidate); err == nil {
-							jsonlPath = candidate
-							log.Printf("[web] session found via fallback scan: %s (requested agent=%q)", jsonlPath, agentName)
-							break
-						}
-					}
-				}
-				if jsonlPath != "" {
-					break
-				}
+		agentEntries, err := os.ReadDir(agentsDir)
+		if err != nil {
+			log.Printf("[web] failed to read agents dir %s: %v", agentsDir, err)
+		}
+		for _, ae := range agentEntries {
+			if !ae.IsDir() {
+				continue
+			}
+			if p := findSessionFile(filepath.Join(agentsDir, ae.Name(), "sessions"), sessionID, agentName); p != "" {
+				jsonlPath = p
+				log.Printf("[web] session found via fallback scan: %s (requested agent=%q)", jsonlPath, agentName)
+				break
 			}
 		}
 	}

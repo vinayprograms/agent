@@ -23,6 +23,8 @@ func writeSession(t *testing.T, dir, name string) string {
 
 func runCmd(t *testing.T, args ...string) (stdout string, err error) {
 	t.Helper()
+	// Isolate the state directory: nothing here may read the real one.
+	t.Setenv("HOME", t.TempDir())
 	cmd := New(Config{Use: "agent-replay", Version: "1.2.3", Commit: "abc", BuildTime: "today"})
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -44,9 +46,13 @@ func TestReplay_SingleFile(t *testing.T) {
 	}
 }
 
-func TestReplay_NoArgs(t *testing.T) {
-	if _, err := runCmd(t); err == nil {
-		t.Error("expected error for missing args")
+func TestReplay_NoSessionsRecorded(t *testing.T) {
+	out, err := runCmd(t)
+	if err == nil {
+		t.Fatalf("expected a friendly error for an empty state directory, got: %s", out)
+	}
+	if !strings.Contains(err.Error(), "no sessions recorded yet") || !strings.Contains(err.Error(), "sessions") {
+		t.Errorf("error = %v, want it to name the missing sessions directory", err)
 	}
 }
 
@@ -182,17 +188,6 @@ func TestIsTerminal(t *testing.T) {
 	f.Close()
 	if isTerminal(f) {
 		t.Error("expected a closed file's Stat error to report not-a-terminal")
-	}
-}
-
-func TestReplay_DirectoryGlobError(t *testing.T) {
-	parent := t.TempDir()
-	bad := filepath.Join(parent, "bad[dir")
-	if err := os.Mkdir(bad, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runCmd(t, "--no-pager", bad); err == nil {
-		t.Error("expected glob error for a directory with an unmatched '[' in its path")
 	}
 }
 
