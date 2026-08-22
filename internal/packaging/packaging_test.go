@@ -1,7 +1,9 @@
 package packaging
 
 import (
+	"archive/zip"
 	"crypto/ed25519"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -391,3 +393,80 @@ RUN main USING main
 		t.Errorf("expected no error for quoted .md path, got: %v", err)
 	}
 }
+
+func TestPackErrors(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name  string
+		setup func(src string)
+		out   string
+	}{
+		{"no Agentfile", func(string) {}, ""},
+		{"agent package reference", func(src string) {
+			os.WriteFile(filepath.Join(src, "Agentfile"), []byte("NAME x\nAGENT a FROM b.agent\n"), 0o644)
+		}, ""},
+		{"bad manifest", func(src string) {
+			os.WriteFile(filepath.Join(src, "Agentfile"), []byte("NAME x\n"), 0o644)
+			os.WriteFile(filepath.Join(src, ManifestFile), []byte("{"), 0o644)
+		}, ""},
+		{"unreadable file", func(src string) {
+			os.WriteFile(filepath.Join(src, "Agentfile"), []byte("NAME x\n"), 0o644)
+			os.WriteFile(filepath.Join(src, "secret"), nil, 0)
+		}, ""},
+		{"unwritable output", func(src string) {
+			os.WriteFile(filepath.Join(src, "Agentfile"), []byte("NAME x\n"), 0o644)
+		}, filepath.Join(dir, "missing-dir", "x.agent")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := filepath.Join(dir, strings.ReplaceAll(tt.name, " ", "-"))
+			os.MkdirAll(src, 0o755)
+			tt.setup(src)
+			if _, err := Pack(PackOptions{SourceDir: src, OutputPath: tt.out}); err == nil {
+				t.Error("Pack = nil error, want error")
+			}
+		})
+	}
+}
+
+func TestLoadErrors(t *testing.T) {
+	dir := t.TempDir()
+	writeZip := func(name string, files map[string][]byte, method uint16) string {
+		p := filepath.Join(dir, name)
+		f, _ := os.Create(p)
+		zw := zip.NewWriter(f)
+		// A method the reader cannot decompress makes zip.File.Open fail.
+		zw.RegisterCompressor(99, func(w io.Writer) (io.WriteCloser, error) { return nopWriteCloser{w}, nil })
+		for n, b := range files {
+			w, _ := zw.CreateHeader(&zip.FileHeader{Name: n, Method: method})
+			w.Write(b)
+		}
+		zw.Close()
+		f.Close()
+		return p
+	}
+	notZip := filepath.Join(dir, "not.agent")
+	os.WriteFile(notZip, []byte("nope"), 0o644)
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"not a zip", notZip},
+		{"unsupported method", writeZip("method.agent", map[string][]byte{ManifestFile: []byte("{}")}, 99)},
+		{"bad manifest", writeZip("badm.agent", map[string][]byte{ManifestFile: []byte("{")}, zip.Store)},
+		{"missing manifest", writeZip("nom.agent", map[string][]byte{ContentFile: []byte("x")}, zip.Store)},
+		{"missing content", writeZip("noc.agent", map[string][]byte{ManifestFile: []byte("{}")}, zip.Store)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Load(tt.path); err == nil {
+				t.Error("Load = nil error, want error")
+			}
+		})
+	}
+}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
