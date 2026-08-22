@@ -58,7 +58,7 @@ func TestRecorder_Create(t *testing.T) {
 	rec := mustOpen(t, t.TempDir(), nil)
 	ids := map[string]bool{}
 	for range 50 {
-		s, err := rec.Create("wf")
+		s, err := rec.Create(Meta{Name: "wf"})
 		if err != nil {
 			t.Fatalf("Create error: %v", err)
 		}
@@ -72,7 +72,7 @@ func TestRecorder_Create(t *testing.T) {
 		}
 	}
 	// Header + footer exist before any event.
-	s, _ := rec.Create("wf")
+	s, _ := rec.Create(Meta{Name: "wf"})
 	defer s.Close()
 	got, err := rec.Get(s.ID)
 	if err != nil {
@@ -86,7 +86,7 @@ func TestRecorder_Create(t *testing.T) {
 		dir := t.TempDir()
 		rec := mustOpen(t, dir, nil)
 		os.RemoveAll(dir)
-		if _, err := rec.Create("wf"); err == nil {
+		if _, err := rec.Create(Meta{Name: "wf"}); err == nil {
 			t.Error("Create with missing dir: want error")
 		}
 	})
@@ -225,7 +225,7 @@ func TestSession_ConcurrentAddEventFlushClose(t *testing.T) {
 
 	t.Run("recorder-backed", func(t *testing.T) {
 		rec := mustOpen(t, t.TempDir(), nil)
-		s, err := rec.Create("wf")
+		s, err := rec.Create(Meta{Name: "wf"})
 		if err != nil {
 			t.Fatalf("Create error: %v", err)
 		}
@@ -238,7 +238,7 @@ func TestWriter(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			var seen []uint64
 			rec := mustOpen(t, t.TempDir(), func(e Event) { seen = append(seen, e.SeqID) })
-			s, _ := rec.Create("wf")
+			s, _ := rec.Create(Meta{Name: "wf"})
 			defer s.Close()
 			for range batchSizeMax - 1 {
 				s.AddEvent(Event{Type: EventUser})
@@ -260,7 +260,7 @@ func TestWriter(t *testing.T) {
 	t.Run("ticker", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			rec := mustOpen(t, t.TempDir(), nil)
-			s, _ := rec.Create("wf")
+			s, _ := rec.Create(Meta{Name: "wf"})
 			defer s.Close()
 			s.AddEvent(Event{Type: EventUser})
 			time.Sleep(flushInterval - time.Millisecond)
@@ -280,7 +280,7 @@ func TestWriter(t *testing.T) {
 	t.Run("flush and close", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			rec := mustOpen(t, t.TempDir(), nil)
-			s, _ := rec.Create("wf")
+			s, _ := rec.Create(Meta{Name: "wf"})
 			s.AddEvent(Event{Type: EventUser})
 			s.AddEvent(Event{Type: EventAssistant})
 			s.Flush()
@@ -320,7 +320,7 @@ func TestWriter(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			dir := t.TempDir()
 			rec := mustOpen(t, dir, nil)
-			s, _ := rec.Create("wf")
+			s, _ := rec.Create(Meta{Name: "wf"})
 			os.RemoveAll(dir)
 			s.AddEvent(Event{Type: EventUser})
 			s.Close()

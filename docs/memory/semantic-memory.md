@@ -100,7 +100,8 @@ When `persist_memory = true`:
 
 ```
 {state.location}/
-├── sessions/               # Session state (execution trace, checkpoints)
+├── sessions/               # One <session-id>.jsonl per run (execution trace)
+├── checkpoints/            # Supervision checkpoints, per session id
 ├── kv.json                 # Photographic memory (key-value)
 ├── observations.bleve/     # BM25 index directory
 ├── semantic_graph.json     # Term relationships + embeddings
@@ -111,7 +112,7 @@ When `persist_memory = false`:
 
 ```
 {state.location}/
-├── sessions/           # Session state (still persisted)
+├── sessions/           # One <session-id>.jsonl per run (still persisted)
 └── logs/               # Audit logs (still persisted)
 
 # kv.json, observations.bleve, and semantic_graph.json are NOT written

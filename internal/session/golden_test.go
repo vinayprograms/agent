@@ -1,9 +1,11 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,4 +127,65 @@ func goldenSession() *Session {
 		sess.AddEvent(ev)
 	}
 	return sess
+}
+
+// TestRecorder_HeaderFieldsGolden pins the header record's wire format for
+// a session carrying the deployment fields, and checks that a header
+// written before they existed (the golden fixture) still loads.
+func TestRecorder_HeaderFieldsGolden(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := rec.Create(Meta{
+		Name:      "deployed",
+		Agentfile: "/abs/path/Agentfile",
+		Label:     "worker-3",
+		Inputs:    map[string]string{"task": "do it"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.Close()
+
+	data, err := os.ReadFile(filepath.Join(dir, sess.ID+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// updated_at is a zero time.Time on the header record: it is not
+	// omitempty-able, and has been on the wire since the format was cut.
+	// updated_at is a zero time on the header record: time.Time is not
+	// omitempty-able, and it has been on the wire since the format was cut.
+	header, _, _ := strings.Cut(string(data), "\n")
+	want := `{"_type":"header","id":"` + sess.ID + `","workflow_name":"deployed","agentfile":"/abs/path/Agentfile","label":"worker-3","inputs":{"task":"do it"},"created_at":` + mustJSON(t, sess.CreatedAt) + `,"updated_at":"0001-01-01T00:00:00Z"}`
+	if header != want {
+		t.Errorf("header record\n got: %s\nwant: %s", header, want)
+	}
+
+	loaded, err := rec.Get(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Agentfile != "/abs/path/Agentfile" || loaded.Label != "worker-3" || loaded.Inputs["task"] != "do it" {
+		t.Errorf("round trip: agentfile=%q label=%q inputs=%v", loaded.Agentfile, loaded.Label, loaded.Inputs)
+	}
+
+	// A header from before these fields exist reads back with them empty.
+	old, err := ReadFile(filepath.Join("testdata", "golden.jsonl"), ReadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.Agentfile != "" || old.Label != "" || old.WorkflowName != "golden-workflow" {
+		t.Errorf("old fixture: agentfile=%q label=%q name=%q", old.Agentfile, old.Label, old.WorkflowName)
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

@@ -81,6 +81,8 @@ type Sink func(Event)
 type Session struct {
 	ID           string            `json:"id"`
 	WorkflowName string            `json:"workflow_name"`
+	Agentfile    string            `json:"agentfile,omitempty"`
+	Label        string            `json:"label,omitempty"`
 	Inputs       map[string]string `json:"inputs"`
 	State        map[string]any    `json:"state"`
 	Outputs      map[string]string `json:"outputs"`

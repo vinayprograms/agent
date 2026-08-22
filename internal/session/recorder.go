@@ -36,14 +36,30 @@ func Open(dir string, sink Sink) (*Recorder, error) {
 	return &Recorder{dir: dir, sink: sink}, nil
 }
 
-// Create starts a new running session for workflowName, writes its header,
-// and starts the background writer. Call Session.Close when done.
-func (r *Recorder) Create(workflowName string) (*Session, error) {
+// Meta is the identity of a new session: the workflow NAME, the absolute
+// path of the Agentfile it came from (empty for an inline goal), the
+// deployment label (empty for a plain run), and the workflow inputs.
+type Meta struct {
+	Name      string
+	Agentfile string
+	Label     string
+	Inputs    map[string]string
+}
+
+// Create starts a new running session for meta, writes its header, and
+// starts the background writer. Call Session.Close when done.
+func (r *Recorder) Create(meta Meta) (*Session, error) {
 	now := time.Now()
+	inputs := meta.Inputs
+	if inputs == nil {
+		inputs = make(map[string]string)
+	}
 	s := &Session{
 		ID:           randomHex(16),
-		WorkflowName: workflowName,
-		Inputs:       make(map[string]string),
+		WorkflowName: meta.Name,
+		Agentfile:    meta.Agentfile,
+		Label:        meta.Label,
+		Inputs:       inputs,
 		State:        make(map[string]any),
 		Outputs:      make(map[string]string),
 		Status:       StatusRunning,
@@ -93,6 +109,8 @@ type jsonlRecord struct {
 	// Header fields (when _type == "header")
 	ID           string            `json:"id,omitempty"`
 	WorkflowName string            `json:"workflow_name,omitempty"`
+	Agentfile    string            `json:"agentfile,omitempty"`
+	Label        string            `json:"label,omitempty"`
 	Inputs       map[string]string `json:"inputs,omitempty"`
 	CreatedAt    time.Time         `json:"created_at,omitempty"`
 
@@ -132,6 +150,8 @@ func (r *Recorder) save(s *Session) error {
 			RecordType:   recordHeader,
 			ID:           s.ID,
 			WorkflowName: s.WorkflowName,
+			Agentfile:    s.Agentfile,
+			Label:        s.Label,
 			Inputs:       s.Inputs,
 			CreatedAt:    s.CreatedAt,
 		})
@@ -242,6 +262,8 @@ func applyRecord(s *Session, line []byte) error {
 	case recordHeader:
 		s.ID = rec.ID
 		s.WorkflowName = rec.WorkflowName
+		s.Agentfile = rec.Agentfile
+		s.Label = rec.Label
 		s.Inputs = rec.Inputs
 		s.CreatedAt = rec.CreatedAt
 	case recordEvent:
