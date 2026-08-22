@@ -29,9 +29,9 @@ type Stats struct {
 	ModelUsage map[string]*ModelUsage
 
 	// LLM response times
-	LLMCallCount    int
-	LLMTotalMs      int64
-	LLMAvgMs        int64
+	LLMCallCount int
+	LLMTotalMs   int64
+	LLMAvgMs     int64
 
 	// Security supervisor (execution)
 	ExecSupervisorCount   int
@@ -216,7 +216,7 @@ func PrintStats(w io.Writer, stats *Stats) {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
-	
+
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, headerStyle.Render("═══════════════════════════════════════════════════════════════════"))
 	fmt.Fprintln(w, headerStyle.Render("                         SESSION STATISTICS                         "))
