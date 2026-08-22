@@ -156,6 +156,9 @@ func TestSecurity_DefaultDeny(t *testing.T) {
 	}
 
 	registry := testkit.Registry(t, pol, t.TempDir())
+	if registry.Has("write") {
+		t.Fatal("a policy-disabled tool must not be registered")
+	}
 
 	_, err := registry.Execute(t.Context(), "write", map[string]any{
 		"path":    "/tmp/test.txt",
@@ -174,7 +177,6 @@ func TestSecurity_DisabledTool(t *testing.T) {
 	pol := policy.New()
 	pol.DefaultDeny = true
 	pol.Tools["read"] = &policy.ToolPolicy{}
-	delete(pol.Tools, "bash")
 
 	registry := testkit.Registry(t, pol, t.TempDir())
 

@@ -200,14 +200,17 @@ func TestFailure_FileSystemError(t *testing.T) {
 	os.WriteFile(restrictedFile, []byte("test"), 0644)
 
 	pol := policy.New()
-	pol.DefaultDeny = true // No tools listed = read is disabled and never registered
+	pol.DefaultDeny = true
+	// read is enabled but only for the allowed/ subtree: the restricted file
+	// must be rejected by the path guard at execute time.
+	pol.Tools["read"] = &policy.ToolPolicy{Allow: []string{filepath.Join(tmpDir, "allowed", "**")}}
 	registry := testkit.Registry(t, pol, tmpDir)
 
 	_, err = registry.Execute(t.Context(), "read", map[string]any{
 		"path": restrictedFile,
 	})
-	if err == nil {
-		t.Error("expected policy denial")
+	if err == nil || !strings.Contains(err.Error(), "denied") {
+		t.Errorf("expected policy denial, got %v", err)
 	}
 }
 
