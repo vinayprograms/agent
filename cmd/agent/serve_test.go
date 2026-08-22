@@ -176,3 +176,31 @@ func TestEnableTool(t *testing.T) {
 		t.Error("existing tool policy must not be replaced")
 	}
 }
+
+func TestDeferredMetrics(t *testing.T) {
+	var d deferredMetrics
+	// The zero value drops every metric.
+	d.RecordLLMCall(1, 2, 3, 4, 5)
+	d.RecordSupervision(true)
+	d.SetSubagents(2)
+
+	spy := &metricsSpy{}
+	d.set(spy)
+	d.RecordLLMCall(1, 2, 3, 4, 5)
+	d.RecordSupervision(true)
+	d.SetSubagents(2)
+	if spy.llm != 1 || spy.supervision != 1 || spy.subagents != 2 {
+		t.Errorf("metrics not forwarded: %+v", spy)
+	}
+}
+
+// metricsSpy counts the metrics forwarded to it.
+type metricsSpy struct {
+	llm         int
+	supervision int
+	subagents   int
+}
+
+func (m *metricsSpy) RecordLLMCall(_, _, _, _ int, _ int64) { m.llm++ }
+func (m *metricsSpy) RecordSupervision(bool)                { m.supervision++ }
+func (m *metricsSpy) SetSubagents(n int)                    { m.subagents = n }

@@ -126,7 +126,7 @@ func (l *Loaded) loadConfig(opts LoadOptions, warn io.Writer) error {
 				opts.Workspace, cliResolved, cfgResolved)
 		}
 	}
-	// --state always wins over config; the caller chose it explicitly.
+	// The CLI workspace wins once it has been checked against the file.
 	if opts.Workspace != "" {
 		cfg.Agent.Workspace = opts.Workspace
 	}

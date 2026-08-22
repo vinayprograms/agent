@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/config"
@@ -178,7 +181,7 @@ func TestServeAgent_IdleHandlers(t *testing.T) {
 
 	// Shutdown paths with nothing in flight.
 	a.initiateShutdown(t.Context())
-	a.initiateBusShutdown(t.Context())
+	a.initiateBusShutdown()
 	if a.state() != "draining" {
 		t.Errorf("status %q", a.state())
 	}
@@ -275,5 +278,114 @@ func TestGetCapabilities(t *testing.T) {
 	a = &serviceAgent{loaded: &run.Loaded{Workflow: &agentfile.Workflow{Name: "wfname"}}}
 	if got := a.getCapabilities(); len(got) != 1 || got[0] != "wfname" {
 		t.Errorf("got %v", got)
+	}
+}
+
+// TestServeAgent_ShutdownWaitsForRunningTask pins the drain contract: a
+// completed task must not leave a signal behind that lets a later shutdown
+// walk away from a task that is still executing.
+func TestServeAgent_ShutdownWaitsForRunningTask(t *testing.T) {
+	a, _ := serveRuntime(t)
+	a.drainTimeout = 5 * time.Second
+
+	// Two tasks run to completion, then a third is in flight.
+	for _, id := range []string{"t1", "t2"} {
+		a.executeTask(t.Context(), swarm.NewTaskMessage(id, "cap", map[string]string{"k": "v"}))
+	}
+	a.exec.Lock()
+	a.setState("busy", swarm.NewTaskMessage("t3", "cap", map[string]string{"k": "v"}))
+
+	const held = 250 * time.Millisecond
+	go func() {
+		time.Sleep(held)
+		a.setState("idle", nil)
+		a.exec.Unlock()
+	}()
+
+	start := time.Now()
+	a.initiateShutdown(t.Context())
+	if waited := time.Since(start); waited < held {
+		t.Errorf("shutdown returned after %s, before the running task finished (%s)", waited, held)
+	}
+}
+
+// TestServeAgent_BusShutdownWaitsForRunningTask is the bus-mode half of
+// the same contract.
+func TestServeAgent_BusShutdownWaitsForRunningTask(t *testing.T) {
+	a, _ := serveRuntime(t)
+	a.drainTimeout = 5 * time.Second
+
+	a.executeTask(t.Context(), swarm.NewTaskMessage("t1", "cap", map[string]string{"k": "v"}))
+	a.exec.Lock()
+	a.setState("busy", swarm.NewTaskMessage("t2", "cap", map[string]string{"k": "v"}))
+
+	const held = 250 * time.Millisecond
+	go func() {
+		time.Sleep(held)
+		a.setState("idle", nil)
+		a.exec.Unlock()
+	}()
+
+	start := time.Now()
+	a.initiateBusShutdown()
+	if waited := time.Since(start); waited < held {
+		t.Errorf("bus shutdown returned after %s, before the running task finished (%s)", waited, held)
+	}
+}
+
+// TestServeAgent_AwaitIdleTimesOut pins the forced-shutdown escape hatch.
+func TestServeAgent_AwaitIdleTimesOut(t *testing.T) {
+	a, _ := serveRuntime(t)
+	a.exec.Lock()
+	defer a.exec.Unlock()
+	if a.awaitIdle(20 * time.Millisecond) {
+		t.Error("awaitIdle should time out while a task holds the executor")
+	}
+}
+
+// TestServeAgent_AwaitTaskDone pins that a shutdown signal does not make
+// the pull loop abandon (and Nak) a task that is still draining.
+func TestServeAgent_AwaitTaskDone(t *testing.T) {
+	a, _ := serveRuntime(t)
+	a.drainTimeout = time.Second
+
+	// Already finished.
+	a.taskDone <- struct{}{}
+	if !a.awaitTaskDone(t.Context()) {
+		t.Error("a completed task should report done")
+	}
+
+	// Shutdown signalled while the task is still draining: keep waiting.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		a.taskDone <- struct{}{}
+	}()
+	if !a.awaitTaskDone(ctx) {
+		t.Error("a draining task must be waited for, not abandoned")
+	}
+
+	// Drain deadline expires with no completion: the caller must Nak.
+	a.drainTimeout = 20 * time.Millisecond
+	if a.awaitTaskDone(ctx) {
+		t.Error("expected the drain deadline to expire")
+	}
+}
+
+// TestTaskContext pins that a shutdown signal drains rather than aborting
+// the task in flight.
+func TestTaskContext(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	taskCtx, cancelTasks := taskContext(parent)
+	defer cancelTasks()
+
+	cancelParent()
+	if err := taskCtx.Err(); err != nil {
+		t.Errorf("a shutdown signal must not abort the task: %v", err)
+	}
+	cancelTasks()
+	if !errors.Is(taskCtx.Err(), context.Canceled) {
+		t.Errorf("task context should be cancellable by its owner: %v", taskCtx.Err())
 	}
 }

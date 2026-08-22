@@ -44,6 +44,9 @@ type serviceAgent struct {
 
 	// Service-level session (shared across all tasks)
 	serviceRuntime *run.Runtime
+	// metrics forwards executor metrics to the heartbeat sender, which
+	// only exists once the bus is up.
+	metrics *deferredMetrics
 	// interrupts is the buffer of the task currently executing (nil when
 	// idle) — corrections that arrive between tasks are discarded.
 	interrupts   atomic.Pointer[executor.InterruptBuffer]
@@ -220,6 +223,7 @@ func runServe(ctx context.Context, d deps, opts serveOptions) error {
 	// Session events stream to NATS once the bus is up (see publishEvent
 	// below); until then the sink drops them.
 	publishEvent := new(atomic.Pointer[session.Sink])
+	metrics := &deferredMetrics{}
 	serviceRt, err := run.New(ctx, loaded, run.Deps{
 		Creds:   creds,
 		Stdout:  opts.stdout,
@@ -230,6 +234,7 @@ func runServe(ctx context.Context, d deps, opts serveOptions) error {
 				(*p)(evt)
 			}
 		},
+		Metrics:     metrics,
 		KeepSession: true, // session persists across tasks
 	})
 	if err != nil {
@@ -274,6 +279,7 @@ func runServe(ctx context.Context, d deps, opts serveOptions) error {
 		capabilitiesStr: capabilitiesStr,
 		capability:      capability,
 		serviceRuntime:  serviceRt,
+		metrics:         metrics,
 		publishEvent:    publishEvent,
 		status:          "idle",
 		taskDone:        make(chan struct{}, 1),
@@ -297,7 +303,7 @@ func (a *serviceAgent) handler() http.Handler {
 	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"status":     a.state(),
 			"capability": a.capability.Name,
 		})
@@ -356,6 +362,10 @@ func (a *serviceAgent) runHTTPMode(ctx context.Context) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		// No WriteTimeout on purpose: it caps the whole handler, and
+		// POST /task runs a workflow whose duration is the workload's,
+		// not the transport's. The read-side timeouts and the body cap
+		// are what close the slow-loris door.
 	}
 
 	fmt.Fprintf(a.stderr, "Service agent: %s (ID: %s, capability: %s)\n", a.loaded.Workflow.Name, a.agentID, a.capability.Name)
@@ -442,7 +452,7 @@ func (a *serviceAgent) runBusMode(ctx context.Context) error {
 	hbSender.SetMetadata("version", version)
 
 	// Wire metrics collector for dashboard reporting
-	a.serviceRuntime.SetMetricsCollector(swarm.NewMetricsCollector(hbSender))
+	a.metrics.set(swarm.NewMetricsCollector(hbSender))
 
 	// Wire event publisher — streams structured session events to NATS
 	// for the swarm UI's real-time event log.
@@ -485,25 +495,25 @@ func (a *serviceAgent) runBusMode(ctx context.Context) error {
 	// Subscribe to work.<capability>.* for task assignment.
 	// Prefer JetStream pull consumer (ack-based, guaranteed single delivery)
 	// with fallback to NATS queue groups (push-based, best-effort distribution).
-	cap := a.getCapabilities()[0]
+	capName := a.getCapabilities()[0]
 	if js != nil {
-		pullSub, err := swarm.EnsureWorkConsumer(js, cap)
+		pullSub, err := swarm.EnsureWorkConsumer(js, capName)
 		if err != nil {
 			fmt.Fprintf(a.stderr, "⚠️  JetStream pull consumer failed: %v (falling back to queue groups)\n", err)
 		} else {
 			a.workPullSub = pullSub
-			fmt.Fprintf(a.stderr, "✓ JetStream pull consumer: work.%s.* (ack-based delivery)\n", cap)
+			fmt.Fprintf(a.stderr, "✓ JetStream pull consumer: work.%s.* (ack-based delivery)\n", capName)
 		}
 	}
 	if a.workPullSub == nil {
 		// Fallback: NATS queue groups (push-based)
-		workSubject := fmt.Sprintf("work.%s.*", cap)
+		workSubject := fmt.Sprintf("work.%s.*", capName)
 		workSub, err := natsBus.Join(a.queueGroup).Subscribe(workSubject)
 		if err != nil {
 			return fmt.Errorf("subscribing to %s: %w", workSubject, err)
 		}
 		a.taskSubs = append(a.taskSubs, workSub)
-		fmt.Fprintf(a.stderr, "⚠️  Using queue group fallback: work.%s.* (push-based)\n", cap)
+		fmt.Fprintf(a.stderr, "⚠️  Using queue group fallback: work.%s.* (push-based)\n", capName)
 	}
 	defer func() {
 		if a.workPullSub != nil {
@@ -549,9 +559,9 @@ func (a *serviceAgent) runBusMode(ctx context.Context) error {
 		a.loaded.Workflow.Name, a.agentID, a.instanceID, a.agentType, a.capability.Name)
 	fmt.Fprintf(a.stderr, "Connected to bus: %s\n", a.loaded.Config.Service.BusURL)
 	if a.workPullSub != nil {
-		fmt.Fprintf(a.stderr, "Listening on: work.%s.* (JetStream pull consumer)\n", cap)
+		fmt.Fprintf(a.stderr, "Listening on: work.%s.* (JetStream pull consumer)\n", capName)
 	} else {
-		fmt.Fprintf(a.stderr, "Listening on: work.%s.* (queue: %s)\n", cap, a.queueGroup)
+		fmt.Fprintf(a.stderr, "Listening on: work.%s.* (queue: %s)\n", capName, a.queueGroup)
 	}
 	fmt.Fprintf(a.stderr, "Listening on: work.%s.* (corrections)\n", a.instanceID)
 	if a.agentType == "manager" {
@@ -565,6 +575,12 @@ func (a *serviceAgent) runBusMode(ctx context.Context) error {
 }
 
 func (a *serviceAgent) runMainLoop(ctx context.Context) {
+	// ctx carries the shutdown signal; taskCtx carries task execution and
+	// outlives it, so a signal drains the task in flight instead of
+	// aborting it. It is cancelled on the way out, once the drain is done.
+	taskCtx, cancelTasks := taskContext(ctx)
+	defer cancelTasks()
+
 	// Work channel — fed by either JetStream pull or queue group push
 	workCh := make(chan *messaging.Message, 16)
 
@@ -604,7 +620,7 @@ func (a *serviceAgent) runMainLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			fmt.Fprintf(a.stderr, "\nReceived shutdown signal, draining...\n")
-			a.initiateBusShutdown(context.WithoutCancel(ctx))
+			a.initiateBusShutdown()
 			return
 
 		case _, ok := <-controlCh:
@@ -613,14 +629,14 @@ func (a *serviceAgent) runMainLoop(ctx context.Context) {
 				continue
 			}
 			fmt.Fprintf(a.stderr, "\nReceived remote shutdown signal, draining...\n")
-			a.initiateBusShutdown(ctx)
+			a.initiateBusShutdown()
 			return
 
 		case msg, ok := <-workCh:
 			if !ok {
 				return
 			}
-			a.handleBusTask(ctx, msg)
+			a.handleBusTask(taskCtx, msg)
 
 		case msg, ok := <-instanceCh:
 			if !ok {
@@ -872,6 +888,14 @@ func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *messagin
 				Data:    natsMsg.Data,
 			}
 
+			// Discard any completion left over from a task this loop did
+			// not dispatch, so the signal we wait for below is this
+			// task's own.
+			select {
+			case <-a.taskDone:
+			default:
+			}
+
 			// Send to work channel (blocks until main loop picks it up)
 			select {
 			case workCh <- busMsg:
@@ -880,11 +904,10 @@ func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *messagin
 				return
 			}
 
-			// Wait for task processing to complete before acking.
-			// executeTask signals taskDone when it finishes.
-			select {
-			case <-a.taskDone:
-			case <-ctx.Done():
+			// Wait for task processing to complete before acking. A
+			// shutdown signal drains the task rather than abandoning it;
+			// only an expired drain leaves it for another worker.
+			if !a.awaitTaskDone(ctx) {
 				natsMsg.Nak()
 				return
 			}
@@ -984,8 +1007,10 @@ func (a *serviceAgent) publishToDiscuss(taskID, goalName, content string) {
 	}
 }
 
-// initiateBusShutdown handles graceful shutdown in bus mode.
-func (a *serviceAgent) initiateBusShutdown(ctx context.Context) {
+// initiateBusShutdown handles graceful shutdown in bus mode: deregister,
+// stop taking work, then drain. It takes no context — every step here is
+// either a non-cancellable teardown call or bounded by the drain timeout.
+func (a *serviceAgent) initiateBusShutdown() {
 	inFlight := a.busy()
 	a.setStatus("draining")
 
@@ -1020,15 +1045,93 @@ func (a *serviceAgent) initiateBusShutdown(ctx context.Context) {
 	// Wait for current task to complete (with timeout)
 	if inFlight {
 		fmt.Fprintf(a.stderr, "Waiting for current task to complete (timeout: %s)...\n", a.drainTimeout)
-		select {
-		case <-a.taskDone:
+		if a.awaitIdle(a.drainTimeout) {
 			fmt.Fprintf(a.stderr, "Task completed, shutting down.\n")
-		case <-time.After(a.drainTimeout):
+		} else {
 			fmt.Fprintf(a.stderr, "Drain timeout reached, forcing shutdown.\n")
 		}
 	}
 
 	// Heartbeat and bus will be closed by deferred calls in runBusMode
+}
+
+// awaitIdle blocks until no task is executing, or until timeout expires.
+// It waits on the execution lock itself rather than on a completion
+// signal: a signal outlives the task that sent it, a held lock cannot.
+func (a *serviceAgent) awaitIdle(timeout time.Duration) bool {
+	idle := make(chan struct{})
+	go func() {
+		a.exec.Lock()
+		a.exec.Unlock()
+		close(idle)
+	}()
+	select {
+	case <-idle:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// awaitTaskDone waits for the task the caller dispatched to finish, and
+// reports whether it did. A shutdown signal does not abandon the task:
+// execution is detached from it (see taskContext), so the task drains and
+// its result is still published — only the drain deadline gives up, and
+// then the caller must Nak so another worker retries.
+func (a *serviceAgent) awaitTaskDone(ctx context.Context) bool {
+	select {
+	case <-a.taskDone:
+		return true
+	case <-ctx.Done():
+	}
+	select {
+	case <-a.taskDone:
+		return true
+	case <-time.After(a.drainTimeout):
+		return false
+	}
+}
+
+// deferredMetrics forwards executor metrics to a collector that is wired
+// after the executor exists: the heartbeat sender only appears once the
+// bus is up. The zero value drops every metric.
+type deferredMetrics struct {
+	target atomic.Pointer[executor.MetricsCollector]
+}
+
+func (d *deferredMetrics) set(mc executor.MetricsCollector) { d.target.Store(&mc) }
+
+func (d *deferredMetrics) collector() executor.MetricsCollector {
+	if p := d.target.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+func (d *deferredMetrics) RecordLLMCall(in, out, cacheCreation, cacheRead int, latencyMs int64) {
+	if c := d.collector(); c != nil {
+		c.RecordLLMCall(in, out, cacheCreation, cacheRead, latencyMs)
+	}
+}
+
+func (d *deferredMetrics) RecordSupervision(approved bool) {
+	if c := d.collector(); c != nil {
+		c.RecordSupervision(approved)
+	}
+}
+
+func (d *deferredMetrics) SetSubagents(count int) {
+	if c := d.collector(); c != nil {
+		c.SetSubagents(count)
+	}
+}
+
+// taskContext derives the context tasks execute on. It is detached from
+// the shutdown signal — SIGINT starts a drain, it does not abort the task
+// in flight — and is cancelled by its own cancel func once the drain is
+// over.
+func taskContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.WithoutCancel(ctx))
 }
 
 // state reports the agent's lifecycle state: "idle", "busy" or "draining".
@@ -1134,10 +1237,9 @@ func (a *serviceAgent) initiateShutdown(ctx context.Context) {
 	// Wait for current task to complete (with timeout)
 	if inFlight {
 		fmt.Fprintf(a.stderr, "Waiting for current task to complete (timeout: %s)...\n", a.drainTimeout)
-		select {
-		case <-a.taskDone:
+		if a.awaitIdle(a.drainTimeout) {
 			fmt.Fprintf(a.stderr, "Task completed, shutting down.\n")
-		case <-time.After(a.drainTimeout):
+		} else {
 			fmt.Fprintf(a.stderr, "Drain timeout reached, forcing shutdown.\n")
 		}
 	}

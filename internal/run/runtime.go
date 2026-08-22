@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
@@ -44,6 +43,10 @@ type Deps struct {
 	Stderr  io.Writer    // status lines and warnings; nil discards
 	Version string       // reported to telemetry as the service version
 	Sink    session.Sink // optional: session events (serve mode streams them to the bus)
+	// Metrics receives LLM and supervision metrics. Optional; serve mode
+	// supplies a forwarder because its heartbeat sender only exists once
+	// the bus is up.
+	Metrics executor.MetricsCollector
 	// KeepSession leaves the session open across runs (serve mode): Run
 	// flushes but does not close it.
 	KeepSession bool
@@ -75,11 +78,9 @@ type Runtime struct {
 	mcpManager        *mcp.Manager
 	eventSink         session.Sink // optional; set before setup (serve mode)
 	persistentSession bool
-	// metrics forwards LLM/supervision metrics to the heartbeat sender,
-	// which only exists once the bus is up — after the executor is built.
-	metrics    *deferredMetrics
-	sessionMgr *session.Recorder
-	sess       *session.Session
+	metrics           executor.MetricsCollector
+	sessionMgr        *session.Recorder
+	sess              *session.Session
 
 	// Security (computed before the tool set so the bash gate gets the scope)
 	secMode  executor.SecurityMode
@@ -115,7 +116,7 @@ func newRuntime(l *Loaded, deps Deps) *Runtime {
 		cfg:               l.Config,
 		pol:               l.Policy,
 		creds:             deps.Creds,
-		metrics:           &deferredMetrics{},
+		metrics:           deps.Metrics,
 		inputs:            l.Inputs,
 		debug:             l.Debug,
 		sessionLabel:      l.SessionLabel,
@@ -152,10 +153,6 @@ func (rt *Runtime) Policy() *policy.Policy { return rt.pol }
 
 // Session is the record of this run; its ID identifies the agent.
 func (rt *Runtime) Session() *session.Session { return rt.sess }
-
-// SetMetricsCollector directs executor metrics to mc. Serve mode calls it
-// once the heartbeat sender exists.
-func (rt *Runtime) SetMetricsCollector(mc executor.MetricsCollector) { rt.metrics.set(mc) }
 
 // newLogger returns the process logger: text to stderr, Debug level when
 // --debug is set.
@@ -512,40 +509,6 @@ func (rt *Runtime) createExecutor(ctx context.Context) error {
 		rt.bashGate.OnDecision = rt.exec.LogBashSecurity
 	}
 	return nil
-}
-
-// deferredMetrics forwards to a collector wired after the executor exists
-// (serve mode builds the heartbeat sender only once the bus is up).
-// The zero value drops every metric.
-type deferredMetrics struct {
-	target atomic.Pointer[executor.MetricsCollector]
-}
-
-func (d *deferredMetrics) set(mc executor.MetricsCollector) { d.target.Store(&mc) }
-
-func (d *deferredMetrics) collector() executor.MetricsCollector {
-	if p := d.target.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
-func (d *deferredMetrics) RecordLLMCall(in, out, cacheCreation, cacheRead int, latencyMs int64) {
-	if c := d.collector(); c != nil {
-		c.RecordLLMCall(in, out, cacheCreation, cacheRead, latencyMs)
-	}
-}
-
-func (d *deferredMetrics) RecordSupervision(approved bool) {
-	if c := d.collector(); c != nil {
-		c.RecordSupervision(approved)
-	}
-}
-
-func (d *deferredMetrics) SetSubagents(count int) {
-	if c := d.collector(); c != nil {
-		c.SetSubagents(count)
-	}
 }
 
 // profileResolver creates models based on capability profiles.

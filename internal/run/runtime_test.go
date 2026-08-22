@@ -514,30 +514,24 @@ func TestNew_AccessorsAndClose(t *testing.T) {
 	}
 }
 
-func TestDeferredMetrics(t *testing.T) {
-	var d deferredMetrics
-	// The zero value drops every metric.
-	d.RecordLLMCall(1, 2, 3, 4, 5)
-	d.RecordSupervision(true)
-	d.SetSubagents(2)
-
-	spy := &metricsSpy{}
-	d.set(spy)
-	d.RecordLLMCall(1, 2, 3, 4, 5)
-	d.RecordSupervision(true)
-	d.SetSubagents(2)
-	if spy.llm != 1 || spy.supervision != 1 || spy.subagents != 2 {
-		t.Errorf("metrics not forwarded: %+v", spy)
+// TestNew_MetricsFromDeps pins that the metrics collector is wired at
+// construction; there is no setter on the built runtime.
+func TestNew_MetricsFromDeps(t *testing.T) {
+	l := testWorkflow(t, nil)
+	want := &countingMetrics{}
+	rt, err := New(t.Context(), l, Deps{Creds: credentials.NewEnvStore(), Metrics: want})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer rt.Close()
+	if rt.metrics != executor.MetricsCollector(want) {
+		t.Errorf("metrics collector = %v, want the injected one", rt.metrics)
 	}
 }
 
-// metricsSpy counts the metrics forwarded to it.
-type metricsSpy struct {
-	llm         int
-	supervision int
-	subagents   int
-}
+// countingMetrics records that it was called.
+type countingMetrics struct{ calls int }
 
-func (m *metricsSpy) RecordLLMCall(_, _, _, _ int, _ int64) { m.llm++ }
-func (m *metricsSpy) RecordSupervision(bool)                { m.supervision++ }
-func (m *metricsSpy) SetSubagents(n int)                    { m.subagents = n }
+func (m *countingMetrics) RecordLLMCall(_, _, _, _ int, _ int64) { m.calls++ }
+func (m *countingMetrics) RecordSupervision(bool)                { m.calls++ }
+func (m *countingMetrics) SetSubagents(int)                      { m.calls++ }
