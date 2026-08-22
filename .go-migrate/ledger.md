@@ -58,7 +58,7 @@ Wave B:
 6. [x] U6 internal/supervision — llm.Model, slog (A-G5), tests on llmmock
 7. [x] U7 cmd/swarm — tasks→internal/swarm envelopes, messaging re-point
 Wave C:
-8. [ ] U8 internal/executor — tools/llm/contentguard/memory/mcp/slog/spawn (largest)
+8. [x] U8 internal/executor — tools/llm/contentguard/memory/mcp/slog/spawn (largest)
 Wave D:
 9. [ ] U9 cmd/agent — runtime wiring (toolset builder, guards, shellguard, contentguard, telemetry), serve (messaging/registry/second conn), workflow, tests
 10. [x] U10 cmd/agentmem — memory API
@@ -112,3 +112,6 @@ parked-smells / BUGS for refactor phase: replay --web panics (float64 vs int64);
 ### U12 examples policy.toml + docs — DONE (6203382 + 6c0a6c0, verifier FAIL→fixed)
 5 policy files converted (enabled sets unchanged vs main; default_deny explicit everywhere); tests/system/policy_files_test.go walks repo and asserts zero unknown keys. Widened rm/chmod deny entries removed after review. Docs: security 05/06/07/10/README, design 01/02/04/05, execution/05, configuration/protocols, README, Makefile setup-dev, examples/agent/memory/README.
 Flag for U9/U11: examples/agent/memory/simple-memory.agent references `memory_forget` (not a v1.2.0 tool); internal/setup/setup_test.go:1057 legacy literal is intentional (legacy-warning test).
+### U8 internal/executor — DONE (799163e, af606c4, 4dc30cb; verifier FAIL→PASS)
+API for U9/U11: `New(Config) (*Executor, error)` — NewExecutor/NewExecutorWithFactory DELETED. Config{Workflow, Model llm.Model, Resolver llm.Resolver, Registry *tools.Registry, Policy, SpawnBinder *tools.SpawnBinder, Logger *slog.Logger, Debug, MCPManager, SkillRefs, Session, SessionManager, PersistentSession, CheckpointStore, Supervisor, HumanAvailable, HumanInputChan, Security *SecurityConfig{Mode, Scope, Screener, Reviewer(REQUIRED), Patterns, Keywords}, TimeoutMCP/WebSearch/WebFetch, ObservationExtractor (=*memory.Extractor), ObservationStore (=BleveStore/InMemoryStore), MetricsCollector, InterruptBuffer, DiscussPublisher, WorkspaceContext, Hooks}. Executor builds contentguard (Skip = registry minus {bash,write,edit,web_fetch,spawn_agents,rm,mv,patch}); guard error ⇒ New error (fail-closed); Reviewer required in every mode. `(*Executor).LogBashSecurity` matches shellguard.Gate.OnDecision. Definitions filtered by policy + execution refused for disabled tools. Session meta keys unchanged; value spellings now kit's (`tool:X`, "no untrusted content", "skipped tool: X"). coverage executor 87.3%.
+parked-smells: hand-rolled semaphore→errgroup.SetLimit; atomic.AddInt32→atomic.Int32; observation goroutine context.Background (→WithoutCancel + lifetime); fmt.Errorf '%s'→%q; bare contentguard error (prefix "security:"); TestExecutor_ToolExecution `ls ..`; workspace.go 0%, converge multi-agent paths uncovered.
