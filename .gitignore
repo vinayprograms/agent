@@ -40,7 +40,7 @@ sessions/
 # Signing keys
 *.pem
 /agent
-replay
+/replay
 
 # Local design worksheet (not repo docs)
 DESIGN-DEBT.md
