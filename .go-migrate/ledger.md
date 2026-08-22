@@ -64,7 +64,7 @@ Wave D:
 10. [x] U10 cmd/agentmem — memory API
 Wave E:
 11. [ ] U11 tests/{integration,failure,performance,security,system} — llmmock, registry builder, policy files
-12. [ ] U12 examples/**/policy.toml + docs (security 06/07/10, configuration, usage) to new schema
+12. [x] U12 examples/**/policy.toml + docs (security 06/07/10, configuration, usage) to new schema
 Final: verify.md gate (gofmt/vet/build/test -race), then parked-smells cleanup, then the idiomatic refactor + 100% coverage phases (separate ledger section below).
 
 ## Gate protocol per unit
@@ -109,3 +109,6 @@ re-points only (tasks.X→swarm.X, 22 sites); wire/on-disk formats pinned by new
 parked-smells / BUGS for refactor phase: replay --web panics (float64 vs int64); submit loses early results (second subscription) → 30s hang; capabilities counts heartbeats not agents; taskDB unlocked RMW; replay ignores dataDir; http.Server no timeouts; taskID path traversal in web handlers; duplicated heartbeat struct ×3; checkNATS no-op; ignored errors; tests use Sleep sequencing + unchecked fixture writes.
 - A-C1 ownership note: loud rejection of legacy policy keys (via policy.FromTOMLWithUnknownKeys, replacing the vanished policy.ValidateKeys call in cmd/agent/workflow.go) is implemented by U9. `sandbox`/`timeout` are valid v1.2.0 keys that this agent does not enforce.
 - A-C3 refinement (U12 verifier): shellguard deny matches base command names only; legacy glob entries (rm -rf *, chmod 777 *) are NOT widened to bare commands — dropped, LLM review covers them.
+### U12 examples policy.toml + docs — DONE (6203382 + 6c0a6c0, verifier FAIL→fixed)
+5 policy files converted (enabled sets unchanged vs main; default_deny explicit everywhere); tests/system/policy_files_test.go walks repo and asserts zero unknown keys. Widened rm/chmod deny entries removed after review. Docs: security 05/06/07/10/README, design 01/02/04/05, execution/05, configuration/protocols, README, Makefile setup-dev, examples/agent/memory/README.
+Flag for U9/U11: examples/agent/memory/simple-memory.agent references `memory_forget` (not a v1.2.0 tool); internal/setup/setup_test.go:1057 legacy literal is intentional (legacy-warning test).
