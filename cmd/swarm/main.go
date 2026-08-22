@@ -22,7 +22,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/vinayprograms/agent/internal/swarm"
-	"github.com/vinayprograms/agentkit/tasks"
 )
 
 type CLI struct {
@@ -79,9 +78,9 @@ type RestartCmd struct {
 	Agents []string `arg:"" optional:"" help:"Specific agents to restart (default: all)"`
 }
 type UICmd struct {
-	Port    int    `name:"port" short:"p" default:"9090" help:"Web UI port"`
-	Bind    string `name:"bind" short:"b" default:"127.0.0.1" help:"Bind address (default: localhost only)"`
-	TUI     bool   `name:"tui" help:"Use terminal TUI instead of web"`
+	Port     int    `name:"port" short:"p" default:"9090" help:"Web UI port"`
+	Bind     string `name:"bind" short:"b" default:"127.0.0.1" help:"Bind address (default: localhost only)"`
+	TUI      bool   `name:"tui" help:"Use terminal TUI instead of web"`
 	Manifest string `name:"manifest" short:"f" default:"" help:"Path to swarm.yaml (default: auto-detect in CWD)"`
 }
 type ReplayCmd struct {
@@ -350,7 +349,7 @@ func (s *SubmitCmd) Run(a *app) error {
 		return fmt.Errorf("no inputs provided: use --input name=value or positional argument")
 	}
 
-	task := tasks.TaskMessage{
+	task := swarm.TaskMessage{
 		TaskID:      taskID,
 		Capability:  s.Capability,
 		Inputs:      inputs,
@@ -464,7 +463,7 @@ func (d *DiscussCmd) Run(a *app) error {
 		return fmt.Errorf("no inputs provided: use --input name=value or positional argument")
 	}
 
-	task := tasks.TaskMessage{
+	task := swarm.TaskMessage{
 		TaskID:      taskID,
 		Inputs:      inputs,
 		Attempt:     1,
@@ -518,7 +517,7 @@ func (r *ResultCmd) Run(a *app) error {
 	return printResult(result)
 }
 
-func printResult(r *tasks.TaskResult) error {
+func printResult(r *swarm.TaskResult) error {
 	output := struct {
 		TaskID     string      `json:"task_id"`
 		Status     string      `json:"status"`
@@ -977,7 +976,7 @@ func (c *ChainCmd) Run(a *app) error {
 		taskID := fmt.Sprintf("t-%s", uuid.New().String()[:8])
 		inputs := map[string]string{"task": prevOutput}
 
-		tm := tasks.TaskMessage{
+		tm := swarm.TaskMessage{
 			TaskID:     taskID,
 			Capability: cap,
 			Inputs:     inputs,
@@ -1013,12 +1012,12 @@ func (c *ChainCmd) Run(a *app) error {
 			return fmt.Errorf("timeout waiting for stage %d: %w", i+1, err)
 		}
 
-		var result tasks.TaskResult
+		var result swarm.TaskResult
 		if err := json.Unmarshal(msg.Data, &result); err != nil {
 			return fmt.Errorf("parse result: %w", err)
 		}
 
-		if result.Status == tasks.ResultFailed {
+		if result.Status == swarm.ResultFailed {
 			return fmt.Errorf("stage %d failed: %s", i+1, result.Error)
 		}
 
@@ -1085,7 +1084,7 @@ func openTaskDB(path string) (*taskDB, error) {
 
 func (d *taskDB) Close() error { return nil }
 
-func (d *taskDB) InsertTask(task *tasks.TaskMessage, status string) error {
+func (d *taskDB) InsertTask(task *swarm.TaskMessage, status string) error {
 	records := d.loadRecords()
 
 	// Deduplicate — skip if task already recorded
@@ -1120,16 +1119,16 @@ func (d *taskDB) InsertTask(task *tasks.TaskMessage, status string) error {
 	return nil
 }
 
-func (d *taskDB) GetTask(taskID string) (*tasks.TaskMessage, error) {
+func (d *taskDB) GetTask(taskID string) (*swarm.TaskMessage, error) {
 	inputDir := filepath.Join(filepath.Dir(d.dbPath), "tasks")
 	data, err := os.ReadFile(filepath.Join(inputDir, taskID+".input.json"))
 	if err != nil {
 		return nil, err
 	}
-	return tasks.UnmarshalTaskMessage(data)
+	return swarm.UnmarshalTaskMessage(data)
 }
 
-func (d *taskDB) UpdateResult(result *tasks.TaskResult) error {
+func (d *taskDB) UpdateResult(result *swarm.TaskResult) error {
 	// Update status in records
 	records := d.loadRecords()
 	for i, r := range records {
@@ -1160,14 +1159,14 @@ func (d *taskDB) UpdateResult(result *tasks.TaskResult) error {
 	return nil
 }
 
-func (d *taskDB) GetResult(taskID string) (*tasks.TaskResult, error) {
+func (d *taskDB) GetResult(taskID string) (*swarm.TaskResult, error) {
 	// Check result files
 	resultDir := filepath.Join(filepath.Dir(d.dbPath), "tasks")
 	data, err := os.ReadFile(filepath.Join(resultDir, taskID+".json"))
 	if err != nil {
 		return nil, err
 	}
-	var res tasks.TaskResult
+	var res swarm.TaskResult
 	if err := json.Unmarshal(data, &res); err != nil {
 		return nil, err
 	}

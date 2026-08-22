@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/vinayprograms/agentkit/tasks"
+	"github.com/vinayprograms/agent/internal/swarm"
 )
 
 // heartbeatTimeout is how long to wait after last heartbeat before declaring agents dead.
@@ -16,7 +16,7 @@ const heartbeatTimeout = 30 * time.Second
 // waitForResult waits for a task result while monitoring agent heartbeats.
 // It only times out if ALL agents stop sending heartbeats (i.e., they're dead).
 // Returns the result when received, or error if all agents are gone.
-func waitForResult(nc *nats.Conn, taskID string, db *taskDB) (*tasks.TaskResult, error) {
+func waitForResult(nc *nats.Conn, taskID string, db *taskDB) (*swarm.TaskResult, error) {
 	// Subscribe to result
 	resultSub, err := nc.SubscribeSync(fmt.Sprintf("done.*.%s", taskID))
 	if err != nil {
@@ -39,7 +39,7 @@ func waitForResult(nc *nats.Conn, taskID string, db *taskDB) (*tasks.TaskResult,
 		msg, err := resultSub.NextMsg(1 * time.Second)
 		if err == nil {
 			// Got result!
-			var result tasks.TaskResult
+			var result swarm.TaskResult
 			if err := json.Unmarshal(msg.Data, &result); err != nil {
 				return nil, fmt.Errorf("parse result: %w", err)
 			}

@@ -17,7 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
-	"github.com/vinayprograms/agentkit/tasks"
+	"github.com/vinayprograms/agent/internal/swarm"
 	"golang.org/x/net/websocket"
 	tsclient "tailscale.com/client/local"
 	"tailscale.com/ipn"
@@ -178,7 +178,7 @@ func (s *webServer) persistNATSMessage(msgType, subject string, data []byte) {
 	switch msgType {
 	case "work":
 		// Persist task input: work.<cap>.<task_id>
-		tm, err := tasks.UnmarshalTaskMessage(data)
+		tm, err := swarm.UnmarshalTaskMessage(data)
 		if err != nil {
 			return
 		}
@@ -201,7 +201,7 @@ func (s *webServer) persistNATSMessage(msgType, subject string, data []byte) {
 
 	case "done":
 		// Persist task result: done.<cap>.<task_id>
-		var result tasks.TaskResult
+		var result swarm.TaskResult
 		if err := json.Unmarshal(data, &result); err != nil {
 			return
 		}
@@ -251,7 +251,7 @@ func (s *webServer) persistDiscussContribution(subject string, data []byte) {
 	taskID := parts[len(parts)-1]
 
 	// Try as TaskResult first (agent comments/results)
-	var result tasks.TaskResult
+	var result swarm.TaskResult
 	if err := json.Unmarshal(data, &result); err == nil && result.AgentID != "" {
 		entryType := "execute"
 		if result.Metadata != nil {
@@ -292,7 +292,7 @@ func (s *webServer) persistDiscussContribution(subject string, data []byte) {
 	}
 
 	// Try as TaskMessage (initial topic or follow-up with prior_output)
-	tm, err := tasks.UnmarshalTaskMessage(data)
+	tm, err := swarm.UnmarshalTaskMessage(data)
 	if err != nil {
 		return
 	}
@@ -481,7 +481,7 @@ func (s *webServer) handleTaskCommand(args []string) {
 		}()
 	}
 
-	taskMsg := &tasks.TaskMessage{
+	taskMsg := &swarm.TaskMessage{
 		TaskID:      taskID,
 		Capability:  capability,
 		Inputs:      map[string]string{"task": task},
@@ -509,7 +509,7 @@ func (s *webServer) handleDiscussCommand(args []string) {
 	taskID := fmt.Sprintf("d-%s", uuid.New().String()[:8])
 	subject := fmt.Sprintf("discuss.%s", taskID)
 
-	taskMsg := &tasks.TaskMessage{
+	taskMsg := &swarm.TaskMessage{
 		TaskID:      taskID,
 		Capability:  capability,
 		Inputs:      map[string]string{"task": topic},
@@ -607,9 +607,9 @@ func (s *webServer) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{
-		"task_id":  taskID,
-		"input":    input,
-		"result":   result,
+		"task_id": taskID,
+		"input":   input,
+		"result":  result,
 	})
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
@@ -700,7 +700,7 @@ func (s *webServer) handleHumanReply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tm := &tasks.TaskMessage{
+	tm := &swarm.TaskMessage{
 		TaskID:      taskID,
 		Inputs:      map[string]string{"task": taskContent},
 		Metadata:    meta,
