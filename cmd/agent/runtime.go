@@ -374,7 +374,7 @@ func (rt *runtime) createExecutor() error {
 	}
 
 	// --- Supervision ---
-	var checkpointStore checkpoint.CheckpointStore
+	var checkpointStore supervision.Store
 	var supervisor supervision.Supervisor
 	if rt.wf.HasSupervisedGoals() {
 		checkpointDir := filepath.Join(rt.sessionPath, "checkpoints", rt.sess.ID)

@@ -1,8 +1,11 @@
+// Package checkpoint records execution phases for supervision, providing
+// pre/post snapshots that enable drift detection and course correction.
 package checkpoint
 
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -50,9 +53,9 @@ type PostCheckpoint struct {
 
 // ReconcileResult is created during the RECONCILE phase.
 type ReconcileResult struct {
-	StepID    string   `json:"step_id"`
-	Triggers  []string `json:"triggers"`
-	Supervise bool     `json:"supervise"`
+	StepID    string    `json:"step_id"`
+	Triggers  []string  `json:"triggers"`
+	Supervise bool      `json:"supervise"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -73,157 +76,87 @@ type Checkpoint struct {
 	Supervise *SuperviseResult `json:"supervise,omitempty"`
 }
 
-// Decision represents a key decision made during execution.
-type Decision struct {
-	Choice string `json:"choice"`
-	Reason string `json:"reason"`
-}
-
-// Store manages checkpoints for a session.
+// Store keeps one Checkpoint per step in memory and mirrors each to
+// <dir>/<stepID>.json on every save. It is safe for concurrent use.
 type Store struct {
 	dir         string
-	checkpoints map[string]*Checkpoint
-	order       []string // tracks insertion order of step IDs
 	mu          sync.RWMutex
+	checkpoints map[string]*Checkpoint
+	order       []string // step IDs in first-seen order
 }
 
-// Verify Store implements CheckpointStore.
-var _ CheckpointStore = (*Store)(nil)
-
-// NewStore creates a new checkpoint store.
+// NewStore creates a checkpoint store writing under dir, creating it if needed.
 func NewStore(dir string) (*Store, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create checkpoint directory: %w", err)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating checkpoint directory: %w", err)
 	}
-	return &Store{
-		dir:         dir,
-		checkpoints: make(map[string]*Checkpoint),
-	}, nil
+	return &Store{dir: dir, checkpoints: make(map[string]*Checkpoint)}, nil
 }
 
-// SavePre saves a pre-checkpoint.
+// SavePre records the COMMIT phase of a step.
 func (s *Store) SavePre(cp *PreCheckpoint) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, ok := s.checkpoints[cp.StepID]; !ok {
-		s.checkpoints[cp.StepID] = &Checkpoint{}
-		s.order = append(s.order, cp.StepID)
-	}
-	s.checkpoints[cp.StepID].Pre = cp
-
-	return s.flush(cp.StepID)
+	return s.upsert(cp.StepID, func(c *Checkpoint) { c.Pre = cp })
 }
 
-// SavePost saves a post-checkpoint.
+// SavePost records the EXECUTE phase of a step.
 func (s *Store) SavePost(cp *PostCheckpoint) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, ok := s.checkpoints[cp.StepID]; !ok {
-		s.checkpoints[cp.StepID] = &Checkpoint{}
-		s.order = append(s.order, cp.StepID)
-	}
-	s.checkpoints[cp.StepID].Post = cp
-
-	return s.flush(cp.StepID)
+	return s.upsert(cp.StepID, func(c *Checkpoint) { c.Post = cp })
 }
 
-// SaveReconcile saves a reconcile result.
+// SaveReconcile records the RECONCILE phase of a step.
 func (s *Store) SaveReconcile(r *ReconcileResult) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, ok := s.checkpoints[r.StepID]; !ok {
-		s.checkpoints[r.StepID] = &Checkpoint{}
-		s.order = append(s.order, r.StepID)
-	}
-	s.checkpoints[r.StepID].Reconcile = r
-
-	return s.flush(r.StepID)
+	return s.upsert(r.StepID, func(c *Checkpoint) { c.Reconcile = r })
 }
 
-// SaveSupervise saves a supervise result.
+// SaveSupervise records the SUPERVISE phase of a step.
 func (s *Store) SaveSupervise(r *SuperviseResult) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	return s.upsert(r.StepID, func(c *Checkpoint) { c.Supervise = r })
+}
 
-	if _, ok := s.checkpoints[r.StepID]; !ok {
-		s.checkpoints[r.StepID] = &Checkpoint{}
-		s.order = append(s.order, r.StepID)
+// Checkpoint returns a copy of the checkpoint for stepID. The phase records
+// inside it are the values passed to the Save* methods.
+func (s *Store) Checkpoint(stepID string) (Checkpoint, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cp, ok := s.checkpoints[stepID]
+	if !ok {
+		return Checkpoint{}, false
 	}
-	s.checkpoints[r.StepID].Supervise = r
-
-	return s.flush(r.StepID)
+	return *cp, true
 }
 
-// Get retrieves a checkpoint by step ID.
-func (s *Store) Get(stepID string) *Checkpoint {
+// Trail returns every checkpoint in the order its step was first saved.
+func (s *Store) Trail() []Checkpoint {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.checkpoints[stepID]
-}
-
-// GetDecisionTrail returns all checkpoints in chronological order.
-func (s *Store) GetDecisionTrail() []*Checkpoint {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	trail := make([]*Checkpoint, 0, len(s.order))
+	trail := make([]Checkpoint, 0, len(s.order))
 	for _, id := range s.order {
-		if cp, ok := s.checkpoints[id]; ok {
-			trail = append(trail, cp)
-		}
+		trail = append(trail, *s.checkpoints[id])
 	}
 	return trail
 }
 
-// flush writes a checkpoint to disk.
-func (s *Store) flush(stepID string) error {
-	cp := s.checkpoints[stepID]
-	data, err := json.MarshalIndent(cp, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	path := filepath.Join(s.dir, fmt.Sprintf("%s.json", stepID))
-	return os.WriteFile(path, data, 0644)
-}
-
-// Load loads checkpoints from disk.
-func (s *Store) Load() error {
+// upsert applies set to the step's checkpoint (creating it on first sight)
+// and flushes it to disk.
+func (s *Store) upsert(stepID string, set func(*Checkpoint)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-
-		path := filepath.Join(s.dir, entry.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-
-		var cp Checkpoint
-		if err := json.Unmarshal(data, &cp); err != nil {
-			continue
-		}
-
-		// Extract step ID from filename
-		stepID := entry.Name()[:len(entry.Name())-5] // remove .json
-		s.checkpoints[stepID] = &cp
+	cp, ok := s.checkpoints[stepID]
+	if !ok {
+		cp = &Checkpoint{}
+		s.checkpoints[stepID] = cp
 		s.order = append(s.order, stepID)
 	}
+	set(cp)
 
+	data, err := json.MarshalIndent(cp, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encoding checkpoint %q: %w", stepID, err)
+	}
+	// Step IDs such as "subagent:role" or "a/b" must not steer the path.
+	path := filepath.Join(s.dir, url.PathEscape(stepID)+".json")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("writing checkpoint: %w", err)
+	}
 	return nil
 }

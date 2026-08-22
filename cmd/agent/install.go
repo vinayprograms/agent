@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/vinayprograms/agent/internal/packaging"
@@ -9,9 +11,17 @@ import (
 
 // runInstall installs a package.
 func runInstall(c *InstallCmd) error {
+	target := c.Target
+	if target == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolving default install directory: %w", err)
+		}
+		target = filepath.Join(home, ".agent", "packages")
+	}
 	opts := packaging.InstallOptions{
 		PackagePath: c.Package,
-		TargetDir:   c.Target,
+		TargetDir:   target,
 		NoDeps:      c.NoDeps,
 		DryRun:      c.DryRun,
 	}

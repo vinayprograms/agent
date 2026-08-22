@@ -14,14 +14,6 @@ import (
 	"github.com/vinayprograms/agentkit/tools"
 )
 
-// Make the rate limiters and retry backoffs instant so tests don't sleep.
-func init() {
-	searchCooldown = 0
-	ddgCooldown = 0
-	ddgBackoff = 0
-	ddgMaxBackoff = 0
-}
-
 // fakeCreds is a credentials.Lookup backed by a map.
 type fakeCreds map[string]string
 
@@ -47,9 +39,14 @@ func serve(t *testing.T, status int, body string) *httptest.Server {
 	return srv
 }
 
-// newTool builds a tool whose provider endpoints all point at srv.
+// instant makes the rate limiters and retry backoffs instant so tests don't sleep.
+func instant(t *Tool) {
+	t.searchLimit.cooldown, t.ddgLimit.cooldown, t.ddgBackoff, t.ddgMaxBackoff = 0, 0, 0, 0
+}
+
+// newTool builds an instant tool whose provider endpoints all point at srv.
 func newTool(srv *httptest.Server, creds credentials.Lookup, searxngURL, provider string) *Tool {
-	tl := New(creds, searxngURL, provider)
+	tl := New(creds, searxngURL, provider, instant)
 	tl.braveURL, tl.tavilyURL, tl.ddgURL = srv.URL, srv.URL, srv.URL
 	return tl
 }
@@ -117,6 +114,7 @@ func TestExecute_Providers(t *testing.T) {
 		body     string
 		want     string // substring of output
 		wantErr  string // substring of error
+		noProv   bool   // error must wrap ErrNoProvider
 	}{
 		{name: "searxng pinned", provider: "searxng", searxng: true, status: 200, body: searxJSON, want: "1. A\n   https://a.example\n   sa\n\n2. B"},
 		{name: "searxng missing url", provider: "searxng", wantErr: "no searxng_url"},
@@ -137,8 +135,8 @@ func TestExecute_Providers(t *testing.T) {
 		{name: "auto > brave", provider: "", creds: fakeCreds{"brave": "k", "tavily": "k"}, status: 200, body: braveJSON, want: "1. A"},
 		{name: "auto > tavily", provider: "auto", creds: fakeCreds{"tavily": "k"}, status: 200, body: tavilyJSON, want: "1. A"},
 		{name: "auto > duckduckgo", provider: "auto", status: 200, body: liteSample, want: "pkg.go.dev"},
-		{name: "auto duckduckgo error is actionable", provider: "auto", status: 500, wantErr: "searxng_url, or provide a Brave/Tavily API key (credentials [brave]/[tavily] or BRAVE_API_KEY/TAVILY_API_KEY)"},
-		{name: "auto duckduckgo no results", provider: "auto", status: 200, body: "<html></html>", wantErr: "no results from DuckDuckGo fallback"},
+		{name: "auto duckduckgo error is actionable", provider: "auto", status: 500, wantErr: "searxng_url, or provide a Brave/Tavily API key (credentials [brave]/[tavily] or BRAVE_API_KEY/TAVILY_API_KEY)", noProv: true},
+		{name: "auto duckduckgo no results", provider: "auto", status: 200, body: "<html></html>", wantErr: "no results from DuckDuckGo fallback", noProv: true},
 		{name: "unknown provider", provider: "bing", wantErr: `unknown search_provider "bing"`},
 	}
 	for _, tc := range tests {
@@ -155,10 +153,13 @@ func TestExecute_Providers(t *testing.T) {
 			}
 			tl := newTool(srv, tc.creds, searxng, tc.provider)
 
-			got, err := tl.Execute(context.Background(), args(t, map[string]any{"query": "go docs", "count": 2}))
+			got, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "go docs", "count": 2}))
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+				}
+				if errors.Is(err, ErrNoProvider) != tc.noProv {
+					t.Errorf("errors.Is(err, ErrNoProvider) = %v, want %v", !tc.noProv, tc.noProv)
 				}
 				return
 			}
@@ -185,7 +186,7 @@ func TestExecute_QueryValidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := tl.Execute(context.Background(), a); err == nil || !strings.Contains(err.Error(), "query is required") {
+			if _, err := tl.Execute(t.Context(), a); err == nil || !strings.Contains(err.Error(), "query is required") {
 				t.Errorf("err = %v, want query is required", err)
 			}
 		})
@@ -202,7 +203,7 @@ func TestExecute_CountClamped(t *testing.T) {
 
 	for in, want := range map[int]string{0: "1", 99: "10", 3: "3"} {
 		tl := newTool(srv, fakeCreds{"brave": "k"}, "", "brave")
-		if _, err := tl.Execute(context.Background(), args(t, map[string]any{"query": "q", "count": in})); err != nil {
+		if _, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q", "count": in})); err != nil {
 			t.Fatal(err)
 		}
 		if got := gotCount.Load(); got != want {
@@ -214,7 +215,7 @@ func TestExecute_CountClamped(t *testing.T) {
 func TestExecute_SearxngTruncatesToCount(t *testing.T) {
 	srv := serve(t, 200, searxJSON)
 	tl := newTool(srv, nil, srv.URL, "searxng")
-	got, err := tl.Execute(context.Background(), args(t, map[string]any{"query": "q", "count": 1}))
+	got, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q", "count": 1}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +227,7 @@ func TestExecute_SearxngTruncatesToCount(t *testing.T) {
 func TestExecute_NoResultsMessage(t *testing.T) {
 	srv := serve(t, 200, `{"results":[]}`)
 	tl := newTool(srv, nil, srv.URL, "searxng")
-	got, err := tl.Execute(context.Background(), args(t, map[string]any{"query": "q"}))
+	got, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +252,7 @@ func TestExecute_TransportErrors(t *testing.T) {
 	} {
 		t.Run(tc.provider, func(t *testing.T) {
 			tl := newTool(srv, tc.creds, srv.URL, tc.provider)
-			_, err := tl.Execute(context.Background(), args(t, map[string]any{"query": "q"}))
+			_, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"}))
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("err = %v, want %q", err, tc.wantErr)
 			}
@@ -266,7 +267,7 @@ func TestExecute_BadEndpointURL(t *testing.T) {
 		t.Run(provider, func(t *testing.T) {
 			tl := newTool(srv, fakeCreds{"brave": "k", "tavily": "k"}, "\x7f", provider)
 			tl.braveURL, tl.tavilyURL, tl.ddgURL = "\x7f", "\x7f", "\x7f"
-			if _, err := tl.Execute(context.Background(), args(t, map[string]any{"query": "q"})); err == nil {
+			if _, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"})); err == nil {
 				t.Error("expected request construction error")
 			}
 		})
@@ -280,7 +281,7 @@ func TestExecute_ReadBodyError(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	tl := newTool(srv, nil, "", "duckduckgo")
-	_, err := tl.Execute(context.Background(), args(t, map[string]any{"query": "q"}))
+	_, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"}))
 	if err == nil || !strings.Contains(err.Error(), "read duckduckgo response") {
 		t.Errorf("err = %v", err)
 	}
@@ -288,36 +289,34 @@ func TestExecute_ReadBodyError(t *testing.T) {
 
 func TestExecute_ContextCancelled(t *testing.T) {
 	t.Run("search cooldown", func(t *testing.T) {
-		searchCooldown = time.Hour
-		lastSearchTime = time.Now()
-		t.Cleanup(func() { searchCooldown = 0 })
-		ctx, cancel := context.WithCancel(context.Background())
+		tl := New(nil, "", "", instant)
+		tl.searchLimit.cooldown, tl.searchLimit.last = time.Hour, time.Now()
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		_, err := New(nil, "", "").Execute(ctx, args(t, map[string]any{"query": "q"}))
+		_, err := tl.Execute(ctx, args(t, map[string]any{"query": "q"}))
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("err = %v", err)
 		}
 	})
 	t.Run("ddg cooldown", func(t *testing.T) {
-		ddgCooldown = time.Hour
-		ddgLastSearch = time.Now()
-		t.Cleanup(func() { ddgCooldown = 0 })
-		ctx, cancel := context.WithCancel(context.Background())
+		tl := New(nil, "", "duckduckgo", instant)
+		tl.ddgLimit.cooldown, tl.ddgLimit.last = time.Hour, time.Now()
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		_, err := New(nil, "", "duckduckgo").Execute(ctx, args(t, map[string]any{"query": "q"}))
+		_, err := tl.Execute(ctx, args(t, map[string]any{"query": "q"}))
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("err = %v", err)
 		}
 	})
 	t.Run("ddg retry backoff", func(t *testing.T) {
 		srv := serve(t, 429, "")
-		ddgBackoff = time.Hour
-		t.Cleanup(func() { ddgBackoff = 0 })
-		ctx, cancel := context.WithCancel(context.Background())
+		tl := newTool(srv, nil, "", "duckduckgo")
+		tl.ddgBackoff = time.Hour
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		// First attempt sends (ctx already cancelled → transport error), then
 		// the backoff select observes ctx.Done.
-		_, err := newTool(srv, nil, "", "duckduckgo").Execute(ctx, args(t, map[string]any{"query": "q"}))
+		_, err := tl.Execute(ctx, args(t, map[string]any{"query": "q"}))
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("err = %v", err)
 		}
@@ -326,16 +325,51 @@ func TestExecute_ContextCancelled(t *testing.T) {
 
 func TestExecute_CooldownWaits(t *testing.T) {
 	srv := serve(t, 200, liteSample)
-	searchCooldown, ddgCooldown = 5*time.Millisecond, 30*time.Millisecond
-	lastSearchTime, ddgLastSearch = time.Now(), time.Now()
-	t.Cleanup(func() { searchCooldown, ddgCooldown = 0, 0 })
+	tl := newTool(srv, nil, "", "duckduckgo")
+	tl.searchLimit.cooldown, tl.ddgLimit.cooldown = 5*time.Millisecond, 30*time.Millisecond
+	tl.searchLimit.last, tl.ddgLimit.last = time.Now(), time.Now()
 
 	start := time.Now()
-	if _, err := newTool(srv, nil, "", "duckduckgo").Execute(context.Background(), args(t, map[string]any{"query": "q"})); err != nil {
+	if _, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"})); err != nil {
 		t.Fatal(err)
 	}
 	if time.Since(start) < 30*time.Millisecond {
 		t.Error("expected the cooldown to be honoured")
+	}
+}
+
+func TestLimiter_InjectedClock(t *testing.T) {
+	// With a fixed clock nothing ever elapses, so a second call must wait
+	// the full cooldown; with the clock advanced past it, it must not.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := base
+	tl := New(nil, "", "", instant)
+	tl.now = func() time.Time { return clock }
+	tl.searchLimit.cooldown = time.Hour
+
+	if err := tl.searchLimit.wait(t.Context(), tl.now); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := tl.searchLimit.wait(ctx, tl.now); !errors.Is(err, context.Canceled) {
+		t.Errorf("second call with no elapsed time = %v, want wait (context.Canceled)", err)
+	}
+	clock = base.Add(2 * time.Hour)
+	if err := tl.searchLimit.wait(ctx, tl.now); err != nil {
+		t.Errorf("call after cooldown = %v, want nil", err)
+	}
+	if !tl.searchLimit.last.Equal(clock) {
+		t.Errorf("last = %v, want %v", tl.searchLimit.last, clock)
+	}
+}
+
+func TestWithHTTPTimeout(t *testing.T) {
+	if got := New(nil, "", "", WithHTTPTimeout(time.Second)).client.Timeout; got != time.Second {
+		t.Errorf("timeout = %v, want 1s", got)
+	}
+	if got := New(nil, "", "").client.Timeout; got != 30*time.Second {
+		t.Errorf("default timeout = %v, want 30s", got)
 	}
 }
 
@@ -349,11 +383,10 @@ func TestDuckDuckGo_RetriesThenSucceeds(t *testing.T) {
 		_, _ = w.Write([]byte(liteSample))
 	}))
 	t.Cleanup(srv.Close)
-	// Non-zero backoff so the cap branch (backoff > ddgMaxBackoff) runs.
-	ddgBackoff, ddgMaxBackoff = time.Millisecond, time.Millisecond
-	t.Cleanup(func() { ddgBackoff, ddgMaxBackoff = 0, 0 })
+	tl := newTool(srv, nil, "", "duckduckgo")
+	tl.ddgBackoff, tl.ddgMaxBackoff = time.Millisecond, time.Millisecond
 
-	got, err := newTool(srv, nil, "", "duckduckgo").Execute(context.Background(), args(t, map[string]any{"query": "q"}))
+	got, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"}))
 	if err != nil {
 		t.Fatal(err)
 	}

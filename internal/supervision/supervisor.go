@@ -39,7 +39,7 @@ type LLMSupervisor struct {
 	model             llm.Model
 	logger            *slog.Logger
 	humanAvailable    bool
-	humanInputChan    chan string
+	humanInputChan    <-chan string
 	humanInputTimeout time.Duration
 }
 
@@ -55,10 +55,13 @@ type Config struct {
 	// zero Config logs like the old kit logger did (to wherever the process's
 	// default handler points). The "component=supervisor" attribute is added
 	// here.
-	Logger            *slog.Logger
+	Logger *slog.Logger
+	// HumanAvailable says a human can answer PAUSE questions; answers arrive
+	// on HumanInputChan. With HumanAvailable and a nil channel, PAUSE verdicts
+	// are returned as-is.
 	HumanAvailable    bool
-	HumanInputChan    chan string
-	HumanInputTimeout time.Duration
+	HumanInputChan    <-chan string
+	HumanInputTimeout time.Duration // zero means 5 minutes
 }
 
 // NewLLMSupervisor creates a new LLM-based supervisor.
@@ -78,11 +81,6 @@ func NewLLMSupervisor(cfg Config) *LLMSupervisor {
 		humanInputChan:    cfg.HumanInputChan,
 		humanInputTimeout: timeout,
 	}
-}
-
-// SetHumanAvailable updates whether a human is available.
-func (s *LLMSupervisor) SetHumanAvailable(available bool) {
-	s.humanAvailable = available
 }
 
 // Reconcile performs static pattern checks on checkpoint data.
@@ -168,25 +166,23 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 		Messages: messages,
 	})
 	if err != nil {
-		s.logger.Error("supervisor_llm_error", "error", err.Error())
 		return nil, fmt.Errorf("supervisor LLM error: %w", err)
 	}
 
-	// Parse response
-	verdict, correction, question := s.parseSupervisionResponse(resp.Content)
-	result.Verdict = string(verdict)
-	result.Correction = correction
-	result.Question = question
+	d := parseSupervisionResponse(resp.Content)
+	result.Verdict = string(d.verdict)
+	result.Correction = d.correction
+	result.Question = d.question
 
 	// Log initial verdict
 	s.logger.Debug("supervise_phase",
 		"goal", "",
 		"step", pre.StepID,
-		"verdict", string(verdict),
-		"reason", correction)
+		"verdict", string(d.verdict),
+		"reason", d.correction)
 
 	// Handle PAUSE verdict
-	if verdict == VerdictPause {
+	if d.verdict == VerdictPause {
 		if requiresHuman && !s.humanAvailable {
 			// Hard fail - workflow requires human but none available
 			s.logVerdict(pre.StepID, "PAUSE_FAILED", "human required but unavailable", true)
@@ -196,7 +192,7 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 		if s.humanAvailable && s.humanInputChan != nil {
 			// Wait for human input
 			s.logger.Info("waiting for human input",
-				"question", question,
+				"question", d.question,
 				"timeout", s.humanInputTimeout.String())
 
 			select {
@@ -222,17 +218,17 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 			// No human available but not required - supervisor decides autonomously
 			s.logger.Warn("no human available, supervisor deciding autonomously")
 			// Re-query with autonomous decision prompt
-			autonomousResp, err := s.makeAutonomousDecision(ctx, pre, post, triggers, question)
+			auto, err := s.makeAutonomousDecision(ctx, d.question)
 			if err != nil {
 				return nil, err
 			}
-			result.Verdict = string(autonomousResp.verdict)
-			result.Correction = autonomousResp.correction
-			s.logVerdict(pre.StepID, string(autonomousResp.verdict), "autonomous decision", false)
+			result.Verdict = string(auto.verdict)
+			result.Correction = auto.correction
+			s.logVerdict(pre.StepID, string(auto.verdict), "autonomous decision", false)
 		}
 	} else {
 		// Log non-PAUSE verdicts
-		s.logVerdict(pre.StepID, string(verdict), correction, false)
+		s.logVerdict(pre.StepID, string(d.verdict), d.correction, false)
 	}
 
 	s.logPhaseComplete("SUPERVISE", pre.StepID, start, result.Verdict)
@@ -259,12 +255,16 @@ func (s *LLMSupervisor) logPhaseComplete(phase, step string, start time.Time, re
 		"result", result)
 }
 
-type autonomousDecision struct {
+// decision is a parsed supervisor reply.
+type decision struct {
 	verdict    Verdict
-	correction string
+	correction string // REORIENT guidance
+	question   string // PAUSE question
 }
 
-func (s *LLMSupervisor) makeAutonomousDecision(ctx context.Context, pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, question string) (*autonomousDecision, error) {
+// makeAutonomousDecision re-asks the model when it wanted a human (PAUSE)
+// but none is available; the reply is constrained to CONTINUE or REORIENT.
+func (s *LLMSupervisor) makeAutonomousDecision(ctx context.Context, question string) (decision, error) {
 	prompt := fmt.Sprintf(`You previously wanted to ask: %s
 
 But no human is available. You must make a decision autonomously.
@@ -283,29 +283,24 @@ CORRECTION: <your guidance>`, question)
 
 	resp, err := s.model.Chat(ctx, llm.ChatRequest{Messages: messages})
 	if err != nil {
-		return nil, err
+		return decision{}, err
 	}
 
-	// Parse simple response
-	lines := strings.Split(resp.Content, "\n")
-	decision := &autonomousDecision{verdict: VerdictContinue}
-
-	for _, line := range lines {
+	d := decision{verdict: VerdictContinue}
+	for line := range strings.Lines(resp.Content) {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "VERDICT:") {
-			v := strings.TrimSpace(strings.TrimPrefix(line, "VERDICT:"))
+		if v, ok := strings.CutPrefix(line, "VERDICT:"); ok {
 			if strings.Contains(strings.ToUpper(v), "REORIENT") {
-				decision.verdict = VerdictReorient
+				d.verdict = VerdictReorient
 			}
-		} else if strings.HasPrefix(line, "CORRECTION:") {
-			decision.correction = strings.TrimSpace(strings.TrimPrefix(line, "CORRECTION:"))
+		} else if c, ok := strings.CutPrefix(line, "CORRECTION:"); ok {
+			d.correction = strings.TrimSpace(c)
 		}
 	}
-
-	return decision, nil
+	return d, nil
 }
 
-func (s *LLMSupervisor) buildSupervisionPrompt(originalGoal string, pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, decisionTrail []*checkpoint.Checkpoint) string {
+func (s *LLMSupervisor) buildSupervisionPrompt(originalGoal string, pre *checkpoint.PreCheckpoint, post *checkpoint.PostCheckpoint, triggers []string, decisionTrail []checkpoint.Checkpoint) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("ORIGINAL GOAL: %s\n\n", originalGoal))
@@ -363,41 +358,27 @@ Respond with ONE of:
 	return sb.String()
 }
 
-func (s *LLMSupervisor) parseSupervisionResponse(content string) (Verdict, string, string) {
-	content = strings.TrimSpace(content)
-	lines := strings.Split(content, "\n")
-
-	for _, line := range lines {
+// parseSupervisionResponse finds the first line starting with a verdict;
+// the text after the verdict's colon (quotes stripped) is the correction for
+// REORIENT or the question for PAUSE. An unclear reply means CONTINUE.
+func parseSupervisionResponse(content string) decision {
+	for line := range strings.Lines(content) {
 		line = strings.TrimSpace(line)
 		upper := strings.ToUpper(line)
-
-		if strings.HasPrefix(upper, "CONTINUE") {
-			return VerdictContinue, "", ""
+		_, rest, hasColon := strings.Cut(line, ":")
+		if hasColon {
+			rest = strings.Trim(strings.TrimSpace(rest), `"`)
 		}
-
-		if strings.HasPrefix(upper, "REORIENT") {
-			// Extract correction after colon
-			if idx := strings.Index(line, ":"); idx != -1 {
-				correction := strings.TrimSpace(line[idx+1:])
-				correction = strings.Trim(correction, `"`)
-				return VerdictReorient, correction, ""
-			}
-			return VerdictReorient, "", ""
-		}
-
-		if strings.HasPrefix(upper, "PAUSE") {
-			// Extract question after colon
-			if idx := strings.Index(line, ":"); idx != -1 {
-				question := strings.TrimSpace(line[idx+1:])
-				question = strings.Trim(question, `"`)
-				return VerdictPause, "", question
-			}
-			return VerdictPause, "", ""
+		switch {
+		case strings.HasPrefix(upper, "CONTINUE"):
+			return decision{verdict: VerdictContinue}
+		case strings.HasPrefix(upper, "REORIENT"):
+			return decision{verdict: VerdictReorient, correction: rest}
+		case strings.HasPrefix(upper, "PAUSE"):
+			return decision{verdict: VerdictPause, question: rest}
 		}
 	}
-
-	// Default to continue if unclear
-	return VerdictContinue, "", ""
+	return decision{verdict: VerdictContinue}
 }
 
 const supervisorSystemPrompt = `You are a supervision agent reviewing another agent's work for alignment with the original goal.

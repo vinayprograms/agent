@@ -52,16 +52,10 @@ type TaskMessage struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`     // Arbitrary key-value pairs
 }
 
-// Validate checks if the task message has required fields.
+// Validate reports whether the task message has its required fields.
 func (m *TaskMessage) Validate() error {
-	if m.TaskID == "" {
+	if m.TaskID == "" || m.Capability == "" {
 		return ErrInvalidTask
-	}
-	if m.Capability == "" {
-		return ErrInvalidTask
-	}
-	if m.Inputs == nil {
-		m.Inputs = make(map[string]string)
 	}
 	return nil
 }
@@ -97,7 +91,7 @@ type TaskResult struct {
 
 	// Outcome
 	Status  ResultStatus `json:"status"`
-	Outputs interface{}  `json:"outputs,omitempty"` // Structured outputs from the workflow
+	Outputs any          `json:"outputs,omitempty"` // Structured outputs from the workflow
 	Error   string       `json:"error,omitempty"`   // Error message if failed
 
 	// Execution Info

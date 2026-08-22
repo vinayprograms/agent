@@ -72,13 +72,3 @@ func EnsureWorkConsumer(js nats.JetStreamContext, capability string) (*nats.Subs
 
 	return sub, nil
 }
-
-// LastSequence returns the current last sequence number of the swarm stream.
-// Used by the REPLAY phase to determine the catch-up boundary.
-func LastSequence(js nats.JetStreamContext) (uint64, error) {
-	info, err := js.StreamInfo(StreamName)
-	if err != nil {
-		return 0, fmt.Errorf("stream info: %w", err)
-	}
-	return info.State.LastSeq, nil
-}

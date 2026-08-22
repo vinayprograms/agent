@@ -67,18 +67,20 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 			Supervised:    supervised,
 			HumanRequired: false, // Dynamic sub-agents don't require human approval
 		},
-		// COMMIT
-		func(ctx context.Context) *checkpoint.PreCheckpoint {
-			return e.subAgentCommitPhase(ctx, role, task)
-		},
-		// EXECUTE
-		func(ctx context.Context) (*supervision.ExecuteResult, error) {
-			output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, userPrompt)
-			return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
-		},
-		// POST-CHECKPOINT
-		func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
-			return e.subAgentPostCheckpoint(ctx, role, pre, output, toolsUsed)
+		supervision.Work{
+			// COMMIT
+			Commit: func(ctx context.Context) *checkpoint.PreCheckpoint {
+				return e.subAgentCommitPhase(ctx, role, task)
+			},
+			// EXECUTE
+			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
+				output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, userPrompt)
+				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
+			},
+			// POST-CHECKPOINT
+			Post: func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
+				return e.subAgentPostCheckpoint(ctx, role, pre, output, toolsUsed)
+			},
 		},
 	)
 	if err != nil {
@@ -183,18 +185,20 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 			Supervised:    supervised,
 			HumanRequired: false,
 		},
-		// COMMIT
-		func(ctx context.Context) *checkpoint.PreCheckpoint {
-			return e.subAgentCommitPhase(ctx, role, task)
-		},
-		// EXECUTE
-		func(ctx context.Context) (*supervision.ExecuteResult, error) {
-			output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt)
-			return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
-		},
-		// POST-CHECKPOINT
-		func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
-			return e.subAgentPostCheckpoint(ctx, role, pre, output, toolsUsed)
+		supervision.Work{
+			// COMMIT
+			Commit: func(ctx context.Context) *checkpoint.PreCheckpoint {
+				return e.subAgentCommitPhase(ctx, role, task)
+			},
+			// EXECUTE
+			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
+				output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt)
+				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
+			},
+			// POST-CHECKPOINT
+			Post: func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
+				return e.subAgentPostCheckpoint(ctx, role, pre, output, toolsUsed)
+			},
 		},
 	)
 	if err != nil {

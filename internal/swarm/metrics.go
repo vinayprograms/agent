@@ -6,7 +6,7 @@
 package swarm
 
 import (
-	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 )
@@ -25,11 +25,18 @@ type MetricsCollector struct {
 	totalLatencyMs atomic.Int64 // cumulative for averaging
 
 	mu     sync.Mutex
-	sender Sender
+	sender MetadataSetter
+}
+
+// MetadataSetter is what the collector needs from a heartbeat sender;
+// *BusSender satisfies it.
+type MetadataSetter interface {
+	SetMetadata(key, value string)
 }
 
 // NewMetricsCollector creates a collector that writes to a heartbeat sender.
-func NewMetricsCollector(sender Sender) *MetricsCollector {
+// A nil sender makes every Record*/Set* a no-op.
+func NewMetricsCollector(sender MetadataSetter) *MetricsCollector {
 	return &MetricsCollector{sender: sender}
 }
 
@@ -70,18 +77,19 @@ func (m *MetricsCollector) flush() {
 		return
 	}
 
-	m.sender.SetMetadata("tokens_in", fmt.Sprintf("%d", m.tokensIn.Load()))
-	m.sender.SetMetadata("tokens_out", fmt.Sprintf("%d", m.tokensOut.Load()))
-	m.sender.SetMetadata("cache_creation_tokens", fmt.Sprintf("%d", m.cacheCreation.Load()))
-	m.sender.SetMetadata("cache_read_tokens", fmt.Sprintf("%d", m.cacheRead.Load()))
-	m.sender.SetMetadata("llm_calls", fmt.Sprintf("%d", m.llmCalls.Load()))
-	m.sender.SetMetadata("subagents", fmt.Sprintf("%d", m.subagents.Load()))
-	m.sender.SetMetadata("sup_approved", fmt.Sprintf("%d", m.supApproved.Load()))
-	m.sender.SetMetadata("sup_denied", fmt.Sprintf("%d", m.supDenied.Load()))
+	set := func(key string, v *atomic.Int64) {
+		m.sender.SetMetadata(key, strconv.FormatInt(v.Load(), 10))
+	}
+	set("tokens_in", &m.tokensIn)
+	set("tokens_out", &m.tokensOut)
+	set("cache_creation_tokens", &m.cacheCreation)
+	set("cache_read_tokens", &m.cacheRead)
+	set("llm_calls", &m.llmCalls)
+	set("subagents", &m.subagents)
+	set("sup_approved", &m.supApproved)
+	set("sup_denied", &m.supDenied)
 
-	calls := m.llmCalls.Load()
-	if calls > 0 {
-		avg := m.totalLatencyMs.Load() / calls
-		m.sender.SetMetadata("avg_latency_ms", fmt.Sprintf("%d", avg))
+	if calls := m.llmCalls.Load(); calls > 0 {
+		m.sender.SetMetadata("avg_latency_ms", strconv.FormatInt(m.totalLatencyMs.Load()/calls, 10))
 	}
 }

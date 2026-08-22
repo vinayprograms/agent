@@ -5,6 +5,7 @@ package skills
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,10 +41,10 @@ type SkillRef struct {
 // Load loads a skill from a directory.
 func Load(skillDir string) (*Skill, error) {
 	skillPath := filepath.Join(skillDir, "SKILL.md")
-	
+
 	content, err := os.ReadFile(skillPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read SKILL.md: %w", err)
+		return nil, fmt.Errorf("reading skill: %w", err)
 	}
 
 	skill, err := Parse(string(content))
@@ -95,7 +96,7 @@ func Parse(content string) (*Skill, error) {
 // splitFrontmatter extracts YAML frontmatter from markdown.
 func splitFrontmatter(content string) (frontmatter, body string, err error) {
 	lines := strings.Split(content, "\n")
-	
+
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
 		return "", "", fmt.Errorf("missing frontmatter delimiter")
 	}
@@ -146,38 +147,38 @@ func validateName(name string) error {
 	return nil
 }
 
-// Discover finds all skills in a directory.
-func Discover(skillsDir string) ([]SkillRef, error) {
-	var refs []SkillRef
-
+// Discover finds all skills in a directory. Every sub-directory holding a
+// SKILL.md is a candidate; those whose frontmatter cannot be read are
+// reported in invalid (one error per skill, naming its path) rather than
+// silently dropped. A missing skillsDir yields no skills and no error.
+func Discover(skillsDir string) (refs []SkillRef, invalid []error, err error) {
 	entries, err := os.ReadDir(skillsDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-
-		skillPath := filepath.Join(skillsDir, entry.Name(), "SKILL.md")
-		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
+		skillDir := filepath.Join(skillsDir, entry.Name())
+		skillPath := filepath.Join(skillDir, "SKILL.md")
+		if _, err := os.Stat(skillPath); errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-
-		// Quick parse for metadata only
 		ref, err := parseRef(skillPath)
 		if err != nil {
-			continue // Skip invalid skills
+			invalid = append(invalid, fmt.Errorf("skill %q: %w", skillDir, err))
+			continue
 		}
-		ref.Path = filepath.Join(skillsDir, entry.Name())
+		ref.Path = skillDir
 		refs = append(refs, ref)
 	}
 
-	return refs, nil
+	return refs, invalid, nil
 }
 
 // parseRef quickly parses just the frontmatter for discovery.
@@ -208,6 +209,9 @@ func parseRef(path string) (SkillRef, error) {
 		}
 		fmLines = append(fmLines, line)
 	}
+	if err := scanner.Err(); err != nil {
+		return SkillRef{}, err
+	}
 
 	var ref SkillRef
 	if err := yaml.Unmarshal([]byte(strings.Join(fmLines, "\n")), &ref); err != nil {
@@ -217,12 +221,17 @@ func parseRef(path string) (SkillRef, error) {
 	return ref, nil
 }
 
-// ReadReference reads a reference file from the skill.
+// ReadReference reads a reference file from the skill's references directory.
+// name is untrusted (it comes from LLM output) and must stay inside that
+// directory: absolute names and ".." segments are rejected.
 func (s *Skill) ReadReference(name string) (string, error) {
-	refPath := filepath.Join(s.Path, "references", name)
+	refPath, err := subpath(filepath.Join(s.Path, "references"), name)
+	if err != nil {
+		return "", err
+	}
 	content, err := os.ReadFile(refPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read reference %s: %w", name, err)
+		return "", fmt.Errorf("reading reference %q: %w", name, err)
 	}
 	return string(content), nil
 }
@@ -232,7 +241,7 @@ func (s *Skill) ListScripts() ([]string, error) {
 	scriptsDir := filepath.Join(s.Path, "scripts")
 	entries, err := os.ReadDir(scriptsDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
@@ -247,7 +256,19 @@ func (s *Skill) ListScripts() ([]string, error) {
 	return scripts, nil
 }
 
-// ScriptPath returns the full path to a script.
-func (s *Skill) ScriptPath(name string) string {
-	return filepath.Join(s.Path, "scripts", name)
+// ScriptPath returns the full path to a script. name is subject to the same
+// containment rule as ReadReference.
+func (s *Skill) ScriptPath(name string) (string, error) {
+	return subpath(filepath.Join(s.Path, "scripts"), name)
+}
+
+// subpath joins an untrusted name under a trusted dir, refusing names that
+// would resolve outside it.
+func subpath(dir, name string) (string, error) {
+	clean := filepath.Clean(name)
+	if name == "" || filepath.IsAbs(clean) || clean == ".." ||
+		strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid skill file name %q: must be relative to the skill directory", name)
+	}
+	return filepath.Join(dir, clean), nil
 }

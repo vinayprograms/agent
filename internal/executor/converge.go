@@ -62,56 +62,58 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 			Supervised:    supervised,
 			HumanRequired: humanRequired,
 		},
-		// COMMIT: declare intent to converge
-		func(ctx context.Context) *checkpoint.PreCheckpoint {
-			return e.commitPhase(ctx, goal, initialPrompt)
-		},
-		// EXECUTE: convergence loop
-		func(ctx context.Context) (*supervision.ExecuteResult, error) {
-			var lastOutput string
-			for i := 1; i <= maxIterations; i++ {
-				e.logger.Debug("convergence iteration", "goal", goal.Name, "iteration", i)
+		supervision.Work{
+			// COMMIT: declare intent to converge
+			Commit: func(ctx context.Context) *checkpoint.PreCheckpoint {
+				return e.commitPhase(ctx, goal, initialPrompt)
+			},
+			// EXECUTE: convergence loop
+			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
+				var lastOutput string
+				for i := 1; i <= maxIterations; i++ {
+					e.logger.Debug("convergence iteration", "goal", goal.Name, "iteration", i)
 
-				e.logEvent(session.EventSystem, fmt.Sprintf("Convergence iteration %d for goal %q", i, goal.Name))
+					e.logEvent(session.EventSystem, fmt.Sprintf("Convergence iteration %d for goal %q", i, goal.Name))
 
-				prompt := e.buildConvergePrompt(goal, iterations, i)
+					prompt := e.buildConvergePrompt(goal, iterations, i)
 
-				output, iterErr := e.executeConvergeIteration(ctx, goal, prompt)
-				if iterErr != nil {
-					return nil, fmt.Errorf("convergence iteration %d failed: %w", i, iterErr)
-				}
+					output, iterErr := e.executeConvergeIteration(ctx, goal, prompt)
+					if iterErr != nil {
+						return nil, fmt.Errorf("convergence iteration %d failed: %w", i, iterErr)
+					}
 
-				trimmed := strings.TrimSpace(output)
-				if trimmed == "CONVERGED" {
-					e.logger.Info("convergence achieved", "goal", goal.Name, "iterations", i)
-					e.logEvent(session.EventSystem, fmt.Sprintf("Goal %q converged after %d iterations", goal.Name, i))
-					converged = true
+					trimmed := strings.TrimSpace(output)
+					if trimmed == "CONVERGED" {
+						e.logger.Info("convergence achieved", "goal", goal.Name, "iterations", i)
+						e.logEvent(session.EventSystem, fmt.Sprintf("Goal %q converged after %d iterations", goal.Name, i))
+						converged = true
+						iterationCount = i
+						break
+					}
+
+					iterations = append(iterations, ConvergenceIteration{N: i, Output: output})
+					lastOutput = output
 					iterationCount = i
-					break
 				}
 
-				iterations = append(iterations, ConvergenceIteration{N: i, Output: output})
-				lastOutput = output
-				iterationCount = i
-			}
+				if !converged {
+					e.logger.Warn("convergence limit reached without converging", "goal", goal.Name, "limit", maxIterations)
+					e.logEvent(session.EventWarning, fmt.Sprintf("Goal %q did not converge within limit (used all iterations)", goal.Name))
+					e.trackConvergenceFailure(goal.Name, maxIterations)
+				}
 
-			if !converged {
-				e.logger.Warn("convergence limit reached without converging", "goal", goal.Name, "limit", maxIterations)
-				e.logEvent(session.EventWarning, fmt.Sprintf("Goal %q did not converge within limit (used all iterations)", goal.Name))
-				e.trackConvergenceFailure(goal.Name, maxIterations)
-			}
+				// For convergence, we note iteration count instead of individual tools
+				toolsUsed := []string{fmt.Sprintf("converge:%d_iterations", iterationCount)}
+				if !converged {
+					toolsUsed = append(toolsUsed, "converge:limit_reached")
+				}
 
-			// For convergence, we note iteration count instead of individual tools
-			toolsUsed := []string{fmt.Sprintf("converge:%d_iterations", iterationCount)}
-			if !converged {
-				toolsUsed = append(toolsUsed, "converge:limit_reached")
-			}
-
-			return &supervision.ExecuteResult{Output: lastOutput, ToolsUsed: toolsUsed}, nil
-		},
-		// POST-CHECKPOINT: self-assessment on final output
-		func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
-			return e.createPostCheckpoint(ctx, goal, pre, output, toolsUsed)
+				return &supervision.ExecuteResult{Output: lastOutput, ToolsUsed: toolsUsed}, nil
+			},
+			// POST-CHECKPOINT: self-assessment on final output
+			Post: func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
+				return e.createPostCheckpoint(ctx, goal, pre, output, toolsUsed)
+			},
 		},
 	)
 	if err != nil {

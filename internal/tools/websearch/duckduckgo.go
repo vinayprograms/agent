@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -23,48 +22,24 @@ const browserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
 // is far more scraper-tolerant than the /html/ endpoint.
 const ddgLiteURL = "https://lite.duckduckgo.com/lite/"
 
-// DDG-specific rate limiting. Worst case: 2s cooldown + 3 retries * up to 5s backoff,
-// which stays within the default 30s web_search timeout.
-var (
-	ddgMutex      sync.Mutex
-	ddgLastSearch time.Time
-	ddgCooldown   = 2 * time.Second
-	ddgBackoff    = 2 * time.Second
-	ddgMaxBackoff = 5 * time.Second
-	ddgMaxRetries = 3
-)
-
-// searchDuckDuckGo searches via DuckDuckGo's lite endpoint (no API key needed).
+// searchDuckDuckGo searches via DuckDuckGo's lite endpoint (no API key
+// needed), retrying rate-limit responses with capped exponential backoff.
 func (t *Tool) searchDuckDuckGo(ctx context.Context, query string, count int) ([]SearchResult, error) {
-	ddgMutex.Lock()
-	elapsed := time.Since(ddgLastSearch)
-	if elapsed < ddgCooldown {
-		wait := ddgCooldown - elapsed
-		ddgMutex.Unlock()
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(wait):
-		}
-		ddgMutex.Lock()
+	if err := t.ddgLimit.wait(ctx, t.now); err != nil {
+		return nil, err
 	}
-	ddgLastSearch = time.Now()
-	ddgMutex.Unlock()
 
-	backoff := ddgBackoff
+	backoff := t.ddgBackoff
 	var lastErr error
 
-	for attempt := 0; attempt <= ddgMaxRetries; attempt++ {
+	for attempt := 0; attempt <= t.ddgMaxRetries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-time.After(backoff):
 			}
-			backoff *= 2
-			if backoff > ddgMaxBackoff {
-				backoff = ddgMaxBackoff
-			}
+			backoff = min(backoff*2, t.ddgMaxBackoff)
 		}
 
 		// The lite endpoint takes the query as POST form data.
@@ -78,7 +53,7 @@ func (t *Tool) searchDuckDuckGo(ctx context.Context, query string, count int) ([
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Accept", "text/html,application/xhtml+xml")
 		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-		req.Header.Set("Referer", ddgLiteURL)
+		req.Header.Set("Referer", t.ddgURL)
 
 		resp, err := t.client.Do(req)
 		if err != nil {
@@ -104,7 +79,7 @@ func (t *Tool) searchDuckDuckGo(ctx context.Context, query string, count int) ([
 		return parseDuckDuckGoLite(string(body), count), nil
 	}
 
-	return nil, fmt.Errorf("duckduckgo search failed after %d retries: %w", ddgMaxRetries, lastErr)
+	return nil, fmt.Errorf("duckduckgo search failed after %d retries: %w", t.ddgMaxRetries, lastErr)
 }
 
 // Lite result anchors look like:

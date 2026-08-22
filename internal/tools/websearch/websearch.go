@@ -19,9 +19,10 @@
 // ("query", "count") and returns the same text format as the built-in, so
 // prompts written against the built-in keep working.
 //
-// Credentials are resolved through credentials.Lookup exactly as tools.Search
-// does (providers "searxng", "brave", "tavily"); the SEARXNG_URL, BRAVE_API_KEY
-// and TAVILY_API_KEY environment variables remain a final fallback.
+// Credentials are resolved once, in New, the way tools.Search resolves them:
+// an explicit config value (searxngURL) wins, then the credentials.Lookup
+// entry for the provider ("searxng", "brave", "tavily"), then the provider's
+// environment variable (SEARXNG_URL, BRAVE_API_KEY, TAVILY_API_KEY).
 //
 // Note: The DuckDuckGo lite parser (parseDuckDuckGoLite) is unit-tested against
 // representative HTML samples but has not been verified against live
@@ -34,6 +35,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,13 +56,32 @@ type SearchResult struct {
 	Snippet string `json:"snippet"`
 }
 
+// ErrNoProvider is returned (wrapped) when no search provider is configured
+// and the keyless DuckDuckGo fallback produced nothing usable.
+var ErrNoProvider = errors.New("no search provider configured")
+
 // Provider endpoints. Fields on Tool so tests can point them at httptest servers.
 const (
 	braveSearchURL  = "https://api.search.brave.com/res/v1/web/search"
 	tavilySearchURL = "https://api.tavily.com/search"
 )
 
+// Defaults for the rate limiting described on Tool.
+const (
+	defaultHTTPTimeout   = 30 * time.Second
+	defaultCooldown      = 500 * time.Millisecond
+	defaultDDGCooldown   = 2 * time.Second
+	defaultDDGBackoff    = 2 * time.Second
+	defaultDDGMaxBackoff = 5 * time.Second
+	defaultDDGMaxRetries = 3
+)
+
 // Tool implements agentkit's tools.Tool interface for web_search.
+//
+// Every search waits out a short cooldown since the previous one on the same
+// Tool; DuckDuckGo adds a longer cooldown plus bounded retries with backoff
+// on 202/403/429 (worst case 2s + 3 retries of up to 5s stays inside the
+// default 30s web_search timeout). Tools do not share limiter state.
 type Tool struct {
 	searxngURL string // config value > credentials "searxng" > SEARXNG_URL env
 	braveKey   string // credentials "brave" > BRAVE_API_KEY env
@@ -73,17 +94,32 @@ type Tool struct {
 	braveURL  string
 	tavilyURL string
 	ddgURL    string
+
+	now           func() time.Time
+	searchLimit   limiter // all providers
+	ddgLimit      limiter // DuckDuckGo only
+	ddgBackoff    time.Duration
+	ddgMaxBackoff time.Duration
+	ddgMaxRetries int
 }
 
 var _ tools.Tool = (*Tool)(nil)
 
+// Option configures a Tool.
+type Option func(*Tool)
+
+// WithHTTPTimeout sets the HTTP client's defensive timeout (default 30s).
+// The caller's context remains the primary deadline.
+func WithHTTPTimeout(d time.Duration) Option {
+	return func(t *Tool) { t.client.Timeout = d }
+}
+
 // New constructs the replacement web_search tool.
 //
 // creds may be nil. searxngURL and provider come from config
-// ([web].searxng_url / search_provider). Credentials are resolved once, at
-// construction, like agentkit's tools.Search: an explicit config value wins,
-// then the credential store, then the provider's environment variable.
-func New(creds credentials.Lookup, searxngURL, provider string) *Tool {
+// ([web].searxng_url / search_provider); see the package doc for how
+// credentials are resolved.
+func New(creds credentials.Lookup, searxngURL, provider string, opts ...Option) *Tool {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
 		provider = "auto"
@@ -91,16 +127,51 @@ func New(creds credentials.Lookup, searxngURL, provider string) *Tool {
 	if searxngURL == "" {
 		searxngURL = resolve(creds, "searxng", "SEARXNG_URL")
 	}
-	return &Tool{
-		searxngURL: searxngURL,
-		braveKey:   resolve(creds, "brave", "BRAVE_API_KEY"),
-		tavilyKey:  resolve(creds, "tavily", "TAVILY_API_KEY"),
-		provider:   provider,
-		client:     &http.Client{Timeout: 30 * time.Second},
-		braveURL:   braveSearchURL,
-		tavilyURL:  tavilySearchURL,
-		ddgURL:     ddgLiteURL,
+	t := &Tool{
+		searxngURL:    searxngURL,
+		braveKey:      resolve(creds, "brave", "BRAVE_API_KEY"),
+		tavilyKey:     resolve(creds, "tavily", "TAVILY_API_KEY"),
+		provider:      provider,
+		client:        &http.Client{Timeout: defaultHTTPTimeout},
+		braveURL:      braveSearchURL,
+		tavilyURL:     tavilySearchURL,
+		ddgURL:        ddgLiteURL,
+		now:           time.Now,
+		searchLimit:   limiter{cooldown: defaultCooldown},
+		ddgLimit:      limiter{cooldown: defaultDDGCooldown},
+		ddgBackoff:    defaultDDGBackoff,
+		ddgMaxBackoff: defaultDDGMaxBackoff,
+		ddgMaxRetries: defaultDDGMaxRetries,
 	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
+}
+
+// limiter enforces a minimum gap between consecutive calls.
+type limiter struct {
+	mu       sync.Mutex
+	cooldown time.Duration
+	last     time.Time
+}
+
+// wait blocks until cooldown has passed since the previous call (or ctx
+// ends), then claims the slot.
+func (l *limiter) wait(ctx context.Context, now func() time.Time) error {
+	l.mu.Lock()
+	if remaining := l.cooldown - now().Sub(l.last); remaining > 0 {
+		l.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(remaining):
+		}
+		l.mu.Lock()
+	}
+	l.last = now()
+	l.mu.Unlock()
+	return nil
 }
 
 // resolve returns the credential for provider, falling back to envVar.
@@ -136,13 +207,6 @@ func (t *Tool) Parameters() map[string]tools.Param {
 	}
 }
 
-// Global rate limiter to avoid hammering search backends.
-var (
-	searchMutex    sync.Mutex
-	lastSearchTime time.Time
-	searchCooldown = 500 * time.Millisecond
-)
-
 // Execute runs the search, honoring the configured provider selection.
 func (t *Tool) Execute(ctx context.Context, args tools.Args) (string, error) {
 	query, err := args.String("query")
@@ -154,22 +218,9 @@ func (t *Tool) Execute(ctx context.Context, args tools.Args) (string, error) {
 	}
 	count := min(max(args.IntOr("count", 5), 1), 10)
 
-	// Rate limiting: serialize requests with a cooldown.
-	searchMutex.Lock()
-	elapsed := time.Since(lastSearchTime)
-	if elapsed < searchCooldown {
-		wait := searchCooldown - elapsed
-		searchMutex.Unlock()
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(wait):
-		}
-		searchMutex.Lock()
+	if err := t.searchLimit.wait(ctx, t.now); err != nil {
+		return "", err
 	}
-	lastSearchTime = time.Now()
-	searchMutex.Unlock()
-
 	results, err := t.search(ctx, query, count)
 	if err != nil {
 		return "", err
@@ -212,16 +263,21 @@ func (t *Tool) search(ctx context.Context, query string, count int) ([]SearchRes
 		// so failures aren't a silent mystery.
 		results, err := t.searchDuckDuckGo(ctx, query, count)
 		if err != nil {
-			return nil, fmt.Errorf("web_search: %w — no search provider configured. Set [web].searxng_url, or provide a Brave/Tavily API key (credentials [brave]/[tavily] or BRAVE_API_KEY/TAVILY_API_KEY) for reliable results. DuckDuckGo is a best-effort fallback subject to rate limiting", err)
+			return nil, fmt.Errorf("web_search: %w (DuckDuckGo fallback: %w). %s", ErrNoProvider, err, noProviderHint)
 		}
 		if len(results) == 0 {
-			return nil, fmt.Errorf("web_search: no results from DuckDuckGo fallback — no search provider configured. Set [web].searxng_url, or provide a Brave/Tavily API key for reliable results")
+			return nil, fmt.Errorf("web_search: %w (no results from DuckDuckGo fallback). %s", ErrNoProvider, noProviderHint)
 		}
 		return results, nil
 	default:
 		return nil, fmt.Errorf("web_search: unknown search_provider %q (want auto|searxng|brave|tavily|duckduckgo)", t.provider)
 	}
 }
+
+// noProviderHint tells the caller how to get off the best-effort fallback.
+const noProviderHint = "Set [web].searxng_url, or provide a Brave/Tavily API key " +
+	"(credentials [brave]/[tavily] or BRAVE_API_KEY/TAVILY_API_KEY) for reliable results; " +
+	"DuckDuckGo is a best-effort fallback subject to rate limiting"
 
 // formatResults renders results in the same text layout as agentkit's built-in
 // web_search, so prompts tuned against the built-in keep working.

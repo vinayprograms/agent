@@ -15,7 +15,7 @@ import (
 type fakeStore struct {
 	failPre, failPost, failReconcile, failSupervise bool
 	saved                                           []string
-	trail                                           []*checkpoint.Checkpoint
+	trail                                           []checkpoint.Checkpoint
 }
 
 func (s *fakeStore) save(kind string, fail bool) error {
@@ -34,8 +34,7 @@ func (s *fakeStore) SaveReconcile(*checkpoint.ReconcileResult) error {
 func (s *fakeStore) SaveSupervise(*checkpoint.SuperviseResult) error {
 	return s.save("supervise", s.failSupervise)
 }
-func (s *fakeStore) Get(string) *checkpoint.Checkpoint          { return nil }
-func (s *fakeStore) GetDecisionTrail() []*checkpoint.Checkpoint { return s.trail }
+func (s *fakeStore) Trail() []checkpoint.Checkpoint { return s.trail }
 
 // fakeSupervisor returns canned reconcile/supervise outcomes.
 type fakeSupervisor struct {
@@ -96,9 +95,7 @@ func TestPipelineRun(t *testing.T) {
 		sup        *fakeSupervisor
 		withPhase  bool
 		req        PipelineRequest
-		commit     CommitFunc
-		execute    ExecuteFunc
-		post       PostCheckpointFunc
+		work       Work
 		wantErr    error
 		wantResult PipelineResult
 		wantSaved  []string
@@ -111,14 +108,14 @@ func TestPipelineRun(t *testing.T) {
 			store:      &fakeStore{},
 			sup:        &fakeSupervisor{},
 			req:        PipelineRequest{StepID: "s1"},
-			execute:    execOK,
+			work:       Work{Execute: execOK},
 			wantResult: PipelineResult{Output: "done", ToolsUsed: []string{"bash"}, ToolCallsMade: true, Verdict: VerdictContinue},
 		},
 		{
 			name:       "supervised without store executes directly",
 			sup:        &fakeSupervisor{},
 			req:        PipelineRequest{StepID: "s1", Supervised: true},
-			execute:    execOK,
+			work:       Work{Execute: execOK},
 			wantResult: PipelineResult{Output: "done", ToolsUsed: []string{"bash"}, ToolCallsMade: true, Verdict: VerdictContinue},
 		},
 		{
@@ -126,7 +123,7 @@ func TestPipelineRun(t *testing.T) {
 			store:      &fakeStore{},
 			sup:        &fakeSupervisor{},
 			req:        PipelineRequest{StepID: "s1"},
-			execute:    func(context.Context) (*ExecuteResult, error) { return nil, execErr },
+			work:       Work{Execute: func(context.Context) (*ExecuteResult, error) { return nil, execErr }},
 			wantErr:    execErr,
 			wantResult: PipelineResult{Verdict: VerdictContinue},
 		},
@@ -135,9 +132,9 @@ func TestPipelineRun(t *testing.T) {
 			store: &fakeStore{},
 			sup:   &fakeSupervisor{},
 			req:   PipelineRequest{StepID: "s1"},
-			execute: func(context.Context) (*ExecuteResult, error) {
+			work: Work{Execute: func(context.Context) (*ExecuteResult, error) {
 				return &ExecuteResult{Output: "partial", ToolsUsed: []string{"x"}, ToolCallsMade: true}, execErr
-			},
+			}},
 			wantErr:    execErr,
 			wantResult: PipelineResult{Output: "partial", ToolsUsed: []string{"x"}, ToolCallsMade: true, Verdict: VerdictContinue},
 		},
@@ -146,9 +143,7 @@ func TestPipelineRun(t *testing.T) {
 			store:      &fakeStore{},
 			sup:        &fakeSupervisor{},
 			req:        PipelineRequest{StepID: "s1", Supervised: true},
-			commit:     commitNil,
-			execute:    execOK,
-			post:       postOK,
+			work:       Work{Commit: commitNil, Execute: execOK, Post: postOK},
 			wantResult: PipelineResult{Output: "done", ToolsUsed: []string{"bash"}, ToolCallsMade: true, Verdict: VerdictContinue},
 		},
 		{
@@ -157,9 +152,7 @@ func TestPipelineRun(t *testing.T) {
 			sup:        &fakeSupervisor{},
 			withPhase:  true,
 			req:        PipelineRequest{StepID: "s1", Supervised: true},
-			commit:     commitPre,
-			execute:    execOK,
-			post:       postNil,
+			work:       Work{Commit: commitPre, Execute: execOK, Post: postNil},
 			wantResult: PipelineResult{Output: "done", ToolsUsed: []string{"bash"}, ToolCallsMade: true, Verdict: VerdictContinue},
 			wantSaved:  []string{"pre"},
 			wantPhase:  []string{"checkpoint:pre"},
@@ -171,9 +164,7 @@ func TestPipelineRun(t *testing.T) {
 			sup:        &fakeSupervisor{triggers: []string{"concerns_raised"}, result: &checkpoint.SuperviseResult{StepID: "s1", Verdict: "CONTINUE"}},
 			withPhase:  true,
 			req:        PipelineRequest{StepID: "s1", Supervised: true},
-			commit:     commitPre,
-			execute:    execOK,
-			post:       postOK,
+			work:       Work{Commit: commitPre, Execute: execOK, Post: postOK},
 			wantResult: PipelineResult{Output: "done", ToolsUsed: []string{"bash"}, ToolCallsMade: true, Verdict: VerdictContinue},
 			wantSaved:  []string{"pre", "post", "reconcile", "supervise"},
 			wantPhase:  []string{"reconcile:s1", "supervise:s1:CONTINUE", "checkpoint:supervise"},
@@ -192,9 +183,7 @@ func TestPipelineRun(t *testing.T) {
 			sup:        &fakeSupervisor{},
 			withPhase:  true,
 			req:        PipelineRequest{StepID: "s1", Supervised: true},
-			commit:     commitPre,
-			execute:    execOK,
-			post:       postOK,
+			work:       Work{Commit: commitPre, Execute: execOK, Post: postOK},
 			wantResult: PipelineResult{Output: "done", ToolsUsed: []string{"bash"}, ToolCallsMade: true, Verdict: VerdictContinue},
 			wantSaved:  []string{"pre", "post", "reconcile"},
 			wantPhase:  []string{"checkpoint:pre", "checkpoint:post", "reconcile:s1"},
@@ -202,12 +191,10 @@ func TestPipelineRun(t *testing.T) {
 		},
 		{
 			name:       "human required forces supervise without triggers",
-			store:      &fakeStore{trail: []*checkpoint.Checkpoint{{Pre: testPre}}},
+			store:      &fakeStore{trail: []checkpoint.Checkpoint{{Pre: testPre}}},
 			sup:        &fakeSupervisor{result: &checkpoint.SuperviseResult{StepID: "s1", Verdict: "PAUSE", Question: "ok?"}},
 			req:        PipelineRequest{StepID: "s1", GoalName: "the goal", Supervised: true, HumanRequired: true},
-			commit:     commitPre,
-			execute:    execOK,
-			post:       postOK,
+			work:       Work{Commit: commitPre, Execute: execOK, Post: postOK},
 			wantResult: PipelineResult{Output: "done", ToolsUsed: []string{"bash"}, ToolCallsMade: true, Verdict: VerdictPause, Question: "ok?"},
 			wantSaved:  []string{"pre", "post", "reconcile", "supervise"},
 			wantEvents: []string{"commit", "execute", "reconcile", "supervise"},
@@ -217,9 +204,7 @@ func TestPipelineRun(t *testing.T) {
 			store:      &fakeStore{},
 			sup:        &fakeSupervisor{triggers: []string{"scope_deviation"}, result: &checkpoint.SuperviseResult{StepID: "s1", Verdict: "REORIENT", Correction: "fix it"}},
 			req:        PipelineRequest{StepID: "s1", Supervised: true},
-			commit:     commitPre,
-			execute:    execOK,
-			post:       postOK,
+			work:       Work{Commit: commitPre, Execute: execOK, Post: postOK},
 			wantResult: PipelineResult{Output: "done", ToolsUsed: []string{"bash"}, ToolCallsMade: true, Verdict: VerdictReorient, Correction: "fix it"},
 			wantSaved:  []string{"pre", "post", "reconcile", "supervise"},
 			wantEvents: []string{"commit", "execute", "reconcile", "supervise"},
@@ -230,9 +215,7 @@ func TestPipelineRun(t *testing.T) {
 			sup:        &fakeSupervisor{triggers: []string{"scope_deviation"}, err: supErr},
 			withPhase:  true,
 			req:        PipelineRequest{StepID: "s1", Supervised: true},
-			commit:     commitPre,
-			execute:    execOK,
-			post:       postOK,
+			work:       Work{Commit: commitPre, Execute: execOK, Post: postOK},
 			wantErr:    supErr,
 			wantResult: PipelineResult{Output: "done", ToolsUsed: []string{"bash"}, ToolCallsMade: true, Verdict: VerdictContinue},
 			wantSaved:  []string{"pre", "post", "reconcile"},
@@ -249,7 +232,7 @@ func TestPipelineRun(t *testing.T) {
 			cfg := PipelineConfig{
 				Supervisor: tt.sup,
 				Logger:     slog.New(slog.NewTextHandler(&buf, nil)),
-				OnEvent:    func(_, phase string, _ any) { events = append(events, phase) },
+				Event:      func(_, phase string, _ any) { events = append(events, phase) },
 			}
 			if tt.store != nil {
 				cfg.Store = tt.store
@@ -259,7 +242,7 @@ func TestPipelineRun(t *testing.T) {
 				cfg.Phase = phase
 			}
 
-			result, err := NewPipeline(cfg).Run(t.Context(), tt.req, tt.commit, tt.execute, tt.post)
+			result, err := NewPipeline(cfg).Run(t.Context(), tt.req, tt.work)
 
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
@@ -294,11 +277,11 @@ func TestPipelineRun(t *testing.T) {
 }
 
 func TestPipelineRun_SuperviseRequest(t *testing.T) {
-	trail := []*checkpoint.Checkpoint{{Pre: testPre}}
+	trail := []checkpoint.Checkpoint{{Pre: testPre}}
 	sup := &fakeSupervisor{triggers: []string{"low_confidence"}, result: &checkpoint.SuperviseResult{StepID: "s1", Verdict: "CONTINUE"}}
 	p := NewPipeline(PipelineConfig{Store: &fakeStore{trail: trail}, Supervisor: sup})
 
-	_, err := p.Run(t.Context(), PipelineRequest{StepID: "s1", GoalName: "the goal", Supervised: true, HumanRequired: true}, commitPre, execOK, postOK)
+	_, err := p.Run(t.Context(), PipelineRequest{StepID: "s1", GoalName: "the goal", Supervised: true, HumanRequired: true}, Work{Commit: commitPre, Execute: execOK, Post: postOK})
 	if err != nil {
 		t.Fatal(err)
 	}
