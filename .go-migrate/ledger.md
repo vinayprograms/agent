@@ -210,3 +210,4 @@ Then: final report to user (ledger has every decision/assumption); optional cove
 ### R11 `agent run --step` — DONE (c34f78c; verifier PASS; merged)
 executor.RunOptions.StepGate + ErrAborted + StatusAborted; run.Deps.StepGate; internal/term.IsTerminal (replaycmd reuses); cmd/agent `--step` on run only, TTY-enforced via deps.isTerminal; docs cli-reference + README. Next: adversarial verifier (check: gate fires after each goal incl. failed ones, abort writes "aborted" footer + exit 1, serve/swarm can't set it, non-TTY rejected before anything loads, `-count=3 -race`), then merge from main checkout.
 R11 follow-ups (low): step label wrong when one goal is used by two RUN steps (carry step name through GoalExecutor/ctx); `term.IsTerminal(any)` → `interface{ Fd() uintptr }`.
+### R10b budget propagation — DONE (8873d60; self-checked): sub-agent budgetError now propagates; (*budget).exhausted() guards converge/parallel rounds; one warning per goal; executor 99.6%.
