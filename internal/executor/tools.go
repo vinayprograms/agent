@@ -151,7 +151,7 @@ func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string,
 
 	// Register as untrusted content block with taint from influencing blocks
 	source := fmt.Sprintf("tool:%s", toolName)
-	e.AddUntrustedContentWithTaint(ctx, content, source, relatedBlocks)
+	e.AddUntrustedContent(ctx, content, source, relatedBlocks...)
 }
 
 // toolResult holds the result of a parallel tool execution.

@@ -313,29 +313,19 @@ func (e *Executor) logPhaseReconcile(goal, step string, triggers []string, escal
 
 // logPhaseSupervise logs the SUPERVISE phase of goal execution.
 func (e *Executor) logPhaseSupervise(goal, step, verdict, guidance string, humanRequired bool, durationMs int64) {
-	e.logPhaseSuperviseWithDetails(goal, step, verdict, guidance, humanRequired, durationMs, "", "", "", "", "")
-}
-
-// logPhaseSuperviseWithDetails logs supervisor review with full LLM details.
-func (e *Executor) logPhaseSuperviseWithDetails(goal, step, verdict, guidance string, humanRequired bool, durationMs int64, supervisorType, model, prompt, response, thinking string) {
 	if e.session == nil {
 		return
 	}
 
 	meta := &session.EventMeta{
-		Phase:          "SUPERVISE",
-		SupervisorType: supervisorType,
-		Verdict:        verdict,
-		HumanRequired:  humanRequired,
-		Model:          model,
+		Phase:         "SUPERVISE",
+		Verdict:       verdict,
+		HumanRequired: humanRequired,
 	}
 
 	// Only include LLM content in debug mode (PII protection)
 	if e.debug {
 		meta.Guidance = guidance
-		meta.Prompt = prompt
-		meta.Response = response
-		meta.Thinking = thinking
 	}
 
 	e.session.AddEvent(session.Event{
@@ -369,11 +359,6 @@ func (e *Executor) logCheckpoint(checkpointType, goal, step, checkpointID string
 
 // logSecurityBlock logs when a content block is registered for security tracking.
 func (e *Executor) logSecurityBlock(blockID, trust, blockType, source, xmlBlock string, entropy float64) {
-	e.logSecurityBlockWithTaint(blockID, trust, blockType, source, xmlBlock, entropy, nil)
-}
-
-// logSecurityBlockWithTaint logs a content block with taint lineage.
-func (e *Executor) logSecurityBlockWithTaint(blockID, trust, blockType, source, xmlBlock string, entropy float64, taintedBy []string) {
 	if e.session == nil {
 		return
 	}
@@ -423,11 +408,6 @@ func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []str
 
 // logSecurityTriage logs LLM triage check to session.
 func (e *Executor) logSecurityTriage(tool, blockID string, suspicious bool, model string, latencyMs int64, inputTokens, outputTokens int, skipReason string) {
-	e.logSecurityTriageWithDetails(tool, blockID, suspicious, model, latencyMs, inputTokens, outputTokens, "", "", "", skipReason)
-}
-
-// logSecurityTriageWithDetails logs LLM triage with full details.
-func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious bool, model string, latencyMs int64, inputTokens, outputTokens int, prompt, response, thinking, skipReason string) {
 	if e.session == nil {
 		return
 	}
@@ -443,13 +423,6 @@ func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious
 		SkipReason: skipReason,
 	}
 
-	// Only include LLM content in debug mode (PII protection)
-	if e.debug {
-		meta.Prompt = prompt
-		meta.Response = response
-		meta.Thinking = thinking
-	}
-
 	e.session.AddEvent(session.Event{
 		Type:       session.EventSecurityTriage,
 		Tool:       tool,
@@ -462,11 +435,6 @@ func (e *Executor) logSecurityTriageWithDetails(tool, blockID string, suspicious
 
 // logSecuritySupervisor logs supervisor review to session.
 func (e *Executor) logSecuritySupervisor(tool, blockID, verdict, reason, model string, latencyMs int64, inputTokens, outputTokens int) {
-	e.logSecuritySupervisorWithDetails(tool, blockID, verdict, reason, model, latencyMs, inputTokens, outputTokens, "", "", "")
-}
-
-// logSecuritySupervisorWithDetails logs supervisor review with full LLM details.
-func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reason, model string, latencyMs int64, inputTokens, outputTokens int, prompt, response, thinking string) {
 	if e.session == nil {
 		return
 	}
@@ -485,9 +453,6 @@ func (e *Executor) logSecuritySupervisorWithDetails(tool, blockID, verdict, reas
 	// Only include LLM content in debug mode (PII protection)
 	if e.debug {
 		meta.Reason = reason
-		meta.Prompt = prompt
-		meta.Response = response
-		meta.Thinking = thinking
 	}
 
 	e.session.AddEvent(session.Event{

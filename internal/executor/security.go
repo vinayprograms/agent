@@ -299,12 +299,9 @@ func lineageTree(c *contentguard.Content, depth int, visited map[string]bool) (s
 }
 
 // AddUntrustedContent registers untrusted content with the content guard.
-func (e *Executor) AddUntrustedContent(ctx context.Context, content, source string) {
-	e.AddUntrustedContentWithTaint(ctx, content, source, nil)
-}
-
-// AddUntrustedContentWithTaint registers untrusted content with explicit taint lineage.
-func (e *Executor) AddUntrustedContentWithTaint(ctx context.Context, content, source string, taintedBy []string) {
+// taintedBy names the blocks whose content influenced this one, so a later
+// tool call can be traced back through its lineage.
+func (e *Executor) AddUntrustedContent(ctx context.Context, content, source string, taintedBy ...string) {
 	if e.guard == nil {
 		return
 	}
@@ -329,5 +326,5 @@ func (e *Executor) AddUntrustedContentWithTaint(ctx context.Context, content, so
 	xmlBlock := fmt.Sprintf(`<block id="%s" trust="untrusted" type="data" source="%s" mutable="true" agent="%s"%s>%s</block>`,
 		block.ID, source, agentContext, taintAttr, truncateForLog(content, 200))
 	entropy := contentguard.ShannonEntropy(content)
-	e.logSecurityBlockWithTaint(block.ID, "untrusted", "data", source, xmlBlock, entropy, taintedBy)
+	e.logSecurityBlock(block.ID, "untrusted", "data", source, xmlBlock, entropy)
 }

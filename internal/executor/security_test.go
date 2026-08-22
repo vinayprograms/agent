@@ -318,7 +318,7 @@ func TestVerifyToolCall_CorrelatesArgsWithBlocks(t *testing.T) {
 	const page = "see https://docs.example.com/very/long/path/to/resource.html for details"
 	exec.AddUntrustedContent(ctx, page, "tool:web_fetch")
 	// Derived content tainted by the page.
-	exec.AddUntrustedContentWithTaint(ctx, "summary of the page", "llm:summary", []string{"b0002"})
+	exec.AddUntrustedContent(ctx, "summary of the page", "llm:summary", "b0002")
 
 	related, err := exec.verifyToolCall(ctx, "web_fetch", map[string]any{"url": "https://docs.example.com/very/long/path/to/resource.html"})
 	if err != nil {
