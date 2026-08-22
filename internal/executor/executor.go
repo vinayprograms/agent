@@ -673,6 +673,11 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	// Check for multi-agent execution
 	if len(goal.UsingAgent) > 0 {
 		output, err := e.executeMultiAgentGoal(ctx, goal)
+		// A spent budget ends this goal with its partial output; the run
+		// continues to the next goal, same as a single-agent goal.
+		if e.noteBudget(ctx, err) {
+			err = nil
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1181,7 +1186,14 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 	// ============================================
 	output, err := e.executeSimpleParallel(ctx, goal, agents)
 	if err != nil {
-		return "", err
+		// A spent budget ends this goal with whatever partial output the
+		// agents produced; the caller (a convergence loop, or the run
+		// itself) decides how to proceed. Any other error is fatal.
+		var spent *budgetError
+		if !errors.As(err, &spent) {
+			return "", err
+		}
+		return output, err
 	}
 
 	// Collect tool names from agents for checkpoint (agents used as "tools")
@@ -1272,6 +1284,13 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		durationMs int64
 	}
 
+	// The goal's budget may already be spent (e.g. a prior convergence
+	// iteration exhausted it). Don't spawn another round of agents just to
+	// have them trip the same budget again.
+	if err := budgetOf(ctx).exhausted(); e.noteBudget(ctx, err) {
+		return "", err
+	}
+
 	task := e.interpolate(goal.Outcome)
 
 	// If we're in a convergence loop, use the convergence-aware prompt instead
@@ -1319,6 +1338,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 
 	// Collect results and log sub-agent completions
 	var agentOutputs []string
+	var budgetErr error
 	for result := range resultChan {
 		// Find agent for model info
 		model := ""
@@ -1333,9 +1353,27 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		e.logSubAgentEnd(result.name, result.name, model, result.output, result.durationMs, result.err)
 
 		if result.err != nil {
+			var spent *budgetError
+			if errors.As(result.err, &spent) {
+				// The goal's budget ran out mid-flight: keep this agent's
+				// partial output and let the caller end the goal, instead of
+				// failing it outright.
+				if budgetErr == nil {
+					budgetErr = result.err
+				}
+				if strings.TrimSpace(result.output) != "" {
+					agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
+				}
+				continue
+			}
 			return "", result.err
 		}
 		agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
+	}
+
+	if budgetErr != nil {
+		// Don't spend more budget synthesizing a partial result.
+		return strings.Join(agentOutputs, "\n\n"), budgetErr
 	}
 
 	// Single agent: return directly

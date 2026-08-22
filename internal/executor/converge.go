@@ -73,6 +73,15 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
 				var lastOutput string
 				for i := 1; i <= maxIterations; i++ {
+					// The budget may already be spent from the previous
+					// iteration (e.g. MaxDuration ticking over between
+					// iterations, or a multi-agent iteration that hit its
+					// limit). Don't start another round against it.
+					if e.noteBudget(ctx, budgetOf(ctx).exhausted()) {
+						budgetStopped = true
+						break
+					}
+
 					e.logger.Debug("convergence iteration", "goal", goal.Name, "iteration", i)
 
 					e.logEvent(session.EventSystem, fmt.Sprintf("Convergence iteration %d for goal %q", i, goal.Name))

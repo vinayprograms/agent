@@ -194,9 +194,13 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 			// EXECUTE
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
 				output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt)
-				if e.noteBudget(ctx, err) {
-					err = nil
-				}
+				// Log/warn once per goal, but keep the error itself so it
+				// propagates to the caller (e.g. a multi-agent goal or a
+				// convergence loop) instead of looking like success. The
+				// caller decides how to end the goal; swallowing it here
+				// let a convergence loop start another iteration against an
+				// already-spent budget (see executeConvergeMultiAgent).
+				e.noteBudget(ctx, err)
 				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
 			},
 			// POST-CHECKPOINT
@@ -206,7 +210,14 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 		},
 	)
 	if err != nil {
-		return "", err
+		// Preserve whatever partial output the sub-agent produced (e.g. a
+		// spent budget) so the caller can still use it instead of losing it
+		// to a bare error.
+		out := ""
+		if pipelineResult != nil {
+			out = pipelineResult.Output
+		}
+		return out, err
 	}
 
 	output := pipelineResult.Output

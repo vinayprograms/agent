@@ -57,7 +57,25 @@ func (b *budget) spend(toolCalls int) error {
 	defer b.mu.Unlock()
 	b.turns++
 	b.tools += toolCalls
+	return b.limitReachedLocked()
+}
 
+// exhausted reports whether the goal has already reached any of its limits,
+// without spending anything new. Callers use it to avoid starting another
+// round of work (a convergence iteration, a fresh batch of sub-agents)
+// against a budget that's already spent. A nil budget is unlimited.
+func (b *budget) exhausted() error {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.limitReachedLocked()
+}
+
+// limitReachedLocked checks the current counters against the configured
+// limits. Callers must hold b.mu.
+func (b *budget) limitReachedLocked() error {
 	switch {
 	case b.limits.MaxTurns > 0 && b.turns >= b.limits.MaxTurns:
 		return &budgetError{b.goal, fmt.Sprintf("%d turns (max %d)", b.turns, b.limits.MaxTurns)}
