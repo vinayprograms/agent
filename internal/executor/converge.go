@@ -82,18 +82,20 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 						return nil, fmt.Errorf("convergence iteration %d failed: %w", i, iterErr)
 					}
 
-					trimmed := strings.TrimSpace(output)
-					if trimmed == "CONVERGED" {
+					content, done := splitConvergence(output)
+					iterationCount = i
+					// A marker-only response carries no new content, so the
+					// previous iteration's output stays final.
+					if content != "" {
+						iterations = append(iterations, ConvergenceIteration{N: i, Output: content})
+						lastOutput = content
+					}
+					if done {
 						e.logger.Info("convergence achieved", "goal", goal.Name, "iterations", i)
 						e.logEvent(session.EventSystem, fmt.Sprintf("Goal %q converged after %d iterations", goal.Name, i))
 						converged = true
-						iterationCount = i
 						break
 					}
-
-					iterations = append(iterations, ConvergenceIteration{N: i, Output: output})
-					lastOutput = output
-					iterationCount = i
 				}
 
 				if !converged {
@@ -142,6 +144,21 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 		Iterations: iterationCount,
 		Output:     finalOutput,
 	}, nil
+}
+
+// convergenceMarker terminates a convergence loop when the model puts it on a
+// line of its own; anything before it is that iteration's final content.
+const convergenceMarker = "CONVERGED"
+
+// splitConvergence separates a convergence iteration's substantive content
+// from a trailing convergenceMarker, reporting whether the loop should end.
+func splitConvergence(output string) (content string, converged bool) {
+	trimmed := strings.TrimSpace(output)
+	lineStart := strings.LastIndex(trimmed, "\n") + 1
+	if strings.TrimSpace(trimmed[lineStart:]) != convergenceMarker {
+		return trimmed, false
+	}
+	return strings.TrimSpace(trimmed[:lineStart]), true
 }
 
 // getConvergeLimit returns the max iterations for a CONVERGE goal.

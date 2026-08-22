@@ -123,7 +123,8 @@ func (b *brief) String() string {
 	if b.isConverge {
 		buf.WriteString("\n<convergence-instruction>\n")
 		buf.WriteString("This is a convergence goal. Review your previous iterations in <convergence-history> and refine your output.\n")
-		buf.WriteString("When you are confident that further refinement would not meaningfully improve the result, output ONLY the word: CONVERGED\n")
+		buf.WriteString("When you are confident that further refinement would not meaningfully improve the result, output your complete final result, then the word CONVERGED on a line of its own as the last line.\n")
+		buf.WriteString("The final result must appear in the response itself even if you also wrote it to a file — it is what downstream goals receive.\n")
 		buf.WriteString("Do not output CONVERGED prematurely. Only converge when the output is truly stable and complete.\n")
 		buf.WriteString("</convergence-instruction>\n")
 	}

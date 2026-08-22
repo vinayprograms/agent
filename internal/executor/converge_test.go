@@ -342,3 +342,83 @@ func TestConvergeGoal_MultiAgent(t *testing.T) {
 		t.Error("convergence context outlived the multi-agent iteration")
 	}
 }
+
+func TestSplitConvergence(t *testing.T) {
+	tests := []struct {
+		name        string
+		output      string
+		wantContent string
+		wantDone    bool
+	}{
+		{"bare marker", "CONVERGED", "", true},
+		{"marker with surrounding space", "  CONVERGED\n", "", true},
+		{"content then marker", "Final answer.\n\nCONVERGED", "Final answer.", true},
+		{"no marker", "Still refining", "Still refining", false},
+		{"marker not on its own line", "The build CONVERGED early", "The build CONVERGED early", false},
+		{"marker first is not terminal", "CONVERGED\nmore work", "CONVERGED\nmore work", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, done := splitConvergence(tt.output)
+			if content != tt.wantContent || done != tt.wantDone {
+				t.Errorf("splitConvergence(%q) = (%q, %v), want (%q, %v)",
+					tt.output, content, done, tt.wantContent, tt.wantDone)
+			}
+		})
+	}
+}
+
+// A CONVERGED marker may carry the final content on the lines before it; that
+// content — not an empty string — is the goal's output.
+func TestConvergeGoal_MarkerCarriesFinalOutput(t *testing.T) {
+	limit := 3
+	wf := &agentfile.Workflow{
+		Name: "converge-test",
+		Goals: []agentfile.Goal{{
+			Name:        "summarize",
+			Outcome:     "Summarize",
+			IsConverge:  true,
+			WithinLimit: &limit,
+		}},
+	}
+	provider := &mockConvergeProvider{responses: []string{"The final summary.\n\nCONVERGED"}}
+
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
+	result, err := exec.executeConvergeGoal(context.Background(), &wf.Goals[0])
+	if err != nil {
+		t.Fatalf("executeConvergeGoal() error = %v", err)
+	}
+	if !result.Converged {
+		t.Error("Converged = false, want true")
+	}
+	if result.Iterations != 1 {
+		t.Errorf("Iterations = %d, want 1", result.Iterations)
+	}
+	if result.Output != "The final summary." {
+		t.Errorf("Output = %q, want %q", result.Output, "The final summary.")
+	}
+}
+
+// A bare CONVERGED on a later iteration keeps the last substantive output.
+func TestConvergeGoal_BareMarkerKeepsLastOutput(t *testing.T) {
+	limit := 5
+	wf := &agentfile.Workflow{
+		Name: "converge-test",
+		Goals: []agentfile.Goal{{
+			Name:        "summarize",
+			Outcome:     "Summarize",
+			IsConverge:  true,
+			WithinLimit: &limit,
+		}},
+	}
+	provider := &mockConvergeProvider{responses: []string{"Draft one", "CONVERGED"}}
+
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
+	result, err := exec.executeConvergeGoal(context.Background(), &wf.Goals[0])
+	if err != nil {
+		t.Fatalf("executeConvergeGoal() error = %v", err)
+	}
+	if result.Output != "Draft one" {
+		t.Errorf("Output = %q, want %q", result.Output, "Draft one")
+	}
+}
