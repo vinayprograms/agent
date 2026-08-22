@@ -119,3 +119,21 @@ parked-smells: hand-rolled semaphore→errgroup.SetLimit; atomic.AddInt32→atom
 new tests/internal/testkit: Registry(t,pol,ws,extra...) with path guards ("<tool>: access denied: …") + shellguard bash gate; Executor(t,cfg); PermissivePolicy(). All tests re-pointed (llmmock, executor.New, registry.Execute, v1.2.0 policy literals, t.Context). BashCommandInjection now enforces && and | cases. TestSystem_CredentialsLoading deleted (asserted nothing). tests/system root resolution fixed; runtime tests need U9.
 parked-smells: glob has no path guard (comment narrowed?); pathGuard CheckPath uses process cwd for relative paths; benchmarks use context.Background/b.N; getSrcDir alias; fixture write errors ignored; tests/system drives CLI via go run subprocess.
 Flag: examples/agent/memory/simple-memory.agent references memory_forget (not a v1.2.0 tool) → fix in U9 or refactor phase.
+
+## Phase 2 — idiomatic refactor + coverage (after U9 merge; source: diagnosis.md + parked-smells above)
+Invariants carry over (CLI flags/commands, Agentfile, session JSONL, swarm wire/on-disk, security fail-close, policy enforcement). Each unit: worker → adversarial verifier (≤2 rounds) → merge. Boundary moves are sanctioned (user asked for better Go design).
+Wave 1 (parallel, independent packages):
+- [ ] R1 cross-cutting sweep: interface{}→any (X6); one DefaultStateDir/config-dir owner in config (X3/X4, bug 12); setup.Step→Screen (X7); dead-code delete list (diagnosis "Delete" table, re-verify zero callers); config.GetProfile BaseURL/Thinking bug (1); cmd/replay *.json→*.jsonl (6); agentmem Walk nil-deref (8).
+- [ ] R4 internal/config: Get-cluster → nouns/delete; deprecation warnings returned not printed; inject home/env; 100%.
+- [ ] R8 small packages: skills.ReadReference/ScriptPath traversal (7); packaging dead code + Get* → File/Agentfile/Config/Policy; agentfile.ValidateWithoutPaths; websearch limiter state onto Tool (+WithHTTPTimeout); supervision.Supervisor + checkpoint.CheckpointStore ifaces → consumers; hooks tests; each to 100%.
+Wave 2:
+- [ ] R2 internal/session: single file-backed Recorder (NewX returns error, no half-built store, AddEvent-after-Close guard); replay/loader.go → session.ReadFile; delete Store/Manager/NewManager/Message/ToolCall; JSONL byte-identical (golden tests); 100%.
+Wave 3:
+- [ ] R3 internal/executor: goroutine ownership (bug 9: observation/async tools under WaitGroup/errgroup, WithoutCancel); Set*/Clear* → Config + RunOptions; errgroup.SetLimit; atomic.Int32; ctx threading (X5); SwarmContext/XMLContextBuilder dead parts; XMLContextBuilder naming gauntlet; U8 parked smells; coverage → 100% (workspace.go, converge multi-agent paths).
+Wave 4 (parallel):
+- [ ] R5 cmd/swarm → internal/swarm/{taskdb (mutex + ID validation, traversal fix), manifest, web (httptest-able, server timeouts), launch}; bugs 3,4,5,10; capabilities counts agents; submit early-result race; replay uses dataDir; cobra root (X8); main thin; tests to 100% of non-TUI code.
+- [ ] R6 cmd/agent → internal/runtime (Load+New+Run) + internal/serve (lifecycle type; status/currentTask sync; one executor per task or serialized; taskDone buffered); bug 2 (cleanup on exit), 11; output via cmd.OutOrStdout/ErrOrStderr (X9); os.Exit only in main (X10, typed exitError); main thin; toolset tests; simple-memory.agent memory_forget fix; 100% of non-TTY code.
+Wave 5:
+- [ ] R7 cmd/replay → delete (Makefile alias) or 5-line main over shared cobra factory; cmd/agentmem cobra; parseCostSpec → replay.ParsePricing; X1 truncate dedupe.
+- [ ] R9 coverage push to 100%: internal/step, internal/hooks, internal/replay (2,420 lines, 0%), internal/setup remaining, cmd/* non-TTY; move tests/integration+failure into package tests where it removes `go run` subprocess tests; adopt synctest for timing tests.
+- [ ] R10 system tests: run every examples/agent/*.agent that needs no MCP/network-only deps via agent.ollama.toml against testdata expected criteria; record results in test-results/; fix Agentfile drift.
