@@ -212,3 +212,6 @@ executor.RunOptions.StepGate + ErrAborted + StatusAborted; run.Deps.StepGate; in
 R11 follow-ups (low): step label wrong when one goal is used by two RUN steps (carry step name through GoalExecutor/ctx); `term.IsTerminal(any)` → `interface{ Fd() uintptr }`.
 ### R10b budget propagation — DONE (8873d60; self-checked): sub-agent budgetError now propagates; (*budget).exhausted() guards converge/parallel rounds; one warning per goal; executor 99.6%.
 Rerun 28-memory-research after R10b: EXIT=0 in 462s, Status complete, research-report-output.md written; leftover (low): the budget-stopped CONVERGE goal reports "" as its own output (partial content from multi-agent round not surfaced).
+
+## FINAL STATE 2026-08-22 (test-results/rerun-report.md): 27 examples → 22 PASS (2 expected TTY blocks), 1 PARTIAL, 2 FAIL (both LLM/NETWORK stalls; 28 passes with the R10b binary — see above).
+Open items for a future session (not regressions): (1) no per-call timeout on LLM requests mid-goal (network stalls hang a goal until the wall-clock budget); (2) CONVERGE "tests pass" criterion can be gamed by a broken test oracle (43); (3) budget stop mid-final-iteration leaves a placeholder output (13); plus the low follow-ups listed under R11/R1b/R10b; X1 truncate dedupe and all swarm items deferred by user ruling.
