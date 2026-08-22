@@ -1,7 +1,9 @@
 package executor
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -143,5 +145,86 @@ func TestBudget_EndsGoalNotRun(t *testing.T) {
 	}
 	if !strings.Contains(warned, `goal "research" exceeded budget`) {
 		t.Errorf("session warning = %q, want one naming the research goal's budget", warned)
+	}
+}
+
+// A CONVERGE goal with USING agents shares its budget across every
+// iteration's agents. Once it's spent, the goal must end — not swallow the
+// budget error as a successful iteration and start another round (which
+// re-trips the same exhausted budget and never stops). Regression test for
+// the bug where spawnAgentWithPrompt's EXECUTE phase turned a *budgetError
+// into a nil error, hiding it from the convergence loop.
+func TestBudget_MultiAgentConvergeEndsGoal(t *testing.T) {
+	loop := fakeTool{name: "search", run: func(context.Context, tools.Args) (string, error) {
+		return "more results", nil
+	}}
+	reg, _ := newTestRegistry(t, t.TempDir(), loop)
+
+	// Every agent, every turn, keeps calling the tool — never converges on
+	// its own. Only the shared budget can stop this.
+	model := modelFunc(func(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+		return &llm.ChatResponse{
+			Content:   "still refining",
+			ToolCalls: []llm.ToolCallResponse{{ID: "1", Name: "search", Args: map[string]any{}}},
+		}, nil
+	})
+
+	limit := 25 // convergence iteration limit: budget must end this long before it's reached
+	wf := &agentfile.Workflow{
+		Name:  "budget-converge",
+		Steps: []agentfile.Step{{Type: agentfile.StepRUN, Name: "main", UsingGoals: []string{"refine"}}},
+		Goals: []agentfile.Goal{{
+			Name: "refine", Outcome: "Refine forever", IsConverge: true,
+			WithinLimit: &limit, UsingAgent: []string{"researcher", "critic"},
+		}},
+		Agents: []agentfile.Agent{{Name: "researcher"}, {Name: "critic"}},
+	}
+
+	sess := &session.Session{}
+	var logBuf bytes.Buffer
+	exec := mustNew(t, Config{
+		Workflow: wf,
+		Model:    model,
+		Registry: reg,
+		Policy:   permissivePolicy(),
+		Session:  sess,
+		Budget:   Budget{MaxToolCalls: 3},
+		Logger:   slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	})
+
+	result, err := exec.Run(t.Context(), RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Status != StatusComplete {
+		t.Errorf("Status = %v, want %v", result.Status, StatusComplete)
+	}
+
+	// The goal must have ended long before using all 25 iterations.
+	if n := strings.Count(logBuf.String(), "convergence iteration"); n >= limit {
+		t.Errorf("logged %d convergence iterations, want well under the limit of %d — the loop didn't stop on budget exhaustion", n, limit)
+	}
+
+	// A budget stop is not a convergence failure.
+	if failures := exec.ConvergenceFailures(); failures["refine"] != 0 {
+		t.Errorf("ConvergenceFailures()[refine] = %d, want 0 — budget exhaustion isn't a convergence failure", failures["refine"])
+	}
+
+	// Exactly one "goal budget exhausted" log line, despite two agents
+	// racing to spend the last of a shared budget across possibly several
+	// iterations.
+	if n := strings.Count(logBuf.String(), "goal budget exhausted"); n != 1 {
+		t.Errorf(`log contains %d "goal budget exhausted" lines, want exactly 1:\n%s`, n, logBuf.String())
+	}
+
+	// Exactly one session warning event for the same reason.
+	warnings := 0
+	for _, evt := range sess.Events {
+		if evt.Type == session.EventWarning && strings.Contains(evt.Content, "exceeded budget") {
+			warnings++
+		}
+	}
+	if warnings != 1 {
+		t.Errorf("session has %d budget-exceeded warning events, want exactly 1", warnings)
 	}
 }
