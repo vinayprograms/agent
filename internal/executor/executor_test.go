@@ -37,9 +37,9 @@ func TestExecutor_InputBinding(t *testing.T) {
 	provider.SetResponse("Analysis complete")
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	result, err := exec.Run(context.Background(), map[string]string{
+	result, err := exec.Run(context.Background(), RunOptions{Inputs: map[string]string{
 		"topic": "golang",
-	})
+	}})
 
 	if err != nil {
 		t.Fatalf("run error: %v", err)
@@ -68,7 +68,7 @@ func TestExecutor_DefaultValues(t *testing.T) {
 	provider.SetResponse("Done")
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	_, err := exec.Run(context.Background(), nil) // No inputs provided
+	_, err := exec.Run(context.Background(), RunOptions{}) // No inputs provided
 
 	if err != nil {
 		t.Fatalf("run error: %v", err)
@@ -97,7 +97,7 @@ func TestExecutor_MissingRequiredInput(t *testing.T) {
 	}
 
 	exec := mustNewExecutor(t, wf, llmmock.New(), nil, nil)
-	_, err := exec.Run(context.Background(), nil)
+	_, err := exec.Run(context.Background(), RunOptions{})
 
 	if err == nil {
 		t.Error("expected error for missing required input")
@@ -134,7 +134,7 @@ func TestExecutor_StepOrder(t *testing.T) {
 		executionOrder = append(executionOrder, name)
 	})
 
-	exec.Run(context.Background(), nil)
+	exec.Run(context.Background(), RunOptions{})
 
 	expected := []string{"first", "second", "third"}
 	if len(executionOrder) != 3 {
@@ -167,10 +167,10 @@ func TestExecutor_VariableInterpolation(t *testing.T) {
 	provider.SetResponse("Done")
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	exec.Run(context.Background(), map[string]string{
+	exec.Run(context.Background(), RunOptions{Inputs: map[string]string{
 		"name":  "Alice",
 		"count": "5",
-	})
+	}})
 
 	req := provider.LastRequest()
 	if !strings.Contains(req.Messages[1].Content, "Hello Alice") {
@@ -205,7 +205,7 @@ func TestExecutor_GoalOutputReference(t *testing.T) {
 	}
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	exec.Run(context.Background(), nil)
+	exec.Run(context.Background(), RunOptions{})
 
 	req := provider.LastRequest()
 	if !strings.Contains(req.Messages[1].Content, "Analysis result: good code") {
@@ -251,7 +251,7 @@ func TestExecutor_GoalLoop(t *testing.T) {
 	reg, _ := newTestRegistry(t, t.TempDir())
 
 	exec := mustNewExecutor(t, wf, provider, reg, pol)
-	exec.Run(context.Background(), nil)
+	exec.Run(context.Background(), RunOptions{})
 
 	if callCount != 3 {
 		t.Errorf("expected 3 LLM calls, got %d", callCount)
@@ -289,7 +289,7 @@ func TestExecutor_MultiAgent(t *testing.T) {
 	})
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	result, err := exec.Run(context.Background(), nil)
+	result, err := exec.Run(context.Background(), RunOptions{})
 
 	if err != nil {
 		t.Fatalf("run error: %v", err)
@@ -322,9 +322,9 @@ func TestExecutor_PromptInterpolation(t *testing.T) {
 	provider.SetResponse("Done")
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	exec.Run(context.Background(), map[string]string{
+	exec.Run(context.Background(), RunOptions{Inputs: map[string]string{
 		"file_path": "/data/input.json",
-	})
+	}})
 
 	req := provider.LastRequest()
 	if !strings.Contains(req.Messages[1].Content, "/data/input.json") {
@@ -356,7 +356,7 @@ func TestExecutor_ResultContainsOutputs(t *testing.T) {
 	}
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	result, _ := exec.Run(context.Background(), nil)
+	result, _ := exec.Run(context.Background(), RunOptions{})
 
 	if result.Outputs["goal1"] != "Output 1" {
 		t.Errorf("expected goal1 output 'Output 1', got %s", result.Outputs["goal1"])
@@ -386,7 +386,7 @@ func TestExecutor_NilMCPManager(t *testing.T) {
 		Model:    provider,
 	})
 
-	result, err := exec.Run(context.Background(), nil)
+	result, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestExecutor_SkillsViaConfig(t *testing.T) {
 		},
 	})
 
-	result, err := exec.Run(context.Background(), nil)
+	result, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -605,7 +605,7 @@ func TestExecutor_AllCallbacks(t *testing.T) {
 		goalCompleted = evt.Data["name"].(string)
 	})
 
-	exec.Run(context.Background(), nil)
+	exec.Run(context.Background(), RunOptions{})
 
 	if goalStarted != "goal1" {
 		t.Errorf("expected goalStarted 'goal1', got %q", goalStarted)
@@ -672,7 +672,7 @@ func TestExecutor_OrchestratorPromptInjected(t *testing.T) {
 	registry, _ := newTestRegistry(t, t.TempDir())
 
 	exec := mustNewExecutor(t, wf, provider, registry, pol)
-	exec.Run(context.Background(), nil)
+	exec.Run(context.Background(), RunOptions{})
 
 	// Check that the system message contains orchestrator guidance
 	messages := provider.LastRequest().Messages
@@ -843,7 +843,7 @@ func TestExecutor_GoalWithStructuredOutput(t *testing.T) {
 	registry, _ := newTestRegistry(t, t.TempDir())
 
 	exec := mustNewExecutor(t, wf, provider, registry, pol)
-	_, err := exec.Run(context.Background(), nil)
+	_, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}

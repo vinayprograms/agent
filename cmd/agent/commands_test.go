@@ -239,13 +239,13 @@ func TestServeAgent_IdleHandlers(t *testing.T) {
 	a.handleInstanceMessage(&messaging.Message{Subject: "work.inst.t1", Data: []byte("fix it")})
 	// While executing, corrections land in the interrupt buffer.
 	buf := executor.NewInterruptBuffer()
-	rt.exec.SetInterruptBuffer(buf)
+	a.interrupts.Store(buf)
 	task := swarm.NewTaskMessage("t2", "cap", map[string]string{"k": "v"})
 	task.SubmittedBy = "mgr"
 	data, _ := task.Marshal()
 	a.handleInstanceMessage(&messaging.Message{Subject: "work.inst.t2", Data: data})
 	a.handleInstanceMessage(&messaging.Message{Subject: "work.inst.t3", Data: []byte("raw")})
-	rt.exec.SetInterruptBuffer(nil)
+	a.interrupts.Store(nil)
 
 	// Manager discuss parsing: update, result, and garbage.
 	a.handleManagerDiscussMessage(t.Context(), &messaging.Message{Data: []byte(`{"instance_id":"i","task_id":"t","goal":"g","content":"c"}`)})

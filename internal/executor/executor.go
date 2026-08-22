@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
@@ -165,7 +166,7 @@ type Executor struct {
 	metricsCollector MetricsCollector
 
 	// Sub-agent tracking
-	activeSubAgents int32 // atomic counter for active sub-agents
+	activeSubAgents atomic.Int32
 
 	// Interrupt buffer for swarm collaboration (nil = non-swarm mode)
 	interruptBuffer *InterruptBuffer
@@ -181,6 +182,12 @@ type Executor struct {
 
 	// Supervision pipeline for the four-phase flow (COMMIT->EXECUTE->RECONCILE->SUPERVISE).
 	pipeline *supervision.Pipeline
+
+	// background owns every fire-and-forget goroutine the executor starts
+	// (observation extraction, async tools). Run waits on it before the
+	// session is flushed or closed, so no goroutine can log to — or block
+	// on — a session that is already shut down.
+	background sync.WaitGroup
 }
 
 // phaseLoggerAdapter adapts the Executor's logging methods to the supervision.PhaseLogger interface.
@@ -208,31 +215,6 @@ func (e *Executor) Registry() *tools.Registry {
 // Hooks returns the hook registry for registering event listeners.
 func (e *Executor) Hooks() *hooks.Registry {
 	return e.hooks
-}
-
-// SetInterruptBuffer attaches an interrupt buffer for swarm collaboration.
-// When set, the executor drains the buffer between LLM turns and injects
-// interrupt messages into the context. A nil buffer disables interrupts.
-func (e *Executor) SetInterruptBuffer(buf *InterruptBuffer) {
-	e.interruptBuffer = buf
-}
-
-// InterruptBuffer returns the current interrupt buffer (may be nil).
-func (e *Executor) InterruptBuffer() *InterruptBuffer {
-	return e.interruptBuffer
-}
-
-// SetDiscussPublisher attaches a callback that publishes non-tool-call
-// LLM responses to the swarm discuss channel. In non-swarm mode, leave
-// unset (nil) — the publish call short-circuits with zero overhead.
-// The caller typically binds the task ID in a closure.
-func (e *Executor) SetDiscussPublisher(fn func(goalName, content string)) {
-	e.discussPublisher = fn
-}
-
-// ClearDiscussPublisher removes the discuss publisher (e.g., after task completes).
-func (e *Executor) ClearDiscussPublisher() {
-	e.discussPublisher = nil
 }
 
 // publishToDiscuss calls the discuss publisher if set.
@@ -295,8 +277,6 @@ func New(cfg Config) (*Executor, error) {
 		observationExtractor: cfg.ObservationExtractor,
 		observationStore:     cfg.ObservationStore,
 		metricsCollector:     cfg.MetricsCollector,
-		interruptBuffer:      cfg.InterruptBuffer,
-		discussPublisher:     cfg.DiscussPublisher,
 		workspaceContext:     cfg.WorkspaceContext,
 	}
 
@@ -318,6 +298,8 @@ func New(cfg Config) (*Executor, error) {
 			Supervisor: e.supervisor,
 			Logger:     e.logger,
 			Phase:      &phaseLoggerAdapter{e: e},
+			// supervision.EventHook carries no context (its signature lives
+			// in internal/supervision); hooks only need a non-nil one.
 			Event: func(stepID string, phase string, data any) {
 				e.hooks.Fire(context.Background(), hooks.SupervisionEvent, map[string]any{
 					"step_id": stepID, "phase": phase, "data": data,
@@ -345,12 +327,6 @@ func (e *Executor) registeredToolNames() []string {
 	return names
 }
 
-// SetMetricsCollector sets the metrics collector for heartbeat reporting.
-// Used by serve mode to wire metrics after construction.
-func (e *Executor) SetMetricsCollector(mc MetricsCollector) {
-	e.metricsCollector = mc
-}
-
 // recordLLMMetrics reports token usage and latency to the metrics collector.
 func (e *Executor) recordLLMMetrics(resp *llm.ChatResponse, latency time.Duration) {
 	if e.metricsCollector == nil || resp == nil {
@@ -369,24 +345,20 @@ func (e *Executor) extractAndStoreObservations(ctx context.Context, stepName, st
 		return
 	}
 
-	// Run extraction asynchronously to not block execution
+	// Extraction runs off the critical path but is owned by the executor:
+	// Run waits for it. Cancellation is detached — a half-stored
+	// observation set is worse than a slightly late one.
 	source := stepType + ":" + stepName
-	go func() {
-		f, i, l, err := e.observationExtractor.Extract(context.Background(), output, memory.WithSource(source))
+	ctx = context.WithoutCancel(ctx)
+	e.background.Go(func() {
+		f, i, l, err := e.observationExtractor.Extract(ctx, output, memory.WithSource(source))
 		if err != nil || len(f)+len(i)+len(l) == 0 {
 			return
 		}
-		if _, err := e.observationStore.RememberFIL(context.Background(), f, i, l, source); err != nil {
+		if _, err := e.observationStore.RememberFIL(ctx, f, i, l, source); err != nil {
 			e.logger.Warn("failed to store observations", "source", source, "error", err.Error())
 		}
-	}()
-}
-
-// SetPersistentSession marks the session as long-lived (serve mode).
-// When set, Run() flushes but does not close the session — the caller
-// is responsible for closing it on shutdown.
-func (e *Executor) SetPersistentSession(persistent bool) {
-	e.persistentSession = persistent
+	})
 }
 
 // flushSession flushes buffered session events to disk.
@@ -419,8 +391,31 @@ func (e *Executor) PreFlight() error {
 	return fmt.Errorf("workflow requires human supervision for steps [%s] but no human connection is available", strings.Join(names, ", "))
 }
 
+// RunOptions carries the state of a single workflow run. Swarm callers
+// (serve mode) create a fresh one per task instead of mutating a shared
+// executor: Interrupts and Discuss apply to this run only.
+type RunOptions struct {
+	// Inputs binds the workflow's declared inputs. Missing inputs fall
+	// back to their defaults; an input with neither is an error.
+	Inputs map[string]string
+	// Interrupts is drained between LLM turns and injected into the
+	// context. nil disables interrupts.
+	Interrupts *InterruptBuffer
+	// Discuss receives every non-tool-call LLM response, for publishing to
+	// the swarm discuss channel. nil disables publishing.
+	Discuss func(goalName, content string)
+}
+
 // Run executes the workflow: binds inputs, builds the step graph, and runs it.
-func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, error) {
+// It returns only after every goroutine it started has finished.
+func (e *Executor) Run(ctx context.Context, opts RunOptions) (*Result, error) {
+	e.interruptBuffer = opts.Interrupts
+	e.discussPublisher = opts.Discuss
+	defer func() {
+		e.interruptBuffer = nil
+		e.discussPublisher = nil
+	}()
+
 	startTime := time.Now()
 	workflowName := e.workflow.Name
 	if workflowName == "" {
@@ -430,9 +425,6 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 
 	// Start workflow span
 	ctx, workflowSpan := e.startWorkflowSpan(ctx, workflowName)
-	defer func() {
-		// Span will be ended by the return paths below
-	}()
 
 	// Flush or close session at end of workflow execution.
 	// Persistent sessions (serve mode) stay open across tasks.
@@ -441,6 +433,9 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 	} else {
 		defer e.closeSession()
 	}
+	// Runs after the session defers are registered, therefore before them:
+	// background work still has an open session to write to.
+	defer e.background.Wait()
 
 	// Set main agent identity in context (workflow name as both name and role)
 	ctx = withAgentIdentity(ctx, workflowName, "main")
@@ -453,7 +448,7 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 	}
 
 	// Bind inputs
-	if err := e.bindInputs(inputs); err != nil {
+	if err := e.bindInputs(opts.Inputs); err != nil {
 		e.logExecutionComplete(workflowName, startTime, string(StatusFailed))
 		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
 		return &Result{Status: StatusFailed, Error: err.Error()}, err
@@ -624,11 +619,11 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	}
 
 	// Build XML-structured prompt with context from previous goals
-	xmlBuilder := NewXMLContextBuilder(e.workflow.Name)
+	b := newBrief(e.workflow.Name)
 
 	// Add prior goal outputs to context
 	for goalName, output := range e.outputs {
-		xmlBuilder.AddPriorGoal(goalName, output)
+		b.AddPriorGoal(goalName, output)
 	}
 
 	// Set current goal with interpolated description
@@ -639,10 +634,10 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		goalDescription += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
 	}
 
-	xmlBuilder.SetCurrentGoal(goal.Name, goalDescription)
+	b.SetCurrentGoal(goal.Name, goalDescription)
 
 	// Build the XML prompt
-	prompt := xmlBuilder.Build()
+	prompt := b.String()
 
 	// Set current goal for logging
 	e.currentGoal = goal.Name
@@ -690,8 +685,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	switch pipelineResult.Verdict {
 	case supervision.VerdictReorient:
 		e.logger.Info("reorienting execution", "goal", goal.Name, "correction", pipelineResult.Correction)
-		xmlBuilder.SetCorrection(pipelineResult.Correction)
-		correctedPrompt := xmlBuilder.Build()
+		b.SetCorrection(pipelineResult.Correction)
+		correctedPrompt := b.String()
 		output, _, toolCallsMade, err = e.executePhase(ctx, goal, correctedPrompt)
 		if err != nil {
 			return nil, err

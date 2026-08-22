@@ -104,10 +104,6 @@ type Config struct {
 	// Metrics collector for heartbeat reporting (optional, used by serve mode)
 	MetricsCollector MetricsCollector
 
-	// Swarm collaboration (nil = non-swarm mode)
-	InterruptBuffer  *InterruptBuffer
-	DiscussPublisher func(goalName, content string)
-
 	// Workspace context injected into system prompt so the agent
 	// knows the project layout without needing to discover it.
 	WorkspaceContext string

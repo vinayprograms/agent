@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agentkit/llm"
+	"golang.org/x/sync/errgroup"
 )
 
 // concurrencyLimit returns the maximum number of concurrent tool executions.
@@ -102,7 +102,7 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (st
 	}
 
 	if !e.registry.Has(tc.Name) {
-		return "", fmt.Errorf("tool '%s' does not exist. Use one of: %s", tc.Name, strings.Join(e.registeredToolNames(), ", "))
+		return "", fmt.Errorf("tool %q does not exist. Use one of: %s", tc.Name, strings.Join(e.registeredToolNames(), ", "))
 	}
 
 	// Enforce policy: reject tool calls that aren't enabled.
@@ -231,10 +231,12 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 		}
 	}
 
-	// Fire async tools in background (fire-and-forget)
+	// Fire async tools in the background. The executor owns them (Run waits),
+	// and cancellation is detached so a write in flight completes.
+	asyncCtx := context.WithoutCancel(ctx)
 	for _, idx := range asyncCalls {
 		tc := toolCalls[idx]
-		go e.executeAsyncTool(ctx, tc)
+		e.background.Go(func() { e.executeAsyncTool(asyncCtx, tc) })
 	}
 
 	// Helper to run tool and return result
@@ -249,34 +251,20 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 	// Prepare messages array
 	messages := make([]llm.Message, len(toolCalls))
 
-	// Execute parallel tools with concurrency limit
+	// Execute parallel tools with a concurrency limit.
 	if len(parallelCalls) > 0 {
-		sem := make(chan struct{}, concurrencyLimit)
-		results := make(chan toolResult, len(parallelCalls))
-		var wg sync.WaitGroup
-
-		for _, idx := range parallelCalls {
+		var g errgroup.Group
+		g.SetLimit(concurrencyLimit)
+		results := make([]toolResult, len(parallelCalls))
+		for i, idx := range parallelCalls {
 			tc := toolCalls[idx]
-			wg.Add(1)
-			go func(idx int, tc llm.ToolCallResponse) {
-				defer wg.Done()
-
-				// Acquire semaphore (blocks if at capacity)
-				sem <- struct{}{}
-				defer func() { <-sem }() // Release when done
-
-				results <- runTool(idx, tc)
-			}(idx, tc)
+			g.Go(func() error {
+				results[i] = runTool(idx, tc)
+				return nil
+			})
 		}
-
-		// Wait for parallel tools to complete
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
-
-		// Collect parallel results
-		for r := range results {
+		_ = g.Wait() // runTool never returns an error; failures become tool content.
+		for _, r := range results {
 			messages[r.index] = llm.Message{
 				Role:       "tool",
 				ToolCallID: r.id,

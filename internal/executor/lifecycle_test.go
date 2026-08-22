@@ -112,36 +112,47 @@ func TestSpawnAgentWithPrompt_ProfileResolution(t *testing.T) {
 	}
 }
 
-func TestSettersAndAccessors(t *testing.T) {
+func TestRunOptions_ScopedToOneRun(t *testing.T) {
 	sess := &session.Session{}
-	exec := mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), Session: sess})
+	buf := NewInterruptBuffer()
+	var published []string
+
+	var exec *Executor
+	model := modelFunc(func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+		// Mid-run the executor sees this run's options.
+		if exec.interruptBuffer != buf {
+			t.Error("interrupt buffer not visible during the run")
+		}
+		exec.publishToDiscuss("g", "")
+		exec.publishToDiscuss("g", "c")
+		return &llm.ChatResponse{Content: "done"}, nil
+	})
+	exec = mustNew(t, Config{Workflow: oneGoalWorkflow(), Model: model, Session: sess, PersistentSession: true})
 
 	if exec.Registry() != nil {
 		t.Error("expected nil registry")
 	}
-	buf := NewInterruptBuffer()
-	exec.SetInterruptBuffer(buf)
-	if exec.InterruptBuffer() != buf {
-		t.Error("interrupt buffer not set")
+	if _, err := exec.Run(t.Context(), RunOptions{
+		Interrupts: buf,
+		Discuss:    func(goal, content string) { published = append(published, goal+":"+content) },
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 
-	var published string
-	exec.SetDiscussPublisher(func(goal, content string) { published = goal + ":" + content })
-	exec.publishToDiscuss("g", "")
-	if published != "" {
-		t.Error("empty content must not publish")
+	// "g:" is absent: empty content never publishes. "work:done" is the
+	// goal's own answer, published by the executor.
+	if len(published) != 2 || published[0] != "g:c" || published[1] != "work:done" {
+		t.Errorf("published = %v, want [g:c work:done]", published)
 	}
-	exec.publishToDiscuss("g", "c")
-	if published != "g:c" {
-		t.Errorf("got %q", published)
+	// Options do not leak into the next run.
+	if exec.interruptBuffer != nil || exec.discussPublisher != nil {
+		t.Error("run options outlived the run")
 	}
-	exec.ClearDiscussPublisher()
 	exec.publishToDiscuss("g", "d")
-	if published != "g:c" {
+	if len(published) != 2 {
 		t.Error("cleared publisher must not fire")
 	}
 
-	exec.SetPersistentSession(true)
 	exec.flushSession()
 	exec.closeSession()
 
@@ -227,7 +238,7 @@ func TestSupervisedGoal_CommitExecuteReconcile(t *testing.T) {
 		return &llm.ChatResponse{Content: "done"}, nil
 	})
 	exec, sess := newSupervisedExecutor(t, supervisedWorkflow(), model, fakeSupervisor{supervise: true, verdict: "CONTINUE"})
-	res, err := exec.Run(context.Background(), nil)
+	res, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil || res.Outputs["work"] != "done" {
 		t.Fatalf("got %+v %v", res, err)
 	}
@@ -260,13 +271,13 @@ func TestSupervisedGoal_ReorientAndPause(t *testing.T) {
 		return &llm.ChatResponse{Content: "first"}, nil
 	})
 	exec, _ := newSupervisedExecutor(t, supervisedWorkflow(), model, fakeSupervisor{supervise: true, verdict: "REORIENT"})
-	res, err := exec.Run(context.Background(), nil)
+	res, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil || res.Outputs["work"] != "corrected" || executions != 2 {
 		t.Fatalf("reorient: %+v %v executions=%d", res, err, executions)
 	}
 
 	exec, _ = newSupervisedExecutor(t, supervisedWorkflow(), model, fakeSupervisor{supervise: true, verdict: "PAUSE"})
-	if _, err := exec.Run(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "paused") {
+	if _, err := exec.Run(context.Background(), RunOptions{}); err == nil || !strings.Contains(err.Error(), "paused") {
 		t.Fatalf("expected pause error, got %v", err)
 	}
 }
@@ -280,7 +291,7 @@ func TestSupervisedGoal_LLMErrorsInPhases(t *testing.T) {
 		return &llm.ChatResponse{Content: "done"}, nil
 	})
 	exec, sess := newSupervisedExecutor(t, supervisedWorkflow(), model, fakeSupervisor{supervise: false})
-	if _, err := exec.Run(context.Background(), nil); err != nil {
+	if _, err := exec.Run(context.Background(), RunOptions{}); err != nil {
 		t.Fatalf("commit/assess errors must not fail the goal: %v", err)
 	}
 	commit := eventsOfType(sess, session.EventPhaseCommit)
@@ -315,7 +326,7 @@ func TestSupervisedMultiAgentGoal(t *testing.T) {
 	})
 
 	exec, sess := newSupervisedExecutor(t, wf, model, fakeSupervisor{supervise: true, verdict: "CONTINUE"})
-	res, err := exec.Run(context.Background(), nil)
+	res, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,18 +343,18 @@ func TestSupervisedMultiAgentGoal(t *testing.T) {
 	// PAUSE fails the run (sub-agents inherit the goal's supervision and
 	// pause first); supervisor error is tolerated.
 	exec, _ = newSupervisedExecutor(t, wf, model, fakeSupervisor{supervise: true, verdict: "PAUSE"})
-	if _, err := exec.Run(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "paused") {
+	if _, err := exec.Run(context.Background(), RunOptions{}); err == nil || !strings.Contains(err.Error(), "paused") {
 		t.Fatalf("expected pause, got %v", err)
 	}
 	exec, _ = newSupervisedExecutor(t, wf, model, fakeSupervisor{supervise: true, err: errors.New("sup down")})
-	if _, err := exec.Run(context.Background(), nil); err != nil {
+	if _, err := exec.Run(context.Background(), RunOptions{}); err != nil {
 		t.Fatalf("supervisor error must not fail the goal: %v", err)
 	}
 
 	// Unknown agent.
 	bad := &agentfile.Workflow{Name: "bad", Steps: wf.Steps, Goals: []agentfile.Goal{{Name: "review", UsingAgent: []string{"ghost"}}}}
 	exec = mustNewExecutor(t, bad, model, nil, nil)
-	if _, err := exec.Run(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "agent not found") {
+	if _, err := exec.Run(context.Background(), RunOptions{}); err == nil || !strings.Contains(err.Error(), "agent not found") {
 		t.Fatalf("expected agent not found, got %v", err)
 	}
 }
@@ -426,7 +437,7 @@ func TestExecutePhase_SkillsInterruptsAndLLMError(t *testing.T) {
 	exec := mustNew(t, Config{Workflow: wf, Model: modelFunc(func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
 		return nil, errors.New("llm down")
 	}), WorkspaceContext: "WORKSPACE: here"})
-	if res, err := exec.Run(context.Background(), nil); err == nil || res.Status != StatusFailed {
+	if res, err := exec.Run(context.Background(), RunOptions{}); err == nil || res.Status != StatusFailed {
 		t.Fatalf("expected failure, got %+v %v", res, err)
 	}
 
@@ -442,8 +453,8 @@ func TestExecutePhase_SkillsInterruptsAndLLMError(t *testing.T) {
 		}
 		return &llm.ChatResponse{Content: "first"}, nil
 	})
-	exec = mustNew(t, Config{Workflow: wf, Model: model, InterruptBuffer: buf})
-	res, err := exec.Run(context.Background(), nil)
+	exec = mustNew(t, Config{Workflow: wf, Model: model})
+	res, err := exec.Run(context.Background(), RunOptions{Interrupts: buf})
 	if err != nil || res.Outputs["g"] != "reconsidered" || turns != 2 {
 		t.Fatalf("got %+v %v turns=%d", res, err, turns)
 	}
@@ -456,7 +467,7 @@ func TestRun_PreFlightFailure(t *testing.T) {
 		Goals: []agentfile.Goal{{Name: "g", Outcome: "Deploy"}},
 	}
 	exec := mustNewExecutor(t, wf, llmmock.New(), nil, nil)
-	if res, err := exec.Run(context.Background(), nil); err == nil || res.Status != StatusFailed {
+	if res, err := exec.Run(context.Background(), RunOptions{}); err == nil || res.Status != StatusFailed {
 		t.Fatalf("expected preflight failure, got %+v %v", res, err)
 	}
 }

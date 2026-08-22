@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/checkpoint"
@@ -162,12 +161,12 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	e.hooks.Fire(ctx, hooks.SubAgentStart, map[string]any{"name": role, "input": map[string]string{"task": task}})
 
 	// Track active sub-agent count for metrics
-	count := atomic.AddInt32(&e.activeSubAgents, 1)
+	count := e.activeSubAgents.Add(1)
 	if e.metricsCollector != nil {
 		e.metricsCollector.SetSubagents(int(count))
 	}
 	defer func() {
-		c := atomic.AddInt32(&e.activeSubAgents, -1)
+		c := e.activeSubAgents.Add(-1)
 		if e.metricsCollector != nil {
 			e.metricsCollector.SetSubagents(int(c))
 		}

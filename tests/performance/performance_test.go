@@ -114,7 +114,7 @@ func BenchmarkExecutorSimple(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		exec := testkit.Executor(b, executor.Config{Workflow: wf, Model: provider})
-		exec.Run(context.Background(), nil)
+		exec.Run(context.Background(), executor.RunOptions{})
 	}
 }
 
@@ -181,7 +181,7 @@ func TestPerformance_ManyGoals(t *testing.T) {
 	provider.SetResponse("Done")
 
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
-	result, err := exec.Run(t.Context(), nil)
+	result, err := exec.Run(t.Context(), executor.RunOptions{})
 	if err != nil {
 		t.Fatalf("execution failed: %v", err)
 	}

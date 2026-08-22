@@ -34,7 +34,7 @@ func TestFailure_LLMError(t *testing.T) {
 	provider.SetError(errors.New("API rate limit exceeded"))
 
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
-	result, err := exec.Run(t.Context(), nil)
+	result, err := exec.Run(t.Context(), executor.RunOptions{})
 
 	if err == nil {
 		t.Error("expected error from LLM failure")
@@ -85,7 +85,7 @@ func TestFailure_ToolError(t *testing.T) {
 	registry := testkit.Registry(t, pol, t.TempDir())
 
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider, Registry: registry, Policy: pol})
-	result, err := exec.Run(t.Context(), nil)
+	result, err := exec.Run(t.Context(), executor.RunOptions{})
 
 	// Should complete despite tool error (error reported to LLM)
 	if err != nil {
@@ -123,7 +123,7 @@ func TestFailure_ContextCancellation(t *testing.T) {
 	defer cancel()
 
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
-	_, err := exec.Run(ctx, nil)
+	_, err := exec.Run(ctx, executor.RunOptions{})
 
 	if err == nil {
 		t.Error("expected context cancellation error")
@@ -151,7 +151,7 @@ func TestFailure_MissingInput(t *testing.T) {
 	provider := llmmock.New()
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
 
-	_, err := exec.Run(t.Context(), nil) // No inputs provided
+	_, err := exec.Run(t.Context(), executor.RunOptions{}) // No inputs provided
 
 	if err == nil {
 		t.Error("expected error for missing input")
@@ -239,7 +239,7 @@ func TestFailure_RecoveryFromPartialExecution(t *testing.T) {
 	}
 
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
-	result, err := exec.Run(t.Context(), nil)
+	result, err := exec.Run(t.Context(), executor.RunOptions{})
 
 	if err == nil {
 		t.Error("expected error from step 2")
@@ -290,7 +290,7 @@ func TestFailure_GracefulDegradation(t *testing.T) {
 
 	// nil registry should work (no tools available)
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
-	result, err := exec.Run(t.Context(), nil)
+	result, err := exec.Run(t.Context(), executor.RunOptions{})
 
 	if err != nil {
 		t.Errorf("unexpected error with nil registry: %v", err)

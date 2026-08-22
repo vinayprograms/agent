@@ -90,7 +90,7 @@ func TestVerifyToolCall_NoUntrustedContentAllows(t *testing.T) {
 func TestVerifyToolCall_EscalationDenied(t *testing.T) {
 	exec, sess := newSecuredExecutor(t, &SecurityConfig{})
 	metrics := &recordingMetrics{}
-	exec.SetMetricsCollector(metrics)
+	exec.metricsCollector = metrics
 	exec.AddUntrustedContent(context.Background(), injected, "tool:web_fetch")
 
 	_, err := exec.verifyToolCall(context.Background(), "bash", map[string]any{"command": "ls"})
@@ -137,7 +137,7 @@ func TestVerifyToolCall_ScreenerBenignAllows(t *testing.T) {
 	screener.SetTokenCounts(11, 2)
 	exec, sess := newSecuredExecutor(t, &SecurityConfig{Screener: screener})
 	metrics := &recordingMetrics{}
-	exec.SetMetricsCollector(metrics)
+	exec.metricsCollector = metrics
 	exec.AddUntrustedContent(context.Background(), injected, "tool:web_fetch")
 
 	if _, err := exec.verifyToolCall(context.Background(), "bash", map[string]any{"command": "ls"}); err != nil {

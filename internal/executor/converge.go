@@ -168,17 +168,17 @@ func (e *Executor) getConvergeLimit(goal *agentfile.Goal) int {
 
 // buildConvergePrompt builds the XML prompt for a convergence iteration.
 func (e *Executor) buildConvergePrompt(goal *agentfile.Goal, iterations []ConvergenceIteration, currentIteration int) string {
-	xmlBuilder := NewXMLContextBuilder(e.workflow.Name)
-	xmlBuilder.SetConvergenceMode()
+	b := newBrief(e.workflow.Name)
+	b.SetConvergenceMode()
 
 	// Add prior goal outputs to context
 	for goalName, output := range e.outputs {
-		xmlBuilder.AddPriorGoal(goalName, output)
+		b.AddPriorGoal(goalName, output)
 	}
 
 	// Add previous convergence iterations
 	for _, iter := range iterations {
-		xmlBuilder.AddConvergenceIteration(iter.N, iter.Output)
+		b.AddConvergenceIteration(iter.N, iter.Output)
 	}
 
 	// Set current goal with interpolated description
@@ -189,22 +189,22 @@ func (e *Executor) buildConvergePrompt(goal *agentfile.Goal, iterations []Conver
 		goalDescription += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
 	}
 
-	xmlBuilder.SetCurrentGoal(goal.Name, goalDescription)
+	b.SetCurrentGoal(goal.Name, goalDescription)
 
-	return xmlBuilder.Build()
+	return b.String()
 }
 
 // buildConvergePromptWithCorrection builds prompt with supervisor correction.
 func (e *Executor) buildConvergePromptWithCorrection(goal *agentfile.Goal, iterations []ConvergenceIteration, currentIteration int, correction string) string {
-	xmlBuilder := NewXMLContextBuilder(e.workflow.Name)
-	xmlBuilder.SetConvergenceMode()
+	b := newBrief(e.workflow.Name)
+	b.SetConvergenceMode()
 
 	for goalName, output := range e.outputs {
-		xmlBuilder.AddPriorGoal(goalName, output)
+		b.AddPriorGoal(goalName, output)
 	}
 
 	for _, iter := range iterations {
-		xmlBuilder.AddConvergenceIteration(iter.N, iter.Output)
+		b.AddConvergenceIteration(iter.N, iter.Output)
 	}
 
 	goalDescription := e.interpolate(goal.Outcome)
@@ -212,10 +212,10 @@ func (e *Executor) buildConvergePromptWithCorrection(goal *agentfile.Goal, itera
 		goalDescription += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
 	}
 
-	xmlBuilder.SetCurrentGoal(goal.Name, goalDescription)
-	xmlBuilder.SetCorrection(correction)
+	b.SetCurrentGoal(goal.Name, goalDescription)
+	b.SetCorrection(correction)
 
-	return xmlBuilder.Build()
+	return b.String()
 }
 
 // executeConvergeIteration executes a single iteration of a convergence goal.
