@@ -10,7 +10,10 @@ import (
 
 // SuperviseRequest contains all inputs for the SUPERVISE phase.
 type SuperviseRequest struct {
-	OriginalGoal  string
+	// GoalName identifies the goal under supervision (for logs); Outcome is
+	// its description, which the supervisor prompt reasons over.
+	GoalName      string
+	Outcome       string
 	Pre           *checkpoint.PreCheckpoint
 	Post          *checkpoint.PostCheckpoint
 	Triggers      []string

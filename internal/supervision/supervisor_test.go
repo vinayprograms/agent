@@ -213,7 +213,7 @@ func TestBuildSupervisionPrompt(t *testing.T) {
 func TestSupervise(t *testing.T) {
 	pre := &checkpoint.PreCheckpoint{StepID: "goal-001", Confidence: "high"}
 	post := &checkpoint.PostCheckpoint{StepID: "goal-001", MetCommitment: true}
-	baseReq := SuperviseRequest{OriginalGoal: "goal", Pre: pre, Post: post, Triggers: []string{"concerns_raised"}}
+	baseReq := SuperviseRequest{Outcome: "goal", Pre: pre, Post: post, Triggers: []string{"concerns_raised"}}
 
 	tests := []struct {
 		name           string
@@ -404,10 +404,10 @@ func TestSupervise_PromptContents(t *testing.T) {
 	model.SetResponse("CONTINUE")
 
 	_, err := sup.Supervise(t.Context(), SuperviseRequest{
-		OriginalGoal: "write the report",
-		Pre:          &checkpoint.PreCheckpoint{StepID: "s1", Interpretation: "draft it"},
-		Post:         &checkpoint.PostCheckpoint{StepID: "s1", MetCommitment: true},
-		Triggers:     []string{"low_confidence"},
+		Outcome:  "write the report",
+		Pre:      &checkpoint.PreCheckpoint{StepID: "s1", Interpretation: "draft it"},
+		Post:     &checkpoint.PostCheckpoint{StepID: "s1", MetCommitment: true},
+		Triggers: []string{"low_confidence"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -421,6 +421,28 @@ func TestSupervise_PromptContents(t *testing.T) {
 	for _, want := range []string{"ORIGINAL GOAL: write the report", "- Interpretation: draft it", "TRIGGERED BY: low_confidence"} {
 		if !strings.Contains(user, want) {
 			t.Errorf("prompt missing %q", want)
+		}
+	}
+}
+
+// The forensic log lines name the goal under supervision, not an empty string.
+func TestSupervise_LogsGoalName(t *testing.T) {
+	sup, model, buf := newTestSupervisor(t, Config{})
+	model.SetResponse("CONTINUE")
+
+	_, err := sup.Supervise(t.Context(), SuperviseRequest{
+		GoalName: "analyze",
+		Outcome:  "Analyze the findings",
+		Pre:      &checkpoint.PreCheckpoint{StepID: "s1"},
+		Post:     &checkpoint.PostCheckpoint{StepID: "s1", MetCommitment: true},
+		Triggers: []string{"low_confidence"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"msg=supervisor_verdict", "goal=analyze"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("log missing %q:\n%s", want, buf.String())
 		}
 	}
 }

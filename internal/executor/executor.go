@@ -95,8 +95,12 @@ const (
 // Result reports the outcome of a run. A failure is carried by Run's
 // error; Status distinguishes it from a run that never started.
 type Result struct {
-	Status     Status
-	Outputs    map[string]string
+	Status  Status
+	Outputs map[string]string
+	// Iterations reports only the CONVERGE goals that exhausted their WITHIN
+	// limit without converging, mapped to that limit. Goals that converged
+	// are absent, so a successful run leaves it nil. The name is part of the
+	// printed JSON result.
 	Iterations map[string]int
 }
 
@@ -637,7 +641,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        goal.Name,
-			GoalName:      goalDescription,
+			GoalName:      goal.Name,
+			Outcome:       goalDescription,
 			Supervised:    supervised,
 			HumanRequired: humanRequired,
 		},
@@ -1125,7 +1130,8 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 			superviseResult, superviseErr := e.supervisor.Supervise(
 				ctx,
 				supervision.SuperviseRequest{
-					OriginalGoal:  goalDescription,
+					GoalName:      goal.Name,
+					Outcome:       goalDescription,
 					Pre:           preCheckpoint,
 					Post:          postCheckpoint,
 					Triggers:      reconcileResult.Triggers,

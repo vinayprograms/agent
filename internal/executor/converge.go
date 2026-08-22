@@ -58,7 +58,8 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        goal.Name,
-			GoalName:      e.goalOutcome(goal.Name),
+			GoalName:      goal.Name,
+			Outcome:       e.goalOutcome(goal.Name),
 			Supervised:    supervised,
 			HumanRequired: humanRequired,
 		},

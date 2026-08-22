@@ -133,7 +133,7 @@ func (s *LLMSupervisor) Reconcile(pre *checkpoint.PreCheckpoint, post *checkpoin
 		"step", pre.StepID,
 		"triggers", strings.Join(triggers, ","),
 		"escalate", result.Supervise)
-	s.logPhaseComplete("RECONCILE", pre.StepID, start, fmt.Sprintf("supervise=%v", result.Supervise))
+	s.logPhaseComplete("RECONCILE", "", pre.StepID, start, fmt.Sprintf("supervise=%v", result.Supervise))
 
 	return result
 }
@@ -147,7 +147,7 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 	requiresHuman := req.HumanRequired
 
 	start := time.Now()
-	s.logger.Debug("phase_start", "phase", "SUPERVISE", "goal", "", "step", pre.StepID)
+	s.logger.Debug("phase_start", "phase", "SUPERVISE", "goal", req.GoalName, "step", pre.StepID)
 
 	result := &checkpoint.SuperviseResult{
 		StepID:    pre.StepID,
@@ -155,7 +155,7 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 	}
 
 	// Build prompt for supervisor
-	prompt := s.buildSupervisionPrompt(req.OriginalGoal, pre, post, triggers, decisionTrail)
+	prompt := s.buildSupervisionPrompt(req.Outcome, pre, post, triggers, decisionTrail)
 
 	messages := []llm.Message{
 		{Role: "system", Content: supervisorSystemPrompt},
@@ -185,7 +185,7 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 	if d.verdict == VerdictPause {
 		if requiresHuman && !s.humanAvailable {
 			// Hard fail - workflow requires human but none available
-			s.logVerdict(pre.StepID, "PAUSE_FAILED", "human required but unavailable", true)
+			s.logVerdict(req.GoalName, pre.StepID, "PAUSE_FAILED", "human required but unavailable", true)
 			return nil, errors.New("supervision requires human input but no human is available")
 		}
 
@@ -200,17 +200,17 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 				// Human provided input, reorient with it
 				result.Verdict = string(VerdictReorient)
 				result.Correction = input
-				s.logVerdict(pre.StepID, "REORIENT", "human provided input", true)
+				s.logVerdict(req.GoalName, pre.StepID, "REORIENT", "human provided input", true)
 			case <-time.After(s.humanInputTimeout):
 				if requiresHuman {
-					s.logVerdict(pre.StepID, "PAUSE_TIMEOUT", "human input timeout", true)
+					s.logVerdict(req.GoalName, pre.StepID, "PAUSE_TIMEOUT", "human input timeout", true)
 					return nil, errors.New("human input timeout - workflow requires human approval")
 				}
 				// Timeout without required human - supervisor decides
 				s.logger.Warn("human input timeout, supervisor will decide")
 				result.Verdict = string(VerdictContinue)
 				result.Correction = "Proceeding without human input (timeout). Review output carefully."
-				s.logVerdict(pre.StepID, "CONTINUE", "timeout fallback", false)
+				s.logVerdict(req.GoalName, pre.StepID, "CONTINUE", "timeout fallback", false)
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
@@ -224,21 +224,21 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 			}
 			result.Verdict = string(auto.verdict)
 			result.Correction = auto.correction
-			s.logVerdict(pre.StepID, string(auto.verdict), "autonomous decision", false)
+			s.logVerdict(req.GoalName, pre.StepID, string(auto.verdict), "autonomous decision", false)
 		}
 	} else {
 		// Log non-PAUSE verdicts
-		s.logVerdict(pre.StepID, string(d.verdict), d.correction, false)
+		s.logVerdict(req.GoalName, pre.StepID, string(d.verdict), d.correction, false)
 	}
 
-	s.logPhaseComplete("SUPERVISE", pre.StepID, start, result.Verdict)
+	s.logPhaseComplete("SUPERVISE", req.GoalName, pre.StepID, start, result.Verdict)
 	return result, nil
 }
 
 // logVerdict mirrors the old kit's SupervisorVerdict event (same keys).
-func (s *LLMSupervisor) logVerdict(step, verdict, guidance string, humanRequired bool) {
+func (s *LLMSupervisor) logVerdict(goal, step, verdict, guidance string, humanRequired bool) {
 	s.logger.Info("supervisor_verdict",
-		"goal", "",
+		"goal", goal,
 		"step", step,
 		"verdict", verdict,
 		"guidance", guidance,
@@ -246,10 +246,10 @@ func (s *LLMSupervisor) logVerdict(step, verdict, guidance string, humanRequired
 }
 
 // logPhaseComplete mirrors the old kit's PhaseComplete event (same keys).
-func (s *LLMSupervisor) logPhaseComplete(phase, step string, start time.Time, result string) {
+func (s *LLMSupervisor) logPhaseComplete(phase, goal, step string, start time.Time, result string) {
 	s.logger.Debug("phase_complete",
 		"phase", phase,
-		"goal", "",
+		"goal", goal,
 		"step", step,
 		"duration", time.Since(start).String(),
 		"result", result)

@@ -62,7 +62,8 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        fmt.Sprintf("subagent:%s", role),
-			GoalName:      e.goalOutcome(e.currentGoal),
+			GoalName:      e.currentGoal,
+			Outcome:       e.goalOutcome(e.currentGoal),
 			Supervised:    supervised,
 			HumanRequired: false, // Dynamic sub-agents don't require human approval
 		},
@@ -180,7 +181,8 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        fmt.Sprintf("subagent:%s", role),
-			GoalName:      e.goalOutcome(e.currentGoal),
+			GoalName:      e.currentGoal,
+			Outcome:       e.goalOutcome(e.currentGoal),
 			Supervised:    supervised,
 			HumanRequired: false,
 		},
