@@ -141,23 +141,12 @@ func TestSettersAndAccessors(t *testing.T) {
 		t.Error("cleared publisher must not fire")
 	}
 
-	var seen []string
-	exec.SetEventPublisher(func(ev session.Event) { seen = append(seen, ev.Type) })
-	exec.logEvent("custom", "x")
-	exec.ClearEventPublisher()
-	exec.logEvent("custom2", "x")
-	if len(seen) != 1 || seen[0] != "custom" {
-		t.Errorf("event publisher: %v", seen)
-	}
-
 	exec.SetPersistentSession(true)
 	exec.flushSession()
 	exec.closeSession()
 
 	// Nil-session variants are no-ops.
 	none := mustNewExecutor(t, &agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
-	none.SetEventPublisher(nil)
-	none.ClearEventPublisher()
 	none.flushSession()
 	none.closeSession()
 }

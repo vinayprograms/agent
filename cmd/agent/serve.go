@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -41,6 +42,7 @@ type serviceAgent struct {
 
 	// Service-level session (shared across all tasks)
 	serviceRuntime *runtime
+	publishEvent   *atomic.Pointer[session.Sink] // session event sink target; nil until the bus is up
 
 	// Runtime state
 	status       string // "idle", "busy", "draining"
@@ -158,8 +160,16 @@ func (cmd *ServeCmd) Run() error {
 		return err
 	}
 
-	// Create service-level runtime (one session for entire service lifetime)
+	// Create service-level runtime (one session for entire service lifetime).
+	// Session events stream to NATS once the bus is up (see publishEvent
+	// below); until then the sink drops them.
+	publishEvent := new(atomic.Pointer[session.Sink])
 	serviceRt := newRuntime(wf, creds)
+	serviceRt.eventSink = func(evt session.Event) {
+		if p := publishEvent.Load(); p != nil {
+			(*p)(evt)
+		}
+	}
 	if err := serviceRt.setup(); err != nil {
 		return fmt.Errorf("setting up service runtime: %w", err)
 	}
@@ -208,6 +218,7 @@ func (cmd *ServeCmd) Run() error {
 		capabilitiesStr: capabilitiesStr,
 		capability:      capability,
 		serviceRuntime:  serviceRt,
+		publishEvent:    publishEvent,
 		status:          "idle",
 		taskDone:        make(chan struct{}),
 		drainTimeout:    drainTimeout,
@@ -384,14 +395,15 @@ func (a *serviceAgent) runBusMode() error {
 	// Wire event publisher — streams structured session events to NATS
 	// for the swarm UI's real-time event log.
 	evtSubject := fmt.Sprintf("events.%s", a.displayName)
-	a.serviceRuntime.exec.SetEventPublisher(func(evt session.Event) {
+	publish := session.Sink(func(evt session.Event) {
 		data, err := json.Marshal(evt)
 		if err != nil {
 			return
 		}
 		natsBus.Publish(evtSubject, data)
 	})
-	defer a.serviceRuntime.exec.ClearEventPublisher()
+	a.publishEvent.Store(&publish)
+	defer a.publishEvent.Store(nil)
 
 	if err := hbSender.Start(ctx); err != nil {
 		return fmt.Errorf("starting heartbeat: %w", err)

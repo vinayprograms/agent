@@ -80,7 +80,6 @@ type Config struct {
 
 	// Session
 	Session           *session.Session
-	SessionManager    session.SessionManager
 	PersistentSession bool
 
 	// Supervision

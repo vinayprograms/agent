@@ -1,18 +1,13 @@
 // Package session provides forensic session recording: every LLM call, tool
 // execution, and security decision is captured for replay and debugging.
+//
+// A [Recorder] persists sessions to a directory as append-only JSONL
+// (header, event records, footer — the last footer wins on read). Sessions
+// created by a Recorder batch their events to disk on a background writer;
+// a zero [Session] records in memory only.
 package session
 
 import (
-	"bufio"
-	"bytes"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,50 +60,37 @@ const (
 
 	// Warning events (shown in yellow in replay)
 	EventWarning = "warning"
-
-	// Deprecated: use the descriptive names above
-	EventSecurityTier1 = EventSecurityStatic
-	EventSecurityTier2 = EventSecurityTriage
-	EventSecurityTier3 = EventSecuritySupervisor
 )
 
-// Writer tuning constants.
-const (
-	eventChSize    = 256 // buffered channel capacity
-	batchSizeMax   = 50  // flush when batch reaches this size
-	flushInterval  = 500 * time.Millisecond
-)
+// Sink receives every event added to a session created by a [Recorder],
+// synchronously from AddEvent, after the event has been sequenced and
+// timestamped. Swarm mode uses it to stream events to NATS. It must not
+// call back into the session.
+type Sink func(Event)
 
-// Session represents a workflow execution session.
+// Session is the persisted record of one workflow execution.
+//
+// The zero value is usable: AddEvent appends in memory and Flush/Close are
+// no-ops. Sessions returned by [Recorder.Create] additionally stream events
+// to disk in batches until Close. Safe for concurrent use.
 type Session struct {
-	ID           string                 `json:"id"`
-	WorkflowName string                 `json:"workflow_name"`
-	Inputs       map[string]string      `json:"inputs"`
-	State        map[string]interface{} `json:"state"`
-	Outputs      map[string]string      `json:"outputs"`
-	Status       string                 `json:"status"`
-	Result       string                 `json:"result,omitempty"`
-	Error        string                 `json:"error,omitempty"`
-	Events       []Event                `json:"events"`
-	CreatedAt    time.Time              `json:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at"`
+	ID           string            `json:"id"`
+	WorkflowName string            `json:"workflow_name"`
+	Inputs       map[string]string `json:"inputs"`
+	State        map[string]any    `json:"state"`
+	Outputs      map[string]string `json:"outputs"`
+	Status       string            `json:"status"`
+	Result       string            `json:"result,omitempty"`
+	Error        string            `json:"error,omitempty"`
+	Events       []Event           `json:"events"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 
-	// Internal state (not persisted)
-	seqCounter uint64     // Monotonic sequence counter
-	mu         sync.Mutex
-
-	// Batched writer state (not persisted)
-	eventCh    chan Event          // buffered event channel
-	flushCh    chan chan struct{}   // explicit flush requests
-	stopCh     chan struct{}       // signal to stop writer
-	writerDone chan struct{}       // closed when writer exits
-	sessionMgr SessionManager     // for persisting batches
-	closeOnce  sync.Once          // ensures Close() is idempotent
-
-	// OnEvent is called synchronously for every event added via AddEvent.
-	// Used by swarm mode to publish structured events to NATS in real time.
-	// The callback receives the fully-sequenced event (with SeqID and Timestamp set).
-	OnEvent func(event Event)
+	seq     atomic.Uint64 // last issued SeqID
+	mu      sync.Mutex    // guards Events, UpdatedAt, written
+	written int           // Events already appended to the file
+	sink    Sink          // set by Recorder.Create; nil otherwise
+	w       *writer       // set by Recorder.Create; nil otherwise
 }
 
 // Event represents a single entry in the session log.
@@ -132,9 +114,9 @@ type Event struct {
 	Step string `json:"step,omitempty"` // Current step (for workflow steps)
 
 	// Content - the actual data
-	Content string                 `json:"content,omitempty"` // Message content, tool result, etc.
-	Tool    string                 `json:"tool,omitempty"`    // Tool name (for tool events)
-	Args    map[string]interface{} `json:"args,omitempty"`    // Tool arguments (sanitized)
+	Content string         `json:"content,omitempty"` // Message content, tool result, etc.
+	Tool    string         `json:"tool,omitempty"`    // Tool name (for tool events)
+	Args    map[string]any `json:"args,omitempty"`    // Tool arguments (sanitized)
 
 	// Outcome
 	Success    *bool  `json:"success,omitempty"`     // nil = in progress, true = success, false = failure
@@ -176,22 +158,22 @@ type EventMeta struct {
 	SupervisorType string `json:"supervisor_type,omitempty"` // "execution" or "security"
 
 	// Security
-	BlockID       string   `json:"block_id,omitempty"`       // Content block ID (b0001, b0002, ...)
-	RelatedBlocks []string `json:"related_blocks,omitempty"` // All blocks whose content contributed to this action
-	TaintLineage  []TaintNode `json:"taint_lineage,omitempty"` // Taint dependency tree for security events
-	Trust         string   `json:"trust,omitempty"`          // trusted, vetted, untrusted
-	BlockType     string   `json:"block_type,omitempty"`     // instruction, data
-	Source        string   `json:"source,omitempty"`         // Where content came from
-	Entropy       float64  `json:"entropy,omitempty"`        // Shannon entropy (0.0-8.0)
-	CheckName     string   `json:"check,omitempty"`          // static, triage, supervisor
-	Pass          bool     `json:"pass,omitempty"`           // Check passed
-	Flags         []string `json:"flags,omitempty"`          // Security flags detected
-	Suspicious    bool     `json:"suspicious,omitempty"`     // Triage result
-	Action        string   `json:"action,omitempty"`         // allow, deny, modify
-	Reason        string   `json:"reason,omitempty"`         // Decision reason
-	CheckPath     string   `json:"check_path,omitempty"`     // Verification path (static, static→triage, static→triage→supervisor)
-	SkipReason    string   `json:"skip_reason,omitempty"`    // Why escalation was skipped (e.g., "low_risk_tool", "no_untrusted_content", "triage_benign")
-	XMLBlock   string   `json:"xml,omitempty"`        // Full XML block for forensic tools
+	BlockID       string      `json:"block_id,omitempty"`       // Content block ID (b0001, b0002, ...)
+	RelatedBlocks []string    `json:"related_blocks,omitempty"` // All blocks whose content contributed to this action
+	TaintLineage  []TaintNode `json:"taint_lineage,omitempty"`  // Taint dependency tree for security events
+	Trust         string      `json:"trust,omitempty"`          // trusted, vetted, untrusted
+	BlockType     string      `json:"block_type,omitempty"`     // instruction, data
+	Source        string      `json:"source,omitempty"`         // Where content came from
+	Entropy       float64     `json:"entropy,omitempty"`        // Shannon entropy (0.0-8.0)
+	CheckName     string      `json:"check,omitempty"`          // static, triage, supervisor
+	Pass          bool        `json:"pass,omitempty"`           // Check passed
+	Flags         []string    `json:"flags,omitempty"`          // Security flags detected
+	Suspicious    bool        `json:"suspicious,omitempty"`     // Triage result
+	Action        string      `json:"action,omitempty"`         // allow, deny, modify
+	Reason        string      `json:"reason,omitempty"`         // Decision reason
+	CheckPath     string      `json:"check_path,omitempty"`     // Verification path (static, static→triage, static→triage→supervisor)
+	SkipReason    string      `json:"skip_reason,omitempty"`    // Why escalation was skipped (e.g., "low_risk_tool", "no_untrusted_content", "triage_benign")
+	XMLBlock      string      `json:"xml,omitempty"`            // Full XML block for forensic tools
 
 	// Deprecated: use CheckName/CheckPath instead
 	Tier     int    `json:"tier,omitempty"`      // 1=static, 2=triage, 3=supervisor
@@ -222,598 +204,50 @@ type EventMeta struct {
 	Thinking string `json:"thinking,omitempty"` // LLM thinking/reasoning (if available)
 }
 
-// nextSeqID returns the next sequence ID for this session.
-func (s *Session) nextSeqID() uint64 {
-	return atomic.AddUint64(&s.seqCounter, 1)
-}
-
-// CurrentSeqID returns the current (last used) sequence ID without incrementing.
-// Returns 0 if no events have been added yet.
-func (s *Session) CurrentSeqID() uint64 {
-	return atomic.LoadUint64(&s.seqCounter)
-}
-
-// Start launches the background writer goroutine.
-// Must be called before AddEvent if batched writes are desired.
-// If mgr is nil, AddEvent falls back to direct append (no persistence).
-func (s *Session) Start(mgr SessionManager) {
-	if mgr == nil {
-		return
-	}
-	s.sessionMgr = mgr
-	s.eventCh = make(chan Event, eventChSize)
-	s.flushCh = make(chan chan struct{}, 4)
-	s.stopCh = make(chan struct{})
-	s.writerDone = make(chan struct{})
-	go s.writerLoop()
-}
-
-// Flush blocks until all buffered events are persisted to disk.
-func (s *Session) Flush() {
-	if s.eventCh == nil {
-		return
-	}
-	done := make(chan struct{})
-	s.flushCh <- done
-	<-done
-}
-
-// Close flushes remaining events and stops the writer goroutine.
-// Safe to call even if Start was never called. Idempotent — safe to call multiple times.
-func (s *Session) Close() {
-	if s.stopCh == nil {
-		return
-	}
-	s.closeOnce.Do(func() {
-		close(s.stopCh)
-		<-s.writerDone
-	})
-}
-
-// AddEvent adds a new event to the session with automatic sequencing.
-// If the writer is running, events are sent to the channel for batched persistence.
-// Otherwise, events are appended directly (backward-compatible for tests).
+// AddEvent sequences and timestamps event (if its Timestamp is zero),
+// hands it to the Sink, and records it. It never blocks on a closed
+// session: before Close events are batched to the writer; after Close (or
+// on a zero Session) they are appended in memory, where a later
+// [Recorder.Update] persists them. Returns the assigned SeqID.
 func (s *Session) AddEvent(event Event) uint64 {
-	event.SeqID = s.nextSeqID()
+	event.SeqID = s.seq.Add(1)
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
-
-	// Fire real-time callback (e.g., NATS publish) with fully-sequenced event
-	if s.OnEvent != nil {
-		s.OnEvent(event)
+	if s.sink != nil {
+		s.sink(event)
 	}
-
-	if s.eventCh != nil {
-		s.eventCh <- event
-		return event.SeqID
+	if s.w == nil || !s.w.enqueue(event) {
+		s.append(event)
 	}
-
-	// Fallback: direct append (no writer running)
-	s.mu.Lock()
-	s.Events = append(s.Events, event)
-	s.UpdatedAt = time.Now()
-	s.mu.Unlock()
 	return event.SeqID
 }
 
-// writerLoop is the background goroutine that batches events and flushes to disk.
-func (s *Session) writerLoop() {
-	defer close(s.writerDone)
-
-	ticker := time.NewTicker(flushInterval)
-	defer ticker.Stop()
-
-	var batch []Event
-
-	for {
-		select {
-		case evt := <-s.eventCh:
-			batch = append(batch, evt)
-			if len(batch) >= batchSizeMax {
-				s.persistBatch(batch)
-				batch = batch[:0]
-			}
-
-		case <-ticker.C:
-			if len(batch) > 0 {
-				s.persistBatch(batch)
-				batch = batch[:0]
-			}
-
-		case done := <-s.flushCh:
-			batch = s.drainChannel(batch)
-			if len(batch) > 0 {
-				s.persistBatch(batch)
-				batch = batch[:0]
-			}
-			close(done)
-
-		case <-s.stopCh:
-			batch = s.drainChannel(batch)
-			if len(batch) > 0 {
-				s.persistBatch(batch)
-			}
-			return
-		}
-	}
-}
-
-// drainChannel reads all pending events from eventCh without blocking.
-func (s *Session) drainChannel(batch []Event) []Event {
-	for {
-		select {
-		case evt := <-s.eventCh:
-			batch = append(batch, evt)
-		default:
-			return batch
-		}
-	}
-}
-
-// persistBatch appends events to the session and calls the session manager.
-func (s *Session) persistBatch(batch []Event) {
-	s.mu.Lock()
-	s.Events = append(s.Events, batch...)
-	s.UpdatedAt = time.Now()
-	s.mu.Unlock()
-
-	if s.sessionMgr != nil {
-		s.sessionMgr.Update(s)
-	}
-}
-
-// StartCorrelation generates a new correlation ID for linking related events.
-func (s *Session) StartCorrelation() string {
-	b := make([]byte, 4)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// Message represents an LLM message (kept for backwards compatibility).
-type Message struct {
-	Role      string    `json:"role"` // user, assistant, tool
-	Content   string    `json:"content"`
-	Goal      string    `json:"goal"`
-	Agent     string    `json:"agent,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-// ToolCall represents a tool invocation (kept for backwards compatibility).
-type ToolCall struct {
-	ID        string                 `json:"id"`
-	Name      string                 `json:"name"`
-	Args      map[string]interface{} `json:"args"`
-	Result    interface{}            `json:"result"`
-	Error     string                 `json:"error,omitempty"`
-	Duration  time.Duration          `json:"duration"`
-	Goal      string                 `json:"goal"`
-	Timestamp time.Time              `json:"timestamp"`
-}
-
-// Store is the interface for session persistence.
-type Store interface {
-	Save(sess *Session) error
-	Load(id string) (*Session, error)
-}
-
-// SessionManager is the interface for session management operations.
-type SessionManager interface {
-	Create(workflowName string) (*Session, error)
-	Update(sess *Session) error
-	Get(id string) (*Session, error)
-}
-
-// Manager manages sessions.
-type Manager struct {
-	store Store
-	mu    sync.Mutex
-}
-
-// NewManager creates a new session manager.
-func NewManager(store Store) *Manager {
-	return &Manager{store: store}
-}
-
-// Create creates a new session.
-func (m *Manager) Create(workflowName string, inputs map[string]string) (*Session, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	id := generateID()
-	now := time.Now()
-
-	sess := &Session{
-		ID:           id,
-		WorkflowName: workflowName,
-		Inputs:       inputs,
-		State:        make(map[string]interface{}),
-		Outputs:      make(map[string]string),
-		Status:       StatusRunning,
-		Events:       []Event{},
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-
-	if err := m.store.Save(sess); err != nil {
-		return nil, err
-	}
-
-	return sess, nil
-}
-
-// Get retrieves a session by ID.
-func (m *Manager) Get(id string) (*Session, error) {
-	return m.store.Load(id)
-}
-
-// Update saves changes to a session.
-func (m *Manager) Update(sess *Session) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	sess.UpdatedAt = time.Now()
-	return m.store.Save(sess)
-}
-
-// AddEvent adds an event to a session.
-func (m *Manager) AddEvent(id string, event Event) error {
-	sess, err := m.store.Load(id)
-	if err != nil {
-		return err
-	}
-
-	sess.AddEvent(event)
-	return m.store.Save(sess)
-}
-
-// generateID creates a unique session ID.
-func generateID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// JSONL record types for streaming format
-const (
-	RecordTypeHeader = "header" // Session metadata (first line)
-	RecordTypeEvent  = "event"  // Individual event
-	RecordTypeFooter = "footer" // Final state (last line, optional)
-)
-
-// JSONLRecord is a wrapper for JSONL lines with type discrimination.
-type JSONLRecord struct {
-	RecordType string `json:"_type"` // header, event, footer
-	
-	// Header fields (when _type == "header")
-	ID           string            `json:"id,omitempty"`
-	WorkflowName string            `json:"workflow_name,omitempty"`
-	Inputs       map[string]string `json:"inputs,omitempty"`
-	CreatedAt    time.Time         `json:"created_at,omitempty"`
-	
-	// Event fields (when _type == "event") - embedded Event
-	*Event `json:",omitempty"`
-	
-	// Footer fields (when _type == "footer")
-	Status    string                 `json:"status,omitempty"`
-	Result    string                 `json:"result,omitempty"`
-	Error     string                 `json:"error,omitempty"`
-	Outputs   map[string]string      `json:"outputs,omitempty"`
-	State     map[string]interface{} `json:"state,omitempty"`
-	UpdatedAt time.Time              `json:"updated_at,omitempty"`
-}
-
-// FileStore implements Store using the filesystem.
-// New sessions use JSONL format; legacy JSON format is supported for reading.
-// Uses append-only writes for efficient event streaming.
-type FileStore struct {
-	dir           string
-	writtenEvents map[string]int // session ID -> number of events written
-	mu            sync.Mutex     // protects concurrent Save calls
-}
-
-// NewFileStore creates a new file-based store.
-func NewFileStore(dir string) (*FileStore, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, err
-	}
-	return &FileStore{dir: dir, writtenEvents: make(map[string]int)}, nil
-}
-
-// Save persists a session to disk using append-only writes.
-// On first call, writes header. On subsequent calls, appends new events only.
-// Always appends footer (loader takes the last footer).
-func (s *FileStore) Save(sess *Session) error {
+// append records events in memory.
+func (s *Session) append(events ...Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if err := os.MkdirAll(s.dir, 0755); err != nil {
-		return fmt.Errorf("failed to create session directory: %w", err)
-	}
-
-	path := filepath.Join(s.dir, sess.ID+".jsonl")
-	
-	// Check if file exists (header already written)
-	fileExists := false
-	if _, err := os.Stat(path); err == nil {
-		fileExists = true
-	}
-	
-	// Open file in append mode (or create if new)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open session file: %w", err)
-	}
-	defer f.Close()
-
-	// Write header if this is a new file
-	if !fileExists {
-		header := JSONLRecord{
-			RecordType:   RecordTypeHeader,
-			ID:           sess.ID,
-			WorkflowName: sess.WorkflowName,
-			Inputs:       sess.Inputs,
-			CreatedAt:    sess.CreatedAt,
-		}
-		if err := s.writeLine(f, header); err != nil {
-			return err
-		}
-	}
-
-	// Get count of already-written events
-	writtenCount := s.writtenEvents[sess.ID]
-	
-	// Append only new events
-	for i := writtenCount; i < len(sess.Events); i++ {
-		evtCopy := sess.Events[i] // copy to avoid pointer issues
-		record := JSONLRecord{
-			RecordType: RecordTypeEvent,
-			Event:      &evtCopy,
-		}
-		if err := s.writeLine(f, record); err != nil {
-			return err
-		}
-	}
-	
-	// Update written count
-	s.writtenEvents[sess.ID] = len(sess.Events)
-
-	// Append footer (most recent footer wins on load)
-	footer := JSONLRecord{
-		RecordType: RecordTypeFooter,
-		Status:     sess.Status,
-		Result:     sess.Result,
-		Error:      sess.Error,
-		Outputs:    sess.Outputs,
-		State:      sess.State,
-		UpdatedAt:  sess.UpdatedAt,
-	}
-	if err := s.writeLine(f, footer); err != nil {
-		return err
-	}
-
-	// Sync to disk before closing to ensure durability
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("failed to sync session file: %w", err)
-	}
-
-	return nil
+	s.Events = append(s.Events, events...)
+	s.UpdatedAt = time.Now()
 }
 
-// writeLine writes a single JSONL record.
-func (s *FileStore) writeLine(f *os.File, record JSONLRecord) error {
-	data, err := json.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("failed to marshal record: %w", err)
+// Flush blocks until every event added so far is on disk. No-op after
+// Close or on a session without a writer.
+func (s *Session) Flush() {
+	if s.w != nil {
+		s.w.flush()
 	}
-	if _, err := f.Write(data); err != nil {
-		return err
-	}
-	if _, err := f.WriteString("\n"); err != nil {
-		return err
-	}
-	return nil
 }
 
-// Load reads a session from disk.
-// Supports both JSONL (new) and JSON (legacy) formats.
-func (s *FileStore) Load(id string) (*Session, error) {
-	// Try JSONL first
-	jsonlPath := filepath.Join(s.dir, id+".jsonl")
-	if _, err := os.Stat(jsonlPath); err == nil {
-		return s.loadJSONL(jsonlPath)
+// Close flushes remaining events and stops the background writer.
+// Idempotent; a no-op on a session without a writer.
+func (s *Session) Close() {
+	if s.w != nil {
+		s.w.close()
 	}
-
-	// Fall back to legacy JSON
-	jsonPath := filepath.Join(s.dir, id+".json")
-	return s.loadLegacyJSON(jsonPath)
 }
 
-// loadJSONL loads a session from JSONL format.
-func (s *FileStore) loadJSONL(path string) (*Session, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	sess := &Session{
-		Inputs:  make(map[string]string),
-		State:   make(map[string]interface{}),
-		Outputs: make(map[string]string),
-		Events:  []Event{},
-	}
-
-	// Use bufio.Reader instead of Scanner - no line length limits
-	reader := bufio.NewReader(f)
-
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				// Process final line if no trailing newline
-				if len(line) > 0 {
-					if parseErr := s.parseJSONLLine(line, sess); parseErr != nil {
-						return nil, parseErr
-					}
-				}
-				break
-			}
-			return nil, fmt.Errorf("error reading JSONL: %w", err)
-		}
-
-		// Skip empty lines
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-
-		if err := s.parseJSONLLine(line, sess); err != nil {
-			return nil, err
-		}
-	}
-
-	// Restore sequence counter from last event
-	if len(sess.Events) > 0 {
-		sess.seqCounter = sess.Events[len(sess.Events)-1].SeqID
-	}
-
-	return sess, nil
-}
-
-// parseJSONLLine parses a single JSONL line into the session.
-func (s *FileStore) parseJSONLLine(line []byte, sess *Session) error {
-	var record JSONLRecord
-	if err := json.Unmarshal(line, &record); err != nil {
-		return fmt.Errorf("failed to parse JSONL line: %w", err)
-	}
-
-	switch record.RecordType {
-	case RecordTypeHeader:
-		sess.ID = record.ID
-		sess.WorkflowName = record.WorkflowName
-		sess.Inputs = record.Inputs
-		sess.CreatedAt = record.CreatedAt
-		
-	case RecordTypeEvent:
-		if record.Event != nil {
-			sess.Events = append(sess.Events, *record.Event)
-		}
-		
-	case RecordTypeFooter:
-		sess.Status = record.Status
-		sess.Result = record.Result
-		sess.Error = record.Error
-		sess.Outputs = record.Outputs
-		sess.State = record.State
-		sess.UpdatedAt = record.UpdatedAt
-	}
-
-	return nil
-}
-
-// loadLegacyJSON loads a session from legacy JSON format.
-func (s *FileStore) loadLegacyJSON(path string) (*Session, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var sess Session
-	if err := json.Unmarshal(data, &sess); err != nil {
-		return nil, err
-	}
-
-	// Restore sequence counter from last event
-	if len(sess.Events) > 0 {
-		sess.seqCounter = sess.Events[len(sess.Events)-1].SeqID
-	}
-
-	return &sess, nil
-}
-
-// FileManager wraps FileStore to implement SessionManager.
-type FileManager struct {
-	store *FileStore
-}
-
-// NewFileManager creates a new file-based session manager.
-func NewFileManager(dir string) SessionManager {
-	store, err := NewFileStore(dir)
-	if err != nil {
-		// Fallback: create with error handling in actual use
-		return &FileManager{store: &FileStore{dir: dir, writtenEvents: make(map[string]int)}}
-	}
-	return &FileManager{store: store}
-}
-
-// Create creates a new session.
-func (m *FileManager) Create(workflowName string) (*Session, error) {
-	id := generateID()
-	now := time.Now()
-
-	sess := &Session{
-		ID:           id,
-		WorkflowName: workflowName,
-		Inputs:       make(map[string]string),
-		State:        make(map[string]interface{}),
-		Outputs:      make(map[string]string),
-		Status:       StatusRunning,
-		Events:       []Event{},
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-
-	if err := m.store.Save(sess); err != nil {
-		return nil, err
-	}
-
-	return sess, nil
-}
-
-// Update updates a session.
-func (m *FileManager) Update(sess *Session) error {
-	sess.UpdatedAt = time.Now()
-	return m.store.Save(sess)
-}
-
-// Get retrieves a session by ID.
-func (m *FileManager) Get(id string) (*Session, error) {
-	return m.store.Load(id)
-}
-
-// DetectFormat checks if a file is JSONL or legacy JSON format.
-func DetectFormat(path string) (string, error) {
-	// Check extension first
-	if strings.HasSuffix(path, ".jsonl") {
-		return "jsonl", nil
-	}
-	if strings.HasSuffix(path, ".json") {
-		return "json", nil
-	}
-	
-	// Peek at content
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	buf := make([]byte, 256)
-	n, err := f.Read(buf)
-	if err != nil {
-		return "", err
-	}
-	
-	content := string(buf[:n])
-	// JSONL header has _type field
-	if strings.Contains(content, `"_type"`) {
-		return "jsonl", nil
-	}
-	// Legacy JSON has events array
-	if strings.Contains(content, `"events"`) {
-		return "json", nil
-	}
-	
-	return "json", nil // default to legacy
+// StartCorrelation returns a fresh correlation ID for linking related events.
+func (s *Session) StartCorrelation() string {
+	return randomHex(4)
 }

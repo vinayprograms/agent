@@ -52,7 +52,8 @@ type runtime struct {
 	bashGate   *shellguard.Gate
 	exec       *executor.Executor
 	mcpManager *mcp.Manager
-	sessionMgr session.SessionManager
+	eventSink  session.Sink // optional; set before setup (serve mode)
+	sessionMgr *session.Recorder
 	sess       *session.Session
 
 	// Security (computed before the tool set so the bash gate gets the scope)
@@ -366,8 +367,11 @@ func (rt *runtime) createExecutor() error {
 	mcpMgr := rt.connectMCP()
 
 	// --- Session ---
-	rt.sessionMgr = session.NewFileManager(rt.sessionPath)
 	var err error
+	rt.sessionMgr, err = session.Open(rt.sessionPath, rt.eventSink)
+	if err != nil {
+		return err
+	}
 	rt.sess, err = rt.sessionMgr.Create(rt.wf.Name)
 	if err != nil {
 		return fmt.Errorf("creating session: %w", err)
@@ -420,7 +424,6 @@ func (rt *runtime) createExecutor() error {
 		Debug:                rt.debug,
 		MCPManager:           mcpMgr,
 		Session:              rt.sess,
-		SessionManager:       rt.sessionMgr,
 		Security:             rt.securityConfig(),
 		TimeoutMCP:           rt.cfg.Timeouts.MCP,
 		TimeoutWebSearch:     rt.cfg.Timeouts.WebSearch,
