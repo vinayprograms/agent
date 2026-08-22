@@ -50,3 +50,4 @@ DESIGN-DEBT.md
 
 # Outputs from ad-hoc example/system-test runs
 /test-results/
+!/test-results/go.mod
