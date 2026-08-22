@@ -10,4 +10,5 @@ GOAL review "Review code at $code_path for bugs, security issues, and best pract
 GOAL style "Check code style and formatting" USING style-checker
 GOAL synthesize "Combine review and style feedback into actionable recommendations"
 
-RUN main USING review, style THEN synthesize
+RUN main USING review, style
+RUN finish USING synthesize
