@@ -73,6 +73,10 @@ type Sink func(Event)
 // The zero value is usable: AddEvent appends in memory and Flush/Close are
 // no-ops. Sessions returned by [Recorder.Create] additionally stream events
 // to disk in batches until Close. Safe for concurrent use.
+//
+// The exported fields (other than Events, which AddEvent owns) are the
+// caller's to read and mutate freely; they are only read back by
+// [Recorder.Update], which persists whatever they hold at that call.
 type Session struct {
 	ID           string            `json:"id"`
 	WorkflowName string            `json:"workflow_name"`
