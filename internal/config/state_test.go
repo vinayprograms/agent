@@ -79,3 +79,16 @@ func mustStateDir(t *testing.T, configPath, override, home string) string {
 	}
 	return dir
 }
+
+func TestStateDir_EmptyHomeAsksOS(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if got, want := mustStateDir(t, "", "~/x", ""), filepath.Join(home, "x"); got != want {
+		t.Errorf("empty home = %q, want %q", got, want)
+	}
+
+	t.Setenv("HOME", "")
+	if _, err := StateDir("", "~/x", ""); err == nil {
+		t.Error("expected an error when the OS cannot resolve a home directory")
+	}
+}
