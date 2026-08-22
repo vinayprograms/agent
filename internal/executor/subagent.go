@@ -73,7 +73,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 		},
 		// EXECUTE
 		func(ctx context.Context) (*supervision.ExecuteResult, error) {
-			output, toolsUsed, err := e.subAgentExecutePhaseWithProvider(ctx, e.provider, role, systemPrompt, userPrompt)
+			output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, userPrompt)
 			return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
 		},
 		// POST-CHECKPOINT
@@ -90,12 +90,9 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	// Handle supervision verdict
 	switch pipelineResult.Verdict {
 	case supervision.VerdictReorient:
-		e.logger.Info("reorienting sub-agent execution", map[string]any{
-			"role":       role,
-			"correction": pipelineResult.Correction,
-		})
+		e.logger.Info("reorienting sub-agent execution", "role", role, "correction", pipelineResult.Correction)
 		correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, pipelineResult.Correction)
-		output, _, err = e.subAgentExecutePhaseWithProvider(ctx, e.provider, role, systemPrompt, correctedTask)
+		output, _, err = e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, correctedTask)
 		if err != nil {
 			return "", err
 		}
@@ -110,16 +107,16 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 
 // spawnAgentWithPrompt spawns a sub-agent with a custom system prompt and optional profile.
 // This is the unified entry point used by both AGENT entries and dynamic sub-agents.
-// The profile parameter allows using a different LLM provider (e.g., "fast", "reasoning-heavy").
+// The profile parameter allows using a different LLM model (e.g., "fast", "reasoning-heavy").
 func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt, task string, outputs []string, profile string, priorGoals []GoalOutput, agentSupervised bool) (string, error) {
 	// Set sub-agent context
 	ctx = withAgentIdentity(ctx, role, role)
 
-	// Get the provider (use profile if specified, otherwise default)
-	provider := e.provider
+	// Get the model (use profile if specified, otherwise default)
+	model := e.model
 	if profile != "" {
 		var err error
-		provider, err = e.providerFactory.GetProvider(profile)
+		model, err = e.resolver.Model(profile)
 		if err != nil {
 			return "", fmt.Errorf("failed to get provider for profile %q: %w", profile, err)
 		}
@@ -192,7 +189,7 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 		},
 		// EXECUTE
 		func(ctx context.Context) (*supervision.ExecuteResult, error) {
-			output, toolsUsed, err := e.subAgentExecutePhaseWithProvider(ctx, provider, role, systemPrompt, userPrompt)
+			output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt)
 			return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
 		},
 		// POST-CHECKPOINT
@@ -210,7 +207,7 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	switch pipelineResult.Verdict {
 	case supervision.VerdictReorient:
 		correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, pipelineResult.Correction)
-		output, _, err = e.subAgentExecutePhaseWithProvider(ctx, provider, role, systemPrompt, correctedTask)
+		output, _, err = e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, correctedTask)
 		if err != nil {
 			return "", err
 		}
@@ -223,39 +220,22 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	return output, nil
 }
 
-// subAgentExecutePhaseWithProvider runs the sub-agent execution loop with a specific provider.
-func (e *Executor) subAgentExecutePhaseWithProvider(ctx context.Context, provider llm.Provider, role, systemPrompt, userPrompt string) (output string, toolsUsed []string, err error) {
+// subAgentExecutePhaseWithModel runs the sub-agent execution loop with a specific model.
+func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.Model, role, systemPrompt, userPrompt string) (output string, toolsUsed []string, err error) {
 	start := time.Now()
 	stepID := fmt.Sprintf("subagent:%s", role)
-	e.logger.PhaseStart("EXECUTE", role, stepID)
+	e.logPhaseStart("EXECUTE", role, stepID)
 
 	messages := []llm.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}
 
-	// Build tool definitions (excluding spawn_agent and spawn_agents to enforce depth=1)
+	// Build tool definitions (excluding spawn_agents to enforce depth=1)
 	var toolDefs []llm.ToolDef
-	if e.registry != nil {
-		for _, def := range e.registry.Definitions() {
-			if def.Name != "spawn_agent" && def.Name != "spawn_agents" {
-				toolDefs = append(toolDefs, llm.ToolDef{
-					Name:        def.Name,
-					Description: def.Description,
-					Parameters:  def.Parameters,
-				})
-			}
-		}
-	}
-
-	// Add MCP tools
-	if e.mcpManager != nil {
-		for _, t := range e.mcpManager.AllTools() {
-			toolDefs = append(toolDefs, llm.ToolDef{
-				Name:        fmt.Sprintf("mcp_%s_%s", t.Server, t.Tool.Name),
-				Description: fmt.Sprintf("[MCP:%s] %s", t.Server, t.Tool.Description),
-				Parameters:  t.Tool.InputSchema,
-			})
+	for _, def := range e.getAllToolDefinitions() {
+		if def.Name != "spawn_agents" {
+			toolDefs = append(toolDefs, def)
 		}
 	}
 
@@ -269,24 +249,21 @@ func (e *Executor) subAgentExecutePhaseWithProvider(ctx context.Context, provide
 	for {
 		turn++
 		if turn > maxSubAgentTurns {
-			e.logger.Warn("sub-agent hit turn limit", map[string]any{
-				"role":  role,
-				"turns": maxSubAgentTurns,
-			})
-			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "turn_limit")
+			e.logger.Warn("sub-agent hit turn limit", "role", role, "turns", maxSubAgentTurns)
+			e.logPhaseComplete("EXECUTE", role, stepID, start, "turn_limit")
 			for tool := range toolsUsedMap {
 				toolsUsed = append(toolsUsed, tool)
 			}
 			return "Sub-agent reached maximum turn limit. Returning partial results.", toolsUsed, nil
 		}
 		llmStart := time.Now()
-		resp, err := provider.Chat(ctx, llm.ChatRequest{
+		resp, err := model.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    toolDefs,
 		})
 		llmDuration := time.Since(llmStart)
 		if err != nil {
-			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "error")
+			e.logPhaseComplete("EXECUTE", role, stepID, start, "error")
 			return "", nil, fmt.Errorf("sub-agent LLM error: %w", err)
 		}
 
@@ -298,7 +275,7 @@ func (e *Executor) subAgentExecutePhaseWithProvider(ctx context.Context, provide
 			for tool := range toolsUsedMap {
 				toolsUsed = append(toolsUsed, tool)
 			}
-			e.logger.PhaseComplete("EXECUTE", role, stepID, time.Since(start), "complete")
+			e.logPhaseComplete("EXECUTE", role, stepID, start, "complete")
 			return resp.Content, toolsUsed, nil
 		}
 
@@ -324,7 +301,7 @@ func (e *Executor) subAgentExecutePhaseWithProvider(ctx context.Context, provide
 func (e *Executor) subAgentCommitPhase(ctx context.Context, role, task string) *checkpoint.PreCheckpoint {
 	start := time.Now()
 	stepID := fmt.Sprintf("subagent:%s", role)
-	e.logger.PhaseStart("COMMIT", role, stepID)
+	e.logPhaseStart("COMMIT", role, stepID)
 
 	commitPrompt := fmt.Sprintf(`Before executing this task, declare your intent:
 
@@ -348,7 +325,7 @@ Respond with a JSON object:
 		{Role: "user", Content: commitPrompt},
 	}
 
-	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
+	resp, err := e.model.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
 
@@ -361,10 +338,10 @@ Respond with a JSON object:
 	}
 
 	if err != nil {
-		e.logger.Warn("sub-agent commit phase LLM error", map[string]any{"role": role, "error": err.Error()})
+		e.logger.Warn("sub-agent commit phase LLM error", "role", role, "error", err.Error())
 		pre.Confidence = "low"
 		pre.Assumptions = []string{"Failed to get commitment from sub-agent"}
-		e.logger.PhaseComplete("COMMIT", role, stepID, time.Since(start), "error")
+		e.logPhaseComplete("COMMIT", role, stepID, start, "error")
 		return pre
 	}
 
@@ -399,7 +376,7 @@ Respond with a JSON object:
 
 	durationMs := time.Since(start).Milliseconds()
 	e.logPhaseCommit(role, pre.Interpretation, pre.Confidence, durationMs)
-	e.logger.PhaseComplete("COMMIT", role, stepID, time.Since(start), "ok")
+	e.logPhaseComplete("COMMIT", role, stepID, start, "ok")
 
 	return pre
 }
@@ -434,7 +411,7 @@ Respond with a JSON object:
 		{Role: "user", Content: assessPrompt},
 	}
 
-	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
+	resp, err := e.model.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
 
@@ -446,7 +423,7 @@ Respond with a JSON object:
 	}
 
 	if err != nil {
-		e.logger.Warn("sub-agent post-checkpoint LLM error", map[string]any{"role": role, "error": err.Error()})
+		e.logger.Warn("sub-agent post-checkpoint LLM error", "role", role, "error", err.Error())
 		post.MetCommitment = false
 		post.Concerns = []string{"Failed to get self-assessment from sub-agent"}
 		return post
@@ -510,7 +487,7 @@ The information value of a signal is proportional to how much it surprises you r
 
 `
 
-// OrchestratorSystemPromptPrefix returns the prefix to inject when spawn_agent is available.
+// OrchestratorSystemPromptPrefix returns the prefix to inject when spawn_agents is available.
 const OrchestratorSystemPromptPrefix = `You can spawn sub-agents to delegate work when genuinely needed.
 
 CORE PRINCIPLE: Effort should be proportional to the task. Simple tasks should be done directly.

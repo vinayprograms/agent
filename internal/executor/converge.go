@@ -35,9 +35,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 		return nil, fmt.Errorf("CONVERGE goal %q: WITHIN limit must be > 0", goal.Name)
 	}
 
-	e.logger.Info("starting convergence goal", map[string]any{
-		"goal": goal.Name,
-	})
+	e.logger.Info("starting convergence goal", "goal", goal.Name)
 
 	// Set current goal for logging
 	e.currentGoal = goal.Name
@@ -72,10 +70,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 		func(ctx context.Context) (*supervision.ExecuteResult, error) {
 			var lastOutput string
 			for i := 1; i <= maxIterations; i++ {
-				e.logger.Debug("convergence iteration", map[string]any{
-					"goal":      goal.Name,
-					"iteration": i,
-				})
+				e.logger.Debug("convergence iteration", "goal", goal.Name, "iteration", i)
 
 				e.logEvent(session.EventSystem, fmt.Sprintf("Convergence iteration %d for goal %q", i, goal.Name))
 
@@ -88,10 +83,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 
 				trimmed := strings.TrimSpace(output)
 				if trimmed == "CONVERGED" {
-					e.logger.Info("convergence achieved", map[string]any{
-						"goal":       goal.Name,
-						"iterations": i,
-					})
+					e.logger.Info("convergence achieved", "goal", goal.Name, "iterations", i)
 					e.logEvent(session.EventSystem, fmt.Sprintf("Goal %q converged after %d iterations", goal.Name, i))
 					converged = true
 					iterationCount = i
@@ -104,10 +96,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 			}
 
 			if !converged {
-				e.logger.Warn("convergence limit reached without converging", map[string]any{
-					"goal":  goal.Name,
-					"limit": maxIterations,
-				})
+				e.logger.Warn("convergence limit reached without converging", "goal", goal.Name, "limit", maxIterations)
 				e.logEvent(session.EventWarning, fmt.Sprintf("Goal %q did not converge within limit (used all iterations)", goal.Name))
 				e.trackConvergenceFailure(goal.Name, maxIterations)
 			}
@@ -134,10 +123,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 	// Handle supervision verdict
 	switch pipelineResult.Verdict {
 	case supervision.VerdictReorient:
-		e.logger.Info("supervisor requested reorientation", map[string]any{
-			"goal":       goal.Name,
-			"correction": pipelineResult.Correction,
-		})
+		e.logger.Info("supervisor requested reorientation", "goal", goal.Name, "correction", pipelineResult.Correction)
 		correctionPrompt := e.buildConvergePromptWithCorrection(goal, iterations, iterationCount+1, pipelineResult.Correction)
 		correctedOutput, corrErr := e.executeConvergeIteration(ctx, goal, correctionPrompt)
 		if corrErr != nil {
@@ -257,7 +243,7 @@ func (e *Executor) executeConvergeMultiAgent(ctx context.Context, goal *agentfil
 	// Store convergence context so executeSimpleParallel can use it
 	e.convergenceContext = prompt
 	defer func() { e.convergenceContext = "" }()
-	
+
 	return e.executeMultiAgentGoal(ctx, goal)
 }
 

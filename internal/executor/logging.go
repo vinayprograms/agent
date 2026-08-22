@@ -2,14 +2,47 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agentkit/llm"
-	"github.com/vinayprograms/agentkit/security"
 )
+
+// Structured-log helpers. Message strings and keys mirror the old agentkit
+// logging domain events so existing log consumers keep working (A-G5).
+
+// logExecutionComplete logs the completion of workflow execution.
+func (e *Executor) logExecutionComplete(workflow string, start time.Time, status string) {
+	e.logger.Info("execution_complete",
+		"workflow", workflow,
+		"duration", time.Since(start).String(),
+		"status", status)
+}
+
+// logPhaseStart logs the start of an execution phase.
+func (e *Executor) logPhaseStart(phase, goal, step string) {
+	e.logger.Debug("phase_start", "phase", phase, "goal", goal, "step", step)
+}
+
+// logPhaseComplete logs the completion of an execution phase.
+func (e *Executor) logPhaseComplete(phase, goal, step string, start time.Time, result string) {
+	e.logger.Debug("phase_complete",
+		"phase", phase,
+		"goal", goal,
+		"step", step,
+		"duration", time.Since(start).String(),
+		"result", result)
+}
+
+// logToolOutcome logs a tool result (real-time output).
+func (e *Executor) logToolOutcome(tool string, duration time.Duration, err error) {
+	if err != nil {
+		e.logger.Error("tool_error", "tool", tool, "duration", duration.String(), "error", err.Error())
+		return
+	}
+	e.logger.Debug("tool_result", "tool", tool, "duration", duration.String())
+}
 
 // logEvent logs a generic event to the session.
 func (e *Executor) logEvent(eventType, content string) {
@@ -25,7 +58,8 @@ func (e *Executor) logEvent(eventType, content string) {
 }
 
 // LogBashSecurity logs a bash security decision to the session.
-// This is called by the bash security checker callback.
+// Its signature matches shellguard.Gate.OnDecision; the runtime wires it
+// onto the gate attached to the bash tool.
 func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason string, durationMs int64, inputTokens, outputTokens int) {
 	if e.session == nil {
 		return
@@ -62,12 +96,7 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 	})
 
 	// Also log to structured logger
-	e.logger.Debug("bash security check", map[string]any{
-		"step":    step,
-		"allowed": allowed,
-		"command": command,
-		"reason":  reason,
-	})
+	e.logger.Debug("bash security check", "step", step, "allowed", allowed, "command", command, "reason", reason)
 }
 
 // logToolCall logs a tool call event to the session.
@@ -96,9 +125,8 @@ func (e *Executor) logToolCall(ctx context.Context, name string, args map[string
 }
 
 // logToolResult logs a tool result event to the session.
-func (e *Executor) logToolResult(ctx context.Context, name string, args map[string]any, corrID string, result any, err error, duration time.Duration) {
-	// Structured logging to stdout
-	e.logger.ToolResult(name, duration, err)
+func (e *Executor) logToolResult(ctx context.Context, name string, args map[string]any, corrID string, result string, err error, duration time.Duration) {
+	e.logToolOutcome(name, duration, err)
 
 	if e.session == nil {
 		return
@@ -110,18 +138,7 @@ func (e *Executor) logToolResult(ctx context.Context, name string, args map[stri
 	// Only include tool output in debug mode (PII protection)
 	var content string
 	if e.debug {
-		switch v := result.(type) {
-		case string:
-			content = v
-		case []byte:
-			content = string(v)
-		default:
-			if b, err := json.Marshal(result); err == nil {
-				content = string(b)
-			} else {
-				content = fmt.Sprintf("%v", result)
-			}
-		}
+		content = result
 	}
 
 	event := session.Event{
@@ -383,7 +400,7 @@ func (e *Executor) logSecurityBlockWithTaint(blockID, trust, blockType, source, 
 }
 
 // logSecurityStatic logs a static security check result.
-func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []string, pass bool, flags []string, skipReason string, taintLineage []*security.TaintLineageNode) {
+func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []string, pass bool, flags []string, skipReason string, taintLineage []session.TaintNode) {
 	if e.session == nil {
 		return
 	}
@@ -399,37 +416,9 @@ func (e *Executor) logSecurityStatic(tool, blockID string, relatedBlockIDs []str
 			Pass:          pass,
 			Flags:         flags,
 			SkipReason:    skipReason,
-			TaintLineage:  convertTaintLineage(taintLineage),
+			TaintLineage:  taintLineage,
 		},
 	})
-}
-
-// convertTaintLineage converts security taint lineage to session format.
-func convertTaintLineage(nodes []*security.TaintLineageNode) []session.TaintNode {
-	if len(nodes) == 0 {
-		return nil
-	}
-	result := make([]session.TaintNode, len(nodes))
-	for i, n := range nodes {
-		result[i] = convertTaintNode(n)
-	}
-	return result
-}
-
-// convertTaintNode converts a single taint node.
-func convertTaintNode(n *security.TaintLineageNode) session.TaintNode {
-	node := session.TaintNode{
-		BlockID: n.BlockID,
-		Trust:   string(n.Trust),
-		Source:  n.Source,
-	}
-	if len(n.TaintedBy) > 0 {
-		node.TaintedBy = make([]session.TaintNode, len(n.TaintedBy))
-		for i, child := range n.TaintedBy {
-			node.TaintedBy[i] = convertTaintNode(child)
-		}
-	}
-	return node
 }
 
 // logSecurityTriage logs LLM triage check to session.

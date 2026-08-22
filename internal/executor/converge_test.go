@@ -138,7 +138,7 @@ func TestConvergeGoal_ContextBuilding(t *testing.T) {
 	}
 
 	exec := NewExecutor(wf, provider, nil, nil)
-	
+
 	// Override to capture prompts (we can test the context building separately)
 	iterations := []ConvergenceIteration{}
 	prompt := exec.buildConvergePrompt(&wf.Goals[0], iterations, 1)
@@ -185,7 +185,7 @@ func TestConvergeGoal_VariableLimit(t *testing.T) {
 	}
 
 	exec := NewExecutor(wf, provider, nil, nil)
-	
+
 	// Initialize inputs map and set the variable
 	if exec.inputs == nil {
 		exec.inputs = make(map[string]string)

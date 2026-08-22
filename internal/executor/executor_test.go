@@ -4,17 +4,18 @@ package executor
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/hooks"
+	"github.com/vinayprograms/agent/internal/skills"
+	"github.com/vinayprograms/agent/internal/testutil/llmmock"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/policy"
-	"github.com/vinayprograms/agent/internal/skills"
-	"github.com/vinayprograms/agentkit/tools"
 )
 
-func intPtr(i int) *int { return &i }
+func intPtr(i int) *int       { return &i }
 func strPtr(s string) *string { return &s }
 
 // R2.1.1: Accept inputs as key-value pairs
@@ -32,7 +33,7 @@ func TestExecutor_InputBinding(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Analysis complete")
 
 	exec := NewExecutor(wf, provider, nil, nil)
@@ -63,7 +64,7 @@ func TestExecutor_DefaultValues(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done")
 
 	exec := NewExecutor(wf, provider, nil, nil)
@@ -95,7 +96,7 @@ func TestExecutor_MissingRequiredInput(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, llm.NewMockProvider(), nil, nil)
+	exec := NewExecutor(wf, llmmock.New(), nil, nil)
 	_, err := exec.Run(context.Background(), nil)
 
 	if err == nil {
@@ -109,7 +110,7 @@ func TestExecutor_MissingRequiredInput(t *testing.T) {
 // R2.2.1: Execute RUN steps in file order
 func TestExecutor_StepOrder(t *testing.T) {
 	var executionOrder []string
-	
+
 	wf := &agentfile.Workflow{
 		Name: "test",
 		Steps: []agentfile.Step{
@@ -124,7 +125,7 @@ func TestExecutor_StepOrder(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done")
 
 	exec := NewExecutor(wf, provider, nil, nil)
@@ -162,7 +163,7 @@ func TestExecutor_VariableInterpolation(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done")
 
 	exec := NewExecutor(wf, provider, nil, nil)
@@ -194,7 +195,7 @@ func TestExecutor_GoalOutputReference(t *testing.T) {
 	}
 
 	callCount := 0
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		callCount++
 		if callCount == 1 {
@@ -225,7 +226,7 @@ func TestExecutor_GoalLoop(t *testing.T) {
 	}
 
 	callCount := 0
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		callCount++
 		switch callCount {
@@ -246,9 +247,8 @@ func TestExecutor_GoalLoop(t *testing.T) {
 		}
 	}
 
-	pol := policy.New()
-	pol.Workspace = t.TempDir()
-	reg := tools.NewRegistry(pol)
+	pol := permissivePolicy()
+	reg, _ := newTestRegistry(t, t.TempDir())
 
 	exec := NewExecutor(wf, provider, reg, pol)
 	exec.Run(context.Background(), nil)
@@ -274,12 +274,11 @@ func TestExecutor_MultiAgent(t *testing.T) {
 		},
 	}
 
-	callCount := 0
-	provider := llm.NewMockProvider()
-	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-		callCount++
+	// Agents run in parallel, so the model must be safe for concurrent use.
+	var callCount atomic.Int32
+	provider := modelFunc(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		// First two calls are parallel agent calls
-		if callCount <= 2 {
+		if callCount.Add(1) <= 2 {
 			if strings.Contains(req.Messages[0].Content, "critic") {
 				return &llm.ChatResponse{Content: "Code needs improvement"}, nil
 			}
@@ -287,7 +286,7 @@ func TestExecutor_MultiAgent(t *testing.T) {
 		}
 		// Third call is synthesis
 		return &llm.ChatResponse{Content: "Synthesized: Mixed reviews"}, nil
-	}
+	})
 
 	exec := NewExecutor(wf, provider, nil, nil)
 	result, err := exec.Run(context.Background(), nil)
@@ -297,8 +296,8 @@ func TestExecutor_MultiAgent(t *testing.T) {
 	}
 
 	// Should have at least 2 agent calls + 1 synthesis
-	if callCount < 3 {
-		t.Errorf("expected at least 3 LLM calls for multi-agent, got %d", callCount)
+	if callCount.Load() < 3 {
+		t.Errorf("expected at least 3 LLM calls for multi-agent, got %d", callCount.Load())
 	}
 
 	_ = result
@@ -319,7 +318,7 @@ func TestExecutor_PromptInterpolation(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done")
 
 	exec := NewExecutor(wf, provider, nil, nil)
@@ -347,7 +346,7 @@ func TestExecutor_ResultContainsOutputs(t *testing.T) {
 	}
 
 	callCount := 0
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		callCount++
 		if callCount == 1 {
@@ -379,12 +378,12 @@ func TestExecutor_NilMCPManager(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done")
 
 	exec := New(Config{
-		Workflow:  wf,
-		Provider:  provider,
+		Workflow: wf,
+		Model:    provider,
 	})
 
 	result, err := exec.Run(context.Background(), nil)
@@ -408,12 +407,12 @@ func TestExecutor_SkillsViaConfig(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done")
 
 	exec := New(Config{
-		Workflow:  wf,
-		Provider:  provider,
+		Workflow: wf,
+		Model:    provider,
 		SkillRefs: []skills.SkillRef{
 			{Name: "code-review", Description: "Review code", Path: "/path/to/skill"},
 			{Name: "testing", Description: "Write tests", Path: "/path/to/testing"},
@@ -438,19 +437,19 @@ func TestExecutor_SkillsViaConfig(t *testing.T) {
 // Test getAllToolDefinitions with no MCP
 func TestExecutor_GetAllToolDefinitions(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}
-	provider := llm.NewMockProvider()
-	pol := policy.New()
-	registry := tools.NewRegistry(pol)
-	
+	provider := llmmock.New()
+	pol := permissivePolicy()
+	registry, _ := newTestRegistry(t, t.TempDir())
+
 	exec := NewExecutor(wf, provider, registry, pol)
-	
+
 	defs := exec.getAllToolDefinitions()
-	
+
 	// Should have built-in tools
 	if len(defs) == 0 {
 		t.Error("expected some tool definitions")
 	}
-	
+
 	// Check that built-in tools are present
 	hasRead := false
 	for _, d := range defs {
@@ -469,20 +468,20 @@ func TestExecutor_GetAllToolDefinitions(t *testing.T) {
 // for a tool that exists in the registry, the executor must reject it.
 func TestExecutor_DefaultDenyBlocksToolExecution(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 
 	// Create restrictive policy: default_deny=true, only "bash" enabled
-	pol := policy.NewRestrictive()
-	pol.Tools["bash"] = &policy.ToolPolicy{Enabled: true}
+	pol := policy.New()
+	pol.Tools["bash"] = &policy.ToolPolicy{}
 
-	registry := tools.NewRegistry(pol)
+	registry, _ := newTestRegistry(t, t.TempDir())
 
 	exec := NewExecutor(wf, provider, registry, pol)
 
 	// Definitions should filter out disabled tools
 	defs := exec.getAllToolDefinitions()
 	for _, d := range defs {
-		if d.Name == "read" || d.Name == "write" || d.Name == "grep" {
+		if d.Name == "read" || d.Name == "ls" || d.Name == "pwd" {
 			t.Errorf("tool %q should not appear in definitions with default_deny", d.Name)
 		}
 	}
@@ -519,21 +518,21 @@ func TestExecutor_DefaultDenyBlocksToolExecution(t *testing.T) {
 // Test skill activation check
 func TestExecutor_CheckSkillActivation(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	exec := New(Config{
-		Workflow:  wf,
-		Provider:  provider,
+		Workflow: wf,
+		Model:    provider,
 		SkillRefs: []skills.SkillRef{
 			{Name: "code-review", Description: "Review code", Path: "/nonexistent"},
 		},
 	})
-	
+
 	// No activation
 	skill := exec.checkSkillActivation("Just a normal response")
 	if skill != nil {
 		t.Error("expected no skill activation")
 	}
-	
+
 	// Activation pattern but skill doesn't exist
 	skill = exec.checkSkillActivation("Let me [use-skill:unknown-skill] for this")
 	if skill != nil {
@@ -544,7 +543,7 @@ func TestExecutor_CheckSkillActivation(t *testing.T) {
 // Test hooks for skill loading
 func TestExecutor_OnSkillLoadedHook(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	exec := NewExecutor(wf, provider, nil, nil)
 
 	// Register hook
@@ -563,16 +562,16 @@ func TestExecutor_OnSkillLoadedHook(t *testing.T) {
 // Test MCP tool call parsing
 func TestExecutor_MCPToolNameParsing(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	exec := NewExecutor(wf, provider, nil, nil)
-	
+
 	// Without MCP manager, should error
 	_, err := exec.executeMCPTool(context.Background(), llm.ToolCallResponse{
 		ID:   "call_1",
 		Name: "mcp_filesystem_read_file",
 		Args: map[string]interface{}{"path": "/tmp/test"},
 	})
-	
+
 	if err == nil {
 		t.Error("expected error without MCP manager")
 	}
@@ -593,11 +592,11 @@ func TestExecutor_AllCallbacks(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done")
 
 	exec := NewExecutor(wf, provider, nil, nil)
-	
+
 	var goalStarted, goalCompleted string
 	exec.Hooks().On(hooks.GoalStart, func(_ context.Context, evt hooks.Event) {
 		goalStarted = evt.Data["name"].(string)
@@ -605,9 +604,9 @@ func TestExecutor_AllCallbacks(t *testing.T) {
 	exec.Hooks().On(hooks.GoalComplete, func(_ context.Context, evt hooks.Event) {
 		goalCompleted = evt.Data["name"].(string)
 	})
-	
+
 	exec.Run(context.Background(), nil)
-	
+
 	if goalStarted != "goal1" {
 		t.Errorf("expected goalStarted 'goal1', got %q", goalStarted)
 	}
@@ -616,7 +615,7 @@ func TestExecutor_AllCallbacks(t *testing.T) {
 	}
 }
 
-// Test spawn_agent tool is registered by default
+// Test the executor binds its spawner to the runtime's spawn_agents binder
 func TestExecutor_SpawnAgentToolRegistered(t *testing.T) {
 	wf := &agentfile.Workflow{
 		Name: "test",
@@ -628,19 +627,34 @@ func TestExecutor_SpawnAgentToolRegistered(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
-	registry := tools.NewRegistry(nil)
+	provider := llmmock.New()
+	provider.SetResponse("sub-agent done")
+	registry, binder := newTestRegistry(t, t.TempDir())
 
-	exec := NewExecutor(wf, provider, registry, nil)
-	_ = exec // executor created
+	// Before New, the tool exists but has no spawner bound.
+	if _, err := registry.Execute(context.Background(), "spawn_agents", map[string]any{
+		"agents": []any{map[string]any{"role": "r", "task": "t"}},
+	}); err == nil {
+		t.Fatal("expected spawn_agents to fail before binding")
+	}
 
-	// Verify spawn_agent is in the registry
-	if !registry.Has("spawn_agent") {
-		t.Error("expected spawn_agent tool to be registered")
+	New(Config{Workflow: wf, Model: provider, Registry: registry, SpawnBinder: binder})
+
+	if !registry.Has("spawn_agents") {
+		t.Fatal("expected spawn_agents tool to be registered")
+	}
+	out, err := registry.Execute(context.Background(), "spawn_agents", map[string]any{
+		"agents": []any{map[string]any{"role": "researcher", "task": "look"}},
+	})
+	if err != nil {
+		t.Fatalf("spawn_agents after bind: %v", err)
+	}
+	if out != "sub-agent done" {
+		t.Errorf("expected bound spawner output, got %q", out)
 	}
 }
 
-// Test orchestrator prompt injection when spawn_agent is available
+// Test orchestrator prompt injection when spawn_agents is available
 func TestExecutor_OrchestratorPromptInjected(t *testing.T) {
 	wf := &agentfile.Workflow{
 		Name: "test",
@@ -652,10 +666,10 @@ func TestExecutor_OrchestratorPromptInjected(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done")
-	pol := policy.New()
-	registry := tools.NewRegistry(pol)
+	pol := permissivePolicy()
+	registry, _ := newTestRegistry(t, t.TempDir())
 
 	exec := NewExecutor(wf, provider, registry, pol)
 	exec.Run(context.Background(), nil)
@@ -679,7 +693,7 @@ func TestExecutor_OrchestratorPromptInjected(t *testing.T) {
 	}
 }
 
-// Test sub-agent depth=1 enforcement (spawn_agent not available to sub-agents)
+// Test sub-agent depth=1 enforcement (spawn_agents not available to sub-agents)
 func TestExecutor_SubAgentCannotSpawn(t *testing.T) {
 	wf := &agentfile.Workflow{
 		Name: "test",
@@ -693,7 +707,7 @@ func TestExecutor_SubAgentCannotSpawn(t *testing.T) {
 
 	// Track what tools are available to sub-agent
 	var subAgentTools []string
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		// Capture tool names from request
 		for _, tool := range req.Tools {
@@ -705,8 +719,8 @@ func TestExecutor_SubAgentCannotSpawn(t *testing.T) {
 		}, nil
 	}
 
-	pol := policy.New()
-	registry := tools.NewRegistry(pol)
+	pol := permissivePolicy()
+	registry, _ := newTestRegistry(t, t.TempDir())
 	exec := NewExecutor(wf, provider, registry, pol)
 
 	// Manually trigger sub-agent spawn to inspect tool filtering
@@ -715,10 +729,13 @@ func TestExecutor_SubAgentCannotSpawn(t *testing.T) {
 		t.Fatalf("spawn error: %v", err)
 	}
 
-	// spawn_agent should NOT be in sub-agent's tool list
+	// spawn_agents should NOT be in sub-agent's tool list
+	if len(subAgentTools) == 0 {
+		t.Fatal("expected sub-agent to see some tools")
+	}
 	for _, name := range subAgentTools {
-		if name == "spawn_agent" {
-			t.Error("spawn_agent should not be available to sub-agents")
+		if name == "spawn_agents" {
+			t.Error("spawn_agents should not be available to sub-agents")
 		}
 	}
 }
@@ -820,10 +837,10 @@ func TestExecutor_GoalWithStructuredOutput(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse(`{"summary": "Test summary", "recommendations": ["Do X", "Do Y"]}`)
-	pol := policy.New()
-	registry := tools.NewRegistry(pol)
+	pol := permissivePolicy()
+	registry, _ := newTestRegistry(t, t.TempDir())
 
 	exec := NewExecutor(wf, provider, registry, pol)
 	_, err := exec.Run(context.Background(), nil)
@@ -849,7 +866,6 @@ func TestExecutor_GoalWithStructuredOutput(t *testing.T) {
 		t.Errorf("expected summary='Test summary', got %q", exec.outputs["summary"])
 	}
 }
-
 
 // Test supervision helpers
 
