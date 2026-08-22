@@ -307,15 +307,16 @@ func (rt *Runtime) setupRegistry() error {
 
 	rt.spawn = tools.NewSpawnBinder()
 	reg, err := buildToolset(toolsetConfig{
-		Policy:      rt.pol,
-		Workspace:   workspace,
-		Creds:       rt.creds,
-		Summarizer:  summarizer,
-		HTTPTimeout: rt.httpTimeout(),
-		Scratchpad:  rt.scratchpad,
-		Memory:      rt.bleveStore,
-		BashGate:    rt.bashGate,
-		Spawn:       rt.spawn,
+		Policy:           rt.pol,
+		Workspace:        workspace,
+		Creds:            rt.creds,
+		Summarizer:       summarizer,
+		HTTPTimeout:      rt.httpTimeout(),
+		Scratchpad:       rt.scratchpad,
+		Memory:           rt.bleveStore,
+		BashGate:         rt.bashGate,
+		Spawn:            rt.spawn,
+		SearchCooldownMS: rt.cfg.Timeouts.SearchCooldownMS,
 	})
 	if err != nil {
 		return err

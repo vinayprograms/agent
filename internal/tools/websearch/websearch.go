@@ -38,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -82,9 +83,12 @@ const (
 // Tool implements agentkit's tools.Tool interface for web_search.
 //
 // Every search waits out a short cooldown since the previous one on the same
-// Tool; DuckDuckGo adds a longer cooldown plus bounded retries with backoff
-// on 202/403/429 (worst case 2s + 3 retries of up to 5s stays inside the
-// default 30s web_search timeout). Tools do not share limiter state.
+// Tool; DuckDuckGo adds a longer cooldown plus bounded retries with jittered
+// backoff on 202/403/429 (worst case 2s + 3 retries of up to 5s stays inside
+// the default 30s web_search timeout). Results are cached per (provider,
+// query, count) for 5 minutes, so repeated lookups — including from
+// concurrent sub-agents sharing this Tool — skip both the cooldown and the
+// HTTP call. Tools do not share limiter or cache state with each other.
 type Tool struct {
 	searxngURL string // config value > credentials "searxng" > SEARXNG_URL env
 	braveKey   string // credentials "brave" > BRAVE_API_KEY env
@@ -99,11 +103,13 @@ type Tool struct {
 	ddgURL    string
 
 	now           func() time.Time
-	searchLimit   limiter // all providers
-	ddgLimit      limiter // DuckDuckGo only
+	randFloat     func() float64 // jitter source for DDG backoff, [0,1)
+	searchLimit   limiter        // all providers
+	ddgLimit      limiter        // DuckDuckGo only
 	ddgBackoff    time.Duration
 	ddgMaxBackoff time.Duration
 	ddgMaxRetries int
+	cache         resultCache // shared across sub-agents; a Tool is one instance
 }
 
 var _ tools.Tool = (*Tool)(nil)
@@ -115,6 +121,13 @@ type Option func(*Tool)
 // The caller's context remains the primary deadline.
 func WithHTTPTimeout(d time.Duration) Option {
 	return func(t *Tool) { t.client.Timeout = d }
+}
+
+// WithCooldown sets the minimum gap between DuckDuckGo queries (default
+// 2s; see defaultDDGCooldown). It does not affect the other providers,
+// which are rate limited by their own APIs.
+func WithCooldown(d time.Duration) Option {
+	return func(t *Tool) { t.ddgLimit.cooldown = d }
 }
 
 // New constructs the replacement web_search tool.
@@ -140,6 +153,7 @@ func New(creds credentials.Lookup, searxngURL, provider string, opts ...Option) 
 		tavilyURL:     tavilySearchURL,
 		ddgURL:        ddgLiteURL,
 		now:           time.Now,
+		randFloat:     rand.Float64,
 		searchLimit:   limiter{cooldown: defaultCooldown},
 		ddgLimit:      limiter{cooldown: defaultDDGCooldown},
 		ddgBackoff:    defaultDDGBackoff,
@@ -221,6 +235,11 @@ func (t *Tool) Execute(ctx context.Context, args tools.Args) (string, error) {
 	}
 	count := min(max(args.IntOr("count", 5), 1), 10)
 
+	key := cacheKey{provider: t.provider, query: query, count: count}
+	if cached, ok := t.cache.get(key, t.now()); ok {
+		return cached, nil
+	}
+
 	if err := t.searchLimit.wait(ctx, t.now); err != nil {
 		return "", err
 	}
@@ -228,7 +247,9 @@ func (t *Tool) Execute(ctx context.Context, args tools.Args) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return formatResults(results), nil
+	formatted := formatResults(results)
+	t.cache.put(key, formatted, t.now())
+	return formatted, nil
 }
 
 func (t *Tool) search(ctx context.Context, query string, count int) ([]SearchResult, error) {

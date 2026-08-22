@@ -1,6 +1,9 @@
 package websearch
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // Representative fragment of a lite.duckduckgo.com response. Attribute order
 // (href before class) and the //duckduckgo.com/l/?uddg= redirect wrapper mirror
@@ -61,5 +64,28 @@ func TestParseDuckDuckGoLite_SkipsNonHTTPLinks(t *testing.T) {
 	results := parseDuckDuckGoLite(sample, 5)
 	if len(results) != 2 || results[0].URL != "https://go.dev/doc/" {
 		t.Fatalf("expected the relative link to be skipped, got %+v", results)
+	}
+}
+
+func TestJitteredBackoff_Bounds(t *testing.T) {
+	tl := New(nil, "", "")
+	backoff := 2 * time.Second
+
+	tl.randFloat = func() float64 { return 0 }
+	if got := tl.jitteredBackoff(backoff); got != backoff {
+		t.Errorf("jitteredBackoff with randFloat=0 = %v, want exactly the base backoff %v", got, backoff)
+	}
+
+	tl.randFloat = func() float64 { return 1 }
+	if want, got := backoff+time.Duration(float64(backoff)*ddgJitterFraction), tl.jitteredBackoff(backoff); got != want {
+		t.Errorf("jitteredBackoff with randFloat=1 = %v, want %v (backoff + %.0f%% jitter)", got, want, ddgJitterFraction*100)
+	}
+
+	// Any value in between must stay within [backoff, backoff*(1+fraction)].
+	tl.randFloat = func() float64 { return 0.37 }
+	got := tl.jitteredBackoff(backoff)
+	upperBound := backoff + time.Duration(float64(backoff)*ddgJitterFraction)
+	if got < backoff || got > upperBound {
+		t.Errorf("jitteredBackoff(%v) = %v, want in [%v, %v]", backoff, got, backoff, upperBound)
 	}
 }

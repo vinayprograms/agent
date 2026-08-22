@@ -39,6 +39,10 @@ type toolsetConfig struct {
 	// may be empty, in which case credentials and env decide.
 	SearXNGURL     string
 	SearchProvider string
+	// SearchCooldownMS is the minimum gap between DuckDuckGo queries
+	// ([timeouts].search_cooldown_ms). Zero keeps the websearch package
+	// default (2s).
+	SearchCooldownMS int
 }
 
 // buildToolset registers every builtin tool that the policy enables.
@@ -71,8 +75,13 @@ func buildToolset(c toolsetConfig) (*tools.Registry, error) {
 	}
 
 	var fetchOpts []webfetch.Option
+	var searchOpts []websearch.Option
 	if c.HTTPTimeout > 0 {
 		fetchOpts = append(fetchOpts, webfetch.WithHTTPTimeout(c.HTTPTimeout))
+		searchOpts = append(searchOpts, websearch.WithHTTPTimeout(c.HTTPTimeout))
+	}
+	if c.SearchCooldownMS > 0 {
+		searchOpts = append(searchOpts, websearch.WithCooldown(time.Duration(c.SearchCooldownMS)*time.Millisecond))
 	}
 
 	steps := []func() error{
@@ -114,12 +123,14 @@ func buildToolset(c toolsetConfig) (*tools.Registry, error) {
 			return add(tools.Bash(ws), c.BashGate)
 		},
 
-		// Web: domain guard on fetch. web_fetch is the in-repo replacement
-		// for the kit's builtin (see its package doc for why).
+		// Web: domain guard on fetch; both fetch and search are in-repo
+		// replacements for the kit's builtins (see their package docs).
 		func() error {
 			return add(webfetch.New(c.Summarizer, fetchOpts...), domainGuard{pol: c.Policy, tool: "web_fetch"})
 		},
-		func() error { return add(websearch.New(c.Creds, c.SearXNGURL, c.SearchProvider)) },
+		func() error {
+			return add(websearch.New(c.Creds, c.SearXNGURL, c.SearchProvider, searchOpts...))
+		},
 
 		// Sub-agents (late-bound by the executor).
 		func() error {
