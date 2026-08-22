@@ -63,7 +63,7 @@ Wave D:
 9. [ ] U9 cmd/agent — runtime wiring (toolset builder, guards, shellguard, contentguard, telemetry), serve (messaging/registry/second conn), workflow, tests
 10. [x] U10 cmd/agentmem — memory API
 Wave E:
-11. [ ] U11 tests/{integration,failure,performance,security,system} — llmmock, registry builder, policy files
+11. [x] U11 tests/{integration,failure,performance,security,system} — llmmock, registry builder, policy files
 12. [x] U12 examples/**/policy.toml + docs (security 06/07/10, configuration, usage) to new schema
 Final: verify.md gate (gofmt/vet/build/test -race), then parked-smells cleanup, then the idiomatic refactor + 100% coverage phases (separate ledger section below).
 
@@ -115,3 +115,7 @@ Flag for U9/U11: examples/agent/memory/simple-memory.agent references `memory_fo
 ### U8 internal/executor — DONE (799163e, af606c4, 4dc30cb; verifier FAIL→PASS)
 API for U9/U11: `New(Config) (*Executor, error)` — NewExecutor/NewExecutorWithFactory DELETED. Config{Workflow, Model llm.Model, Resolver llm.Resolver, Registry *tools.Registry, Policy, SpawnBinder *tools.SpawnBinder, Logger *slog.Logger, Debug, MCPManager, SkillRefs, Session, SessionManager, PersistentSession, CheckpointStore, Supervisor, HumanAvailable, HumanInputChan, Security *SecurityConfig{Mode, Scope, Screener, Reviewer(REQUIRED), Patterns, Keywords}, TimeoutMCP/WebSearch/WebFetch, ObservationExtractor (=*memory.Extractor), ObservationStore (=BleveStore/InMemoryStore), MetricsCollector, InterruptBuffer, DiscussPublisher, WorkspaceContext, Hooks}. Executor builds contentguard (Skip = registry minus {bash,write,edit,web_fetch,spawn_agents,rm,mv,patch}); guard error ⇒ New error (fail-closed); Reviewer required in every mode. `(*Executor).LogBashSecurity` matches shellguard.Gate.OnDecision. Definitions filtered by policy + execution refused for disabled tools. Session meta keys unchanged; value spellings now kit's (`tool:X`, "no untrusted content", "skipped tool: X"). coverage executor 87.3%.
 parked-smells: hand-rolled semaphore→errgroup.SetLimit; atomic.AddInt32→atomic.Int32; observation goroutine context.Background (→WithoutCancel + lifetime); fmt.Errorf '%s'→%q; bare contentguard error (prefix "security:"); TestExecutor_ToolExecution `ls ..`; workspace.go 0%, converge multi-agent paths uncovered.
+### U11 tests/* — DONE (783c41e + 79c86cc, verifier PASS w/ fixes applied)
+new tests/internal/testkit: Registry(t,pol,ws,extra...) with path guards ("<tool>: access denied: …") + shellguard bash gate; Executor(t,cfg); PermissivePolicy(). All tests re-pointed (llmmock, executor.New, registry.Execute, v1.2.0 policy literals, t.Context). BashCommandInjection now enforces && and | cases. TestSystem_CredentialsLoading deleted (asserted nothing). tests/system root resolution fixed; runtime tests need U9.
+parked-smells: glob has no path guard (comment narrowed?); pathGuard CheckPath uses process cwd for relative paths; benchmarks use context.Background/b.N; getSrcDir alias; fixture write errors ignored; tests/system drives CLI via go run subprocess.
+Flag: examples/agent/memory/simple-memory.agent references memory_forget (not a v1.2.0 tool) → fix in U9 or refactor phase.

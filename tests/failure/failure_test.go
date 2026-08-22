@@ -12,9 +12,10 @@ import (
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/testutil/llmmock"
+	"github.com/vinayprograms/agent/tests/internal/testkit"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/policy"
-	"github.com/vinayprograms/agentkit/tools"
 )
 
 // TestFailure_LLMError tests handling of LLM API errors.
@@ -29,11 +30,11 @@ func TestFailure_LLMError(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetError(errors.New("API rate limit exceeded"))
 
-	exec := executor.NewExecutor(wf, provider, nil, nil)
-	result, err := exec.Run(context.Background(), nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
+	result, err := exec.Run(t.Context(), nil)
 
 	if err == nil {
 		t.Error("expected error from LLM failure")
@@ -59,7 +60,7 @@ func TestFailure_ToolError(t *testing.T) {
 	}
 
 	// Provider that requests reading a non-existent file
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		for _, msg := range req.Messages {
 			if msg.Role == "tool" {
@@ -80,12 +81,11 @@ func TestFailure_ToolError(t *testing.T) {
 	}
 
 	pol := policy.New()
-	pol.Workspace = t.TempDir()
-	pol.Tools["read"] = &policy.ToolPolicy{Enabled: true, Allow: []string{"**"}}
-	registry := tools.NewRegistry(pol)
+	pol.Tools["read"] = &policy.ToolPolicy{Allow: []string{"**"}}
+	registry := testkit.Registry(t, pol, t.TempDir())
 
-	exec := executor.NewExecutor(wf, provider, registry, pol)
-	result, err := exec.Run(context.Background(), nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider, Registry: registry, Policy: pol})
+	result, err := exec.Run(t.Context(), nil)
 
 	// Should complete despite tool error (error reported to LLM)
 	if err != nil {
@@ -109,7 +109,7 @@ func TestFailure_ContextCancellation(t *testing.T) {
 	}
 
 	// Provider that blocks until context is cancelled
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		select {
 		case <-ctx.Done():
@@ -119,10 +119,10 @@ func TestFailure_ContextCancellation(t *testing.T) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 
-	exec := executor.NewExecutor(wf, provider, nil, nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
 	_, err := exec.Run(ctx, nil)
 
 	if err == nil {
@@ -148,10 +148,10 @@ func TestFailure_MissingInput(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
-	exec := executor.NewExecutor(wf, provider, nil, nil)
+	provider := llmmock.New()
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
 
-	_, err := exec.Run(context.Background(), nil) // No inputs provided
+	_, err := exec.Run(t.Context(), nil) // No inputs provided
 
 	if err == nil {
 		t.Error("expected error for missing input")
@@ -200,16 +200,17 @@ func TestFailure_FileSystemError(t *testing.T) {
 	os.WriteFile(restrictedFile, []byte("test"), 0644)
 
 	pol := policy.New()
-	pol.Workspace = tmpDir
-	pol.DefaultDeny = true // No allow patterns = all denied
-	registry := tools.NewRegistry(pol)
-	readTool := registry.Get("read")
+	pol.DefaultDeny = true
+	// read is enabled but only for the allowed/ subtree: the restricted file
+	// must be rejected by the path guard at execute time.
+	pol.Tools["read"] = &policy.ToolPolicy{Allow: []string{filepath.Join(tmpDir, "allowed", "**")}}
+	registry := testkit.Registry(t, pol, tmpDir)
 
-	_, err = readTool.Execute(context.Background(), map[string]interface{}{
+	_, err = registry.Execute(t.Context(), "read", map[string]any{
 		"path": restrictedFile,
 	})
-	if err == nil {
-		t.Error("expected policy denial")
+	if err == nil || !strings.Contains(err.Error(), "denied") {
+		t.Errorf("expected policy denial, got %v", err)
 	}
 }
 
@@ -228,7 +229,7 @@ func TestFailure_RecoveryFromPartialExecution(t *testing.T) {
 	}
 
 	callCount := 0
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		callCount++
 		if callCount == 2 {
@@ -237,8 +238,8 @@ func TestFailure_RecoveryFromPartialExecution(t *testing.T) {
 		return &llm.ChatResponse{Content: "Done"}, nil
 	}
 
-	exec := executor.NewExecutor(wf, provider, nil, nil)
-	result, err := exec.Run(context.Background(), nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
+	result, err := exec.Run(t.Context(), nil)
 
 	if err == nil {
 		t.Error("expected error from step 2")
@@ -246,12 +247,12 @@ func TestFailure_RecoveryFromPartialExecution(t *testing.T) {
 	if result.Status != executor.StatusFailed {
 		t.Errorf("expected Failed status, got %s", result.Status)
 	}
-	
+
 	// Step 3 should not have been reached
 	if _, ok := result.Outputs["step3"]; ok {
 		t.Error("step3 should not have been executed")
 	}
-	
+
 	// Verify exactly 2 LLM calls were made (step1 succeeded, step2 failed)
 	if callCount != 2 {
 		t.Errorf("expected 2 LLM calls, got %d", callCount)
@@ -284,12 +285,12 @@ func TestFailure_GracefulDegradation(t *testing.T) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done without tools")
 
 	// nil registry should work (no tools available)
-	exec := executor.NewExecutor(wf, provider, nil, nil)
-	result, err := exec.Run(context.Background(), nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
+	result, err := exec.Run(t.Context(), nil)
 
 	if err != nil {
 		t.Errorf("unexpected error with nil registry: %v", err)

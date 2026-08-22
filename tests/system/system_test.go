@@ -16,8 +16,8 @@ func buildAgent(t *testing.T) string {
 	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "agent")
 
-	cmd := exec.Command("go", "build", "-o", binPath, "../../cmd/agent")
-	cmd.Dir = filepath.Join(getProjectRoot(t), "src")
+	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/agent")
+	cmd.Dir = getProjectRoot(t)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build agent: %v\n%s", err, output)
 	}
@@ -25,13 +25,16 @@ func buildAgent(t *testing.T) string {
 	return binPath
 }
 
+// getProjectRoot returns the module root (the directory holding go.mod).
 func getProjectRoot(t *testing.T) string {
 	t.Helper()
-	// Find project root by looking for go.mod
-	dir, _ := os.Getwd()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Dir(dir) // Parent of src
+			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -68,12 +71,11 @@ RUN main USING analyze
 	}
 }
 
+// getSrcDir returns the directory `go run ./cmd/agent` must run from: the
+// module root.
 func getSrcDir(t *testing.T) string {
 	t.Helper()
-	// Get current file's directory and go up to src
-	dir, _ := os.Getwd()
-	// We're in tests/system, need to go up two levels to src
-	return filepath.Join(dir, "..", "..")
+	return getProjectRoot(t)
 }
 
 // TestSystem_ValidateInvalidAgentfile tests validation of invalid files.
@@ -134,7 +136,8 @@ RUN step1 USING analyze, summarize
 	os.WriteFile(path, []byte(agentfile), 0644)
 
 	cmd := exec.Command("go", "run", "./cmd/agent", "inspect", path)
-	srcDir := getSrcDir(t); cmd.Dir = srcDir
+	srcDir := getSrcDir(t)
+	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("inspect failed: %v\n%s", err, output)
@@ -190,7 +193,8 @@ RUN main USING analyze
 	os.WriteFile(path, []byte(agentfile), 0644)
 
 	cmd := exec.Command("go", "run", "./cmd/agent", "validate", path)
-	srcDir := getSrcDir(t); cmd.Dir = srcDir
+	srcDir := getSrcDir(t)
+	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("validate with external files failed: %v\n%s", err, output)
@@ -214,7 +218,8 @@ RUN main USING analyze
 	os.WriteFile(path, []byte(agentfile), 0644)
 
 	cmd := exec.Command("go", "run", "./cmd/agent", "validate", path)
-	srcDir := getSrcDir(t); cmd.Dir = srcDir
+	srcDir := getSrcDir(t)
+	cmd.Dir = srcDir
 	output, _ := cmd.CombinedOutput()
 
 	// Error message changed with smart resolution
@@ -226,7 +231,8 @@ RUN main USING analyze
 // TestSystem_HelpCommand tests the help command.
 func TestSystem_HelpCommand(t *testing.T) {
 	cmd := exec.Command("go", "run", "./cmd/agent", "--help")
-	srcDir := getSrcDir(t); cmd.Dir = srcDir
+	srcDir := getSrcDir(t)
+	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("help failed: %v\n%s", err, output)
@@ -250,7 +256,8 @@ func TestSystem_HelpCommand(t *testing.T) {
 // TestSystem_VersionCommand tests the version command.
 func TestSystem_VersionCommand(t *testing.T) {
 	cmd := exec.Command("go", "run", "./cmd/agent", "version")
-	srcDir := getSrcDir(t); cmd.Dir = srcDir
+	srcDir := getSrcDir(t)
+	cmd.Dir = srcDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("version failed: %v\n%s", err, output)
@@ -264,7 +271,8 @@ func TestSystem_VersionCommand(t *testing.T) {
 // TestSystem_UnknownCommand tests handling of unknown commands.
 func TestSystem_UnknownCommand(t *testing.T) {
 	cmd := exec.Command("go", "run", "./cmd/agent", "unknown")
-	srcDir := getSrcDir(t); cmd.Dir = srcDir
+	srcDir := getSrcDir(t)
+	cmd.Dir = srcDir
 	output, _ := cmd.CombinedOutput()
 
 	// Cobra reports unknown commands as "unknown command"
@@ -421,31 +429,4 @@ RUN main USING main
 	if !strings.Contains(outStr, "fast") {
 		t.Error("expected 'fast' profile in inspect output")
 	}
-}
-
-// TestSystem_CredentialsLoading tests that credentials.toml is loaded.
-func TestSystem_CredentialsLoading(t *testing.T) {
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
-
-	// Create credentials.toml
-	credContent := `
-[anthropic]
-api_key = "test-key-from-toml"
-`
-	os.WriteFile("credentials.toml", []byte(credContent), 0600)
-
-	// Clear existing env
-	os.Unsetenv("ANTHROPIC_API_KEY")
-
-	// Import and test credentials package directly
-	// (The CLI test would require spawning a subprocess that inherits the file)
-	
-	// For now, just verify the file format is correct
-	srcDir := getSrcDir(t)
-	cmd := exec.Command("go", "run", "./internal/credentials", "-test")
-	cmd.Dir = srcDir
-	// This just verifies the package compiles correctly in context
 }

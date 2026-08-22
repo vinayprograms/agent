@@ -7,14 +7,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/testutil/llmmock"
+	"github.com/vinayprograms/agent/tests/internal/testkit"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/policy"
-	"github.com/vinayprograms/agentkit/tools"
 )
+
+// modelFunc adapts a function to llm.Model. Unlike llmmock it keeps no
+// state, so it is safe for tests whose sub-agents call it in parallel.
+type modelFunc func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error)
+
+func (f modelFunc) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	return f(ctx, req)
+}
 
 // TestParserToExecutor tests the full flow from parsing to execution.
 func TestParserToExecutor(t *testing.T) {
@@ -44,7 +54,7 @@ RUN main USING analyze, summarize
 
 	// Setup mock provider
 	callCount := 0
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		callCount++
 		if callCount == 1 {
@@ -55,11 +65,10 @@ RUN main USING analyze, summarize
 
 	// Execute
 	pol := policy.New()
-	pol.Workspace = tmpDir
-	registry := tools.NewRegistry(pol)
+	registry := testkit.Registry(t, pol, tmpDir)
 
-	exec := executor.NewExecutor(wf, provider, registry, pol)
-	result, err := exec.Run(context.Background(), nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider, Registry: registry, Policy: pol})
+	result, err := exec.Run(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -102,7 +111,7 @@ RUN main USING read_file
 
 	// Mock provider that uses read tool
 	toolCalled := false
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		// First call: request tool
 		for _, msg := range req.Messages {
@@ -119,12 +128,11 @@ RUN main USING read_file
 	}
 
 	pol := policy.New()
-	pol.Workspace = tmpDir
-	pol.Tools["read"] = &policy.ToolPolicy{Enabled: true, Allow: []string{"**"}}
-	registry := tools.NewRegistry(pol)
+	pol.Tools["read"] = &policy.ToolPolicy{Allow: []string{"**"}}
+	registry := testkit.Registry(t, pol, tmpDir)
 
-	exec := executor.NewExecutor(wf, provider, registry, pol)
-	_, err = exec.Run(context.Background(), nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider, Registry: registry, Policy: pol})
+	_, err = exec.Run(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -153,7 +161,7 @@ RUN main USING write_sensitive
 	}
 
 	// Mock provider that tries to write to /etc/passwd
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		for _, msg := range req.Messages {
 			if msg.Role == "tool" {
@@ -176,16 +184,14 @@ RUN main USING write_sensitive
 
 	pol := policy.New()
 	pol.DefaultDeny = true
-	pol.Workspace = tmpDir
 	pol.Tools["write"] = &policy.ToolPolicy{
-		Enabled: true,
-		Allow:   []string{tmpDir + "/**"},
-		Deny:    []string{"/etc/*"},
+		Allow: []string{tmpDir + "/**"},
+		Deny:  []string{"/etc/*"},
 	}
-	registry := tools.NewRegistry(pol)
+	registry := testkit.Registry(t, pol, tmpDir)
 
-	exec := executor.NewExecutor(wf, provider, registry, pol)
-	_, err = exec.Run(context.Background(), nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider, Registry: registry, Policy: pol})
+	_, err = exec.Run(t.Context(), nil)
 	// Should complete (policy error is reported to LLM, not fatal)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -223,31 +229,38 @@ RUN main USING review
 
 	// Track agent calls
 	// Note: system prompts now include TersenessGuidance prefix, so use Contains
+	// Agents run in parallel, so the tracking map needs a lock.
+	var mu sync.Mutex
 	agentCalls := make(map[string]bool)
-	provider := llm.NewMockProvider()
-	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	provider := modelFunc(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		for _, msg := range req.Messages {
 			if msg.Role == "system" {
 				if strings.Contains(msg.Content, "You are a critic") {
+					mu.Lock()
 					agentCalls["critic"] = true
+					mu.Unlock()
 					return &llm.ChatResponse{Content: "Needs improvement"}, nil
 				}
 				if strings.Contains(msg.Content, "You are an optimist") {
+					mu.Lock()
 					agentCalls["optimist"] = true
+					mu.Unlock()
 					return &llm.ChatResponse{Content: "Looks great!"}, nil
 				}
 			}
 		}
 		// Synthesis call
 		return &llm.ChatResponse{Content: "Mixed feedback"}, nil
-	}
+	})
 
-	exec := executor.NewExecutor(wf, provider, nil, nil)
-	result, err := exec.Run(context.Background(), nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
+	result, err := exec.Run(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
+	mu.Lock()
+	defer mu.Unlock()
 	if !agentCalls["critic"] {
 		t.Error("critic agent was not called")
 	}
@@ -287,7 +300,7 @@ RUN main USING research
 	// Track tool calls from sub-agent
 	var toolsReceived []string
 	callCount := 0
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.ChatFunc = func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		callCount++
 		// First call should receive tools (sub-agent execution)
@@ -301,12 +314,11 @@ RUN main USING research
 		return &llm.ChatResponse{Content: "Done"}, nil
 	}
 
-	// Create tool registry with a test tool
-	pol := policy.New()
-	registry := tools.NewRegistry(pol)
+	// Create a tool registry with every builtin enabled
+	registry := testkit.Registry(t, testkit.PermissivePolicy(), tmpDir)
 
-	exec := executor.NewExecutor(wf, provider, registry, nil)
-	result, err := exec.Run(context.Background(), nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider, Registry: registry})
+	result, err := exec.Run(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
