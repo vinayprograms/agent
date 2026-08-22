@@ -24,7 +24,7 @@ func TestDefaultDirs(t *testing.T) {
 	if got, want := DefaultConfigDir("/h"), filepath.Join("/h", ".config", "grid"); got != want {
 		t.Errorf("DefaultConfigDir(/h) = %q, want %q", got, want)
 	}
-	if got, want := DefaultStateDir("/h"), filepath.Join("/h", ".local", "grid"); got != want {
+	if got, want := DefaultStateDir("/h"), filepath.Join("/h", ".local", "agent"); got != want {
 		t.Errorf("DefaultStateDir(/h) = %q, want %q", got, want)
 	}
 }
@@ -32,7 +32,7 @@ func TestDefaultDirs(t *testing.T) {
 func TestNew(t *testing.T) {
 	want := &Config{
 		LLM:       LLMConfig{MaxTokens: 4096},
-		State:     StateConfig{Location: "~/.local/grid"},
+		State:     StateConfig{Location: "~/.local/agent"},
 		Telemetry: TelemetryConfig{Protocol: ProtocolNoop},
 		Timeouts:  TimeoutsConfig{MCP: 60, WebSearch: 30, WebFetch: 60},
 	}

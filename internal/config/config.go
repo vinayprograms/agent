@@ -21,9 +21,9 @@ func DefaultConfigDir(home string) string {
 }
 
 // DefaultStateDir is the default base directory for persistent state
-// (~/.local/grid), used when [state] location is unset.
+// (~/.local/agent), used when [state] location is unset.
 func DefaultStateDir(home string) string {
-	return filepath.Join(home, ".local", "grid")
+	return filepath.Join(home, ".local", "agent")
 }
 
 // LoadOptions controls layered config loading.
