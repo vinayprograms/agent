@@ -252,7 +252,7 @@ func TestSetupTelemetry(t *testing.T) {
 
 func TestProfileResolver(t *testing.T) {
 	w := testWorkflow(t, func(c *config.Config) {
-		c.Profiles = map[string]config.Profile{
+		c.Profiles = map[string]config.LLMConfig{
 			"fast":   {Provider: "ollama-local", Model: "fast-model"},
 			"broken": {Provider: "anthropic", Model: "claude-opus"},
 		}
@@ -285,7 +285,7 @@ func TestProfileResolver(t *testing.T) {
 
 func TestCreateTriageProvider(t *testing.T) {
 	w := testWorkflow(t, func(c *config.Config) {
-		c.Profiles = map[string]config.Profile{
+		c.Profiles = map[string]config.LLMConfig{
 			"triage": {Provider: "ollama-local", Model: "t"},
 			"broken": {Provider: "anthropic", Model: "claude-opus"},
 		}

@@ -101,7 +101,7 @@ func (rt *runtime) resolveStoragePath() {
 	rt.storagePath = rt.cfg.State.Location
 	if rt.storagePath == "" {
 		home, _ := os.UserHomeDir()
-		rt.storagePath = filepath.Join(home, ".local", "grid")
+		rt.storagePath = config.DefaultStateDir(home)
 	}
 	if len(rt.storagePath) > 0 && rt.storagePath[0] == '~' {
 		home, _ := os.UserHomeDir()
@@ -278,13 +278,13 @@ func (rt *runtime) setupTelemetry() error {
 	}
 	protocol := rt.cfg.Telemetry.Protocol
 	if protocol == "" {
-		protocol = "grpc"
+		protocol = config.ProtocolGRPC
 	}
 	shutdown, err := telemetry.Init(context.Background(), telemetry.Config{
 		ServiceName:    "agent",
 		ServiceVersion: version,
 		Endpoint:       rt.cfg.Telemetry.Endpoint,
-		Protocol:       protocol,
+		Protocol:       string(protocol),
 		Insecure:       rt.cfg.Telemetry.Insecure,
 		Headers:        rt.cfg.Telemetry.Headers,
 	})
@@ -466,7 +466,7 @@ func (f *profileResolver) Model(profile string) (llm.Model, error) {
 		return cached, nil
 	}
 
-	profileCfg := f.rt.cfg.GetProfile(profile)
+	profileCfg := f.rt.cfg.Profile(profile)
 	if profileCfg.Model == "" {
 		return f.fallback, nil
 	}
@@ -507,7 +507,7 @@ func (rt *runtime) determineSecurityConfig() (executor.SecurityMode, string, str
 // triage profile, else the small LLM (may be nil).
 func (rt *runtime) createTriageProvider() llm.Model {
 	if rt.cfg.Security.TriageLLM != "" {
-		m, err := rt.newModel(rt.cfg.GetProfile(rt.cfg.Security.TriageLLM), llm.RetryConfig{})
+		m, err := rt.newModel(rt.cfg.Profile(rt.cfg.Security.TriageLLM), llm.RetryConfig{})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: triage_llm %q unavailable, using small_llm: %v\n", rt.cfg.Security.TriageLLM, err)
 			return rt.smallLLM

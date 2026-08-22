@@ -56,6 +56,9 @@ func (w *workflow) loadConfig() error {
 	if err != nil {
 		return err
 	}
+	for _, d := range w.cfg.Deprecations {
+		fmt.Fprintf(os.Stderr, "WARN: %s\n", d)
+	}
 
 	// Strict validation: workspace conflict
 	if err := w.validateWorkspaceConfig(); err != nil {

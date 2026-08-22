@@ -1,391 +1,338 @@
-// Package config provides configuration loading and management.
 package config
 
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
-func writeConfigFile(t *testing.T, path, tomlBody string) {
+func writeFile(t *testing.T, path, body string) string {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(path, []byte(tomlBody), 0644); err != nil {
-		t.Fatalf("write config failed: %v", err)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	return path
+}
+
+func TestDefaultDirs(t *testing.T) {
+	if got, want := DefaultConfigDir("/h"), filepath.Join("/h", ".config", "grid"); got != want {
+		t.Errorf("DefaultConfigDir(/h) = %q, want %q", got, want)
+	}
+	if got, want := DefaultStateDir("/h"), filepath.Join("/h", ".local", "agent"); got != want {
+		t.Errorf("DefaultStateDir(/h) = %q, want %q", got, want)
 	}
 }
 
-func TestConfig_LoadWithPrecedence_Order(t *testing.T) {
-	tmpDir := t.TempDir()
-	projectDir := filepath.Join(tmpDir, "project")
-	homeDir := filepath.Join(tmpDir, "home")
-	envPath := filepath.Join(tmpDir, "env.toml")
-	cliPath := filepath.Join(tmpDir, "cli.toml")
-	globalPath := filepath.Join(homeDir, ".config", "grid", "agent.toml")
-	projectPath := filepath.Join(projectDir, "agent.toml")
-
-	t.Setenv("HOME", homeDir)
-	t.Setenv(EnvConfigPath, envPath)
-
-	writeConfigFile(t, globalPath, `
-[agent]
-id = "global-id"
-workspace = "/global-workspace"
-
-[llm]
-model = "global-model"
-max_tokens = 111
-`)
-	writeConfigFile(t, projectPath, `
-[agent]
-workspace = "/project-workspace"
-
-[llm]
-model = "project-model"
-`)
-	writeConfigFile(t, envPath, `
-[llm]
-model = "env-model"
-max_tokens = 222
-`)
-	writeConfigFile(t, cliPath, `
-[llm]
-model = "cli-model"
-`)
-
-	cfg, err := LoadWithPrecedence(LoadOptions{
-		ProjectDir: projectDir,
-		CLIPath:    cliPath,
-	})
-	if err != nil {
-		t.Fatalf("load with precedence failed: %v", err)
+func TestNew(t *testing.T) {
+	want := &Config{
+		LLM:       LLMConfig{MaxTokens: 4096},
+		State:     StateConfig{Location: "~/.local/agent"},
+		Telemetry: TelemetryConfig{Protocol: ProtocolNoop},
+		Timeouts:  TimeoutsConfig{MCP: 60, WebSearch: 30, WebFetch: 60},
 	}
-
-	if cfg.Agent.ID != "global-id" {
-		t.Fatalf("expected global agent.id to persist, got %q", cfg.Agent.ID)
-	}
-	if cfg.Agent.Workspace != "/project-workspace" {
-		t.Fatalf("expected project workspace override, got %q", cfg.Agent.Workspace)
-	}
-	if cfg.LLM.Model != "cli-model" {
-		t.Fatalf("expected CLI model override, got %q", cfg.LLM.Model)
-	}
-	if cfg.LLM.MaxTokens != 222 {
-		t.Fatalf("expected env max_tokens override, got %d", cfg.LLM.MaxTokens)
+	if diff := cmp.Diff(want, New()); diff != "" {
+		t.Errorf("New() mismatch (-want +got):\n%s", diff)
 	}
 }
 
-func TestConfig_LoadWithPrecedence_EnvPathMissing(t *testing.T) {
-	t.Setenv(EnvConfigPath, "/missing/config.toml")
-	_, err := LoadWithPrecedence(LoadOptions{ProjectDir: t.TempDir()})
-	if err == nil {
-		t.Fatal("expected error for missing env config path")
-	}
-}
-
-// R10.1.1: Load config from TOML file
-func TestConfig_LoadFromFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "agent.toml")
-	os.WriteFile(configPath, []byte(`
-[agent]
-id = "test-agent"
-workspace = "/workspace"
-
-[llm]
-provider = "anthropic"
-model = "claude-3-5-sonnet"
-api_key_env = "ANTHROPIC_API_KEY"
-max_tokens = 4096
-`), 0644)
-
-	cfg, err := LoadFile(configPath)
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	if cfg.Agent.ID != "test-agent" {
-		t.Errorf("expected id 'test-agent', got %s", cfg.Agent.ID)
-	}
-	if cfg.Agent.Workspace != "/workspace" {
-		t.Errorf("expected workspace '/workspace', got %s", cfg.Agent.Workspace)
-	}
-	if cfg.LLM.Provider != "anthropic" {
-		t.Errorf("expected provider 'anthropic', got %s", cfg.LLM.Provider)
-	}
-	if cfg.LLM.Model != "claude-3-5-sonnet" {
-		t.Errorf("expected model 'claude-3-5-sonnet', got %s", cfg.LLM.Model)
-	}
-	if cfg.LLM.APIKeyEnv != "ANTHROPIC_API_KEY" {
-		t.Errorf("expected api_key_env 'ANTHROPIC_API_KEY', got %s", cfg.LLM.APIKeyEnv)
-	}
-	if cfg.LLM.MaxTokens != 4096 {
-		t.Errorf("expected max_tokens 4096, got %d", cfg.LLM.MaxTokens)
-	}
-}
-
-// R10.1.3: Default to agent.toml in current directory
-func TestConfig_LoadDefault(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer os.Chdir(oldWd)
-	os.Chdir(tmpDir)
-
-	os.WriteFile("agent.toml", []byte(`
-[agent]
-id = "default-agent"
-`), 0644)
-
-	cfg, err := LoadDefault()
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	if cfg.Agent.ID != "default-agent" {
-		t.Errorf("expected id 'default-agent', got %s", cfg.Agent.ID)
-	}
-}
-
-// R10.2.1-R10.2.13: All config sections
-func TestConfig_AllSections(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "agent.toml")
-	os.WriteFile(configPath, []byte(`
+func TestLoadFile(t *testing.T) {
+	tests := []struct {
+		name    string
+		toml    string
+		want    func(*Config)
+		wantErr string
+	}{
+		{
+			name: "all sections",
+			toml: `
 [agent]
 id = "full-agent"
-workspace = "/home/agent/workspace"
+workspace = "/ws"
 
 [llm]
 provider = "openai"
 model = "gpt-4o"
 api_key_env = "OPENAI_API_KEY"
 max_tokens = 8192
+base_url = "http://localhost:11434"
+thinking = "high"
+
+[profiles.fast]
+model = "gpt-4o-mini"
 
 [web]
-gateway_url = "https://gateway.example.com"
+gateway_url = "https://gw.example.com"
 gateway_token_env = "GATEWAY_TOKEN"
 
 [telemetry]
 enabled = true
-endpoint = "https://telemetry.example.com"
-protocol = "otlp"
+endpoint = "localhost:4317"
+protocol = "http"
 
-[storage]
-path = "/data/grid"
-`), 0644)
+[state]
+location = "/data/grid"
 
-	cfg, err := LoadFile(configPath)
-	if err != nil {
-		t.Fatalf("load error: %v", err)
+[mcp.servers.fs]
+command = "mcp-fs"
+args = ["--root", "/"]
+`,
+			want: func(c *Config) {
+				c.Agent = AgentConfig{ID: "full-agent", Workspace: "/ws"}
+				c.LLM = LLMConfig{Provider: "openai", Model: "gpt-4o", APIKeyEnv: "OPENAI_API_KEY", MaxTokens: 8192, BaseURL: "http://localhost:11434", Thinking: "high"}
+				c.Profiles = map[string]LLMConfig{"fast": {Model: "gpt-4o-mini"}}
+				c.Web = WebConfig{GatewayURL: "https://gw.example.com", GatewayTokenEnv: "GATEWAY_TOKEN"}
+				c.Telemetry = TelemetryConfig{Enabled: true, Endpoint: "localhost:4317", Protocol: ProtocolHTTP}
+				c.State.Location = "/data/grid"
+				c.MCP.Servers = map[string]MCPServerConfig{"fs": {Command: "mcp-fs", Args: []string{"--root", "/"}}}
+			},
+		},
+		{
+			name: "legacy storage.location",
+			toml: "[storage]\nlocation = \"/legacy\"\n",
+			want: func(c *Config) {
+				c.State.Location = "/legacy"
+				c.Deprecations = []string{`[storage] is deprecated, rename to [state] with location = "/legacy"`}
+			},
+		},
+		{
+			name: "legacy storage.path",
+			toml: "[storage]\npath = \"/legacy-path\"\n",
+			want: func(c *Config) {
+				c.State.Location = "/legacy-path"
+				c.Deprecations = []string{`[storage] is deprecated, rename to [state] with location = "/legacy-path"`}
+			},
+		},
+		{
+			name: "empty storage keeps default",
+			toml: "[storage]\n",
+			want: func(*Config) {},
+		},
+		{
+			name:    "storage and state together",
+			toml:    "[storage]\nlocation = \"/a\"\n[state]\nlocation = \"/b\"\n",
+			wantErr: "both [state] and [storage]",
+		},
+		{
+			name:    "invalid toml",
+			toml:    "[invalid",
+			wantErr: "failed to parse config",
+		},
 	}
-
-	// Agent section
-	if cfg.Agent.ID != "full-agent" {
-		t.Errorf("agent.id: expected 'full-agent', got %s", cfg.Agent.ID)
-	}
-	if cfg.Agent.Workspace != "/home/agent/workspace" {
-		t.Errorf("agent.workspace: expected '/home/agent/workspace', got %s", cfg.Agent.Workspace)
-	}
-
-	// LLM section
-	if cfg.LLM.Provider != "openai" {
-		t.Errorf("llm.provider: expected 'openai', got %s", cfg.LLM.Provider)
-	}
-	if cfg.LLM.Model != "gpt-4o" {
-		t.Errorf("llm.model: expected 'gpt-4o', got %s", cfg.LLM.Model)
-	}
-	if cfg.LLM.APIKeyEnv != "OPENAI_API_KEY" {
-		t.Errorf("llm.api_key_env: expected 'OPENAI_API_KEY', got %s", cfg.LLM.APIKeyEnv)
-	}
-	if cfg.LLM.MaxTokens != 8192 {
-		t.Errorf("llm.max_tokens: expected 8192, got %d", cfg.LLM.MaxTokens)
-	}
-
-	// Web section
-	if cfg.Web.GatewayURL != "https://gateway.example.com" {
-		t.Errorf("web.gateway_url: expected 'https://gateway.example.com', got %s", cfg.Web.GatewayURL)
-	}
-	if cfg.Web.GatewayTokenEnv != "GATEWAY_TOKEN" {
-		t.Errorf("web.gateway_token_env: expected 'GATEWAY_TOKEN', got %s", cfg.Web.GatewayTokenEnv)
-	}
-
-	// Telemetry section
-	if !cfg.Telemetry.Enabled {
-		t.Error("telemetry.enabled: expected true")
-	}
-	if cfg.Telemetry.Endpoint != "https://telemetry.example.com" {
-		t.Errorf("telemetry.endpoint: expected 'https://telemetry.example.com', got %s", cfg.Telemetry.Endpoint)
-	}
-	if cfg.Telemetry.Protocol != "otlp" {
-		t.Errorf("telemetry.protocol: expected 'otlp', got %s", cfg.Telemetry.Protocol)
-	}
-
-	// State section (loaded from legacy [storage] via backwards compat)
-	if cfg.State.Location != "/data/grid" {
-		t.Errorf("state.location: expected '/data/grid', got %s", cfg.State.Location)
-	}
-}
-
-// Test defaults
-func TestConfig_Defaults(t *testing.T) {
-	cfg := New()
-
-	if cfg.LLM.MaxTokens != 4096 {
-		t.Errorf("default max_tokens should be 4096, got %d", cfg.LLM.MaxTokens)
-	}
-	if cfg.State.Location != "~/.local/agent" {
-		t.Errorf("default state.location should be '~/.local/agent', got %s", cfg.State.Location)
-	}
-	if cfg.Telemetry.Protocol != "noop" {
-		t.Errorf("default telemetry protocol should be 'noop', got %s", cfg.Telemetry.Protocol)
-	}
-}
-
-// Test file not found
-func TestConfig_FileNotFound(t *testing.T) {
-	_, err := LoadFile("/nonexistent/path/agent.toml")
-	if err == nil {
-		t.Error("expected error for missing file")
-	}
-}
-
-// Test invalid TOML
-func TestConfig_InvalidTOML(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "agent.toml")
-	os.WriteFile(configPath, []byte(`[invalid`), 0644)
-
-	_, err := LoadFile(configPath)
-	if err == nil {
-		t.Error("expected error for invalid TOML")
-	}
-}
-
-// Test GetAPIKey from environment
-func TestConfig_GetAPIKey(t *testing.T) {
-	os.Setenv("TEST_API_KEY", "secret123")
-	defer os.Unsetenv("TEST_API_KEY")
-
-	cfg := New()
-	cfg.LLM.APIKeyEnv = "TEST_API_KEY"
-
-	key := cfg.GetAPIKey()
-	if key != "secret123" {
-		t.Errorf("expected 'secret123', got %s", key)
-	}
-}
-
-// Test GetAPIKey uses default env var when api_key_env not set
-func TestConfig_GetAPIKey_Default(t *testing.T) {
-	os.Setenv("ANTHROPIC_API_KEY", "default-anthropic-key")
-	defer os.Unsetenv("ANTHROPIC_API_KEY")
-
-	cfg := New()
-	cfg.LLM.Provider = "anthropic"
-	// api_key_env not set - should use default ANTHROPIC_API_KEY
-
-	key := cfg.GetAPIKey()
-	if key != "default-anthropic-key" {
-		t.Errorf("expected 'default-anthropic-key', got %s", key)
-	}
-}
-
-// Test DefaultAPIKeyEnv returns correct env var for each provider
-func TestDefaultAPIKeyEnv(t *testing.T) {
-	tests := []struct {
-		provider string
-		expected string
-	}{
-		{"anthropic", "ANTHROPIC_API_KEY"},
-		{"openai", "OPENAI_API_KEY"},
-		{"google", "GOOGLE_API_KEY"},
-		{"mistral", "MISTRAL_API_KEY"},
-		{"groq", "GROQ_API_KEY"},
-		{"unknown", ""},
-	}
-
 	for _, tt := range tests {
-		result := DefaultAPIKeyEnv(tt.provider)
-		if result != tt.expected {
-			t.Errorf("DefaultAPIKeyEnv(%q) = %q, want %q", tt.provider, result, tt.expected)
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeFile(t, filepath.Join(t.TempDir(), "agent.toml"), tt.toml)
+			got, err := LoadFile(path)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("LoadFile() error = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadFile() error = %v", err)
+			}
+			want := New()
+			tt.want(want)
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("LoadFile() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestLoadFile_Missing(t *testing.T) {
+	if _, err := LoadFile(filepath.Join(t.TempDir(), "nope.toml")); err == nil {
+		t.Error("LoadFile(missing) = nil error, want error")
+	}
+}
+
+func TestLoadWithPrecedence(t *testing.T) {
+	const (
+		global  = "[agent]\nid = \"global-id\"\nworkspace = \"/global\"\n[llm]\nmodel = \"global-model\"\nmax_tokens = 111\n"
+		project = "[agent]\nworkspace = \"/project\"\n[llm]\nmodel = \"project-model\"\n"
+		env     = "[llm]\nmodel = \"env-model\"\nmax_tokens = 222\n"
+		cli     = "[llm]\nmodel = \"cli-model\"\n"
+	)
+	type files struct{ global, project, env, cli string }
+	tests := []struct {
+		name    string
+		files   files
+		envVar  string // custom env var name; empty uses EnvConfigPath
+		noEnv   bool   // do not point the env var at the env file
+		noCLI   bool
+		want    func(*Config)
+		wantErr string
+	}{
+		{
+			name:  "global < project < env < cli",
+			files: files{global, project, env, cli},
+			want: func(c *Config) {
+				c.Agent = AgentConfig{ID: "global-id", Workspace: "/project"}
+				c.LLM = LLMConfig{Model: "cli-model", MaxTokens: 222}
+			},
+		},
+		{
+			name:   "custom env var",
+			files:  files{env: env},
+			envVar: "MY_CONFIG",
+			noCLI:  true,
+			want:   func(c *Config) { c.LLM = LLMConfig{Model: "env-model", MaxTokens: 222} },
+		},
+		{
+			name:  "missing optional files are ignored",
+			noEnv: true,
+			noCLI: true,
+			want:  func(*Config) {},
+		},
+		{
+			name:    "env file must exist",
+			files:   files{},
+			noCLI:   true,
+			wantErr: "failed to load config from",
+		},
+		{
+			name:    "cli file must exist",
+			noEnv:   true,
+			wantErr: "failed to parse config",
+		},
+		{
+			name:    "unreadable global path",
+			files:   files{global: "\x00notadir"},
+			noEnv:   true,
+			noCLI:   true,
+			wantErr: "not a directory",
+		},
+		{
+			name:    "unreadable project path",
+			files:   files{project: "\x00notadir"},
+			noEnv:   true,
+			noCLI:   true,
+			wantErr: "not a directory",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			home := filepath.Join(tmp, "home")
+			projectDir := filepath.Join(tmp, "project")
+			envPath := filepath.Join(tmp, "env.toml")
+			cliPath := filepath.Join(tmp, "cli.toml")
+			// A leading NUL marks "make the parent a regular file" so os.Stat fails with ENOTDIR.
+			place := func(path, body string) {
+				if strings.HasPrefix(body, "\x00") {
+					writeFile(t, filepath.Dir(path), "")
+				} else if body != "" {
+					writeFile(t, path, body)
+				}
+			}
+			place(filepath.Join(DefaultConfigDir(home), "agent.toml"), tt.files.global)
+			place(filepath.Join(projectDir, "agent.toml"), tt.files.project)
+			place(envPath, tt.files.env)
+			place(cliPath, tt.files.cli)
+
+			envVar := EnvConfigPath
+			if tt.envVar != "" {
+				envVar = tt.envVar
+			}
+			environ := map[string]string{}
+			if !tt.noEnv {
+				environ[envVar] = envPath
+			}
+			opts := LoadOptions{
+				ProjectDir: projectDir,
+				EnvVar:     tt.envVar,
+				Home:       home,
+				Getenv:     func(k string) string { return environ[k] },
+			}
+			if !tt.noCLI {
+				opts.CLIPath = cliPath
+			}
+
+			got, err := LoadWithPrecedence(opts)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("LoadWithPrecedence() error = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadWithPrecedence() error = %v", err)
+			}
+			want := New()
+			tt.want(want)
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("LoadWithPrecedence() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// Zero-value options fall back to the process: HOME, os.Getenv and the cwd.
+func TestLoadWithPrecedence_ProcessDefaults(t *testing.T) {
+	t.Run("HOME and AGENT_CONFIG", func(t *testing.T) {
+		home := t.TempDir()
+		writeFile(t, filepath.Join(DefaultConfigDir(home), "agent.toml"), "[agent]\nid = \"from-home\"\n")
+		envPath := writeFile(t, filepath.Join(t.TempDir(), "env.toml"), "[agent]\nworkspace = \"/from-env\"\n")
+		t.Setenv("HOME", home)
+		t.Setenv(EnvConfigPath, envPath)
+
+		got, err := LoadWithPrecedence(LoadOptions{ProjectDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("LoadWithPrecedence() error = %v", err)
 		}
-	}
+		if want := (AgentConfig{ID: "from-home", Workspace: "/from-env"}); got.Agent != want {
+			t.Errorf("Agent = %+v, want %+v", got.Agent, want)
+		}
+	})
+	t.Run("cwd project file", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "agent.toml"), "[agent]\nid = \"from-cwd\"\n")
+		t.Chdir(dir)
+		got, err := LoadWithPrecedence(LoadOptions{Home: t.TempDir(), Getenv: func(string) string { return "" }})
+		if err != nil {
+			t.Fatalf("LoadWithPrecedence() error = %v", err)
+		}
+		if got.Agent.ID != "from-cwd" {
+			t.Errorf("Agent.ID = %q, want %q", got.Agent.ID, "from-cwd")
+		}
+	})
+	t.Run("no home", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		if _, err := LoadWithPrecedence(LoadOptions{ProjectDir: t.TempDir()}); err == nil {
+			t.Error("LoadWithPrecedence() without HOME = nil error, want error")
+		}
+	})
 }
 
-// Test GetGatewayToken from environment
-func TestConfig_GetGatewayToken(t *testing.T) {
-	os.Setenv("TEST_GATEWAY_TOKEN", "gateway456")
-	defer os.Unsetenv("TEST_GATEWAY_TOKEN")
-
-	cfg := New()
-	cfg.Web.GatewayTokenEnv = "TEST_GATEWAY_TOKEN"
-
-	token := cfg.GetGatewayToken()
-	if token != "gateway456" {
-		t.Errorf("expected 'gateway456', got %s", token)
+func TestConfig_Profile(t *testing.T) {
+	base := LLMConfig{Provider: "anthropic", Model: "sonnet", APIKeyEnv: "ANTHROPIC_API_KEY", MaxTokens: 4096}
+	cfg := &Config{
+		LLM: base,
+		Profiles: map[string]LLMConfig{
+			"inherit":  {Model: "opus", BaseURL: "http://proxy", Thinking: "high", MaxRetries: 3, RetryBackoff: "10s"},
+			"explicit": {Provider: "openai", Model: "gpt-4o-mini", APIKeyEnv: "OPENAI_API_KEY", MaxTokens: 2048},
+		},
 	}
-}
-
-// Test capability profiles
-func TestConfig_Profiles(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "agent.toml")
-	os.WriteFile(configPath, []byte(`
-[agent]
-id = "profile-test"
-
-[llm]
-provider = "anthropic"
-model = "claude-sonnet-4-20250514"
-max_tokens = 4096
-
-[profiles.reasoning-heavy]
-model = "claude-opus-4-20250514"
-
-[profiles.fast]
-provider = "openai"
-model = "gpt-4o-mini"
-max_tokens = 2048
-`), 0644)
-
-	cfg, err := LoadFile(configPath)
-	if err != nil {
-		t.Fatalf("load error: %v", err)
+	tests := []struct {
+		name string
+		want LLMConfig
+	}{
+		{"", base},
+		{"nonexistent", base},
+		{"inherit", LLMConfig{Provider: "anthropic", Model: "opus", APIKeyEnv: "ANTHROPIC_API_KEY", MaxTokens: 4096, BaseURL: "http://proxy", Thinking: "high", MaxRetries: 3, RetryBackoff: "10s"}},
+		{"explicit", LLMConfig{Provider: "openai", Model: "gpt-4o-mini", APIKeyEnv: "OPENAI_API_KEY", MaxTokens: 2048}},
 	}
-
-	// Default profile
-	defaultLLM := cfg.GetProfile("")
-	if defaultLLM.Model != "claude-sonnet-4-20250514" {
-		t.Errorf("default profile: expected claude-sonnet-4-20250514, got %s", defaultLLM.Model)
-	}
-
-	// reasoning-heavy profile
-	reasoning := cfg.GetProfile("reasoning-heavy")
-	if reasoning.Model != "claude-opus-4-20250514" {
-		t.Errorf("reasoning profile: expected claude-opus-4-20250514, got %s", reasoning.Model)
-	}
-	// Should inherit provider from default
-	if reasoning.Provider != "anthropic" {
-		t.Errorf("reasoning profile: expected inherited provider 'anthropic', got %s", reasoning.Provider)
-	}
-
-	// fast profile
-	fast := cfg.GetProfile("fast")
-	if fast.Model != "gpt-4o-mini" {
-		t.Errorf("fast profile: expected gpt-4o-mini, got %s", fast.Model)
-	}
-	if fast.Provider != "openai" {
-		t.Errorf("fast profile: expected provider 'openai', got %s", fast.Provider)
-	}
-	if fast.MaxTokens != 2048 {
-		t.Errorf("fast profile: expected max_tokens 2048, got %d", fast.MaxTokens)
-	}
-
-	// Unknown profile falls back to default
-	unknown := cfg.GetProfile("nonexistent")
-	if unknown.Model != "claude-sonnet-4-20250514" {
-		t.Errorf("unknown profile: should fall back to default, got %s", unknown.Model)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if diff := cmp.Diff(tt.want, cfg.Profile(tt.name)); diff != "" {
+				t.Errorf("Profile(%q) mismatch (-want +got):\n%s", tt.name, diff)
+			}
+		})
 	}
 }

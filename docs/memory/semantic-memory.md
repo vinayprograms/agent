@@ -89,7 +89,7 @@ model = "text-embedding-3-small"
 # base_url = "https://custom-endpoint.com"  # optional
 
 [state]
-location = "~/.local/grid"              # Base directory for all persistent data
+location = "~/.local/agent"              # Base directory for all persistent data
 persist_memory = true               # true = survives across runs
                                     # false = in-memory only (scratchpad)
 ```
@@ -256,7 +256,7 @@ For multi-tenant deployments, disable local memory and use MCP tools:
 
 ```toml
 [state]
-location = "~/.local/grid"
+location = "~/.local/agent"
 persist_memory = false              # Local memory disabled
 
 [mcp.servers.company_memory]

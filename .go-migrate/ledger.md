@@ -124,7 +124,7 @@ Flag: examples/agent/memory/simple-memory.agent references memory_forget (not a 
 Invariants carry over (CLI flags/commands, Agentfile, session JSONL, swarm wire/on-disk, security fail-close, policy enforcement). Each unit: worker → adversarial verifier (≤2 rounds) → merge. Boundary moves are sanctioned (user asked for better Go design).
 Wave 1 (parallel, independent packages):
 - [ ] R1 cross-cutting sweep: interface{}→any (X6); one DefaultStateDir/config-dir owner in config (X3/X4, bug 12); setup.Step→Screen (X7); dead-code delete list (diagnosis "Delete" table, re-verify zero callers); config.GetProfile BaseURL/Thinking bug (1); cmd/replay *.json→*.jsonl (6); agentmem Walk nil-deref (8).
-- [ ] R4 internal/config: Get-cluster → nouns/delete; deprecation warnings returned not printed; inject home/env; 100%.
+- [x] R4 internal/config: Get-cluster → nouns/delete; deprecation warnings returned not printed; inject home/env; 100%.
 - [ ] R8 small packages: skills.ReadReference/ScriptPath traversal (7); packaging dead code + Get* → File/Agentfile/Config/Policy; agentfile.ValidateWithoutPaths; websearch limiter state onto Tool (+WithHTTPTimeout); supervision.Supervisor + checkpoint.CheckpointStore ifaces → consumers; hooks tests; each to 100%.
 Wave 2:
 - [ ] R2 internal/session: single file-backed Recorder (NewX returns error, no half-built store, AddEvent-after-Close guard); replay/loader.go → session.ReadFile; delete Store/Manager/NewManager/Message/ToolCall; JSONL byte-identical (golden tests); 100%.
@@ -148,3 +148,6 @@ toolset.go builds registry from policy (path/domain guards, bash only with shell
 fix after review: diff/patch guard resolves relative paths against cwd (kit doesn't confine them); legacy-key report skips bare tables, maps memory_read/write.
 parked-smells: grep/glob guarded under "read" (document); http.Server timeouts; status/currentTask races; RunCmd os.Exit; --state not forwarded from run; secTrust only printed; stdout/stderr mix for status lines.
 ## MIGRATION COMPLETE — module green (build/vet/test -race) at this merge. 14 pre-existing gofmt-dirty files in internal/* → R1.
+### R4 internal/config — DONE (09ff2e2 + d154cb9, verifier PASS)
+Profile(name) LLMConfig (bug fix: BaseURL/Thinking/retries now carried); Profiles map[string]LLMConfig; typed Protocol consts; LoadOptions{Home, Getenv}; Config.Deprecations (cmd/agent prints WARN); DefaultConfigDir=~/.config/grid, DefaultStateDir=~/.local/agent (user's explicit choice kept; semantic-memory.md updated); six dead funcs deleted; [storage] compat decoded once. coverage 100%.
+Process note: ALWAYS merge from the main checkout (`git -C /Users/vinay/Documents/projects/agent merge …`), never from inside a worktree.
