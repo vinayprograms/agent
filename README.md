@@ -65,7 +65,7 @@ The `provider` field is optional — it is inferred from the model name (`claude
 | **Packaging** | Signed, distributable agent packages | [Packaging](docs/usage/packaging.md) |
 | **MCP / ACP** | External tool servers and editor integration | [Protocols](docs/configuration/protocols.md) |
 | **Web Search** | SearXNG, Brave, Tavily, DuckDuckGo with auto-fallback | [Web Search](docs/configuration/web-search.md) |
-| **Sub-Agents** | Static (AGENT/USING) and dynamic (spawn_agent) sub-agents | [Design](docs/design/05-subagents.md) |
+| **Sub-Agents** | Static (AGENT/USING) and dynamic (spawn_agents) sub-agents | [Design](docs/design/05-subagents.md) |
 | **Agent Skills** | Load reusable skills from SKILL.md directories | [Protocols](docs/configuration/protocols.md) |
 | **Docker** | CGO-free builds for minimal container images | [Docker](docs/usage/docker.md) |
 
@@ -110,10 +110,10 @@ See [Agentfile DSL](docs/design/02-agentfile.md) for full syntax reference.
 ## Built-in Tools
 
 **File Operations:** `read`, `write`, `edit`, `glob`, `grep`, `ls`
-**Shell:** `bash` (requires policy `[bash] enabled = true`)
+**Shell:** `bash` (requires a `[tools.bash]` table in policy, or `default_deny = false`)
 **Web:** `web_search`, `web_fetch`
-**Memory:** `memory_read`, `memory_write`, `memory_list`, `memory_search`, `remember`, `recall`, `memory_forget`
-**Agents:** `spawn_agent`, `spawn_agents`
+**Memory:** `remember`, `recall`, `scratchpad_read`, `scratchpad_write`, `scratchpad_list`, `scratchpad_search`
+**Agents:** `spawn_agents`
 
 ## API Keys
 
@@ -130,20 +130,20 @@ Keys are loaded in priority order:
 Create `policy.toml` to restrict tool access:
 
 ```toml
+# Workspace comes from agent.toml ([agent].workspace).
+# A tool is enabled by listing a [tools.<name>] table; with default_deny = true
+# everything else is off.
 default_deny = true
-workspace = "/path/to/workspace"
 
 [tools.read]
-enabled = true
 allow = ["$WORKSPACE/**"]
 deny = ["**/.env", "**/*.key"]
 
 [tools.bash]
-enabled = true
-denylist = ["rm *", "sudo *"]
+deny = ["rm", "sudo"]   # bare command names, added to shellguard's built-in list
 ```
 
-See [Security docs](docs/security/README.md) for the full framework (trust boundaries, tiered verification, audit trail, research mode).
+See [Security docs](docs/security/README.md) for the full framework (trust boundaries, tiered verification, session security events, research mode).
 
 ## Documentation
 

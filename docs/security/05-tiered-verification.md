@@ -23,20 +23,25 @@ Scan recent blocks for any with `trust=untrusted`.
 
 If no untrusted content in recent context → **PASS**. No further checks needed.
 
-### Check 2: Tool Risk Level
+### Check 2: Tool Skip List
 
-Classify tools by risk:
+The guard is default-check: every tool call made while untrusted content
+exists is verified unless the tool is on the configured **skip list**. The
+agent builds the skip list from the registered tools, minus the tools that can
+act on the outside world or destroy data:
 
-| High Risk | Low Risk |
-|-----------|----------|
-| bash | read |
-| write | glob |
-| web_fetch | grep |
-| spawn_agent | memory_read |
+| Always checked (never skipped) | Skipped (read-only / local) |
+|-------------------------------|-----------------------------|
+| bash | read, glob, grep, ls, head, tail, tree, diff |
+| write, edit, patch | cp, mkdir, pwd, hostname, whoami, sysinfo, datetime, env, which, git |
+| rm, mv | web_search |
+| web_fetch | scratchpad_*, remember, recall |
+| spawn_agents | |
 
-Low-risk tools with untrusted context → **PASS** with logging.
+Skipped tools with untrusted context → **PASS** with logging.
 
-High-risk tools with untrusted context → continue to pattern check.
+Checked tools with untrusted context → continue to pattern check. MCP tools
+are never on the skip list, so they are always checked.
 
 ### Check 3: Suspicious Patterns
 
@@ -60,7 +65,9 @@ Pattern match for injection attempts in untrusted content and tool arguments:
 **Credential Access Patterns:**
 - "api_key", "password", "token", "secret"
 
-If any pattern matches → escalate to Tier 2.
+If any pattern matches → escalate to Tier 2. The flags recorded in the
+session event are spelled `tool:<name>` for the tool-level trigger and
+`<pattern_name>` for each matching pattern.
 
 ### Check 4: Encoded Content
 
@@ -105,8 +112,8 @@ Only invoked when:
 | Scenario | Tier 1 | Tier 2 | Tier 3 | Total Overhead |
 |----------|--------|--------|--------|----------------|
 | No untrusted content | ✓ | - | - | ~0ms |
-| Untrusted + low-risk tool | ✓ | - | - | ~0ms |
-| Untrusted + high-risk, no flags | ✓ | - | - | ~1ms |
+| Untrusted + skipped tool | ✓ | - | - | ~0ms |
+| Untrusted + checked tool, no flags | ✓ | - | - | ~1ms |
 | Untrusted + suspicious pattern | ✓ | ✓ | - | ~100ms |
 | Triage says suspicious | ✓ | ✓ | ✓ | ~2s |
 | Paranoid mode | ✓ | ✓ | ✓ | ~2s per action |
@@ -133,10 +140,10 @@ Caching "block X is safe" would miss context-dependent attacks where benign-look
 
 - Block registered from `web_fetch` result
 - Checked again when content used in `write` call
-- Checked again when content influences `spawn_agent` task
-- Checked again for each subsequent high-risk tool call
+- Checked again when content influences `spawn_agents` task
+- Checked again for each subsequent non-skipped tool call
 
-For an agent run with 50 tool calls where 30 are high-risk after untrusted content exists, expect ~30 triage calls. At ~100ms and ~$0.0001 per triage call:
+For an agent run with 50 tool calls where 30 are non-skipped after untrusted content exists, expect ~30 triage calls. At ~100ms and ~$0.0001 per triage call:
 
 | Metric | Value |
 |--------|-------|
@@ -158,8 +165,10 @@ triage_model = "claude-haiku"
 
 Tier 3 uses the supervisor model from `[supervision]` config.
 
-Additional patterns and high-risk tools can be configured to extend the defaults.
+Additional patterns and keywords are configured in `policy.toml` under
+`[content.security]` (`patterns`, `keywords`). The skip list is fixed by the
+agent (see Check 2) and is not configurable.
 
 ---
 
-Next: [Cryptographic Audit Trail](06-audit-trail.md)
+Next: [Security Events](06-audit-trail.md)

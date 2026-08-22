@@ -1,3 +1,9 @@
+# Example policy.toml (agentkit v1.2.0 schema)
+#
+# A tool is enabled by the presence of a [tools.<name>] table; there is no
+# per-tool "enabled" flag. With default_deny = false every tool is available
+# and the tables below only add restrictions. Set default_deny = true for
+# production and keep only the [tools.*] tables you need.
 default_deny = false
 
 # Allowed Directories (Universal Filesystem Boundary)
@@ -9,20 +15,21 @@ default_deny = false
 
 # MCP Tool Security
 # ---
-# default_deny = false (or omitted): All MCP tools allowed (development mode)
-# default_deny = true: Only tools in allowed_tools list can be called
+# enabled = true, no allow list: all MCP tools allowed (development mode)
+# enabled = true + allow: only matching "server:tool" patterns can be called
+# enabled = false: no MCP tools at all
 [mcp]
-default_deny = false  # Set to true for production
-# allowed_tools = ["filesystem:read_file", "filesystem:list_directory", "memory:*"]
+enabled = true  # Add an allow list for production
+# allow = ["filesystem:read_file", "filesystem:list_directory", "memory:*"]
 
 # Security Patterns and Keywords
 # ---
 # Extend the built-in security detection with custom patterns and keywords.
 # Patterns are regex-based (for injection detection), keywords are simple word matches.
-[security]
+[content.security]
 # Extra patterns: format is "name:regex"
 # These are checked in addition to built-in patterns like ignore_previous, curl_pipe_bash, etc.
-extra_patterns = [
+patterns = [
     # Data exfiltration attempts
     "exfil_curl:(?i)curl\\s+.*(-d|--data).*\\$",
     "exfil_wget:(?i)wget\\s+--post",
@@ -43,7 +50,7 @@ extra_patterns = [
 ]
 # Extra keywords: simple case-insensitive word matches
 # These are checked in addition to built-in keywords like api_key, password, secret, etc.
-extra_keywords = [
+keywords = [
     # Classification labels
     "confidential",
     "internal_only",
@@ -72,44 +79,36 @@ extra_keywords = [
 
 # Web Tool Security
 # ---
-# allow_domains restricts which domains can be fetched/searched
-[web_fetch]
-enabled = true
-rate_limit = 30
+# `allow` restricts which domains can be fetched (was `allow_domains`).
+# The legacy `rate_limit` key has no equivalent and was dropped.
+[tools.web_fetch]
 # Recommended: restrict to known-good domains in production
-# allow_domains = ["github.com", "*.github.io", "docs.python.org", "pkg.go.dev"]
+# allow = ["github.com", "*.github.io", "docs.python.org", "pkg.go.dev"]
 
-[web_search]
-enabled = true
-rate_limit = 10
+[tools.web_search]
 
 # File Tools
-[read]
-enabled = true
+[tools.read]
 
-[write]
-enabled = true
+[tools.write]
 
-[edit]
-enabled = true
+[tools.edit]
 
-[glob]
-enabled = true
+[tools.glob]
 
-[grep]
-enabled = true
+[tools.grep]
 
-[ls]
-enabled = true
+[tools.ls]
 
 # Shell
-[bash]
-enabled = true
-denylist = ["rm -rf *", "sudo *", "chmod 777 *"]
+# bash is guarded by shellguard: a built-in banned-command list and
+# dangerous-pipe detection, plus the bare command names in `deny`, then an
+# optional small-LLM review. Entries are command names, not globs (the legacy
+# `denylist`/`allowlist` globs are gone).
+[tools.bash]
+deny = ["rm", "sudo", "chmod"]
 
-# Memory
-[memory_read]
-enabled = true
+# Memory (v1.2.0 tool names; were memory_read / memory_write)
+[tools.recall]
 
-[memory_write]
-enabled = true
+[tools.remember]

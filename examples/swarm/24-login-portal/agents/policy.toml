@@ -1,19 +1,14 @@
 # Policy for login portal agents — allow bash for build/test
+# (agentkit v1.2.0 schema)
 
+# All tools available (a [tools.X] table enables a tool; there is no per-tool
+# "enabled" flag).
+default_deny = false
+
+# The legacy bash `allowlist` (go, ls, cat, mkdir, cd, find, grep) has no
+# equivalent: bash is guarded by shellguard, whose built-in deny list already
+# blocks sudo/su, network downloads and curl|bash pipes, and whose chain
+# splitting checks every `;` / `&&` segment. `deny` entries are bare command
+# names matched against each segment's first word.
 [tools.bash]
-enabled = true
-allowlist = [
-  "go *",
-  "ls *",
-  "cat *",
-  "mkdir *",
-  "cd *",
-  "find *",
-  "grep *",
-]
-denylist = [
-  "rm -rf /*",
-  "sudo *",
-  "*;*",
-  "*&&*",
-]
+deny = ["rm", "sudo"]

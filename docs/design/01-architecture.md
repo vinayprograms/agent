@@ -55,7 +55,7 @@ graph TD
 | LLM Client | Multi-provider LLM abstraction |
 | Supervision Engine | Four-phase commit/execute/reconcile/supervise |
 | Security Verifier | Three-tier verification pipeline |
-| Sub-Agent Spawner | Static (AGENT/USING) and dynamic (spawn_agent) sub-agents |
+| Sub-Agent Spawner | Static (AGENT/USING) and dynamic (spawn_agents) sub-agents |
 
 ## Data Flow
 

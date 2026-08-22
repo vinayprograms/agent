@@ -17,9 +17,9 @@
 
 | Tool | Description |
 |------|-------------|
-| bash | Execute shell commands (requires `[bash] enabled = true` in policy) |
+| bash | Execute shell commands (requires a `[tools.bash]` table in policy, or `default_deny = false`) |
 
-> **Note:** The bash tool is **controlled by policy**. It is always registered in the tool registry but only available to the agent when `[bash] enabled = true` is set in `policy.toml`. Policy is the single source of truth. When enabled, bash is protected by a two-step security model (see [Bash Security](../security/10-bash-security.md)).
+> **Note:** The bash tool is **controlled by policy**. The tool registry is built in `cmd/agent` from the loaded policy: a tool is registered only when the policy enables it (a `[tools.<name>]` table, or `default_deny = false`), and each registered tool carries its policy guard (path guards for file tools, a domain guard for `web_fetch`, a shellguard gate for `bash`). Policy is the single source of truth. When enabled, bash is protected by a two-step security model (see [Bash Security](../security/10-bash-security.md)).
 
 ### Web
 
@@ -32,14 +32,15 @@
 
 | Tool | Description |
 |------|-------------|
-| memory_read | Read from agent memory |
-| memory_write | Write to agent memory |
+| remember | Write findings/insights/lessons to agent memory |
+| recall | Search agent memory |
+| scratchpad_read / scratchpad_write / scratchpad_list / scratchpad_search | Per-run scratch notes |
 
 ### Dynamic Agents
 
 | Tool | Description |
 |------|-------------|
-| spawn_agent | Spawn sub-agents at runtime |
+| spawn_agents | Spawn sub-agents at runtime |
 
 ## Web Search Providers
 
@@ -94,40 +95,43 @@ Restrict tool access with policy.toml:
 
 ```toml
 # Note: workspace is set in agent.toml ([agent].workspace), not here.
+# A tool is enabled by the presence of its [tools.<name>] table; there is no
+# per-tool "enabled" key. With default_deny = true, unlisted tools are off.
 default_deny = true
 
 [tools.read]
-enabled = true
 allow = ["$WORKSPACE/**"]
 deny = ["**/.env", "**/*.key"]
 
 [tools.write]
-enabled = true
 allow = ["$WORKSPACE/**"]
 
-# Bash is controlled by policy — set enabled = true to allow bash usage.
+# Bash is controlled by policy — the table enables it. `deny` lists bare
+# command names added to shellguard's built-in banned list.
 [tools.bash]
-enabled = true
-denylist = ["rm *", "sudo *"]
+deny = ["rm", "sudo"]
 
+# `allow` holds domain patterns for web tools.
 [tools.web_fetch]
-enabled = true
-allow_domains = ["api.github.com", "*.example.com"]
+allow = ["api.github.com", "*.example.com"]
 ```
+
+Legacy keys (`enabled`, `allowlist`, `denylist`, `allow_domains`, `rate_limit`)
+are rejected at load time with a message naming the replacement.
 
 ## MCP Tool Security
 
 ```toml
 [mcp]
-default_deny = true
-allowed_tools = [
+enabled = true
+allow = [
   "filesystem:read_file",
   "filesystem:list_directory",
   "memory:*",
 ]
 ```
 
-If [mcp] is not configured, agent logs a warning and allows all MCP tools (development mode).
+`enabled = false` disables all MCP tools. If `[mcp]` is not configured, agent logs a warning and allows all MCP tools (development mode).
 
 ---
 
