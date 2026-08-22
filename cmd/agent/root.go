@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/replaycmd"
 	"github.com/vinayprograms/agent/internal/run"
+	"github.com/vinayprograms/agent/internal/term"
 	"github.com/vinayprograms/agentkit/credentials"
 )
 
@@ -30,6 +32,9 @@ type deps struct {
 	getenv      func(string) string
 	credentials func() (credentials.Lookup, error)
 	newRuntime  func(context.Context, *run.Loaded, run.Deps) (runner, error)
+	// isTerminal reports whether a stream is an interactive terminal; --step
+	// needs one. Tests substitute it.
+	isTerminal func(any) bool
 }
 
 // newDeps returns the real process dependencies.
@@ -42,6 +47,7 @@ func newDeps() deps {
 		newRuntime: func(ctx context.Context, l *run.Loaded, d run.Deps) (runner, error) {
 			return run.New(ctx, l, d)
 		},
+		isTerminal: term.IsTerminal,
 	}
 }
 
@@ -102,6 +108,7 @@ type runOptions struct {
 	workspace string
 	goal      string
 	debug     bool
+	step      bool
 }
 
 // newRunCmd runs a workflow once and exits.
@@ -112,6 +119,13 @@ func newRunCmd(d deps) *cobra.Command {
 		Short: "Run a workflow (one-shot, ephemeral)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var gate func(context.Context, string, string) (bool, error)
+			if opts.step {
+				if !d.isTerminal(cmd.InOrStdin()) || !d.isTerminal(cmd.ErrOrStderr()) {
+					return errors.New("--step needs an interactive terminal")
+				}
+				gate = stepGate(cmd.InOrStdin(), cmd.ErrOrStderr())
+			}
 			creds, err := d.credentials()
 			if err != nil {
 				return err
@@ -131,10 +145,11 @@ func newRunCmd(d deps) *cobra.Command {
 				return err
 			}
 			rt, err := d.newRuntime(cmd.Context(), loaded, run.Deps{
-				Creds:   creds,
-				Stdout:  cmd.OutOrStdout(),
-				Stderr:  cmd.ErrOrStderr(),
-				Version: version,
+				Creds:    creds,
+				Stdout:   cmd.OutOrStdout(),
+				Stderr:   cmd.ErrOrStderr(),
+				Version:  version,
+				StepGate: gate,
 			})
 			if err != nil {
 				return err
@@ -150,6 +165,7 @@ func newRunCmd(d deps) *cobra.Command {
 	f.StringVar(&opts.workspace, "workspace", "", "Workspace directory")
 	f.StringVar(&opts.goal, "goal", "", "Inline goal description (skips Agentfile)")
 	f.BoolVar(&opts.debug, "debug", false, "Enable verbose logging (prompts, responses, tool outputs)")
+	f.BoolVar(&opts.step, "step", false, "Pause after each goal and ask whether to continue (interactive terminal only)")
 	return cmd
 }
 

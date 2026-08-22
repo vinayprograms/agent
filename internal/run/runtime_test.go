@@ -15,6 +15,7 @@ import (
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/config"
 	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/testutil/llmmock"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/llm"
@@ -435,7 +436,15 @@ func TestParseRetryConfig(t *testing.T) {
 func runWith(t *testing.T, l *Loaded, model llm.Model) (string, error) {
 	t.Helper()
 	var out strings.Builder
-	rt := newRuntime(l, Deps{Creds: credentials.NewEnvStore(), Stdout: &out})
+	_, err := runtimeWith(t, l, model, Deps{Creds: credentials.NewEnvStore(), Stdout: &out})
+	return out.String(), err
+}
+
+// runtimeWith builds a runtime over a mock model, runs it, and returns the
+// runtime so the caller can inspect what the run recorded.
+func runtimeWith(t *testing.T, l *Loaded, model llm.Model, d Deps) (*Runtime, error) {
+	t.Helper()
+	rt := newRuntime(l, d)
 	t.Cleanup(rt.Close)
 	if err := rt.setup(t.Context()); err != nil {
 		t.Fatalf("setup: %v", err)
@@ -452,8 +461,30 @@ func runWith(t *testing.T, l *Loaded, model llm.Model) (string, error) {
 		t.Fatalf("executor: %v", err)
 	}
 	rt.exec = exec
-	runErr := rt.Run(t.Context())
-	return out.String(), runErr
+	return rt, rt.Run(t.Context())
+}
+
+func TestRun_StepGateAbortMarksSessionAborted(t *testing.T) {
+	l := testWorkflow(t, nil)
+	model := llmmock.New()
+	model.SetResponse("done")
+	var seen []string
+	rt, err := runtimeWith(t, l, model, Deps{
+		Creds: credentials.NewEnvStore(),
+		StepGate: func(_ context.Context, step, goal string) (bool, error) {
+			seen = append(seen, step+"/"+goal)
+			return false, nil
+		},
+	})
+	if !errors.Is(err, executor.ErrAborted) {
+		t.Fatalf("Run error = %v, want executor.ErrAborted", err)
+	}
+	if len(seen) != 1 {
+		t.Errorf("gate calls = %v, want exactly one", seen)
+	}
+	if rt.sess.Status != session.StatusAborted {
+		t.Errorf("session status = %q, want %q", rt.sess.Status, session.StatusAborted)
+	}
 }
 
 func TestRun_WorkflowPrintsJSONResult(t *testing.T) {

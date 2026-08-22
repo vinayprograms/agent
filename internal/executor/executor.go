@@ -5,8 +5,10 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -90,7 +92,13 @@ const (
 	StatusRunning  Status = "running"
 	StatusComplete Status = "complete"
 	StatusFailed   Status = "failed"
+	// StatusAborted is a run stopped by RunOptions.StepGate.
+	StatusAborted Status = "aborted"
 )
+
+// ErrAborted is returned by Run when RunOptions.StepGate declined to
+// continue. Callers match it with errors.Is.
+var ErrAborted = errors.New("run aborted")
 
 // Result reports the outcome of a run. A failure is carried by Run's
 // error; Status distinguishes it from a run that never started.
@@ -181,6 +189,9 @@ type Executor struct {
 	// Called with each non-tool-call LLM response during execution.
 	// The caller (serve.go) binds the task ID in the closure.
 	discussPublisher func(goalName, content string)
+
+	// stepGate is the current run's RunOptions.StepGate; nil when off.
+	stepGate func(ctx context.Context, step, goal string) (bool, error)
 
 	// Workspace context injected into system prompt so the agent
 	// knows the project layout without needing to discover it.
@@ -426,6 +437,12 @@ type RunOptions struct {
 	// Discuss receives every non-tool-call LLM response, for publishing to
 	// the swarm discuss channel. nil disables publishing.
 	Discuss func(goalName, content string)
+	// StepGate is consulted after each goal of a RUN step finishes, whether
+	// it succeeded or failed, before the next goal starts; step and goal name
+	// the goal that just ended. proceed=false stops the run with ErrAborted;
+	// a non-nil error fails it. Work inside a goal — sub-agent spawns,
+	// CONVERGE iterations — is not gated. nil disables gating.
+	StepGate func(ctx context.Context, step, goal string) (proceed bool, err error)
 }
 
 // Run executes the workflow: binds inputs, builds the step graph, and runs it.
@@ -433,9 +450,11 @@ type RunOptions struct {
 func (e *Executor) Run(ctx context.Context, opts RunOptions) (*Result, error) {
 	e.interruptBuffer = opts.Interrupts
 	e.discussPublisher = opts.Discuss
+	e.stepGate = opts.StepGate
 	defer func() {
 		e.interruptBuffer = nil
 		e.discussPublisher = nil
+		e.stepGate = nil
 	}()
 
 	startTime := time.Now()
@@ -481,9 +500,13 @@ func (e *Executor) Run(ctx context.Context, opts RunOptions) (*Result, error) {
 	state := step.NewState(e.inputs)
 
 	if err := graph.Execute(ctx, state); err != nil {
-		e.logExecutionComplete(workflowName, startTime, string(StatusFailed))
-		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
-		return &Result{Status: StatusFailed}, err
+		status := StatusFailed
+		if errors.Is(err, ErrAborted) {
+			status = StatusAborted
+		}
+		e.logExecutionComplete(workflowName, startTime, string(status))
+		e.endWorkflowSpan(workflowSpan, string(status), err)
+		return &Result{Status: status}, err
 	}
 
 	// Collect outputs
@@ -533,6 +556,9 @@ func (e *Executor) ExecuteGoal(ctx context.Context, goalName string, state *step
 	}
 
 	result, err := e.executeGoalWithTracking(ctx, goal)
+	if gateErr := e.gateAfterGoal(ctx, goalName); gateErr != nil {
+		return errors.Join(err, gateErr)
+	}
 	if err != nil {
 		return err
 	}
@@ -549,6 +575,35 @@ func (e *Executor) ExecuteGoal(ctx context.Context, goalName string, state *step
 	}
 
 	return nil
+}
+
+// gateAfterGoal consults the run's StepGate, if any, now that goalName has
+// finished. The step name is the first RUN step listing the goal — a label
+// for the operator, so a goal reused across steps needs no more than that.
+func (e *Executor) gateAfterGoal(ctx context.Context, goalName string) error {
+	if e.stepGate == nil {
+		return nil
+	}
+	stepName := e.stepForGoal(goalName)
+	proceed, err := e.stepGate(ctx, stepName, goalName)
+	if err != nil {
+		return fmt.Errorf("step gate after step %q goal %q: %w", stepName, goalName, err)
+	}
+	if !proceed {
+		return fmt.Errorf("%w after step %q goal %q", ErrAborted, stepName, goalName)
+	}
+	return nil
+}
+
+// stepForGoal returns the name of the first RUN step that uses goalName, or
+// the goal name itself when no step claims it.
+func (e *Executor) stepForGoal(goalName string) string {
+	for _, s := range e.workflow.Steps {
+		if slices.Contains(s.UsingGoals, goalName) {
+			return s.Name
+		}
+	}
+	return goalName
 }
 
 // GoalResult contains the result of executing a goal.

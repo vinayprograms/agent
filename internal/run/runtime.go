@@ -52,6 +52,9 @@ type Deps struct {
 	// KeepSession leaves the session open across runs (serve mode): Run
 	// flushes but does not close it.
 	KeepSession bool
+	// StepGate pauses the run after each goal; see
+	// [executor.RunOptions.StepGate]. nil (serve mode always) disables it.
+	StepGate func(ctx context.Context, step, goal string) (bool, error)
 }
 
 // Runtime executes a loaded workflow. New returns one ready to Run; Close
@@ -80,6 +83,7 @@ type Runtime struct {
 	mcpManager        *mcp.Manager
 	eventSink         session.Sink // optional; set before setup (serve mode)
 	persistentSession bool
+	stepGate          func(ctx context.Context, step, goal string) (bool, error)
 	metrics           executor.MetricsCollector
 	sessionMgr        *session.Recorder
 	sess              *session.Session
@@ -128,6 +132,7 @@ func newRuntime(l *Loaded, deps Deps) *Runtime {
 		version:           deps.Version,
 		eventSink:         deps.Sink,
 		persistentSession: deps.KeepSession,
+		stepGate:          deps.StepGate,
 	}
 	rt.logger = newLogger(l.Debug, rt.stderr)
 	rt.resolveStoragePath()
@@ -665,9 +670,12 @@ func (rt *Runtime) setupCallbacks() {
 func (rt *Runtime) Run(ctx context.Context) error {
 	fmt.Fprintf(rt.stderr, "Running workflow: %s (session: %s)\n\n", rt.wf.Name, rt.sess.ID)
 
-	result, err := rt.exec.Run(ctx, executor.RunOptions{Inputs: rt.inputs})
+	result, err := rt.exec.Run(ctx, executor.RunOptions{Inputs: rt.inputs, StepGate: rt.stepGate})
 	if err != nil {
-		rt.sess.Status = "failed"
+		rt.sess.Status = session.StatusFailed
+		if errors.Is(err, executor.ErrAborted) {
+			rt.sess.Status = session.StatusAborted
+		}
 		rt.sess.Error = err.Error()
 		rt.sessionMgr.Update(rt.sess)
 		return err

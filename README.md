@@ -73,7 +73,7 @@ The `provider` field is optional — it is inferred from the model name (`claude
 
 | Command | Description |
 |---------|-------------|
-| `agent run <file>` | Execute a workflow |
+| `agent run <file>` | Execute a workflow (add `--step` to confirm each goal from an interactive terminal) |
 | `agent validate <file>` | Check syntax without running |
 | `agent inspect <file>` | Show workflow/package structure |
 | `agent pack <dir>` | Create a signed package |
