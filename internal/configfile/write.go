@@ -25,14 +25,8 @@ func Write(dir string, o Options, force bool) ([]string, error) {
 	}
 
 	if !force {
-		var blocked []error
-		for _, f := range files {
-			if _, err := os.Stat(f.path); err == nil {
-				blocked = append(blocked, fmt.Errorf("%s already exists", f.path))
-			}
-		}
-		if len(blocked) > 0 {
-			return nil, fmt.Errorf("%w (use --force to overwrite)", errors.Join(blocked...))
+		if err := EnsureAbsent(files[0].path, files[1].path); err != nil {
+			return nil, err
 		}
 	}
 
@@ -47,4 +41,21 @@ func Write(dir string, o Options, force bool) ([]string, error) {
 		written = append(written, f.path)
 	}
 	return written, nil
+}
+
+// EnsureAbsent reports every path that already exists as one error, phrased
+// as the refusal --force overrides. Callers that write more than the two
+// files Write owns (an API key alongside them, say) check the whole set with
+// this first, so a blocked write changes nothing at all.
+func EnsureAbsent(paths ...string) error {
+	var blocked []error
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			blocked = append(blocked, fmt.Errorf("%s already exists", p))
+		}
+	}
+	if len(blocked) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w (use --force to overwrite)", errors.Join(blocked...))
 }

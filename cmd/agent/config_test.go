@@ -311,7 +311,7 @@ func TestConfigShow_RedactsSecrets(t *testing.T) {
 	if !strings.Contains(out, `api_key = "sk-…abcd"`) {
 		t.Errorf("long key must keep a recognisable stub:\n%s", out)
 	}
-	if !strings.Contains(out, `api_key = "…"`) {
+	if !strings.Contains(out, `api_key = "***"`) {
 		t.Errorf("short key must be fully hidden:\n%s", out)
 	}
 }
@@ -538,5 +538,142 @@ func TestSetup_TargetFlagsAreRejectedTogether(t *testing.T) {
 	if err := h.exec("setup", "--dir", ".", "--default"); err == nil ||
 		!strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("setup must reject both target flags: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// verifier findings
+
+func TestConfigInit_RefusesToOverwriteCredentials(t *testing.T) {
+	h := configEnv(t)
+	existing := write(t, "credentials.toml", "[anthropic]\napi_key = \"original\"\n")
+	if err := os.Chmod(existing, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := h.exec("config", "init", "--provider", "anthropic", "--api-key", "new-key")
+	if err == nil {
+		t.Fatal("init must refuse to overwrite an existing credentials.toml")
+	}
+	if !strings.Contains(err.Error(), "credentials.toml already exists") || !strings.Contains(err.Error(), "--force") {
+		t.Errorf("error must name the file and --force: %v", err)
+	}
+	if body, _ := os.ReadFile("credentials.toml"); !strings.Contains(string(body), "original") {
+		t.Errorf("the existing key must survive a refused init: %s", body)
+	}
+	// The whole write is refused up front: the other two files are untouched.
+	for _, name := range []string{"agent.toml", "policy.toml"} {
+		if _, err := os.Stat(name); err == nil {
+			t.Errorf("%s must not be written when credentials.toml is in the way", name)
+		}
+	}
+}
+
+func TestConfigInit_ForceOverwritesCredentials(t *testing.T) {
+	h := configEnv(t)
+	existing := write(t, "credentials.toml", "[openai]\napi_key = \"kept-for-other-provider\"\n")
+	if err := os.Chmod(existing, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.exec("config", "init", "--provider", "anthropic", "--api-key", "new-key", "--force"); err != nil {
+		t.Fatalf("--force: %v", err)
+	}
+	body, _ := os.ReadFile("credentials.toml")
+	if !strings.Contains(string(body), "new-key") || !strings.Contains(string(body), "kept-for-other-provider") {
+		t.Errorf("--force must add the key while preserving other providers: %s", body)
+	}
+}
+
+func TestConfigShow_RedactsNestedAndUnconventionalSecrets(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", `[llm]
+model = "gpt-4o"
+
+[telemetry.headers]
+x-honeycomb-team = "hc-0123456789abcdef"
+x-tenant = 'single-quoted-secret-value'
+
+[mcp.servers.gh]
+command = "gh-mcp"
+
+[mcp.servers.gh.env]
+GITHUB_TOKEN = "ghp_0123456789abcdef"
+GH_HOST = "github.example.com"
+
+[embedding]
+api_key = 'sk-single-0123456789'
+
+[service]
+authorization = "Bearer 0123456789abcdef"
+`)
+	if err := h.exec("config", "show"); err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	out := h.out.String()
+	for _, secret := range []string{
+		"hc-0123456789abcdef",        // telemetry header value, unconventional key
+		"single-quoted-secret-value", // single-quoted header value
+		"ghp_0123456789abcdef",       // MCP server env value
+		"github.example.com",         // every env value is opaque, not just the token
+		"sk-single-0123456789",       // single-quoted api_key
+		"Bearer 0123456789abcdef",    // authorization
+	} {
+		if strings.Contains(out, secret) {
+			t.Errorf("leaked %q:\n%s", secret, out)
+		}
+	}
+	if !strings.Contains(out, `model = "gpt-4o"`) || !strings.Contains(out, "gh-mcp") {
+		t.Errorf("non-secret values must survive:\n%s", out)
+	}
+	if !strings.Contains(out, "cdef") {
+		t.Errorf("the mask must keep the last four characters:\n%s", out)
+	}
+}
+
+func TestConfigShow_ResolvedRedactsNestedSecrets(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[telemetry]\nenabled = true\n[telemetry.headers]\nx-key = \"hc-0123456789abcdef\"\n")
+	if err := h.exec("config", "show", "--resolved"); err != nil {
+		t.Fatalf("show --resolved: %v", err)
+	}
+	if strings.Contains(h.out.String(), "hc-0123456789abcdef") {
+		t.Errorf("--resolved leaked a telemetry header:\n%s", h.out.String())
+	}
+}
+
+func TestConfigShow_UnparseableFileIsAnErrorNotARawDump(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "api_key = \"sk-0123456789abcdef\"\nthis is not toml\n")
+	err := h.exec("config", "show")
+	if err == nil {
+		t.Fatal("an unparseable file must not be printed")
+	}
+	if strings.Contains(h.out.String(), "sk-0123456789abcdef") {
+		t.Errorf("a file that cannot be parsed cannot be redacted, so it must not be shown:\n%s", h.out.String())
+	}
+}
+
+func TestConfigTarget_ExpandsTilde(t *testing.T) {
+	h := configEnv(t)
+	if err := h.exec("config", "init", "--dir", "~/nested/cfg", "--provider", "openai"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.home, "nested", "cfg", "agent.toml")); err != nil {
+		t.Errorf("--dir must expand ~: %v", err)
+	}
+}
+
+func TestConfigValidate_DoesNotDoubleTheFileName(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[limits]\nmax_duration = \"not-a-duration\"\n")
+	err := h.exec("config", "validate")
+	if err == nil {
+		t.Fatal("an invalid duration must fail validation")
+	}
+	if strings.Contains(err.Error(), "agent.toml: agent.toml") {
+		t.Errorf("the file must be named once:\n%s", err)
+	}
+	if !strings.Contains(err.Error(), "agent.toml") {
+		t.Errorf("the file must still be named:\n%s", err)
 	}
 }

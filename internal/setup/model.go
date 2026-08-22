@@ -16,47 +16,10 @@ import (
 	"github.com/vinayprograms/agentkit/policy"
 )
 
-// The wizard's vocabulary is defined by internal/configfile, which owns the
-// shape of a generated configuration and renders it as TOML. These aliases
-// keep the wizard's own code (and its tests) reading in setup terms.
-type (
-	// Config is the configuration the wizard collects.
-	Config = configfile.Options
-	// MCPServerSetup holds MCP server configuration during setup.
-	MCPServerSetup = configfile.MCPServerSetup
-	// ProfileConfig holds a capability profile configuration.
-	ProfileConfig = configfile.ProfileConfig
-)
-
-// Deployment scenarios
-const (
-	ScenarioLocal      = configfile.ScenarioLocal
-	ScenarioDev        = configfile.ScenarioDev
-	ScenarioTeam       = configfile.ScenarioTeam
-	ScenarioProduction = configfile.ScenarioProduction
-	ScenarioDocker     = configfile.ScenarioDocker
-)
-
-// Provider options
-const (
-	ProviderAnthropic   = configfile.ProviderAnthropic
-	ProviderOpenAI      = configfile.ProviderOpenAI
-	ProviderGoogle      = configfile.ProviderGoogle
-	ProviderGroq        = configfile.ProviderGroq
-	ProviderMistral     = configfile.ProviderMistral
-	ProviderXAI         = configfile.ProviderXAI
-	ProviderOpenRouter  = configfile.ProviderOpenRouter
-	ProviderOllamaCloud = configfile.ProviderOllamaCloud
-	ProviderOllamaLocal = configfile.ProviderOllamaLocal
-	ProviderLiteLLM     = configfile.ProviderLiteLLM
-	ProviderLMStudio    = configfile.ProviderLMStudio
-	ProviderCustom      = configfile.ProviderCustom
-)
-
 // Model is the bubbletea model for the setup wizard
 type Model struct {
 	screen    Screen
-	config    Config
+	config    configfile.Options
 	cursor    int
 	textInput textinput.Model
 	err       error
@@ -119,11 +82,11 @@ func New(ctx context.Context, opts ...Option) Model {
 		dir:       ".",
 		ctx:       ctx,
 		probe:     dialMCP,
-		config: Config{
+		config: configfile.Options{
 			Workspace:        ".",
 			ConfigDir:        getDefaultConfigDir(),
-			Profiles:         make(map[string]ProfileConfig),
-			MCPServers:       make(map[string]MCPServerSetup),
+			Profiles:         make(map[string]configfile.ProfileConfig),
+			MCPServers:       make(map[string]configfile.MCPServerSetup),
 			AllowBash:        true,
 			AllowWeb:         true,
 			EnableMemory:     true,
@@ -241,9 +204,9 @@ func (m *Model) loadExistingConfig() error {
 	// Profiles
 	if len(cfg.Profiles) > 0 {
 		m.config.UseProfiles = true
-		m.config.Profiles = make(map[string]ProfileConfig)
+		m.config.Profiles = make(map[string]configfile.ProfileConfig)
 		for name, p := range cfg.Profiles {
-			m.config.Profiles[name] = ProfileConfig{
+			m.config.Profiles[name] = configfile.ProfileConfig{
 				Provider: p.Provider,
 				Model:    p.Model,
 				BaseURL:  p.BaseURL,
@@ -263,7 +226,7 @@ func (m *Model) loadExistingConfig() error {
 	// MCP - load existing servers
 	m.config.EnableMCP = len(cfg.MCP.Servers) > 0
 	for name, srv := range cfg.MCP.Servers {
-		m.config.MCPServers[name] = MCPServerSetup{
+		m.config.MCPServers[name] = configfile.MCPServerSetup{
 			Command:     srv.Command,
 			Args:        srv.Args,
 			DeniedTools: srv.DeniedTools,
@@ -439,7 +402,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.config.Scenario = scenarios[m.cursor].id
 			// Only apply defaults if not in edit mode
 			if !m.editMode {
-				m.applyScenarioDefaults()
+				m.config.ApplyScenario()
 			}
 		}
 		m.screen = ScreenProvider
@@ -450,7 +413,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		if m.cursor >= 0 && m.cursor < len(providers) {
 			m.config.Provider = providers[m.cursor].id
 			if !m.editMode {
-				m.setDefaultModel()
+				m.config.SetDefaultModel()
 			}
 		}
 		if m.needsCustomModelInput() {
@@ -491,12 +454,12 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.config.APIKey = m.textInput.Value()
 		}
 		m.textInput.EchoMode = textinput.EchoNormal
-		if m.needsBaseURL() {
+		if configfile.NeedsBaseURL(m.config.Provider) {
 			m.screen = ScreenBaseURL
 			if m.editMode && m.config.BaseURL != "" {
 				m.textInput.SetValue(m.config.BaseURL)
 			} else {
-				m.textInput.SetValue(m.getDefaultBaseURL())
+				m.textInput.SetValue(configfile.DefaultBaseURL(m.config.Provider))
 			}
 			m.textInput.Placeholder = "https://..."
 		} else {
@@ -537,7 +500,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		if m.cursor >= 0 && m.cursor < len(providers) {
 			m.config.SmallLLMProvider = providers[m.cursor].id
 			if !m.editMode || m.config.SmallLLMModel == "" {
-				m.setDefaultSmallModel()
+				m.config.SetDefaultSmallModel()
 			}
 		}
 		m.screen = ScreenSmallLLMModel
@@ -601,7 +564,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 	case ScreenProfilesConfig:
 		// Auto-configure profiles based on provider
-		m.configureDefaultProfiles()
+		m.config.ConfigureDefaultProfiles()
 		m.screen = ScreenFeatures
 		m.cursor = 0
 		m.initFeatureSelection()
@@ -690,7 +653,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 
 		// Save server config
-		m.config.MCPServers[m.currentMCPName] = MCPServerSetup{
+		m.config.MCPServers[m.currentMCPName] = configfile.MCPServerSetup{
 			Command:         m.currentMCPCommand,
 			Args:            args,
 			DeniedTools:     deniedTools,
@@ -743,14 +706,6 @@ func (m *Model) applyFeatureSelection() {
 	m.config.EnableMemory = m.selected[1]
 	m.config.EnableTelemetry = m.selected[2]
 }
-
-func (m *Model) applyScenarioDefaults() { m.config.ApplyScenario() }
-
-func (m *Model) setDefaultModel() { m.config.SetDefaultModel() }
-
-func (m *Model) setDefaultSmallModel() { m.config.SetDefaultSmallModel() }
-
-func (m *Model) configureDefaultProfiles() { m.config.ConfigureDefaultProfiles() }
 
 // Run starts the setup wizard against dir, the directory agent.toml and
 // policy.toml are read from and written to (empty means the working

@@ -82,11 +82,20 @@ func (t targetFlags) resolve(d deps) (target, error) {
 		}
 		tg.dir, tg.explicit = config.DefaultConfigDir(d.home), true
 	case t.dir != "":
-		tg.dir, tg.explicit = t.dir, true
+		tg.dir, tg.explicit = expandHome(t.dir, d.home), true
 	default:
 		tg.dir = "."
 	}
 	return tg, nil
+}
+
+// expandHome replaces a leading ~ in p with home, so --dir ~/x works even
+// when the shell did not expand it (quoted, or from a config file).
+func expandHome(p, home string) string {
+	if home == "" || p != "~" && !strings.HasPrefix(p, "~"+string(filepath.Separator)) {
+		return p
+	}
+	return filepath.Join(home, strings.TrimPrefix(p, "~"))
 }
 
 // fileset is one configuration file at a target: the candidate paths in
@@ -218,12 +227,25 @@ func runConfigInit(out io.Writer, d deps, opts initOptions) error {
 		return err
 	}
 
-	written, err := configfile.Write(tg.dir, o, opts.force)
+	// Everything that would be overwritten is checked before anything is
+	// written, so a refused init leaves all three files untouched.
+	credsPath := filepath.Join(tg.dir, "credentials.toml")
+	if !opts.force {
+		guarded := []string{filepath.Join(tg.dir, "agent.toml"), filepath.Join(tg.dir, "policy.toml")}
+		if opts.apiKey != "" {
+			guarded = append(guarded, credsPath)
+		}
+		if err := configfile.EnsureAbsent(guarded...); err != nil {
+			return err
+		}
+	}
+
+	written, err := configfile.Write(tg.dir, o, true)
 	if err != nil {
 		return err
 	}
 	if opts.apiKey != "" {
-		path, err := writeAPIKey(filepath.Join(tg.dir, "credentials.toml"), o.Provider, opts.apiKey)
+		path, err := writeAPIKey(credsPath, o.Provider, opts.apiKey)
 		if err != nil {
 			return err
 		}
@@ -361,7 +383,11 @@ func showFiles(out io.Writer, t target) error {
 			if err != nil {
 				return fmt.Errorf("read %s: %w", p, err)
 			}
-			fmt.Fprintln(out, redactSecrets(strings.TrimRight(string(body), "\n")))
+			safe, err := redactTOML(string(body))
+			if err != nil {
+				return fmt.Errorf("%s: %w", display(p, t.home), err)
+			}
+			fmt.Fprintln(out, safe)
 		}
 	}
 	return nil
@@ -376,7 +402,11 @@ func showResolved(out io.Writer, t target) error {
 	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
 		return fmt.Errorf("encode resolved config: %w", err)
 	}
-	fmt.Fprintln(out, redactSecrets(strings.TrimRight(buf.String(), "\n")))
+	safe, err := redactTOML(buf.String())
+	if err != nil {
+		return fmt.Errorf("encode resolved config: %w", err)
+	}
+	fmt.Fprintln(out, safe)
 	return nil
 }
 
@@ -388,22 +418,72 @@ func displayAll(paths []string, home string) []string {
 	return out
 }
 
-// secretAssignment matches a TOML key=value line whose key names a secret.
-var secretAssignment = regexp.MustCompile(`(?mi)^(\s*(?:api_key|access_token|refresh_token|client_secret|password)\s*=\s*)"([^"]*)"`)
+// secretKey matches a TOML key whose value is credential material. It is
+// deliberately loose: over-redacting a harmless value costs nothing, while
+// missing one puts a live key in a pasted bug report.
+var secretKey = regexp.MustCompile(`(?i)api_?key|token|secret|password|authorization`)
 
-// redactSecrets rewrites secret values in TOML text so `agent config show`
-// can be pasted into a bug report. Enough of the value survives to tell two
-// keys apart.
-func redactSecrets(text string) string {
-	return secretAssignment.ReplaceAllStringFunc(text, func(m string) string {
-		g := secretAssignment.FindStringSubmatch(m)
-		return g[1] + `"` + redact(g[2]) + `"`
-	})
+// opaqueTable reports whether every value in the table at path is secret
+// whatever its keys are called. Both tables hold user-supplied name/value
+// pairs — outbound telemetry headers and an MCP server's environment — so no
+// key-name rule can cover them.
+func opaqueTable(path []string) bool {
+	switch {
+	case len(path) == 2 && path[0] == "telemetry" && path[1] == "headers":
+		return true
+	case len(path) == 4 && path[0] == "mcp" && path[1] == "servers" && path[3] == "env":
+		return true
+	}
+	return false
 }
 
+// redactTOML masks every secret in TOML text and re-encodes it. Redaction
+// works on the decoded document rather than the raw text so it sees values
+// however they were quoted and however deeply they are nested; the cost is
+// that comments do not survive, and that text which does not parse is
+// reported as an error rather than printed unredacted.
+func redactTOML(text string) (string, error) {
+	var doc map[string]any
+	if _, err := toml.Decode(text, &doc); err != nil {
+		return "", err
+	}
+	redactTree(doc, nil)
+	var buf strings.Builder
+	if err := toml.NewEncoder(&buf).Encode(doc); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(buf.String(), "\n"), nil
+}
+
+// redactTree walks a decoded TOML document, masking string values whose key
+// names a secret or whose table is opaque.
+func redactTree(node map[string]any, path []string) {
+	opaque := opaqueTable(path)
+	for k, v := range node {
+		child := append(slices.Clone(path), k)
+		switch value := v.(type) {
+		case map[string]any:
+			redactTree(value, child)
+		case []any:
+			for _, elem := range value {
+				if table, ok := elem.(map[string]any); ok {
+					redactTree(table, child)
+				}
+			}
+		case string:
+			if opaque || secretKey.MatchString(k) {
+				node[k] = redact(value)
+			}
+		}
+	}
+}
+
+// redact masks a secret, keeping just enough of a long one to tell two keys
+// apart. A short value is hidden completely — there is too little of it for a
+// stub to be anything but a hint at the whole.
 func redact(v string) string {
-	if len(v) <= 8 {
-		return "…"
+	if len(v) < 8 {
+		return "***"
 	}
 	return v[:3] + "…" + v[len(v)-4:]
 }
@@ -462,7 +542,7 @@ func validateAgentFile(t target, f fileset) (*config.Config, []string) {
 	var problems []string
 	for _, p := range f.active() {
 		if _, err := config.LoadFile(p); err != nil {
-			problems = append(problems, fmt.Sprintf("%s: %v", display(p, t.home), err))
+			problems = append(problems, prefixPath(display(p, t.home), err))
 		}
 	}
 	cfg, err := t.loadConfig()
@@ -488,11 +568,11 @@ func validatePolicyFile(t target, f fileset, cfg *config.Config) []string {
 	path := active[0]
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return []string{fmt.Sprintf("%s: %v", display(path, t.home), err)}
+		return []string{prefixPath(display(path, t.home), err)}
 	}
 	_, unknown, err := policy.FromTOMLWithUnknownKeys(string(body), cfg.Agent.Workspace, t.home)
 	if err != nil {
-		return []string{fmt.Sprintf("%s: %v", display(path, t.home), err)}
+		return []string{prefixPath(display(path, t.home), err)}
 	}
 	if err := run.ValidatePolicyKeys(display(path, t.home), unknown); err != nil {
 		return []string{err.Error()}
@@ -508,9 +588,18 @@ func validateCredentialsFile(t target, f fileset) []string {
 		return nil
 	}
 	if _, err := credentials.NewFileStore(active[0]); err != nil {
-		return []string{fmt.Sprintf("%s: %v", display(active[0], t.home), err)}
+		return []string{prefixPath(display(active[0], t.home), err)}
 	}
 	return nil
+}
+
+// prefixPath names the file a problem came from, unless the loader already
+// named it — a problem is never reported as "agent.toml: agent.toml: ...".
+func prefixPath(path string, err error) string {
+	if strings.Contains(err.Error(), path) {
+		return err.Error()
+	}
+	return path + ": " + err.Error()
 }
 
 // credentialWarnings reports configured providers with no credential in the

@@ -94,7 +94,7 @@ func typeText(t *testing.T, m Model, s string) Model {
 
 func TestGeneratePolicyTOML_RoundTripsWithNoUnknownKeys(t *testing.T) {
 	isolate(t)
-	scenarios := []string{ScenarioLocal, ScenarioDev, ScenarioTeam, ScenarioProduction, ScenarioDocker}
+	scenarios := []string{configfile.ScenarioLocal, configfile.ScenarioDev, configfile.ScenarioTeam, configfile.ScenarioProduction, configfile.ScenarioDocker}
 	for _, sc := range scenarios {
 		for _, deny := range []bool{false, true} {
 			for _, bash := range []bool{false, true} {
@@ -109,8 +109,8 @@ func TestGeneratePolicyTOML_RoundTripsWithNoUnknownKeys(t *testing.T) {
 							m.config.AllowWeb = web
 							m.config.EnableMCP = mcpMode != "off"
 							if mcpMode == "servers" {
-								m.config.MCPServers["memory"] = MCPServerSetup{Command: "npx"}
-								m.config.MCPServers["fs"] = MCPServerSetup{Command: "uvx"}
+								m.config.MCPServers["memory"] = configfile.MCPServerSetup{Command: "npx"}
+								m.config.MCPServers["fs"] = configfile.MCPServerSetup{Command: "uvx"}
 							}
 							assertPolicyMatchesConfig(t, m)
 						})
@@ -185,7 +185,7 @@ func TestGeneratePolicyTOML_LegacyKeysAbsent(t *testing.T) {
 	m := New(context.Background())
 	m.config.DefaultDeny = true
 	m.config.EnableMCP = true
-	m.config.MCPServers["memory"] = MCPServerSetup{}
+	m.config.MCPServers["memory"] = configfile.MCPServerSetup{}
 	content := configfile.PolicyTOML(m.config)
 	for _, legacy := range []string{"enabled = true\n[", "allowlist", "denylist", "allowed_tools", "mcp.default_deny", "sandbox", "[security]"} {
 		if strings.Contains(content, legacy) {
@@ -197,21 +197,21 @@ func TestGeneratePolicyTOML_LegacyKeysAbsent(t *testing.T) {
 func TestGenerateAgentTOML(t *testing.T) {
 	isolate(t)
 	m := New(context.Background())
-	m.config.Provider = ProviderOpenAI
+	m.config.Provider = configfile.ProviderOpenAI
 	m.config.Model = "gpt-4o"
 	m.config.BaseURL = "http://proxy/v1"
 	m.config.CredentialMethod = "env"
 	m.config.SmallLLMEnabled = true
-	m.config.SmallLLMProvider = ProviderOpenAI
+	m.config.SmallLLMProvider = configfile.ProviderOpenAI
 	m.config.SmallLLMModel = "gpt-4o-mini"
 	m.config.SmallLLMBaseURL = "http://proxy/v1"
 	m.config.UseProfiles = true
-	m.config.Profiles["fast"] = ProfileConfig{Model: "gpt-4o-mini", Thinking: "off"}
-	m.config.Profiles["plain"] = ProfileConfig{Model: "gpt-4o"}
+	m.config.Profiles["fast"] = configfile.ProfileConfig{Model: "gpt-4o-mini", Thinking: "off"}
+	m.config.Profiles["plain"] = configfile.ProfileConfig{Model: "gpt-4o"}
 	m.config.SecurityMode = "paranoid"
 	m.config.EnableTelemetry = true
 	m.config.EnableMCP = true
-	m.config.MCPServers["memory"] = MCPServerSetup{
+	m.config.MCPServers["memory"] = configfile.MCPServerSetup{
 		Command: "npx", Args: []string{"-y", "srv"}, DeniedTools: []string{"delete"},
 	}
 
@@ -219,7 +219,7 @@ func TestGenerateAgentTOML(t *testing.T) {
 	if _, err := toml.Decode(configfile.AgentTOML(m.config), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.LLM.Provider != ProviderOpenAI || cfg.LLM.APIKeyEnv != "OPENAI_API_KEY" || cfg.LLM.BaseURL != "http://proxy/v1" {
+	if cfg.LLM.Provider != configfile.ProviderOpenAI || cfg.LLM.APIKeyEnv != "OPENAI_API_KEY" || cfg.LLM.BaseURL != "http://proxy/v1" {
 		t.Errorf("llm = %+v", cfg.LLM)
 	}
 	if cfg.SmallLLM.Model != "gpt-4o-mini" || cfg.SmallLLM.BaseURL != "http://proxy/v1" {
@@ -237,7 +237,7 @@ func TestGenerateAgentTOML(t *testing.T) {
 	}
 
 	// MCP enabled with no servers emits a commented placeholder only.
-	m.config.MCPServers = map[string]MCPServerSetup{}
+	m.config.MCPServers = map[string]configfile.MCPServerSetup{}
 	m.config.CredentialMethod = "file"
 	out := configfile.AgentTOML(m.config)
 	if !strings.Contains(out, "# [mcp.servers.memory]") || strings.Contains(out, "api_key_env") {
@@ -257,16 +257,16 @@ func TestApplyScenarioDefaults(t *testing.T) {
 		bash     bool
 		cred     string
 	}{
-		{ScenarioLocal, ProviderOllamaLocal, false, true, "file"},
-		{ScenarioDev, ProviderAnthropic, false, true, "file"},
-		{ScenarioTeam, ProviderLiteLLM, true, true, "file"},
-		{ScenarioProduction, ProviderLiteLLM, true, false, "file"},
-		{ScenarioDocker, ProviderLiteLLM, true, true, "env"},
+		{configfile.ScenarioLocal, configfile.ProviderOllamaLocal, false, true, "file"},
+		{configfile.ScenarioDev, configfile.ProviderAnthropic, false, true, "file"},
+		{configfile.ScenarioTeam, configfile.ProviderLiteLLM, true, true, "file"},
+		{configfile.ScenarioProduction, configfile.ProviderLiteLLM, true, false, "file"},
+		{configfile.ScenarioDocker, configfile.ProviderLiteLLM, true, true, "env"},
 	}
 	for _, tt := range tests {
 		m := New(context.Background())
 		m.config.Scenario = tt.scenario
-		m.applyScenarioDefaults()
+		m.config.ApplyScenario()
 		if m.config.Provider != tt.provider || m.config.DefaultDeny != tt.deny ||
 			m.config.AllowBash != tt.bash || m.config.CredentialMethod != tt.cred {
 			t.Errorf("%s: %+v", tt.scenario, m.config)
@@ -279,8 +279,8 @@ func TestDefaultModels(t *testing.T) {
 	m := New(context.Background())
 	for _, p := range m.getProviders() {
 		m.config.Provider = p.id
-		m.setDefaultModel()
-		if p.id != ProviderCustom && m.config.Model == "" {
+		m.config.SetDefaultModel()
+		if p.id != configfile.ProviderCustom && m.config.Model == "" {
 			t.Errorf("%s: no default model", p.id)
 		}
 		if len(m.getModels()) == 0 {
@@ -288,18 +288,18 @@ func TestDefaultModels(t *testing.T) {
 		}
 		m.config.SmallLLMProvider = p.id
 		m.config.BaseURL = "http://x"
-		m.setDefaultSmallModel()
-		if m.config.SmallLLMModel == "" && p.id != ProviderCustom {
+		m.config.SetDefaultSmallModel()
+		if m.config.SmallLLMModel == "" && p.id != configfile.ProviderCustom {
 			t.Errorf("%s: no default small model", p.id)
 		}
 		if m.config.SmallLLMBaseURL != "http://x" {
 			t.Errorf("%s: base URL not inherited", p.id)
 		}
 	}
-	m.config.Provider = ProviderCustom
+	m.config.Provider = configfile.ProviderCustom
 	m.config.Model = "mine"
-	m.config.SmallLLMProvider = ProviderCustom
-	m.setDefaultSmallModel()
+	m.config.SmallLLMProvider = configfile.ProviderCustom
+	m.config.SetDefaultSmallModel()
 	if m.config.SmallLLMModel != "mine" {
 		t.Errorf("custom small model = %q", m.config.SmallLLMModel)
 	}
@@ -307,10 +307,10 @@ func TestDefaultModels(t *testing.T) {
 
 func TestConfigureDefaultProfiles(t *testing.T) {
 	isolate(t)
-	for provider, want := range map[string]int{ProviderAnthropic: 3, ProviderOpenAI: 3, ProviderLiteLLM: 2, ProviderGroq: 1} {
+	for provider, want := range map[string]int{configfile.ProviderAnthropic: 3, configfile.ProviderOpenAI: 3, configfile.ProviderLiteLLM: 2, configfile.ProviderGroq: 1} {
 		m := New(context.Background())
 		m.config.Provider = provider
-		m.configureDefaultProfiles()
+		m.config.ConfigureDefaultProfiles()
 		if len(m.config.Profiles) != want {
 			t.Errorf("%s: %d profiles, want %d", provider, len(m.config.Profiles), want)
 		}
@@ -323,12 +323,12 @@ func TestFindIndexes(t *testing.T) {
 	if m.findScenarioIndex() != 0 || m.findProviderIndex("") != 0 || m.findModelIndex() != 0 {
 		t.Error("empty values must map to index 0")
 	}
-	m.config.Scenario = ScenarioTeam
-	m.config.Provider = ProviderGoogle
+	m.config.Scenario = configfile.ScenarioTeam
+	m.config.Provider = configfile.ProviderGoogle
 	m.config.Model = "gemini-1.5-pro"
 	m.config.Thinking = "high"
-	if m.findScenarioIndex() != 2 || m.findProviderIndex(ProviderGoogle) != 2 || m.findModelIndex() != 2 || m.findThinkingIndex() != 4 {
-		t.Errorf("indexes: %d %d %d %d", m.findScenarioIndex(), m.findProviderIndex(ProviderGoogle), m.findModelIndex(), m.findThinkingIndex())
+	if m.findScenarioIndex() != 2 || m.findProviderIndex(configfile.ProviderGoogle) != 2 || m.findModelIndex() != 2 || m.findThinkingIndex() != 4 {
+		t.Errorf("indexes: %d %d %d %d", m.findScenarioIndex(), m.findProviderIndex(configfile.ProviderGoogle), m.findModelIndex(), m.findThinkingIndex())
 	}
 	m.config.Scenario, m.config.Model, m.config.Thinking = "nope", "nope", "nope"
 	if m.findScenarioIndex() != 0 || m.findProviderIndex("nope") != 0 || m.findModelIndex() != 0 || m.findThinkingIndex() != 0 {
@@ -340,29 +340,29 @@ func TestProviderHelpers(t *testing.T) {
 	isolate(t)
 	m := New(context.Background())
 	urls := map[string]string{
-		ProviderOllamaLocal: "http://localhost:11434/v1",
-		ProviderLMStudio:    "http://localhost:1234/v1",
-		ProviderOpenRouter:  "https://openrouter.ai/api/v1",
-		ProviderLiteLLM:     "http://localhost:4000/v1",
-		ProviderAnthropic:   "",
+		configfile.ProviderOllamaLocal: "http://localhost:11434/v1",
+		configfile.ProviderLMStudio:    "http://localhost:1234/v1",
+		configfile.ProviderOpenRouter:  "https://openrouter.ai/api/v1",
+		configfile.ProviderLiteLLM:     "http://localhost:4000/v1",
+		configfile.ProviderAnthropic:   "",
 	}
 	for p, want := range urls {
 		m.config.Provider = p
-		if got := m.getDefaultBaseURL(); got != want {
+		if got := configfile.DefaultBaseURL(m.config.Provider); got != want {
 			t.Errorf("%s base url = %q", p, got)
 		}
 	}
-	m.config.Provider = ProviderAnthropic
-	if m.needsCustomModelInput() || m.needsBaseURL() {
+	m.config.Provider = configfile.ProviderAnthropic
+	if m.needsCustomModelInput() || configfile.NeedsBaseURL(m.config.Provider) {
 		t.Error("anthropic needs neither custom model nor base URL")
 	}
-	m.config.Provider = ProviderCustom
-	if !m.needsCustomModelInput() || !m.needsBaseURL() {
+	m.config.Provider = configfile.ProviderCustom
+	if !m.needsCustomModelInput() || !configfile.NeedsBaseURL(m.config.Provider) {
 		t.Error("custom needs both")
 	}
-	for p, want := range map[string]string{ProviderAnthropic: "ANTHROPIC_API_KEY", ProviderOpenAI: "OPENAI_API_KEY",
-		ProviderGoogle: "GOOGLE_API_KEY", ProviderMistral: "MISTRAL_API_KEY", ProviderGroq: "GROQ_API_KEY", ProviderXAI: "API_KEY"} {
-		if got := getDefaultEnvVar(p); got != want {
+	for p, want := range map[string]string{configfile.ProviderAnthropic: "ANTHROPIC_API_KEY", configfile.ProviderOpenAI: "OPENAI_API_KEY",
+		configfile.ProviderGoogle: "GOOGLE_API_KEY", configfile.ProviderMistral: "MISTRAL_API_KEY", configfile.ProviderGroq: "GROQ_API_KEY", configfile.ProviderXAI: "API_KEY"} {
+		if got := configfile.DefaultEnvVar(p); got != want {
 			t.Errorf("%s env = %q", p, got)
 		}
 	}
@@ -383,7 +383,7 @@ func TestGetSortedMCPServerNames(t *testing.T) {
 	isolate(t)
 	m := New(context.Background())
 	for _, n := range []string{"zeta", "alpha", "mid"} {
-		m.config.MCPServers[n] = MCPServerSetup{}
+		m.config.MCPServers[n] = configfile.MCPServerSetup{}
 	}
 	if got := strings.Join(m.getSortedMCPServerNames(), ","); got != "alpha,mid,zeta" {
 		t.Errorf("sorted = %s", got)
@@ -508,7 +508,7 @@ func TestUpdate_FullFlow_RestrictiveWithMCP(t *testing.T) {
 	m := New(context.Background())
 	m, _ = send(t, m, key(tea.KeyEnter))                   // welcome -> scenario
 	m, _ = send(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // dev -> provider (anthropic)
-	if m.config.Scenario != ScenarioDev || m.screen != ScreenProvider || m.config.Provider != ProviderAnthropic {
+	if m.config.Scenario != configfile.ScenarioDev || m.screen != ScreenProvider || m.config.Provider != configfile.ProviderAnthropic {
 		t.Fatalf("after scenario: %+v step=%d", m.config, m.screen)
 	}
 	m, _ = send(t, m, key(tea.KeyEnter)) // anthropic -> model list
@@ -647,7 +647,7 @@ func TestUpdate_FullFlow_RestrictiveWithMCP(t *testing.T) {
 		t.Errorf("files = %v", m.filesWritten)
 	}
 	store, err := credentials.NewFileStore(credPath)
-	if err != nil || store.Get(ProviderAnthropic) != "sk-test" {
+	if err != nil || store.Get(configfile.ProviderAnthropic) != "sk-test" {
 		t.Errorf("credentials not persisted: %v %v", err, store)
 	}
 	if _, err := policy.FromFile("policy.toml", "/ws", home); err != nil {
@@ -715,14 +715,14 @@ func TestUpdate_EditModeBaseURLAndPreviousStep(t *testing.T) {
 	isolate(t)
 	m := New(context.Background())
 	m.editMode = true
-	m.config.Provider = ProviderLiteLLM
+	m.config.Provider = configfile.ProviderLiteLLM
 	m.config.BaseURL = "http://existing"
 	m.config.SmallLLMEnabled = true
-	m.config.SmallLLMProvider = ProviderLiteLLM
+	m.config.SmallLLMProvider = configfile.ProviderLiteLLM
 	m.config.UseProfiles = true
 	m.screen = ScreenScenario
 	m, _ = send(t, m, key(tea.KeyEnter)) // edit mode keeps provider
-	if m.config.Provider != ProviderLiteLLM {
+	if m.config.Provider != configfile.ProviderLiteLLM {
 		t.Fatal("edit mode must not override provider")
 	}
 	m.screen = ScreenAPIKey
@@ -754,7 +754,7 @@ func TestUpdate_EditModeBaseURLAndPreviousStep(t *testing.T) {
 	if m.previousScreen() != ScreenSmallLLM {
 		t.Error("back from small-llm model skips provider when disabled")
 	}
-	m.config.Provider = ProviderAnthropic
+	m.config.Provider = configfile.ProviderAnthropic
 	m.screen = ScreenThinking
 	if m.previousScreen() != ScreenAPIKey {
 		t.Error("back from thinking skips base URL for direct providers")
@@ -773,7 +773,7 @@ func TestUpdate_EditModeBaseURLAndPreviousStep(t *testing.T) {
 func TestMaxCursorForStep(t *testing.T) {
 	isolate(t)
 	m := New(context.Background())
-	m.config.MCPServers["a"] = MCPServerSetup{}
+	m.config.MCPServers["a"] = configfile.MCPServerSetup{}
 	want := map[Screen]int{
 		ScreenScenario: 4, ScreenProvider: 11, ScreenModel: 0, ScreenThinking: 4, ScreenSmallLLM: 1,
 		ScreenSmallLLMProvider: 11, ScreenSecurity: 1, ScreenSecurityMode: 1, ScreenProfiles: 1,
@@ -799,14 +799,14 @@ func TestMaxCursorForStep(t *testing.T) {
 func TestView_AllSteps(t *testing.T) {
 	isolate(t)
 	m := New(context.Background())
-	m.config.Provider = ProviderAnthropic
+	m.config.Provider = configfile.ProviderAnthropic
 	m.config.Model = "claude-sonnet-4-20250514"
 	m.config.BaseURL = "http://x"
 	m.config.SmallLLMEnabled = true
 	m.config.SmallLLMModel = "haiku"
-	m.config.Profiles["fast"] = ProfileConfig{Model: "haiku"}
-	m.config.MCPServers["denied"] = MCPServerSetup{DeniedTools: []string{"x"}}
-	m.config.MCPServers["open"] = MCPServerSetup{}
+	m.config.Profiles["fast"] = configfile.ProfileConfig{Model: "haiku"}
+	m.config.MCPServers["denied"] = configfile.MCPServerSetup{DeniedTools: []string{"x"}}
+	m.config.MCPServers["open"] = configfile.MCPServerSetup{}
 	m.selected = map[int]bool{0: true}
 	m.probedTools = []string{"read", "write"}
 	m.currentMCPName = "srv"
@@ -822,7 +822,7 @@ func TestView_AllSteps(t *testing.T) {
 	}
 
 	m.screen = ScreenCustomModel
-	for _, p := range []string{ProviderOllamaLocal, ProviderLMStudio, ProviderLiteLLM, ProviderCustom} {
+	for _, p := range []string{configfile.ProviderOllamaLocal, configfile.ProviderLMStudio, configfile.ProviderLiteLLM, configfile.ProviderCustom} {
 		m.config.Provider = p
 		if !strings.Contains(m.View(), "Model Name") {
 			t.Errorf("%s custom model view", p)
@@ -862,7 +862,7 @@ func TestView_AllSteps(t *testing.T) {
 func TestCredentialMethods_ClaudeCLI(t *testing.T) {
 	home := isolate(t)
 	m := New(context.Background())
-	m.config.Provider = ProviderAnthropic
+	m.config.Provider = configfile.ProviderAnthropic
 	if len(m.getCredentialMethods()) != 2 || !strings.Contains(m.viewCredentialMethod(), "Tip") {
 		t.Fatal("without Claude CLI: file+env and a tip")
 	}
@@ -880,7 +880,7 @@ func TestCredentialMethods_ClaudeCLI(t *testing.T) {
 	if m.config.CredentialMethod != "claude-cli" {
 		t.Errorf("method = %s", m.config.CredentialMethod)
 	}
-	m.config.Provider = ProviderOpenAI
+	m.config.Provider = configfile.ProviderOpenAI
 	if len(m.getCredentialMethods()) != 2 {
 		t.Error("claude-cli is anthropic-only")
 	}
@@ -893,7 +893,7 @@ func TestWriteCredentials(t *testing.T) {
 	home := isolate(t)
 	path := filepath.Join(home, ".config", "agent", "credentials.toml")
 	m := New(context.Background())
-	m.config.Provider = ProviderOpenAI
+	m.config.Provider = configfile.ProviderOpenAI
 	m.config.APIKey = "first"
 	if got, err := m.writeCredentials(); err != nil || got != path {
 		t.Fatalf("path=%s err=%v", got, err)
@@ -904,13 +904,13 @@ func TestWriteCredentials(t *testing.T) {
 	}
 
 	// Second write preserves other providers.
-	m.config.Provider = ProviderGroq
+	m.config.Provider = configfile.ProviderGroq
 	m.config.APIKey = "second"
 	if _, err := m.writeCredentials(); err != nil {
 		t.Fatal(err)
 	}
 	store, err := credentials.NewFileStore(path)
-	if err != nil || store.Get(ProviderOpenAI) != "first" || store.Get(ProviderGroq) != "second" {
+	if err != nil || store.Get(configfile.ProviderOpenAI) != "first" || store.Get(configfile.ProviderGroq) != "second" {
 		t.Errorf("store = %v err=%v", store, err)
 	}
 
@@ -1026,7 +1026,7 @@ func TestView_CursorHighlight(t *testing.T) {
 	isolate(t)
 	m := New(context.Background())
 	m.probedTools = []string{"a"}
-	m.config.MCPServers["x"] = MCPServerSetup{}
+	m.config.MCPServers["x"] = configfile.MCPServerSetup{}
 	m.cursor = 0
 	for _, step := range []Screen{ScreenScenario, ScreenProvider, ScreenModel, ScreenThinking, ScreenSmallLLM,
 		ScreenSmallLLMProvider, ScreenSecurity, ScreenSecurityMode, ScreenProfiles, ScreenFeatures,
@@ -1048,7 +1048,7 @@ func TestWriteCredentials_SaveFailure(t *testing.T) {
 	os.Chmod(dir, 0500) // exists but unwritable: NewFileStore succeeds, Save fails
 	t.Cleanup(func() { os.Chmod(dir, 0700) })
 	m := New(context.Background())
-	m.config.Provider = ProviderOpenAI
+	m.config.Provider = configfile.ProviderOpenAI
 	m.config.APIKey = "k"
 	if _, err := m.writeCredentials(); err == nil || !strings.Contains(err.Error(), "save credentials") {
 		t.Errorf("expected save failure, got %v", err)
@@ -1074,7 +1074,7 @@ func TestWriteCredentials_EmptyExistingFile(t *testing.T) {
 	os.MkdirAll(filepath.Dir(path), 0700)
 	os.WriteFile(path, nil, 0600)
 	m := New(context.Background())
-	m.config.Provider = ProviderOpenAI
+	m.config.Provider = configfile.ProviderOpenAI
 	m.config.APIKey = "k"
 	if _, err := m.writeCredentials(); err != nil {
 		t.Fatalf("empty credentials file must not fail: %v", err)
