@@ -7,16 +7,16 @@ type Node interface {
 
 // Workflow represents the root AST node of an Agentfile.
 type Workflow struct {
-	Name         string
-	BaseDir      string // directory containing the Agentfile
-	Supervised   bool   // global supervision enabled (SUPERVISED at top)
-	HumanOnly    bool   // global human-only mode (SUPERVISED HUMAN at top)
-	SecurityMode string // "default", "paranoid", or "research" (SECURITY directive)
+	Name          string
+	BaseDir       string // directory containing the Agentfile
+	Supervised    bool   // global supervision enabled (SUPERVISED at top)
+	HumanOnly     bool   // global human-only mode (SUPERVISED HUMAN at top)
+	SecurityMode  string // "default", "paranoid", or "research" (SECURITY directive)
 	SecurityScope string // scope description for research mode (e.g., "authorized pentest of lab environment")
-	Inputs       []Input
-	Agents       []Agent
-	Goals        []Goal
-	Steps        []Step
+	Inputs        []Input
+	Agents        []Agent
+	Goals         []Goal
+	Steps         []Step
 }
 
 func (w *Workflow) node() {}
@@ -32,16 +32,16 @@ func (i *Input) node() {}
 
 // Agent represents an AGENT declaration.
 type Agent struct {
-	Name       string
-	FromPath   string          // path to prompt file or skill directory
-	Prompt     string          // loaded prompt content (or skill instructions)
-	Requires   string          // capability profile name (e.g., "reasoning-heavy", "code-generation")
-	Outputs    []string        // structured output field names (after ->)
-	IsSkill    bool            // true if loaded from a skill directory
-	SkillDir   string          // path to skill directory (if IsSkill)
+	Name        string
+	FromPath    string          // path to prompt file or skill directory
+	Prompt      string          // loaded prompt content (or skill instructions)
+	Requires    string          // capability profile name (e.g., "reasoning-heavy", "code-generation")
+	Outputs     []string        // structured output field names (after ->)
+	IsSkill     bool            // true if loaded from a skill directory
+	SkillDir    string          // path to skill directory (if IsSkill)
 	Supervision SupervisionMode // inherit/supervised/unsupervised
-	HumanOnly  bool            // requires human approval (SUPERVISED HUMAN)
-	Line       int
+	HumanOnly   bool            // requires human approval (SUPERVISED HUMAN)
+	Line        int
 }
 
 func (a *Agent) node() {}
@@ -147,8 +147,8 @@ func (wf *Workflow) HasHumanRequiredSteps() bool {
 	return false
 }
 
-// GetHumanRequiredStepNames returns names of steps that require human supervision.
-func (wf *Workflow) GetHumanRequiredStepNames() []string {
+// HumanRequiredStepNames returns names of steps that require human supervision.
+func (wf *Workflow) HumanRequiredStepNames() []string {
 	var names []string
 	for _, step := range wf.Steps {
 		if step.RequiresHuman(wf) {

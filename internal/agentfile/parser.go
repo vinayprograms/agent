@@ -5,17 +5,16 @@ import (
 	"strconv"
 )
 
-// Parser parses Agentfile tokens into an AST.
-type Parser struct {
+// parser parses Agentfile tokens into an AST.
+type parser struct {
 	l         *Lexer
 	curToken  Token
 	peekToken Token
-	errors    []string
 }
 
-// NewParser creates a new parser for the given lexer.
-func NewParser(l *Lexer) *Parser {
-	p := &Parser{l: l}
+// newParser creates a new parser for the given lexer.
+func newParser(l *Lexer) *parser {
+	p := &parser{l: l}
 	// Read two tokens to initialize curToken and peekToken
 	p.nextToken()
 	p.nextToken()
@@ -23,13 +22,13 @@ func NewParser(l *Lexer) *Parser {
 }
 
 // nextToken advances to the next token.
-func (p *Parser) nextToken() {
+func (p *parser) nextToken() {
 	p.curToken = p.peekToken
 	p.peekToken = p.l.NextToken()
 }
 
 // Parse parses the input and returns the workflow AST.
-func (p *Parser) Parse() (*Workflow, error) {
+func (p *parser) Parse() (*Workflow, error) {
 	wf := &Workflow{}
 
 	for p.curToken.Type != TokenEOF {
@@ -116,7 +115,7 @@ func (p *Parser) Parse() (*Workflow, error) {
 }
 
 // parseNameStatement parses: NAME <identifier>
-func (p *Parser) parseNameStatement() (string, error) {
+func (p *parser) parseNameStatement() (string, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume NAME
 
@@ -131,7 +130,7 @@ func (p *Parser) parseNameStatement() (string, error) {
 }
 
 // parseInputStatement parses: INPUT <identifier> [DEFAULT <value>]
-func (p *Parser) parseInputStatement() (*Input, error) {
+func (p *parser) parseInputStatement() (*Input, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume INPUT
 
@@ -161,7 +160,7 @@ func (p *Parser) parseInputStatement() (*Input, error) {
 }
 
 // parseAgentStatement parses: AGENT <identifier> (FROM <path> | <string>) [-> outputs] [REQUIRES <string>] [SUPERVISED [HUMAN] | UNSUPERVISED]
-func (p *Parser) parseAgentStatement() (*Agent, error) {
+func (p *parser) parseAgentStatement() (*Agent, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume AGENT
 
@@ -227,7 +226,7 @@ func (p *Parser) parseAgentStatement() (*Agent, error) {
 }
 
 // parseGoalStatement parses: GOAL <identifier> (<string> | FROM <path>) [-> outputs] [USING <identifier_list>] [SUPERVISED [HUMAN] | UNSUPERVISED]
-func (p *Parser) parseGoalStatement() (*Goal, error) {
+func (p *parser) parseGoalStatement() (*Goal, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume GOAL
 
@@ -292,7 +291,7 @@ func (p *Parser) parseGoalStatement() (*Goal, error) {
 }
 
 // parseConvergeStatement parses: CONVERGE <identifier> (<string> | FROM <path>) [-> outputs] [USING <identifier_list>] WITHIN (<number> | <variable>) [SUPERVISED [HUMAN] | UNSUPERVISED]
-func (p *Parser) parseConvergeStatement() (*Goal, error) {
+func (p *parser) parseConvergeStatement() (*Goal, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume CONVERGE
 
@@ -376,7 +375,7 @@ func (p *Parser) parseConvergeStatement() (*Goal, error) {
 }
 
 // parseRunStatement parses: RUN <identifier> USING <identifier_list> [SUPERVISED [HUMAN] | UNSUPERVISED]
-func (p *Parser) parseRunStatement() (*Step, error) {
+func (p *parser) parseRunStatement() (*Step, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume RUN
 
@@ -419,7 +418,7 @@ func (p *Parser) parseRunStatement() (*Step, error) {
 }
 
 // parseIdentifierList parses: USING <identifier> [, <identifier>]*
-func (p *Parser) parseIdentifierList() ([]string, error) {
+func (p *parser) parseIdentifierList() ([]string, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume USING
 
@@ -445,7 +444,7 @@ func (p *Parser) parseIdentifierList() ([]string, error) {
 }
 
 // parseOutputList parses: -> <identifier> [, <identifier>]*
-func (p *Parser) parseOutputList() ([]string, error) {
+func (p *parser) parseOutputList() ([]string, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume ->
 
@@ -471,19 +470,19 @@ func (p *Parser) parseOutputList() ([]string, error) {
 }
 
 // isIdentifier returns true if current token is an identifier (not a keyword used as value).
-func (p *Parser) isIdentifier() bool {
+func (p *parser) isIdentifier() bool {
 	return p.curToken.Type == TokenIdent
 }
 
 // isValue returns true if current token can be a value (number, string, identifier).
-func (p *Parser) isValue() bool {
+func (p *parser) isValue() bool {
 	return p.curToken.Type == TokenNumber ||
 		p.curToken.Type == TokenString ||
 		p.curToken.Type == TokenIdent
 }
 
 // skipNewline skips newline tokens.
-func (p *Parser) skipNewline() {
+func (p *parser) skipNewline() {
 	for p.curToken.Type == TokenNewline {
 		p.nextToken()
 	}

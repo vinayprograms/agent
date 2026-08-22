@@ -185,7 +185,7 @@ func (l *Lexer) readIdentifier() Token {
 		l.readChar()
 	}
 	literal := l.input[position:l.position]
-	tokenType := LookupIdent(literal)
+	tokenType := lookupIdent(literal)
 	return Token{
 		Type:    tokenType,
 		Literal: literal,
@@ -366,11 +366,6 @@ func (l *Lexer) readPath() Token {
 // isLetter returns true if the byte is a letter.
 func isLetter(ch byte) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
-}
-
-// isIdentChar returns true if the byte can be part of an identifier (after first char).
-func isIdentChar(ch byte) bool {
-	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '-'
 }
 
 // isDigit returns true if the byte is a digit.

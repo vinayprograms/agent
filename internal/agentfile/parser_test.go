@@ -9,7 +9,7 @@ import (
 func TestParser_NameStatement(t *testing.T) {
 	input := `NAME my-workflow`
 
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	wf, err := p.Parse()
 	if err != nil {
 		t.Fatalf("parser error: %v", err)
@@ -26,7 +26,7 @@ func TestParser_InputStatement(t *testing.T) {
 INPUT feature_request
 INPUT max_iterations DEFAULT 10`
 
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	wf, err := p.Parse()
 	if err != nil {
 		t.Fatalf("parser error: %v", err)
@@ -61,7 +61,7 @@ func TestParser_AgentStatement(t *testing.T) {
 AGENT creative FROM agents/creative.md
 AGENT devils_advocate FROM agents/devils_advocate.md`
 
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	wf, err := p.Parse()
 	if err != nil {
 		t.Fatalf("parser error: %v", err)
@@ -88,7 +88,7 @@ func TestParser_GoalInlineString(t *testing.T) {
 	input := `NAME test
 GOAL run_tests "Run all tests and capture any failures"`
 
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	wf, err := p.Parse()
 	if err != nil {
 		t.Fatalf("parser error: %v", err)
@@ -111,7 +111,7 @@ func TestParser_GoalFromPath(t *testing.T) {
 	input := `NAME test
 GOAL analyze FROM goals/analyze.md`
 
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	wf, err := p.Parse()
 	if err != nil {
 		t.Fatalf("parser error: %v", err)
@@ -134,7 +134,7 @@ func TestParser_GoalWithUsing(t *testing.T) {
 	input := `NAME test
 GOAL analyze FROM goals/analyze.md USING creative, devils_advocate`
 
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	wf, err := p.Parse()
 	if err != nil {
 		t.Fatalf("parser error: %v", err)
@@ -162,7 +162,7 @@ GOAL analyze "Analyze the input"
 GOAL build "Build the project"
 RUN setup USING analyze, build`
 
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	wf, err := p.Parse()
 	if err != nil {
 		t.Fatalf("parser error: %v", err)
@@ -207,7 +207,7 @@ GOAL run_tests "Run all tests and capture any failures"
 
 RUN setup USING analyze, system_tests, run_tests`
 
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	wf, err := p.Parse()
 	if err != nil {
 		t.Fatalf("parser error: %v", err)
@@ -241,19 +241,19 @@ func TestParser_SyntaxErrors(t *testing.T) {
 			expectedError: "line 1",
 		},
 		{
-			input:         `NAME test
+			input: `NAME test
 GOAL analyze`,
 			expectedError: "line 2",
 		},
 		{
-			input:         `NAME test
+			input: `NAME test
 RUN setup`,
 			expectedError: "line 2",
 		},
 	}
 
 	for i, tt := range tests {
-		p := NewParser(NewLexer(tt.input))
+		p := newParser(NewLexer(tt.input))
 		_, err := p.Parse()
 		if err == nil {
 			t.Errorf("tests[%d] - expected error, got nil", i)
@@ -275,7 +275,7 @@ RUN first USING a
 RUN second USING b
 RUN third USING c`
 
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	wf, err := p.Parse()
 	if err != nil {
 		t.Fatalf("parser error: %v", err)
@@ -301,7 +301,7 @@ func TestParser_InputStringDefault(t *testing.T) {
 	input := `NAME test
 INPUT greeting DEFAULT "hello world"`
 
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	wf, err := p.Parse()
 	if err != nil {
 		t.Fatalf("parser error: %v", err)
@@ -320,24 +320,24 @@ INPUT greeting DEFAULT "hello world"`
 }
 
 func TestParseAgentWithRequires(t *testing.T) {
-    input := `NAME test
+	input := `NAME test
 AGENT critic FROM agents/critic.md REQUIRES "reasoning-heavy"
 GOAL test "Test goal" USING critic
 RUN main USING test`
 
-    wf, err := ParseString(input)
-    if err != nil {
-        t.Fatalf("ParseString failed: %v", err)
-    }
-    
-    if len(wf.Agents) != 1 {
-        t.Fatalf("expected 1 agent, got %d", len(wf.Agents))
-    }
-    
-    agent := wf.Agents[0]
-    if agent.Requires != "reasoning-heavy" {
-        t.Errorf("expected Requires='reasoning-heavy', got %q", agent.Requires)
-    }
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	if len(wf.Agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(wf.Agents))
+	}
+
+	agent := wf.Agents[0]
+	if agent.Requires != "reasoning-heavy" {
+		t.Errorf("expected Requires='reasoning-heavy', got %q", agent.Requires)
+	}
 }
 
 // Test GOAL with structured output
@@ -761,8 +761,8 @@ RUN main USING a, b`,
 	}
 }
 
-// Test GetHumanRequiredStepNames
-func TestWorkflow_GetHumanRequiredStepNames(t *testing.T) {
+// Test HumanRequiredStepNames
+func TestWorkflow_HumanRequiredStepNames(t *testing.T) {
 	input := `NAME test
 GOAL analyze "Analyze"
 GOAL deploy "Deploy" SUPERVISED HUMAN
@@ -774,7 +774,7 @@ RUN main USING analyze, deploy, cleanup`
 		t.Fatalf("ParseString failed: %v", err)
 	}
 
-	names := wf.GetHumanRequiredStepNames()
+	names := wf.HumanRequiredStepNames()
 	if len(names) != 2 {
 		t.Fatalf("expected 2 names, got %d", len(names))
 	}
@@ -816,7 +816,7 @@ func TestParser_SecurityMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := NewParser(NewLexer(tt.input))
+			p := newParser(NewLexer(tt.input))
 			wf, err := p.Parse()
 
 			if tt.shouldError {
@@ -867,7 +867,7 @@ func TestParser_SecurityResearchMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := NewParser(NewLexer(tt.input))
+			p := newParser(NewLexer(tt.input))
 			wf, err := p.Parse()
 
 			if tt.shouldError {
@@ -1067,5 +1067,163 @@ RUN main USING refine`
 	_, err := ParseString(input)
 	if err == nil {
 		t.Error("expected error for CONVERGE without WITHIN, got nil")
+	}
+}
+
+// TestParser_ErrorBranches exercises every parse-error return path left
+// uncovered by the happy-path and TestParser_SyntaxErrors tests above.
+func TestParser_ErrorBranches(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{"INPUT missing identifier", `NAME t
+INPUT`, "expected identifier after INPUT"},
+		{"INPUT DEFAULT missing value", `NAME t
+INPUT x DEFAULT`, "expected value after DEFAULT"},
+		{"AGENT missing identifier", `NAME t
+AGENT`, "expected identifier after AGENT"},
+		{"AGENT FROM missing path", `NAME t
+AGENT a FROM
+GOAL g "g" USING a
+RUN r USING g`, "expected path after FROM"},
+		{"AGENT neither string nor FROM", `NAME t
+AGENT a 123`, "expected string or FROM after AGENT name"},
+		{"AGENT outputs error", `NAME t
+AGENT a "p" ->`, "expected identifier after ->"},
+		{"AGENT REQUIRES missing string", `NAME t
+AGENT a "p" REQUIRES`, "expected string after REQUIRES"},
+		{"GOAL missing identifier", `NAME t
+GOAL`, "expected identifier after GOAL"},
+		{"GOAL FROM missing path", `NAME t
+GOAL g FROM`, "expected path after FROM"},
+		{"GOAL neither string nor FROM", `NAME t
+GOAL g 123`, "expected string or FROM after GOAL name"},
+		{"GOAL outputs error", `NAME t
+GOAL g "g" ->`, "expected identifier after ->"},
+		{"GOAL USING error", `NAME t
+GOAL g "g" USING`, "expected identifier after USING"},
+		{"CONVERGE missing identifier", `NAME t
+CONVERGE`, "expected identifier after CONVERGE"},
+		{"CONVERGE FROM missing path", `NAME t
+CONVERGE c FROM`, "expected path after FROM"},
+		{"CONVERGE neither string nor FROM", `NAME t
+CONVERGE c 123`, "expected string or FROM after CONVERGE name"},
+		{"CONVERGE outputs error", `NAME t
+CONVERGE c "c" -> WITHIN 3`, "expected identifier after ->"},
+		{"CONVERGE USING error", `NAME t
+CONVERGE c "c" USING WITHIN 3`, "expected identifier after USING"},
+		{"CONVERGE WITHIN missing value", `NAME t
+CONVERGE c "c" WITHIN`, "expected number or variable after WITHIN"},
+		{"RUN missing identifier", `NAME t
+RUN`, "expected identifier after RUN"},
+		{"RUN missing USING", `NAME t
+RUN r`, "expected USING after RUN name"},
+		{"identifier list trailing comma", `NAME t
+GOAL g "g"
+RUN r USING g,`, "expected identifier after comma"},
+		{"output list trailing comma", `NAME t
+GOAL g "g" -> out1,`, "expected identifier after comma"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseString(tt.input)
+			if err == nil {
+				t.Fatalf("ParseString(%q) = nil error, want error containing %q", tt.input, tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ParseString(%q) error = %q, want containing %q", tt.input, err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParser_UnexpectedTopLevelToken(t *testing.T) {
+	_, err := ParseString(`,`)
+	if err == nil {
+		t.Fatal("ParseString(...) = nil error, want error for unexpected token")
+	}
+	if !strings.Contains(err.Error(), "unexpected token") {
+		t.Errorf("ParseString(...) error = %q, want containing %q", err.Error(), "unexpected token")
+	}
+}
+
+func TestParser_TopLevelWrapErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{"NAME statement error propagates from Parse", `NAME`, "expected identifier after NAME"},
+		{"SECURITY missing mode", "SECURITY\nNAME t\nGOAL g \"g\"\nRUN r USING g", "expected security mode after SECURITY"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseString(tt.input)
+			if err == nil {
+				t.Fatalf("ParseString(%q) = nil error, want error containing %q", tt.input, tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ParseString(%q) error = %q, want containing %q", tt.input, err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParser_ConvergeFromPath(t *testing.T) {
+	input := `NAME t
+CONVERGE c FROM converge.md WITHIN 3
+RUN r USING c
+`
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString(%q) error = %v", input, err)
+	}
+	if wf.Goals[0].FromPath != "converge.md" {
+		t.Errorf("Goals[0].FromPath = %q, want %q", wf.Goals[0].FromPath, "converge.md")
+	}
+}
+
+func TestParser_ConvergeUnsupervised(t *testing.T) {
+	input := `NAME t
+CONVERGE c "c" WITHIN 3 UNSUPERVISED
+RUN r USING c
+`
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString(%q) error = %v", input, err)
+	}
+	if wf.Goals[0].Supervision != SupervisionDisabled {
+		t.Errorf("Goals[0].Supervision = %v, want SupervisionDisabled", wf.Goals[0].Supervision)
+	}
+}
+
+func TestParser_RunSupervisedHuman(t *testing.T) {
+	input := `NAME t
+GOAL g "g"
+RUN r USING g SUPERVISED HUMAN
+`
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString(%q) error = %v", input, err)
+	}
+	if !wf.Steps[0].HumanOnly {
+		t.Error("Steps[0].HumanOnly = false, want true")
+	}
+}
+
+func TestParser_RunUnsupervised(t *testing.T) {
+	input := `NAME t
+GOAL g "g"
+RUN r USING g UNSUPERVISED
+`
+	wf, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("ParseString(%q) error = %v", input, err)
+	}
+	if wf.Steps[0].Supervision != SupervisionDisabled {
+		t.Errorf("Steps[0].Supervision = %v, want SupervisionDisabled", wf.Steps[0].Supervision)
 	}
 }

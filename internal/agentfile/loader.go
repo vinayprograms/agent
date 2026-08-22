@@ -1,6 +1,7 @@
 package agentfile
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,20 @@ import (
 	"github.com/vinayprograms/agent/internal/skills"
 )
 
+// ValidationError is a single Agentfile validation failure. Line is 0 when
+// the error is not associated with a specific line.
+type ValidationError struct {
+	Line int
+	Msg  string
+}
+
+func (e *ValidationError) Error() string {
+	if e.Line == 0 {
+		return e.Msg
+	}
+	return fmt.Sprintf("line %d: %s", e.Line, e.Msg)
+}
+
 // LoadOptions configures how Agentfiles are loaded.
 type LoadOptions struct {
 	SkillPaths []string // Paths to search for skills
@@ -16,7 +31,7 @@ type LoadOptions struct {
 
 // ParseString parses an Agentfile from a string.
 func ParseString(input string) (*Workflow, error) {
-	p := NewParser(NewLexer(input))
+	p := newParser(NewLexer(input))
 	return p.Parse()
 }
 
@@ -63,7 +78,7 @@ func LoadFileWithOptions(path string, opts LoadOptions) (*Workflow, error) {
 			goalPath := filepath.Join(baseDir, goal.FromPath)
 			goalContent, err := os.ReadFile(goalPath)
 			if err != nil {
-				return nil, fmt.Errorf("line %d: failed to load goal prompt %q: %w", 
+				return nil, fmt.Errorf("line %d: failed to load goal prompt %q: %w",
 					goal.Line, goal.FromPath, err)
 			}
 			goal.Outcome = string(goalContent)
@@ -86,10 +101,10 @@ func LoadFileWithOptions(path string, opts LoadOptions) (*Workflow, error) {
 // 5. Still not found → Error
 func resolveAgentFrom(agent *Agent, baseDir string, skillPaths []string) error {
 	target := agent.FromPath
-	
+
 	// Try as relative path first
 	fullPath := filepath.Join(baseDir, target)
-	
+
 	// Check if it's a file
 	if info, err := os.Stat(fullPath); err == nil {
 		if !info.IsDir() {
@@ -105,11 +120,11 @@ func resolveAgentFrom(agent *Agent, baseDir string, skillPaths []string) error {
 			agent.IsSkill = false
 			return nil
 		}
-		
+
 		// It's a directory - must be a skill
 		return loadAgentFromSkillDir(agent, fullPath)
 	}
-	
+
 	// Path doesn't exist relative to baseDir - search skill paths
 	for _, skillPath := range skillPaths {
 		// Expand ~ if present
@@ -117,36 +132,36 @@ func resolveAgentFrom(agent *Agent, baseDir string, skillPaths []string) error {
 			home, _ := os.UserHomeDir()
 			skillPath = filepath.Join(home, skillPath[1:])
 		}
-		
+
 		candidatePath := filepath.Join(skillPath, target)
 		if info, err := os.Stat(candidatePath); err == nil && info.IsDir() {
 			return loadAgentFromSkillDir(agent, candidatePath)
 		}
 	}
-	
+
 	return fmt.Errorf("agent not found: %s (checked relative path and skill paths)", target)
 }
 
 // loadAgentFromSkillDir loads an agent from a skill directory.
 func loadAgentFromSkillDir(agent *Agent, skillDir string) error {
 	skillMdPath := filepath.Join(skillDir, "SKILL.md")
-	
+
 	if _, err := os.Stat(skillMdPath); os.IsNotExist(err) {
 		return fmt.Errorf("directory %s is not a valid skill (missing SKILL.md)", skillDir)
 	}
-	
+
 	// Load the skill
 	skill, err := skills.Load(skillDir)
 	if err != nil {
 		return fmt.Errorf("failed to load skill from %s: %w", skillDir, err)
 	}
-	
+
 	// Build prompt from skill
 	var prompt strings.Builder
 	prompt.WriteString(skill.Description)
 	prompt.WriteString("\n\n")
 	prompt.WriteString(skill.Instructions)
-	
+
 	// Add available scripts info
 	scripts, _ := skill.ListScripts()
 	if len(scripts) > 0 {
@@ -155,26 +170,27 @@ func loadAgentFromSkillDir(agent *Agent, skillDir string) error {
 			prompt.WriteString(fmt.Sprintf("- %s\n", s))
 		}
 	}
-	
+
 	agent.Prompt = prompt.String()
 	agent.IsSkill = true
 	agent.SkillDir = skillDir
-	
+
 	return nil
 }
 
-// Validate validates the workflow AST.
+// Validate validates the workflow AST, returning errors.Join of any
+// ValidationError found. Use errors.As to recover individual failures.
 func Validate(wf *Workflow) error {
-	var errs []string
+	var errs []error
 
 	// R1.3.6: Verify NAME is specified
 	if wf.Name == "" {
-		errs = append(errs, "NAME is required")
+		errs = append(errs, &ValidationError{Msg: "NAME is required"})
 	}
 
 	// R1.3.7: Verify at least one RUN step exists
 	if len(wf.Steps) == 0 {
-		errs = append(errs, "at least one RUN step is required")
+		errs = append(errs, &ValidationError{Msg: "at least one RUN step is required"})
 	}
 
 	// Build lookup maps
@@ -192,8 +208,10 @@ func Validate(wf *Workflow) error {
 	for _, goal := range wf.Goals {
 		for _, agentName := range goal.UsingAgent {
 			if !definedAgents[agentName] {
-				errs = append(errs, fmt.Sprintf("line %d: undefined agent %q in USING clause", 
-					goal.Line, agentName))
+				errs = append(errs, &ValidationError{
+					Line: goal.Line,
+					Msg:  fmt.Sprintf("undefined agent %q in USING clause", agentName),
+				})
 			}
 		}
 	}
@@ -202,8 +220,10 @@ func Validate(wf *Workflow) error {
 	for _, step := range wf.Steps {
 		for _, goalName := range step.UsingGoals {
 			if !definedGoals[goalName] {
-				errs = append(errs, fmt.Sprintf("line %d: undefined goal %q in %s step", 
-					step.Line, goalName, step.Type))
+				errs = append(errs, &ValidationError{
+					Line: step.Line,
+					Msg:  fmt.Sprintf("undefined goal %q in %s step", goalName, step.Type),
+				})
 			}
 		}
 	}
@@ -214,33 +234,29 @@ func Validate(wf *Workflow) error {
 	if wf.Supervised && wf.HumanOnly {
 		for _, goal := range wf.Goals {
 			if goal.Supervision == SupervisionDisabled {
-				errs = append(errs, fmt.Sprintf("line %d: goal %q cannot be UNSUPERVISED when global is SUPERVISED HUMAN",
-					goal.Line, goal.Name))
+				errs = append(errs, &ValidationError{
+					Line: goal.Line,
+					Msg:  fmt.Sprintf("goal %q cannot be UNSUPERVISED when global is SUPERVISED HUMAN", goal.Name),
+				})
 			}
 		}
 		for _, agent := range wf.Agents {
 			if agent.Supervision == SupervisionDisabled {
-				errs = append(errs, fmt.Sprintf("line %d: agent %q cannot be UNSUPERVISED when global is SUPERVISED HUMAN",
-					agent.Line, agent.Name))
+				errs = append(errs, &ValidationError{
+					Line: agent.Line,
+					Msg:  fmt.Sprintf("agent %q cannot be UNSUPERVISED when global is SUPERVISED HUMAN", agent.Name),
+				})
 			}
 		}
 		for _, step := range wf.Steps {
 			if step.Supervision == SupervisionDisabled {
-				errs = append(errs, fmt.Sprintf("line %d: step %q cannot be UNSUPERVISED when global is SUPERVISED HUMAN",
-					step.Line, step.Name))
+				errs = append(errs, &ValidationError{
+					Line: step.Line,
+					Msg:  fmt.Sprintf("step %q cannot be UNSUPERVISED when global is SUPERVISED HUMAN", step.Name),
+				})
 			}
 		}
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("validation errors:\n  %s", strings.Join(errs, "\n  "))
-	}
-
-	return nil
-}
-
-// ValidateWithoutPaths validates the workflow without checking FROM paths.
-// Used for testing when file system is not available.
-func ValidateWithoutPaths(wf *Workflow) error {
-	return Validate(wf)
+	return errors.Join(errs...)
 }

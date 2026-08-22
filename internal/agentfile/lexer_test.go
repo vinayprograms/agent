@@ -26,11 +26,11 @@ func TestLexer_Keywords(t *testing.T) {
 		l := NewLexer(kw.input)
 		tok := l.NextToken()
 		if tok.Type != kw.expected {
-			t.Errorf("keywords[%d] - tokentype wrong. expected=%q, got=%q for input %q", 
+			t.Errorf("keywords[%d] - tokentype wrong. expected=%q, got=%q for input %q",
 				i, kw.expected, tok.Type, kw.input)
 		}
 		if tok.Literal != kw.input {
-			t.Errorf("keywords[%d] - literal wrong. expected=%q, got=%q", 
+			t.Errorf("keywords[%d] - literal wrong. expected=%q, got=%q",
 				i, kw.input, tok.Literal)
 		}
 	}
@@ -306,7 +306,7 @@ func TestLexer_IllegalCharacters(t *testing.T) {
 
 	l := NewLexer(input)
 	tok := l.NextToken()
-	
+
 	// @illegal should produce an illegal token (@ is not valid)
 	if tok.Type != TokenIllegal {
 		t.Errorf("expected ILLEGAL for @, got %s with literal %q", tok.Type, tok.Literal)
@@ -341,42 +341,42 @@ func TestLexer_ColumnNumbers(t *testing.T) {
 }
 
 func TestLexerRequires(t *testing.T) {
-    input := `AGENT critic FROM agents/critic.md REQUIRES "reasoning-heavy"`
-    l := NewLexer(input)
-    
-    expected := []struct {
-        typ TokenType
-        lit string
-    }{
-        {TokenAGENT, "AGENT"},
-        {TokenIdent, "critic"},
-        {TokenFROM, "FROM"},
-        {TokenPath, "agents/critic.md"},
-        {TokenREQUIRES, "REQUIRES"},
-        {TokenString, "reasoning-heavy"},
-        {TokenEOF, ""},
-    }
-    
-    for i, exp := range expected {
-        tok := l.NextToken()
-        t.Logf("Token %d: type=%s lit=%q", i, tok.Type, tok.Literal)
-        if tok.Type != exp.typ {
-            t.Errorf("token %d: expected type %s, got %s", i, exp.typ, tok.Type)
-        }
-    }
+	input := `AGENT critic FROM agents/critic.md REQUIRES "reasoning-heavy"`
+	l := NewLexer(input)
+
+	expected := []struct {
+		typ TokenType
+		lit string
+	}{
+		{TokenAGENT, "AGENT"},
+		{TokenIdent, "critic"},
+		{TokenFROM, "FROM"},
+		{TokenPath, "agents/critic.md"},
+		{TokenREQUIRES, "REQUIRES"},
+		{TokenString, "reasoning-heavy"},
+		{TokenEOF, ""},
+	}
+
+	for i, exp := range expected {
+		tok := l.NextToken()
+		t.Logf("Token %d: type=%s lit=%q", i, tok.Type, tok.Literal)
+		if tok.Type != exp.typ {
+			t.Errorf("token %d: expected type %s, got %s", i, exp.typ, tok.Type)
+		}
+	}
 }
 
 func TestLexerPathWithRequires(t *testing.T) {
-    input := "AGENT critic FROM agents/critic.md REQUIRES \"reasoning-heavy\""
-    l := NewLexer(input)
-    
-    for {
-        tok := l.NextToken()
-        t.Logf("type=%-10s lit=%q", tok.Type, tok.Literal)
-        if tok.Type == TokenEOF {
-            break
-        }
-    }
+	input := "AGENT critic FROM agents/critic.md REQUIRES \"reasoning-heavy\""
+	l := NewLexer(input)
+
+	for {
+		tok := l.NextToken()
+		t.Logf("type=%-10s lit=%q", tok.Type, tok.Literal)
+		if tok.Type == TokenEOF {
+			break
+		}
+	}
 }
 
 func TestLexer_TripleQuotedString(t *testing.T) {
@@ -387,25 +387,25 @@ Third line
 """`
 
 	l := NewLexer(input)
-	
+
 	// GOAL keyword
 	tok := l.NextToken()
 	if tok.Type != TokenGOAL {
 		t.Fatalf("expected GOAL, got %s", tok.Type)
 	}
-	
+
 	// identifier
 	tok = l.NextToken()
 	if tok.Type != TokenIdent || tok.Literal != "test" {
 		t.Fatalf("expected ident 'test', got %s %q", tok.Type, tok.Literal)
 	}
-	
+
 	// triple-quoted string
 	tok = l.NextToken()
 	if tok.Type != TokenString {
 		t.Fatalf("expected TokenString, got %s", tok.Type)
 	}
-	
+
 	expected := "First line\nSecond line\nThird line"
 	if tok.Literal != expected {
 		t.Errorf("triple-quoted string wrong.\nexpected: %q\ngot:      %q", expected, tok.Literal)
@@ -419,12 +419,12 @@ func TestLexer_TripleQuotedStringInline(t *testing.T) {
 	l := NewLexer(input)
 	l.NextToken() // GOAL
 	l.NextToken() // test
-	
+
 	tok := l.NextToken()
 	if tok.Type != TokenString {
 		t.Fatalf("expected TokenString, got %s", tok.Type)
 	}
-	
+
 	if tok.Literal != "inline content" {
 		t.Errorf("expected %q, got %q", "inline content", tok.Literal)
 	}
@@ -438,9 +438,125 @@ This string never ends
 	l := NewLexer(input)
 	l.NextToken() // GOAL
 	l.NextToken() // test
-	
+
 	tok := l.NextToken()
 	if tok.Type != TokenIllegal {
 		t.Fatalf("expected TokenIllegal for unterminated triple-quote, got %s", tok.Type)
+	}
+}
+
+func TestLexer_StringEscapeUnknown(t *testing.T) {
+	l := NewLexer(`"a\qb"`)
+	tok := l.NextToken()
+	if tok.Type != TokenString {
+		t.Fatalf("NextToken() type = %v, want TokenString", tok.Type)
+	}
+	if tok.Literal != `a\qb` {
+		t.Errorf("NextToken() literal = %q, want %q", tok.Literal, `a\qb`)
+	}
+}
+
+func TestLexer_DashAtEOF(t *testing.T) {
+	l := NewLexer(`-`)
+	tok := l.NextToken()
+	if tok.Type != TokenIllegal {
+		t.Fatalf("NextToken() type = %v, want TokenIllegal", tok.Type)
+	}
+	if tok.Literal != "-" {
+		t.Errorf("NextToken() literal = %q, want %q", tok.Literal, "-")
+	}
+}
+
+func TestLexer_EmptyLineAheadIsCommentOnly(t *testing.T) {
+	// A newline followed by a comment-only line should be treated as empty
+	// and skipped, so the next token is the identifier after it.
+	l := NewLexer("NAME test\n# comment\nGOAL a \"A\"")
+	var types []TokenType
+	for {
+		tok := l.NextToken()
+		types = append(types, tok.Type)
+		if tok.Type == TokenEOF {
+			break
+		}
+	}
+	// Should not see two consecutive newline tokens caused by the
+	// comment-only line; GOAL should follow directly after the NAME line.
+	foundGoal := false
+	for _, ty := range types {
+		if ty == TokenGOAL {
+			foundGoal = true
+		}
+	}
+	if !foundGoal {
+		t.Errorf("NextToken() sequence = %v, want it to contain TokenGOAL", types)
+	}
+}
+
+func TestLexer_EmptyLineAheadAtEOF(t *testing.T) {
+	// A trailing newline with nothing after it counts as an empty line
+	// ahead (EOF branch of isEmptyLineAhead).
+	l := NewLexer("NAME test\n")
+	var got []TokenType
+	for {
+		tok := l.NextToken()
+		got = append(got, tok.Type)
+		if tok.Type == TokenEOF {
+			break
+		}
+	}
+	if got[len(got)-1] != TokenEOF {
+		t.Errorf("NextToken() sequence = %v, want to end in TokenEOF", got)
+	}
+}
+
+func TestLexer_EmptyLineAheadWhitespaceOnly(t *testing.T) {
+	// A blank line containing only spaces should still be treated as empty
+	// (isEmptyLineAhead's whitespace-skipping loop).
+	l := NewLexer("NAME test\n   \nGOAL a \"A\"")
+	foundGoal := false
+	for {
+		tok := l.NextToken()
+		if tok.Type == TokenGOAL {
+			foundGoal = true
+		}
+		if tok.Type == TokenEOF {
+			break
+		}
+	}
+	if !foundGoal {
+		t.Error("NextToken() sequence did not contain TokenGOAL after whitespace-only blank line")
+	}
+}
+
+func TestLexer_StringEscapedQuote(t *testing.T) {
+	l := NewLexer(`"a\"b"`)
+	tok := l.NextToken()
+	if tok.Type != TokenString {
+		t.Fatalf("NextToken() type = %v, want TokenString", tok.Type)
+	}
+	if tok.Literal != `a"b` {
+		t.Errorf("NextToken() literal = %q, want %q", tok.Literal, `a"b`)
+	}
+}
+
+func TestLexer_StringEscapedBackslash(t *testing.T) {
+	l := NewLexer(`"a\\b"`)
+	tok := l.NextToken()
+	if tok.Type != TokenString {
+		t.Fatalf("NextToken() type = %v, want TokenString", tok.Type)
+	}
+	if tok.Literal != `a\b` {
+		t.Errorf("NextToken() literal = %q, want %q", tok.Literal, `a\b`)
+	}
+}
+
+func TestLexer_StringEscapedCarriageReturn(t *testing.T) {
+	l := NewLexer(`"a\rb"`)
+	tok := l.NextToken()
+	if tok.Type != TokenString {
+		t.Fatalf("NextToken() type = %v, want TokenString", tok.Type)
+	}
+	if tok.Literal != "a\rb" {
+		t.Errorf("NextToken() literal = %q, want %q", tok.Literal, "a\rb")
 	}
 }
