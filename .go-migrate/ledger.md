@@ -202,3 +202,8 @@ internal/run: Load(LoadOptions) (*Loaded, error); New(ctx, *Loaded, Deps{Creds,S
 ### R1b final sweep — DONE (ec8db59, 78a0b1e, 8f88591, 1a5280c + vars fix; verifier PASS)
 replay help/usage, ParsePricing + agentmem error tests, errors.New, budget-stop distinction + dedupe, limits.md deadline note, any sweep, cmd/agent printers via io.Writer, memory examples use remember/recall. BUG FIX: GoalResult.Vars merged into state.Outputs so `-> var` outputs appear in printed Outputs. X1 truncate dedupe skipped (depends on swarm move). All examples/**/*.agent validate; three `Agentfile`s (36-dynamic-spawning, packaged/hello-world, packaged/code-reviewer) used an undocumented dialect (VERSION keyword, indented goal bodies) and were pre-existing failures — fixed by the orchestrator to the documented grammar.
 R1b follow-ups (low): doc/warn when a `-> var` name equals a goal name (var wins); tests for budget-warning dedupe + budgetStopped converge branch.
+
+## Checkpoint 3 (usage-limit pause)
+Main @ $(git rev-parse --short HEAD): migration + R1a/R1b/R2/R3/R4/R6/R7/R8/R9a-c/R10 merged & verified; module green; all examples/**/*.agent + Agentfile validate; coverage 87.8% total.
+In flight: R11 `agent run --step` on branch ref/r11 (worktree agent-wt/r11) — worker running; needs verifier + merge. Example re-run agent running → test-results/rerun-report.md.
+Then: final report to user (ledger has every decision/assumption); optional coverage push for internal/run + cmd/agent non-serve paths.
