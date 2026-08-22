@@ -4,11 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,47 +13,21 @@ import (
 	"github.com/vinayprograms/agentkit/memory"
 )
 
-// TestMain doubles as the CLI when re-executed with AGENTMEM_CHILD set: the
-// child runs main() on the args after "--" so that os.Exit paths can be exercised
-// and their stdout/stderr/exit code observed from the parent test.
-func TestMain(m *testing.M) {
-	if os.Getenv("AGENTMEM_CHILD") != "" {
-		// CLI args follow a "--" separator so they never collide with -test.* flags.
-		args := []string{"agentmem"}
-		for i, a := range os.Args {
-			if a == "--" {
-				args = append(args, os.Args[i+1:]...)
-				break
-			}
-		}
-		os.Args = args
-		main()
-		os.Exit(0)
-	}
-	os.Exit(m.Run())
-}
-
-// run re-executes the test binary as the CLI with args and returns
-// stdout, stderr and the exit code.
+// run executes the CLI in-process with args and returns stdout, stderr and
+// an exit code derived from whether Execute returned an error (matching the
+// hand-rolled CLI's os.Exit(1)-on-error convention).
 func run(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	cmdArgs := []string{"-test.run=^$"}
-	if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
-		cmdArgs = append(cmdArgs, "-test.gocoverdir="+f.Value.String())
-	}
-	cmdArgs = append(append(cmdArgs, "--"), args...)
-	cmd := exec.Command(os.Args[0], cmdArgs...)
-	cmd.Env = append(os.Environ(), "AGENTMEM_CHILD=1")
+	root := NewRootCmd()
 	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
-	var exitErr *exec.ExitError
-	switch {
-	case err == nil:
-	case errors.As(err, &exitErr):
-		code = exitErr.ExitCode()
-	default:
-		t.Fatalf("run %v: %v", args, err)
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
+		if err != errNoCommand {
+			fmt.Fprintln(&errb, err)
+		}
+		code = 1
 	}
 	return out.String(), errb.String(), code
 }
@@ -114,10 +85,10 @@ func TestMainDispatch(t *testing.T) {
 		stderr []string
 	}{
 		{name: "no args", code: 1, stdout: []string{"Usage:"}},
-		{name: "help", args: []string{"help"}, stdout: []string{"agentmem - Memory investigation tool"}},
+		{name: "help", args: []string{"help"}, stdout: []string{"agentmem - Memory investigation tool", "Usage:"}},
 		{name: "-h", args: []string{"-h"}, stdout: []string{"Usage:"}},
 		{name: "--help", args: []string{"--help"}, stdout: []string{"Usage:"}},
-		{name: "unknown", args: []string{"bogus"}, code: 1, stdout: []string{"Usage:"}, stderr: []string{"Unknown command: bogus"}},
+		{name: "unknown", args: []string{"bogus"}, code: 1, stdout: []string{"Usage:"}, stderr: []string{"Unknown command:", "bogus"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -248,7 +219,7 @@ func TestStats(t *testing.T) {
 		absent []string
 		stderr []string
 	}{
-		{name: "missing path", args: []string{"--x"}, code: 1, stderr: []string{"storage path required"}},
+		{name: "missing path", args: []string{}, code: 1, stderr: []string{"storage path required"}},
 		{name: "full", args: []string{seeded}, stdout: []string{
 			"Storage path: " + seeded, "Bleve index: " + filepath.Join(seeded, "observations.bleve") + " (exists)",
 			"Size: ", "Semantic graph: 1 terms", "Scratchpad: 2 keys",
@@ -371,5 +342,14 @@ func TestFormatBytes(t *testing.T) {
 		if got := formatBytes(tt.in); got != tt.want {
 			t.Errorf("formatBytes(%d) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestTitle(t *testing.T) {
+	if got := title(""); got != "" {
+		t.Errorf("title(\"\") = %q, want \"\"", got)
+	}
+	if got := title("finding"); got != "Finding" {
+		t.Errorf("title(\"finding\") = %q, want \"Finding\"", got)
 	}
 }

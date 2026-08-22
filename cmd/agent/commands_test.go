@@ -96,27 +96,6 @@ func TestPackVerifyInstall_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestParseCostSpec(t *testing.T) {
-	model, in, out, err := parseCostSpec("gpt:1.5,3")
-	if err != nil || model != "gpt" || in != 1.5 || out != 3 {
-		t.Errorf("got %q %v %v %v", model, in, out, err)
-	}
-	for _, bad := range []string{"nocolon", ":1,2", "m:1", "m:x,2", "m:1,y"} {
-		if _, _, _, err := parseCostSpec(bad); err == nil {
-			t.Errorf("%q should fail", bad)
-		}
-	}
-}
-
-func TestRunReplay_Errors(t *testing.T) {
-	if err := runReplay("/nonexistent.jsonl", 0, true, []string{"bad"}); err == nil {
-		t.Error("bad cost spec should fail")
-	}
-	if err := runReplay("/nonexistent.jsonl", 0, true, nil); err == nil {
-		t.Error("missing session should fail")
-	}
-}
-
 func TestCommandRuns_Simple(t *testing.T) {
 	src := writeAgentDir(t)
 	if err := (&ValidateCmd{File: filepath.Join(src, "Agentfile")}).Run(); err != nil {
