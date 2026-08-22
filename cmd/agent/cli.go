@@ -345,8 +345,6 @@ func buildVersionCmd(cli *CLI, action func() error) *cobra.Command {
 // newRootCmd constructs the root command with all subcommands wired to real actions.
 func newRootCmd() (*cobra.Command, *CLI) {
 	cli := &CLI{}
-	rctx := &runContext{creds: globalCreds}
-
 	root := &cobra.Command{
 		Use:           "agent",
 		Short:         "Headless agent for running AI workflows",
@@ -354,17 +352,17 @@ func newRootCmd() (*cobra.Command, *CLI) {
 		SilenceErrors: true,
 	}
 	root.AddCommand(
-		buildRunCmd(cli, func() error { return cli.Run.Run(rctx) }),
+		buildRunCmd(cli, func() error { return cli.Run.Run() }),
 		buildServeCmd(cli, func() error { return cli.Serve.Run() }),
-		buildValidateCmd(cli, func() error { return cli.Validate.Run(rctx) }),
-		buildInspectCmd(cli, func() error { return cli.Inspect.Run(rctx) }),
-		buildPackCmd(cli, func() error { return cli.Pack.Run(rctx) }),
-		buildVerifyCmd(cli, func() error { return cli.Verify.Run(rctx) }),
-		buildInstallCmd(cli, func() error { return cli.Install.Run(rctx) }),
-		buildKeygenCmd(cli, func() error { return cli.Keygen.Run(rctx) }),
-		buildSetupCmd(cli, func() error { return cli.Setup.Run(rctx) }),
-		buildReplayCmd(cli, func() error { return cli.Replay.Run(rctx) }),
-		buildVersionCmd(cli, func() error { return cli.Version.Run(rctx) }),
+		buildValidateCmd(cli, func() error { return cli.Validate.Run() }),
+		buildInspectCmd(cli, func() error { return cli.Inspect.Run() }),
+		buildPackCmd(cli, func() error { return cli.Pack.Run() }),
+		buildVerifyCmd(cli, func() error { return cli.Verify.Run() }),
+		buildInstallCmd(cli, func() error { return cli.Install.Run() }),
+		buildKeygenCmd(cli, func() error { return cli.Keygen.Run() }),
+		buildSetupCmd(cli, func() error { return cli.Setup.Run() }),
+		buildReplayCmd(cli, func() error { return cli.Replay.Run() }),
+		buildVersionCmd(cli, func() error { return cli.Version.Run() }),
 	)
 	return root, cli
 }
