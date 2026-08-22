@@ -61,7 +61,7 @@ Wave C:
 8. [ ] U8 internal/executor — tools/llm/contentguard/memory/mcp/slog/spawn (largest)
 Wave D:
 9. [ ] U9 cmd/agent — runtime wiring (toolset builder, guards, shellguard, contentguard, telemetry), serve (messaging/registry/second conn), workflow, tests
-10. [ ] U10 cmd/agentmem — memory API
+10. [x] U10 cmd/agentmem — memory API
 Wave E:
 11. [ ] U11 tests/{integration,failure,performance,security,system} — llmmock, registry builder, policy files
 12. [ ] U12 examples/**/policy.toml + docs (security 06/07/10, configuration, usage) to new schema
@@ -101,3 +101,6 @@ parked-smells: 2180-line file; m.err never cleared; hand-rolled bubble sort; val
 API: Config.Provider→Config.Model llm.Model; Config.Logger/PipelineConfig.Logger *slog.Logger (nil ⇒ slog.Default(), component=supervisor). Log messages/keys preserved (+additive `step` key on phase_start/phase_complete). coverage 100%.
 NOTE for U8: phase_start/phase_complete/supervisor_verdict helpers are private here; U8 must reuse the same key set (phase, goal, step, duration, result) — consider a tiny shared helper in refactor phase.
 parked-smells: goal always logged ""; PAUSE with HumanAvailable && nil chan has no error; Supervisor iface is producer-side (consumer = executor); log-and-return at supervisor_llm_error; Pipeline.warn nil-logger now writes (was no-op).
+### U10 cmd/agentmem — DONE (14dd3fa, verifier PASS)
+memory API unchanged in v1.2.0 (bleve store layout identical, stores stay readable). main.go gofmt-only. New TestMain re-exec tests pin commands/flags/exit codes. coverage 98.1% (ListAll/RecallFIL error returns unreachable without seam).
+parked-smells: Walk nil-info deref; silent Sscanf on --limit; strings.Title; swallowed ListAll error in stats; AGENTMEM_CHILD env leak guard; exec without context; --limit/--category cases under-tested.
