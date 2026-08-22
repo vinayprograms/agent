@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -28,7 +29,7 @@ func newPackCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Dir = args[0]
-			return runPack(&opts)
+			return runPack(cmd.OutOrStdout(), &opts)
 		},
 	}
 	f := cmd.Flags()
@@ -41,7 +42,7 @@ func newPackCmd() *cobra.Command {
 }
 
 // runPack creates a signed agent package.
-func runPack(c *packOptions) error {
+func runPack(w io.Writer, c *packOptions) error {
 	opts := packaging.PackOptions{
 		SourceDir:  c.Dir,
 		OutputPath: c.Output,
@@ -68,26 +69,26 @@ func runPack(c *packOptions) error {
 		return fmt.Errorf("creating package: %w", err)
 	}
 
-	printPackResult(pkg, opts)
+	printPackResult(w, pkg, opts)
 	return nil
 }
 
-func printPackResult(pkg *packaging.Package, opts packaging.PackOptions) {
-	fmt.Printf("✓ Created %s\n", opts.OutputPath)
-	fmt.Printf("  Name: %s\n", pkg.Manifest.Name)
-	fmt.Printf("  Version: %s\n", pkg.Manifest.Version)
+func printPackResult(w io.Writer, pkg *packaging.Package, opts packaging.PackOptions) {
+	fmt.Fprintf(w, "✓ Created %s\n", opts.OutputPath)
+	fmt.Fprintf(w, "  Name: %s\n", pkg.Manifest.Name)
+	fmt.Fprintf(w, "  Version: %s\n", pkg.Manifest.Version)
 	if opts.PrivateKey != nil {
-		fmt.Printf("  Signed: yes\n")
+		fmt.Fprintf(w, "  Signed: yes\n")
 	} else {
-		fmt.Printf("  Signed: no (use --sign to sign)\n")
+		fmt.Fprintf(w, "  Signed: no (use --sign to sign)\n")
 	}
 	if len(pkg.Manifest.Inputs) > 0 {
-		fmt.Printf("  Inputs: %d\n", len(pkg.Manifest.Inputs))
+		fmt.Fprintf(w, "  Inputs: %d\n", len(pkg.Manifest.Inputs))
 	}
 	if pkg.Manifest.Requires != nil && len(pkg.Manifest.Requires.Profiles) > 0 {
-		fmt.Printf("  Requires profiles: %s\n", strings.Join(pkg.Manifest.Requires.Profiles, ", "))
+		fmt.Fprintf(w, "  Requires profiles: %s\n", strings.Join(pkg.Manifest.Requires.Profiles, ", "))
 	}
 	if len(pkg.Manifest.Dependencies) > 0 {
-		fmt.Printf("  Dependencies: %d\n", len(pkg.Manifest.Dependencies))
+		fmt.Fprintf(w, "  Dependencies: %d\n", len(pkg.Manifest.Dependencies))
 	}
 }

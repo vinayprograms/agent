@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -16,7 +17,7 @@ func newVerifyCmd() *cobra.Command {
 		Short: "Verify package signature",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVerify(args[0], key)
+			return runVerify(cmd.OutOrStdout(), args[0], key)
 		},
 	}
 	cmd.Flags().StringVar(&key, "key", "", "Public key path for verification")
@@ -24,7 +25,7 @@ func newVerifyCmd() *cobra.Command {
 }
 
 // runVerify verifies a package signature.
-func runVerify(pkgPath, keyPath string) error {
+func runVerify(w io.Writer, pkgPath, keyPath string) error {
 	pkg, err := packaging.Load(pkgPath)
 	if err != nil {
 		return fmt.Errorf("loading package: %w", err)
@@ -42,16 +43,16 @@ func runVerify(pkgPath, keyPath string) error {
 		return fmt.Errorf("verification failed: %w", err)
 	}
 
-	printVerifyResult(pkg)
+	printVerifyResult(w, pkg)
 	return nil
 }
 
-func printVerifyResult(pkg *packaging.Package) {
-	fmt.Printf("✓ Package verified: %s@%s\n", pkg.Manifest.Name, pkg.Manifest.Version)
+func printVerifyResult(w io.Writer, pkg *packaging.Package) {
+	fmt.Fprintf(w, "✓ Package verified: %s@%s\n", pkg.Manifest.Name, pkg.Manifest.Version)
 	if pkg.Signature != nil {
-		fmt.Println("  Signature: valid")
+		fmt.Fprintln(w, "  Signature: valid")
 	} else {
-		fmt.Println("  Signature: unsigned")
+		fmt.Fprintln(w, "  Signature: unsigned")
 	}
-	fmt.Println("  Content hash: valid")
+	fmt.Fprintln(w, "  Content hash: valid")
 }

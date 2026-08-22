@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,59 +43,79 @@ func writeAgentDir(t *testing.T) string {
 }
 
 func TestPackVerifyInstall_RoundTrip(t *testing.T) {
+	var out2 bytes.Buffer
 	src := writeAgentDir(t)
 	keys := filepath.Join(t.TempDir(), "k")
-	if err := runKeygen(keys); err != nil {
+	if err := runKeygen(&out2, keys); err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
-	if err := runKeygen(keys); err == nil {
+	if got := out2.String(); !strings.Contains(got, "Generated key pair") || !strings.Contains(got, keys+".pem") {
+		t.Errorf("keygen output = %q, missing expected fields", got)
+	}
+	if err := runKeygen(io.Discard, keys); err == nil {
 		t.Error("second keygen on the same prefix should fail")
 	}
 
 	out := filepath.Join(t.TempDir(), "pkg.agent")
-	err := runPack(&packOptions{Dir: src, Output: out, Sign: keys + ".pem", Author: "a", Email: "a@b", License: "MIT"})
+	out2.Reset()
+	err := runPack(&out2, &packOptions{Dir: src, Output: out, Sign: keys + ".pem", Author: "a", Email: "a@b", License: "MIT"})
 	if err != nil {
 		t.Fatalf("pack: %v", err)
 	}
-	if err := runPack(&packOptions{Dir: src, Output: out, Sign: "/nonexistent.pem"}); err == nil {
+	if got := out2.String(); !strings.Contains(got, "Created "+out) || !strings.Contains(got, "Signed: yes") {
+		t.Errorf("pack output = %q, missing expected fields", got)
+	}
+	if err := runPack(io.Discard, &packOptions{Dir: src, Output: out, Sign: "/nonexistent.pem"}); err == nil {
 		t.Error("pack with missing key should fail")
 	}
-	if err := runPack(&packOptions{Dir: t.TempDir(), Output: out}); err == nil {
+	if err := runPack(io.Discard, &packOptions{Dir: t.TempDir(), Output: out}); err == nil {
 		t.Error("pack without Agentfile should fail")
 	}
 
-	if err := runVerify(out, keys+".pub"); err != nil {
+	out2.Reset()
+	if err := runVerify(&out2, out, keys+".pub"); err != nil {
 		t.Errorf("verify: %v", err)
 	}
-	if err := runVerify(out, ""); err != nil {
+	if got := out2.String(); !strings.Contains(got, "Package verified") || !strings.Contains(got, "Signature: valid") {
+		t.Errorf("verify output = %q, missing expected fields", got)
+	}
+	if err := runVerify(io.Discard, out, ""); err != nil {
 		t.Errorf("verify without key: %v", err)
 	}
-	if err := runVerify(out, "/nonexistent.pub"); err == nil {
+	if err := runVerify(io.Discard, out, "/nonexistent.pub"); err == nil {
 		t.Error("verify with missing key should fail")
 	}
-	if err := runVerify("/nonexistent.agent", ""); err == nil {
+	if err := runVerify(io.Discard, "/nonexistent.agent", ""); err == nil {
 		t.Error("verify of missing package should fail")
 	}
 
 	target := t.TempDir()
-	if err := runInstall(&installOptions{Package: out, Target: target, Key: keys + ".pub", DryRun: true}); err != nil {
+	out2.Reset()
+	if err := runInstall(&out2, &installOptions{Package: out, Target: target, Key: keys + ".pub", DryRun: true}); err != nil {
 		t.Errorf("install dry-run: %v", err)
 	}
-	if err := runInstall(&installOptions{Package: out, Target: target, NoDeps: true}); err != nil {
+	if got := out2.String(); !strings.Contains(got, "Dry run") {
+		t.Errorf("install dry-run output = %q, missing expected fields", got)
+	}
+	if err := runInstall(io.Discard, &installOptions{Package: out, Target: target, NoDeps: true}); err != nil {
 		t.Errorf("install: %v", err)
 	}
-	if err := runInstall(&installOptions{Package: out, Target: target, Key: "/nonexistent.pub"}); err == nil {
+	if err := runInstall(io.Discard, &installOptions{Package: out, Target: target, Key: "/nonexistent.pub"}); err == nil {
 		t.Error("install with missing key should fail")
 	}
-	if err := runInstall(&installOptions{Package: "/nonexistent.agent", Target: target}); err == nil {
+	if err := runInstall(io.Discard, &installOptions{Package: "/nonexistent.agent", Target: target}); err == nil {
 		t.Error("install of missing package should fail")
 	}
 
 	// inspect both forms
-	if err := runInspectWorkflow(filepath.Join(src, "Agentfile")); err != nil {
+	out2.Reset()
+	if err := runInspectWorkflow(&out2, filepath.Join(src, "Agentfile")); err != nil {
 		t.Errorf("inspect workflow: %v", err)
 	}
-	if err := runInspectPackage(out); err != nil {
+	if got := out2.String(); !strings.Contains(got, "Workflow: pkg-test") {
+		t.Errorf("inspect workflow output = %q, missing expected fields", got)
+	}
+	if err := runInspectPackage(io.Discard, out); err != nil {
 		t.Errorf("inspect package: %v", err)
 	}
 	if !isPackageFile(out) {
