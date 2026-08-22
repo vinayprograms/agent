@@ -58,6 +58,35 @@ api_key = "tvly-..."
 
 Used automatically if no other provider is configured. Subject to rate limiting.
 
+## Rate Limiting and Caching
+
+DuckDuckGo queries wait out a cooldown between requests to avoid the `202`
+rate-limit response. It defaults to 2 seconds and is configurable:
+
+```toml
+# agent.toml
+[timeouts]
+search_cooldown_ms = 2000   # minimum ms between DuckDuckGo queries
+```
+
+Raise this if you run several sub-agents concurrently and see `202`
+responses; DDG retries a rate-limited request with exponential backoff plus
+jitter on top of the cooldown.
+
+Every `web_search` result (from any provider) is cached in-process, keyed by
+provider, query, and result count, for 5 minutes. The cache is shared by all
+sub-agents dispatched through the same tool instance, so repeated or
+overlapping lookups skip both the cooldown and the HTTP call entirely.
+
+## web_fetch and HTTP/1.1
+
+`web_fetch` forces HTTP/1.1 and sends browser-like headers (`User-Agent`,
+`Accept`, `Accept-Language`, etc.). Go's default client negotiates HTTP/2 via
+ALPN, and some enterprise CDNs (Akamai, Cloudflare) fingerprint Go's h2
+`SETTINGS` frame and reject the connection with `INTERNAL_ERROR`. Forcing
+HTTP/1.1 avoids that fingerprint; there is no configuration for this — it is
+always on.
+
 ---
 
 Back to [README](../../README.md) | See also: [Protocols](protocols.md)

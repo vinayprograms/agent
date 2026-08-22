@@ -213,9 +213,10 @@ insecure = false
 # DD-API-KEY = "..."
 
 [timeouts]
-mcp = 60          # seconds; default: 60
-web_search = 30   # seconds; default: 30
-web_fetch = 60    # seconds; default: 60
+mcp = 60                  # seconds; default: 60
+web_search = 30           # seconds; default: 30
+web_fetch = 60            # seconds; default: 60
+search_cooldown_ms = 2000 # ms between DuckDuckGo queries; default: 2000
 
 [embedding]
 # Provider for resume vectors: openai|google|openai-compat|litellm|none
