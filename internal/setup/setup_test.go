@@ -58,7 +58,7 @@ func runFakeMCPServer() {
 }
 
 // isolate runs the test in an empty cwd with a throwaway HOME so that
-// New() finds no existing config and nothing touches the real user files.
+// New(context.Background()) finds no existing config and nothing touches the real user files.
 func isolate(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -101,7 +101,7 @@ func TestGeneratePolicyTOML_RoundTripsWithNoUnknownKeys(t *testing.T) {
 					for _, mcpMode := range []string{"off", "empty", "servers"} {
 						name := fmt.Sprintf("%s/deny=%t/bash=%t/web=%t/mcp=%s", sc, deny, bash, web, mcpMode)
 						t.Run(name, func(t *testing.T) {
-							m := New()
+							m := New(context.Background())
 							m.config.Scenario = sc
 							m.config.DefaultDeny = deny
 							m.config.AllowBash = bash
@@ -181,7 +181,7 @@ func assertPolicyMatchesConfig(t *testing.T, m Model) {
 
 func TestGeneratePolicyTOML_LegacyKeysAbsent(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	m.config.DefaultDeny = true
 	m.config.EnableMCP = true
 	m.config.MCPServers["memory"] = MCPServerSetup{}
@@ -195,7 +195,7 @@ func TestGeneratePolicyTOML_LegacyKeysAbsent(t *testing.T) {
 
 func TestGenerateAgentTOML(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	m.config.Provider = ProviderOpenAI
 	m.config.Model = "gpt-4o"
 	m.config.BaseURL = "http://proxy/v1"
@@ -263,7 +263,7 @@ func TestApplyScenarioDefaults(t *testing.T) {
 		{ScenarioDocker, ProviderLiteLLM, true, true, "env"},
 	}
 	for _, tt := range tests {
-		m := New()
+		m := New(context.Background())
 		m.config.Scenario = tt.scenario
 		m.applyScenarioDefaults()
 		if m.config.Provider != tt.provider || m.config.DefaultDeny != tt.deny ||
@@ -275,7 +275,7 @@ func TestApplyScenarioDefaults(t *testing.T) {
 
 func TestDefaultModels(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	for _, p := range m.getProviders() {
 		m.config.Provider = p.id
 		m.setDefaultModel()
@@ -307,7 +307,7 @@ func TestDefaultModels(t *testing.T) {
 func TestConfigureDefaultProfiles(t *testing.T) {
 	isolate(t)
 	for provider, want := range map[string]int{ProviderAnthropic: 3, ProviderOpenAI: 3, ProviderLiteLLM: 2, ProviderGroq: 1} {
-		m := New()
+		m := New(context.Background())
 		m.config.Provider = provider
 		m.configureDefaultProfiles()
 		if len(m.config.Profiles) != want {
@@ -318,7 +318,7 @@ func TestConfigureDefaultProfiles(t *testing.T) {
 
 func TestFindIndexes(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	if m.findScenarioIndex() != 0 || m.findProviderIndex("") != 0 || m.findModelIndex() != 0 {
 		t.Error("empty values must map to index 0")
 	}
@@ -337,7 +337,7 @@ func TestFindIndexes(t *testing.T) {
 
 func TestProviderHelpers(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	urls := map[string]string{
 		ProviderOllamaLocal: "http://localhost:11434/v1",
 		ProviderLMStudio:    "http://localhost:1234/v1",
@@ -380,7 +380,7 @@ func TestGetDefaultConfigDir(t *testing.T) {
 
 func TestGetSortedMCPServerNames(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	for _, n := range []string{"zeta", "alpha", "mid"} {
 		m.config.MCPServers[n] = MCPServerSetup{}
 	}
@@ -426,7 +426,7 @@ default_deny = true
 	os.WriteFile("agent.toml", []byte(agentTOML), 0644)
 	os.WriteFile("policy.toml", []byte(policyTOML), 0644)
 
-	m := New()
+	m := New(context.Background())
 	if !m.editMode || m.existingFile != "agent.toml" {
 		t.Fatal("expected edit mode")
 	}
@@ -448,12 +448,12 @@ default_deny = true
 
 func TestLoadExistingConfig_Errors(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	if m.editMode {
 		t.Fatal("no agent.toml must not enter edit mode")
 	}
 	os.WriteFile("agent.toml", []byte("not = [valid"), 0644)
-	m = New()
+	m = New(context.Background())
 	if m.editMode {
 		t.Fatal("malformed agent.toml must not enter edit mode")
 	}
@@ -464,7 +464,7 @@ func TestLoadExistingConfig_Errors(t *testing.T) {
 
 func TestUpdate_Navigation(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	m, _ = send(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	if m.width != 80 || m.height != 24 {
 		t.Error("window size not recorded")
@@ -477,8 +477,8 @@ func TestUpdate_Navigation(t *testing.T) {
 	}
 
 	m, _ = send(t, m, key(tea.KeyEnter)) // -> scenario
-	if m.step != ScreenScenario {
-		t.Fatalf("step = %d", m.step)
+	if m.screen != ScreenScenario {
+		t.Fatalf("step = %d", m.screen)
 	}
 	m, _ = send(t, m, key(tea.KeyUp)) // clamps at 0
 	m, _ = send(t, m, key(tea.KeyDown), runes("j"), runes("k"))
@@ -493,106 +493,106 @@ func TestUpdate_Navigation(t *testing.T) {
 	}
 	m, _ = send(t, m, key(tea.KeyTab), key(tea.KeySpace)) // no-ops here
 	m, _ = send(t, m, runes("q"))                         // back
-	if m.step != ScreenWelcome {
-		t.Errorf("q must go back, step = %d", m.step)
+	if m.screen != ScreenWelcome {
+		t.Errorf("q must go back, step = %d", m.screen)
 	}
 	m, _ = send(t, m, "unknown message")
-	if m.step != ScreenWelcome {
+	if m.screen != ScreenWelcome {
 		t.Error("unknown message must be ignored")
 	}
 }
 
 func TestUpdate_FullFlow_RestrictiveWithMCP(t *testing.T) {
 	home := isolate(t)
-	m := New()
+	m := New(context.Background())
 	m, _ = send(t, m, key(tea.KeyEnter))                   // welcome -> scenario
 	m, _ = send(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // dev -> provider (anthropic)
-	if m.config.Scenario != ScenarioDev || m.step != ScreenProvider || m.config.Provider != ProviderAnthropic {
-		t.Fatalf("after scenario: %+v step=%d", m.config, m.step)
+	if m.config.Scenario != ScenarioDev || m.screen != ScreenProvider || m.config.Provider != ProviderAnthropic {
+		t.Fatalf("after scenario: %+v step=%d", m.config, m.screen)
 	}
 	m, _ = send(t, m, key(tea.KeyEnter)) // anthropic -> model list
-	if m.step != ScreenModel || m.config.Model != "claude-sonnet-4-20250514" {
-		t.Fatalf("after provider: step=%d model=%s", m.step, m.config.Model)
+	if m.screen != ScreenModel || m.config.Model != "claude-sonnet-4-20250514" {
+		t.Fatalf("after provider: step=%d model=%s", m.screen, m.config.Model)
 	}
 	m, _ = send(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // opus -> api key
-	if m.step != ScreenAPIKey || m.config.Model != "claude-opus-4-20250514" {
-		t.Fatalf("after model: step=%d model=%s", m.step, m.config.Model)
+	if m.screen != ScreenAPIKey || m.config.Model != "claude-opus-4-20250514" {
+		t.Fatalf("after model: step=%d model=%s", m.screen, m.config.Model)
 	}
 	m = typeText(t, m, "sk-test")
 	m, _ = send(t, m, key(tea.KeyEnter)) // -> thinking (anthropic has no base URL)
-	if m.step != ScreenThinking || m.config.APIKey != "sk-test" {
-		t.Fatalf("after api key: step=%d", m.step)
+	if m.screen != ScreenThinking || m.config.APIKey != "sk-test" {
+		t.Fatalf("after api key: step=%d", m.screen)
 	}
 	m, _ = send(t, m, key(tea.KeyDown), key(tea.KeyDown), key(tea.KeyEnter)) // low -> small llm
-	if m.config.Thinking != "low" || m.step != ScreenSmallLLM || m.cursor != 0 {
+	if m.config.Thinking != "low" || m.screen != ScreenSmallLLM || m.cursor != 0 {
 		t.Fatalf("after thinking: %+v", m.config)
 	}
 	m, _ = send(t, m, key(tea.KeyEnter)) // yes -> small provider
 	m, _ = send(t, m, key(tea.KeyEnter)) // anthropic -> small model
-	if m.step != ScreenSmallLLMModel || m.textInput.Value() != "claude-3-5-haiku-20241022" {
-		t.Fatalf("after small provider: step=%d value=%s", m.step, m.textInput.Value())
+	if m.screen != ScreenSmallLLMModel || m.textInput.Value() != "claude-3-5-haiku-20241022" {
+		t.Fatalf("after small provider: step=%d value=%s", m.screen, m.textInput.Value())
 	}
 	m, _ = send(t, m, key(tea.KeyEnter)) // -> workspace
 	m = typeText(t, m, "/ws")
 	m, _ = send(t, m, key(tea.KeyEnter)) // -> security (cursor 0 = permissive)
-	if m.step != ScreenSecurity || m.config.Workspace != "./ws" && m.config.Workspace != "/ws" {
-		t.Fatalf("after workspace: step=%d ws=%s", m.step, m.config.Workspace)
+	if m.screen != ScreenSecurity || m.config.Workspace != "./ws" && m.config.Workspace != "/ws" {
+		t.Fatalf("after workspace: step=%d ws=%s", m.screen, m.config.Workspace)
 	}
 	m, _ = send(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // restrictive -> security mode
 	if !m.config.DefaultDeny || m.config.AllowBash || m.config.AllowWeb {
 		t.Fatalf("restrictive must clear bash/web: %+v", m.config)
 	}
 	m, _ = send(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // paranoid -> profiles
-	if m.config.SecurityMode != "paranoid" || m.step != ScreenProfiles || m.cursor != 1 {
-		t.Fatalf("after security mode: %+v step=%d", m.config, m.step)
+	if m.config.SecurityMode != "paranoid" || m.screen != ScreenProfiles || m.cursor != 1 {
+		t.Fatalf("after security mode: %+v step=%d", m.config, m.screen)
 	}
 	m, _ = send(t, m, key(tea.KeyUp), key(tea.KeyEnter)) // yes -> profiles config
-	if m.step != ScreenProfilesConfig || !m.config.UseProfiles {
-		t.Fatalf("step = %d", m.step)
+	if m.screen != ScreenProfilesConfig || !m.config.UseProfiles {
+		t.Fatalf("step = %d", m.screen)
 	}
 	m, _ = send(t, m, key(tea.KeyEnter)) // -> features
-	if m.step != ScreenFeatures || len(m.config.Profiles) != 3 {
-		t.Fatalf("step = %d profiles=%d", m.step, len(m.config.Profiles))
+	if m.screen != ScreenFeatures || len(m.config.Profiles) != 3 {
+		t.Fatalf("step = %d profiles=%d", m.screen, len(m.config.Profiles))
 	}
 	m, _ = send(t, m, key(tea.KeySpace), key(tea.KeyEnter)) // toggle MCP on -> mcp add
-	if !m.config.EnableMCP || m.step != ScreenMCPAdd {
-		t.Fatalf("mcp=%t step=%d", m.config.EnableMCP, m.step)
+	if !m.config.EnableMCP || m.screen != ScreenMCPAdd {
+		t.Fatalf("mcp=%t step=%d", m.config.EnableMCP, m.screen)
 	}
 
 	// Add a server: name, command, args, probe (fake result), deny selection.
 	m, _ = send(t, m, key(tea.KeyEnter)) // "Add new" -> name
 	m, _ = send(t, m, key(tea.KeyEnter)) // empty name -> error
-	if m.err == nil || m.step != ScreenMCPName {
+	if m.err == nil || m.screen != ScreenMCPName {
 		t.Fatal("empty name must error")
 	}
 	m = typeText(t, m, "memory")
 	m, _ = send(t, m, key(tea.KeyEnter)) // -> command
 	m, _ = send(t, m, key(tea.KeyEnter)) // empty command -> error
-	if m.step != ScreenMCPCommand {
+	if m.screen != ScreenMCPCommand {
 		t.Fatal("empty command must error")
 	}
 	m = typeText(t, m, "npx")
 	m, _ = send(t, m, key(tea.KeyEnter)) // -> args
 	m = typeText(t, m, "-y srv")
 	m, cmd := send(t, m, key(tea.KeyEnter)) // -> probe
-	if m.step != ScreenMCPProbe || cmd == nil {
-		t.Fatalf("probe not started: step=%d", m.step)
+	if m.screen != ScreenMCPProbe || cmd == nil {
+		t.Fatalf("probe not started: step=%d", m.screen)
 	}
 	m, _ = send(t, m, key(tea.KeyEnter)) // enter during probe is a no-op
 	m, _ = send(t, m, mcpProbeResult{tools: []string{"read", "delete"}})
-	if m.step != ScreenMCPDenySelect || len(m.probedTools) != 2 {
-		t.Fatalf("after probe: step=%d tools=%v", m.step, m.probedTools)
+	if m.screen != ScreenMCPDenySelect || len(m.probedTools) != 2 {
+		t.Fatalf("after probe: step=%d tools=%v", m.screen, m.probedTools)
 	}
 	m, _ = send(t, m, key(tea.KeyDown), key(tea.KeySpace), key(tea.KeyEnter)) // deny "delete"
 	srv := m.config.MCPServers["memory"]
-	if m.step != ScreenMCPAdd || srv.Command != "npx" || len(srv.Args) != 2 || strings.Join(srv.DeniedTools, ",") != "delete" {
-		t.Fatalf("server = %+v step=%d", srv, m.step)
+	if m.screen != ScreenMCPAdd || srv.Command != "npx" || len(srv.Args) != 2 || strings.Join(srv.DeniedTools, ",") != "delete" {
+		t.Fatalf("server = %+v step=%d", srv, m.screen)
 	}
 
 	// Edit the existing server: re-probe, pre-selects previously denied tools.
 	m, cmd = send(t, m, key(tea.KeyEnter)) // cursor 0 = edit memory
-	if m.step != ScreenMCPProbe || cmd == nil || m.currentMCPArgs != "-y srv" {
-		t.Fatalf("edit must re-probe: step=%d args=%q", m.step, m.currentMCPArgs)
+	if m.screen != ScreenMCPProbe || cmd == nil || m.currentMCPArgs != "-y srv" {
+		t.Fatalf("edit must re-probe: step=%d args=%q", m.screen, m.currentMCPArgs)
 	}
 	m, _ = send(t, m, mcpProbeResult{tools: []string{"read", "delete"}})
 	if !m.selected[1] || m.selected[0] {
@@ -619,26 +619,26 @@ func TestUpdate_FullFlow_RestrictiveWithMCP(t *testing.T) {
 	}
 
 	m, _ = send(t, m, key(tea.KeyDown), key(tea.KeyDown), key(tea.KeyDown), key(tea.KeyEnter)) // done -> credentials
-	if m.step != ScreenCredentialMethod {
-		t.Fatalf("step = %d", m.step)
+	if m.screen != ScreenCredentialMethod {
+		t.Fatalf("step = %d", m.screen)
 	}
 	m, _ = send(t, m, key(tea.KeyEnter)) // file -> confirm
-	if m.config.CredentialMethod != "file" || m.step != ScreenConfirm {
-		t.Fatalf("cred=%s step=%d", m.config.CredentialMethod, m.step)
+	if m.config.CredentialMethod != "file" || m.screen != ScreenConfirm {
+		t.Fatalf("cred=%s step=%d", m.config.CredentialMethod, m.screen)
 	}
 	m, _ = send(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // go back -> scenario
-	if m.step != ScreenScenario {
-		t.Fatalf("cancel must return to scenario, step=%d", m.step)
+	if m.screen != ScreenScenario {
+		t.Fatalf("cancel must return to scenario, step=%d", m.screen)
 	}
-	m.step = ScreenConfirm
+	m.screen = ScreenConfirm
 	m.cursor = 0
 	m.err = nil                            // parked smell: validation errors are never cleared and would show on the Complete screen
 	m, cmd = send(t, m, key(tea.KeyEnter)) // create files
-	if m.step != ScreenWriteFiles || cmd == nil {
+	if m.screen != ScreenWriteFiles || cmd == nil {
 		t.Fatal("confirm must start writing")
 	}
 	m, _ = send(t, m, cmd())
-	if m.step != ScreenComplete || m.err != nil {
+	if m.screen != ScreenComplete || m.err != nil {
 		t.Fatalf("write failed: %v", m.err)
 	}
 	credPath := filepath.Join(home, ".config", "grid", "credentials.toml")
@@ -665,28 +665,28 @@ func TestUpdate_FullFlow_RestrictiveWithMCP(t *testing.T) {
 
 func TestUpdate_CustomProviderFlow(t *testing.T) {
 	isolate(t)
-	m := New()
-	m.step = ScreenScenario
+	m := New(context.Background())
+	m.screen = ScreenScenario
 	m.cursor = 0
 	m, _ = send(t, m, key(tea.KeyEnter)) // local -> provider (ollama-local)
 	m, _ = send(t, m, key(tea.KeyEnter)) // ollama-local -> custom model input
-	if m.step != ScreenCustomModel || m.textInput.Value() != "llama3.2" {
-		t.Fatalf("step=%d value=%s", m.step, m.textInput.Value())
+	if m.screen != ScreenCustomModel || m.textInput.Value() != "llama3.2" {
+		t.Fatalf("step=%d value=%s", m.screen, m.textInput.Value())
 	}
 	m.textInput.SetValue("")
 	m, _ = send(t, m, key(tea.KeyEnter)) // empty -> error
-	if m.err == nil || m.step != ScreenCustomModel {
+	if m.err == nil || m.screen != ScreenCustomModel {
 		t.Fatal("empty model must error")
 	}
 	m = typeText(t, m, "phi3")
 	m, _ = send(t, m, key(tea.KeyEnter)) // -> api key
 	m, _ = send(t, m, key(tea.KeyEnter)) // empty key keeps existing -> base URL (default)
-	if m.step != ScreenBaseURL || m.textInput.Value() != "http://localhost:11434/v1" {
-		t.Fatalf("step=%d value=%s", m.step, m.textInput.Value())
+	if m.screen != ScreenBaseURL || m.textInput.Value() != "http://localhost:11434/v1" {
+		t.Fatalf("step=%d value=%s", m.screen, m.textInput.Value())
 	}
 	m, _ = send(t, m, key(tea.KeyEnter)) // -> thinking
-	if m.config.BaseURL != "http://localhost:11434/v1" || m.step != ScreenThinking {
-		t.Fatalf("base url = %s step=%d", m.config.BaseURL, m.step)
+	if m.config.BaseURL != "http://localhost:11434/v1" || m.screen != ScreenThinking {
+		t.Fatalf("base url = %s step=%d", m.config.BaseURL, m.screen)
 	}
 	m, _ = send(t, m, key(tea.KeyEnter))                   // auto -> small llm (cursor 1: no)
 	m, _ = send(t, m, key(tea.KeyEnter))                   // no -> workspace
@@ -696,8 +696,8 @@ func TestUpdate_CustomProviderFlow(t *testing.T) {
 	m, _ = send(t, m, key(tea.KeyEnter))                   // no -> features
 	m, _ = send(t, m, key(tea.KeyEnter))                   // no MCP -> credentials
 	m, _ = send(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // env -> confirm
-	if m.step != ScreenConfirm || m.config.CredentialMethod != "env" || m.config.Workspace != "." {
-		t.Fatalf("step=%d cred=%s ws=%s", m.step, m.config.CredentialMethod, m.config.Workspace)
+	if m.screen != ScreenConfirm || m.config.CredentialMethod != "env" || m.config.Workspace != "." {
+		t.Fatalf("step=%d cred=%s ws=%s", m.screen, m.config.CredentialMethod, m.config.Workspace)
 	}
 	m.err = nil // parked smell: stale validation error, see TestUpdate_FullFlow_RestrictiveWithMCP
 	m, cmd := send(t, m, key(tea.KeyEnter))
@@ -712,30 +712,30 @@ func TestUpdate_CustomProviderFlow(t *testing.T) {
 
 func TestUpdate_EditModeBaseURLAndPreviousStep(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	m.editMode = true
 	m.config.Provider = ProviderLiteLLM
 	m.config.BaseURL = "http://existing"
 	m.config.SmallLLMEnabled = true
 	m.config.SmallLLMProvider = ProviderLiteLLM
 	m.config.UseProfiles = true
-	m.step = ScreenScenario
+	m.screen = ScreenScenario
 	m, _ = send(t, m, key(tea.KeyEnter)) // edit mode keeps provider
 	if m.config.Provider != ProviderLiteLLM {
 		t.Fatal("edit mode must not override provider")
 	}
-	m.step = ScreenAPIKey
+	m.screen = ScreenAPIKey
 	m, _ = send(t, m, key(tea.KeyEnter))
 	if m.textInput.Value() != "http://existing" {
 		t.Errorf("edit mode must prefill base URL, got %q", m.textInput.Value())
 	}
-	m.step = ScreenSmallLLMProvider
+	m.screen = ScreenSmallLLMProvider
 	m.config.SmallLLMModel = "keep-me"
 	m, _ = send(t, m, key(tea.KeyEnter))
 	if m.config.SmallLLMModel != "keep-me" {
 		t.Error("edit mode must keep existing small model")
 	}
-	m.step = ScreenSecurity
+	m.screen = ScreenSecurity
 	m.cursor = 1
 	m.config.AllowBash = true
 	m, _ = send(t, m, key(tea.KeyEnter))
@@ -743,35 +743,35 @@ func TestUpdate_EditModeBaseURLAndPreviousStep(t *testing.T) {
 		t.Error("edit mode must keep AllowBash on restrictive")
 	}
 
-	// previousStep skips conditional steps.
+	// previousScreen skips conditional steps.
 	m.config.SmallLLMEnabled = false
-	m.step = ScreenWorkspace
-	if m.previousStep() != ScreenSmallLLM {
+	m.screen = ScreenWorkspace
+	if m.previousScreen() != ScreenSmallLLM {
 		t.Error("back from workspace skips small-llm model when disabled")
 	}
-	m.step = ScreenSmallLLMModel
-	if m.previousStep() != ScreenSmallLLM {
+	m.screen = ScreenSmallLLMModel
+	if m.previousScreen() != ScreenSmallLLM {
 		t.Error("back from small-llm model skips provider when disabled")
 	}
 	m.config.Provider = ProviderAnthropic
-	m.step = ScreenThinking
-	if m.previousStep() != ScreenAPIKey {
+	m.screen = ScreenThinking
+	if m.previousScreen() != ScreenAPIKey {
 		t.Error("back from thinking skips base URL for direct providers")
 	}
 	m.config.UseProfiles = false
-	m.step = ScreenFeatures
-	if m.previousStep() != ScreenProfiles {
+	m.screen = ScreenFeatures
+	if m.previousScreen() != ScreenProfiles {
 		t.Error("back from features skips profile config")
 	}
-	m.step = ScreenModel
-	if m.previousStep() != ScreenProvider {
+	m.screen = ScreenModel
+	if m.previousScreen() != ScreenProvider {
 		t.Error("plain back")
 	}
 }
 
 func TestMaxCursorForStep(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	m.config.MCPServers["a"] = MCPServerSetup{}
 	want := map[Screen]int{
 		ScreenScenario: 4, ScreenProvider: 11, ScreenModel: 0, ScreenThinking: 4, ScreenSmallLLM: 1,
@@ -780,14 +780,14 @@ func TestMaxCursorForStep(t *testing.T) {
 		ScreenConfirm: 1, ScreenWelcome: 100,
 	}
 	for step, n := range want {
-		m.step = step
-		if got := m.maxCursorForStep(); got != n {
+		m.screen = step
+		if got := m.maxCursorForScreen(); got != n {
 			t.Errorf("step %d: max %d, want %d", step, got, n)
 		}
 	}
-	m.step = ScreenMCPDenySelect
+	m.screen = ScreenMCPDenySelect
 	m.probedTools = []string{"a", "b"}
-	if m.maxCursorForStep() != 1 {
+	if m.maxCursorForScreen() != 1 {
 		t.Error("deny select max")
 	}
 }
@@ -797,7 +797,7 @@ func TestMaxCursorForStep(t *testing.T) {
 
 func TestView_AllSteps(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	m.config.Provider = ProviderAnthropic
 	m.config.Model = "claude-sonnet-4-20250514"
 	m.config.BaseURL = "http://x"
@@ -814,13 +814,13 @@ func TestView_AllSteps(t *testing.T) {
 	m.cursor = 50 // out of range: views must clamp without panicking
 
 	for step := ScreenWelcome; step <= ScreenComplete; step++ {
-		m.step = step
+		m.screen = step
 		if out := m.View(); out == "" {
 			t.Errorf("step %d renders empty", step)
 		}
 	}
 
-	m.step = ScreenCustomModel
+	m.screen = ScreenCustomModel
 	for _, p := range []string{ProviderOllamaLocal, ProviderLMStudio, ProviderLiteLLM, ProviderCustom} {
 		m.config.Provider = p
 		if !strings.Contains(m.View(), "Model Name") {
@@ -828,14 +828,14 @@ func TestView_AllSteps(t *testing.T) {
 		}
 	}
 
-	m.step = ScreenMCPDenySelect
+	m.screen = ScreenMCPDenySelect
 	m.probeError = ""
 	m.probedTools = nil
 	if !strings.Contains(m.View(), "No tools discovered") {
 		t.Error("empty tools view")
 	}
 
-	m.step = ScreenComplete
+	m.screen = ScreenComplete
 	if !strings.Contains(m.View(), "oops") {
 		t.Error("error view must show the error")
 	}
@@ -847,11 +847,11 @@ func TestView_AllSteps(t *testing.T) {
 
 	m.editMode = true
 	m.existingFile = "agent.toml"
-	m.step = ScreenWelcome
+	m.screen = ScreenWelcome
 	if !strings.Contains(m.View(), "Found existing configuration") {
 		t.Error("edit-mode welcome")
 	}
-	m.step = ScreenConfirm
+	m.screen = ScreenConfirm
 	m.config.CredentialMethod = "env"
 	if strings.Contains(m.View(), "credentials.toml") {
 		t.Error("env method must not list credentials.toml")
@@ -860,7 +860,7 @@ func TestView_AllSteps(t *testing.T) {
 
 func TestCredentialMethods_ClaudeCLI(t *testing.T) {
 	home := isolate(t)
-	m := New()
+	m := New(context.Background())
 	m.config.Provider = ProviderAnthropic
 	if len(m.getCredentialMethods()) != 2 || !strings.Contains(m.viewCredentialMethod(), "Tip") {
 		t.Fatal("without Claude CLI: file+env and a tip")
@@ -874,7 +874,7 @@ func TestCredentialMethods_ClaudeCLI(t *testing.T) {
 	if len(methods) != 3 || methods[0].name != "claude-cli" || strings.Contains(m.viewCredentialMethod(), "Tip") {
 		t.Errorf("with Claude CLI: %v", methods)
 	}
-	m.step = ScreenCredentialMethod
+	m.screen = ScreenCredentialMethod
 	m, _ = send(t, m, key(tea.KeyEnter))
 	if m.config.CredentialMethod != "claude-cli" {
 		t.Errorf("method = %s", m.config.CredentialMethod)
@@ -891,7 +891,7 @@ func TestCredentialMethods_ClaudeCLI(t *testing.T) {
 func TestWriteCredentials(t *testing.T) {
 	home := isolate(t)
 	path := filepath.Join(home, ".config", "grid", "credentials.toml")
-	m := New()
+	m := New(context.Background())
 	m.config.Provider = ProviderOpenAI
 	m.config.APIKey = "first"
 	if got, err := m.writeCredentials(); err != nil || got != path {
@@ -927,7 +927,7 @@ func TestWriteCredentials(t *testing.T) {
 
 func TestWriteFiles_Errors(t *testing.T) {
 	dir := isolate(t)
-	m := New()
+	m := New(context.Background())
 	m.config.CredentialMethod = "file"
 	m.config.APIKey = "k"
 
@@ -959,7 +959,7 @@ func TestProbeMCPServer(t *testing.T) {
 		t.Skip("cannot locate test binary:", err)
 	}
 	t.Setenv("SETUP_FAKE_MCP", "1")
-	m := New()
+	m := New(context.Background())
 	m.currentMCPName = "fake"
 	m.currentMCPCommand = exe
 	m.currentMCPArgs = "-test.run=NONE"
@@ -981,27 +981,27 @@ func TestProbeMCPServer(t *testing.T) {
 
 func TestInit(t *testing.T) {
 	isolate(t)
-	if New().Init() == nil {
+	if New(context.Background()).Init() == nil {
 		t.Error("Init must return the blink command")
 	}
 }
 
 func TestUpdate_RemainingBranches(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 
 	m, _ = send(t, m, errMsg{fmt.Errorf("write failed")})
-	if m.step != ScreenComplete || m.err == nil {
+	if m.screen != ScreenComplete || m.err == nil {
 		t.Error("errMsg must land on the complete screen with the error")
 	}
 
-	m.step = ScreenAPIKey // text-input step
+	m.screen = ScreenAPIKey // text-input step
 	if _, cmd := send(t, m, key(tea.KeyCtrlC)); cmd == nil {
 		t.Error("ctrl+c must quit from text input too")
 	}
 
 	// Pre-set cursors reflect current config when entering a step.
-	m.step = ScreenWorkspace
+	m.screen = ScreenWorkspace
 	m.textInput.SetValue("")
 	m.config.DefaultDeny = true
 	m, _ = send(t, m, key(tea.KeyEnter))
@@ -1023,14 +1023,14 @@ func TestUpdate_RemainingBranches(t *testing.T) {
 
 func TestView_CursorHighlight(t *testing.T) {
 	isolate(t)
-	m := New()
+	m := New(context.Background())
 	m.probedTools = []string{"a"}
 	m.config.MCPServers["x"] = MCPServerSetup{}
 	m.cursor = 0
 	for _, step := range []Screen{ScreenScenario, ScreenProvider, ScreenModel, ScreenThinking, ScreenSmallLLM,
 		ScreenSmallLLMProvider, ScreenSecurity, ScreenSecurityMode, ScreenProfiles, ScreenFeatures,
 		ScreenMCPAdd, ScreenMCPDenySelect, ScreenConfirm} {
-		m.step = step
+		m.screen = step
 		if !strings.Contains(m.View(), "> ") {
 			t.Errorf("step %d: cursor row not highlighted", step)
 		}
@@ -1046,7 +1046,7 @@ func TestWriteCredentials_SaveFailure(t *testing.T) {
 	os.MkdirAll(dir, 0700)
 	os.Chmod(dir, 0500) // exists but unwritable: NewFileStore succeeds, Save fails
 	t.Cleanup(func() { os.Chmod(dir, 0700) })
-	m := New()
+	m := New(context.Background())
 	m.config.Provider = ProviderOpenAI
 	m.config.APIKey = "k"
 	if _, err := m.writeCredentials(); err == nil || !strings.Contains(err.Error(), "save credentials") {
@@ -1058,7 +1058,7 @@ func TestLoadExistingConfig_LegacyPolicyKeysWarn(t *testing.T) {
 	isolate(t)
 	os.WriteFile("agent.toml", []byte("[llm]\nmodel = \"gpt-4o\"\n"), 0644)
 	os.WriteFile("policy.toml", []byte("default_deny = false\n[bash]\nenabled = false\n"), 0644)
-	m := New()
+	m := New(context.Background())
 	if !strings.Contains(m.policyWarning, "bash") {
 		t.Fatalf("legacy keys must be surfaced, got %q", m.policyWarning)
 	}
@@ -1072,7 +1072,7 @@ func TestWriteCredentials_EmptyExistingFile(t *testing.T) {
 	path := filepath.Join(home, ".config", "grid", "credentials.toml")
 	os.MkdirAll(filepath.Dir(path), 0700)
 	os.WriteFile(path, nil, 0600)
-	m := New()
+	m := New(context.Background())
 	m.config.Provider = ProviderOpenAI
 	m.config.APIKey = "k"
 	if _, err := m.writeCredentials(); err != nil {
@@ -1101,7 +1101,7 @@ func TestHasClaudeCLICredentials_ExpiredToken(t *testing.T) {
 func TestFreshMode_LegacyPolicyWarn(t *testing.T) {
 	isolate(t)
 	os.WriteFile("policy.toml", []byte("default_deny = false\n[bash]\nenabled = false\n"), 0644)
-	m := New()
+	m := New(context.Background())
 	if m.editMode {
 		t.Fatal("no agent.toml present: must not be edit mode")
 	}
@@ -1116,7 +1116,7 @@ func TestFreshMode_LegacyPolicyWarn(t *testing.T) {
 func TestFreshMode_MalformedPolicyDoesNotWarnOrPanic(t *testing.T) {
 	isolate(t)
 	os.WriteFile("policy.toml", []byte("not valid toml [[["), 0644)
-	m := New()
+	m := New(context.Background())
 	if m.policyWarning != "" {
 		t.Errorf("malformed policy.toml must not produce a warning, got %q", m.policyWarning)
 	}
@@ -1133,7 +1133,7 @@ func TestWithDir_ReadsAndWritesRelativeToInjectedDir(t *testing.T) {
 	os.MkdirAll(sub, 0755)
 	os.WriteFile(filepath.Join(sub, "agent.toml"), []byte("[llm]\nmodel = \"gpt-4o\"\n"), 0644)
 
-	m := New(WithDir(sub))
+	m := New(context.Background(), Dir(sub))
 	if !m.editMode || m.config.Model != "gpt-4o" {
 		t.Fatalf("WithDir must load agent.toml from the injected dir, got editMode=%v model=%q", m.editMode, m.config.Model)
 	}
@@ -1152,7 +1152,7 @@ func TestWithContext_BoundsProbe(t *testing.T) {
 	isolate(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	m := New(WithContext(ctx))
+	m := New(ctx)
 	m.currentMCPCommand = "irrelevant"
 	res := m.probeMCPServer()().(mcpProbeResult)
 	if res.err == nil {
@@ -1167,7 +1167,7 @@ func TestRun_OptionsPassthrough(t *testing.T) {
 	isolate(t)
 	in := strings.NewReader("q")
 	var out bytes.Buffer
-	if err := Run(tea.WithInput(in), tea.WithOutput(&out), tea.WithoutSignals()); err != nil {
+	if err := Run(context.Background(), tea.WithInput(in), tea.WithOutput(&out), tea.WithoutSignals()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 }
@@ -1177,8 +1177,8 @@ func TestRun_OptionsPassthrough(t *testing.T) {
 
 func TestHandleEnter_ErrClearedAfterValidRetry(t *testing.T) {
 	isolate(t)
-	m := New()
-	m.step = ScreenMCPName
+	m := New(context.Background())
+	m.screen = ScreenMCPName
 	m.textInput.SetValue("")
 	m, _ = send(t, m, key(tea.KeyEnter))
 	if m.err == nil {
@@ -1190,7 +1190,7 @@ func TestHandleEnter_ErrClearedAfterValidRetry(t *testing.T) {
 		t.Errorf("a valid retry must clear the stale error, got %v", m.err)
 	}
 
-	m.step = ScreenMCPCommand
+	m.screen = ScreenMCPCommand
 	m.textInput.SetValue("")
 	m, _ = send(t, m, key(tea.KeyEnter))
 	if m.err == nil {

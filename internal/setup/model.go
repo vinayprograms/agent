@@ -102,7 +102,7 @@ type ProfileConfig struct {
 
 // Model is the bubbletea model for the setup wizard
 type Model struct {
-	step      Screen
+	screen    Screen
 	config    Config
 	cursor    int
 	textInput textinput.Model
@@ -111,13 +111,12 @@ type Model struct {
 	height    int
 
 	// dir is the directory agent.toml/policy.toml are read from and written
-	// to. Defaults to "." (the process cwd); inject with WithDir for tests
-	// or callers that don't want to rely on the process's working directory.
+	// to. Defaults to "." (the process cwd); inject with Dir for tests or
+	// callers that don't want to rely on the process's working directory.
 	dir string
 
-	// ctx bounds operations that need one (currently the MCP probe). Defaults
-	// to context.Background(); inject with WithContext to bound wizard
-	// lifetime to a caller's context.
+	// ctx bounds operations that need one (currently the MCP probe). Set
+	// from New's positional ctx parameter.
 	ctx context.Context
 	// probe is the seam used to discover an MCP server's tools. Defaults to
 	// dialMCP (spawns a real process); tests substitute a fake.
@@ -144,33 +143,28 @@ type Model struct {
 	filesWritten []string
 }
 
-// Option configures a Model at construction. See WithDir and WithContext.
+// Option configures a Model at construction. See Dir.
 type Option func(*Model)
 
-// WithDir sets the directory agent.toml/policy.toml are read from and
-// written to. Default is ".".
-func WithDir(dir string) Option {
+// Dir sets the directory agent.toml/policy.toml are read from and written
+// to. Default is ".".
+func Dir(dir string) Option {
 	return func(m *Model) { m.dir = dir }
 }
 
-// WithContext bounds the wizard's operations (currently the MCP probe) to
-// ctx. Default is context.Background().
-func WithContext(ctx context.Context) Option {
-	return func(m *Model) { m.ctx = ctx }
-}
-
-// New creates a new setup model
-func New(opts ...Option) Model {
+// New creates a new setup model. ctx bounds operations that need one
+// (currently the MCP probe).
+func New(ctx context.Context, opts ...Option) Model {
 	ti := textinput.New()
 	ti.Focus()
 	ti.CharLimit = 256
 	ti.Width = 50
 
 	m := Model{
-		step:      ScreenWelcome,
+		screen:    ScreenWelcome,
 		textInput: ti,
 		dir:       ".",
-		ctx:       context.Background(),
+		ctx:       ctx,
 		probe:     dialMCP,
 		config: Config{
 			Workspace:        ".",
@@ -384,7 +378,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.probedTools = msg.tools
 			m.probeError = ""
 		}
-		m.step = ScreenMCPDenySelect
+		m.screen = ScreenMCPDenySelect
 		m.cursor = 0
 
 		// Pre-select previously denied tools (for edit mode)
@@ -404,11 +398,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case filesWrittenMsg:
 		m.filesWritten = msg.files
-		m.step = ScreenComplete
+		m.screen = ScreenComplete
 		return m, nil
 	case errMsg:
 		m.err = msg.error
-		m.step = ScreenComplete
+		m.screen = ScreenComplete
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -418,7 +412,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		// Handle text input steps first - let them capture all keys except ctrl+c and enter
-		if m.isTextInputStep() {
+		if m.isTextInputScreen() {
 			switch msg.String() {
 			case "ctrl+c":
 				return m, tea.Quit
@@ -436,15 +430,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "q":
-			if m.step == ScreenComplete {
+			if m.screen == ScreenComplete {
 				return m, tea.Quit
 			}
-			if m.step == ScreenWelcome {
+			if m.screen == ScreenWelcome {
 				return m, tea.Quit
 			}
 			// Go back
-			if m.step > ScreenWelcome {
-				m.step = m.previousStep()
+			if m.screen > ScreenWelcome {
+				m.screen = m.previousScreen()
 				m.cursor = 0
 			}
 			return m, nil
@@ -459,7 +453,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "down", "j":
-			max := m.maxCursorForStep()
+			max := m.maxCursorForScreen()
 			if m.cursor < max {
 				m.cursor++
 			}
@@ -467,7 +461,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case " ":
 			// Toggle selection for multi-select steps
-			if m.step == ScreenFeatures || m.step == ScreenMCPDenySelect {
+			if m.screen == ScreenFeatures || m.screen == ScreenMCPDenySelect {
 				m.selected[m.cursor] = !m.selected[m.cursor]
 			}
 			return m, nil
@@ -481,9 +475,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleEnter() (tea.Model, tea.Cmd) {
-	switch m.step {
+	switch m.screen {
 	case ScreenWelcome:
-		m.step = ScreenScenario
+		m.screen = ScreenScenario
 		m.cursor = m.findScenarioIndex()
 
 	case ScreenScenario:
@@ -495,7 +489,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 				m.applyScenarioDefaults()
 			}
 		}
-		m.step = ScreenProvider
+		m.screen = ScreenProvider
 		m.cursor = m.findProviderIndex(m.config.Provider)
 
 	case ScreenProvider:
@@ -507,12 +501,12 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.needsCustomModelInput() {
-			m.step = ScreenCustomModel
+			m.screen = ScreenCustomModel
 			m.textInput.SetValue(m.config.Model)
 			m.textInput.Placeholder = "e.g., llama3.2, claude-sonnet-4"
 			m.textInput.Focus()
 		} else {
-			m.step = ScreenModel
+			m.screen = ScreenModel
 			m.cursor = m.findModelIndex()
 		}
 
@@ -523,7 +517,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		} else {
 			m.err = nil
 			m.config.Model = model
-			m.step = ScreenAPIKey
+			m.screen = ScreenAPIKey
 			m.textInput.SetValue("")
 			m.textInput.Placeholder = "sk-... (leave empty to keep existing)"
 			m.textInput.EchoMode = textinput.EchoPassword
@@ -534,7 +528,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		if m.cursor >= 0 && m.cursor < len(models) {
 			m.config.Model = models[m.cursor].id
 		}
-		m.step = ScreenAPIKey
+		m.screen = ScreenAPIKey
 		m.textInput.SetValue("")
 		m.textInput.Placeholder = "sk-... (leave empty to keep existing)"
 		m.textInput.EchoMode = textinput.EchoPassword
@@ -545,7 +539,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		m.textInput.EchoMode = textinput.EchoNormal
 		if m.needsBaseURL() {
-			m.step = ScreenBaseURL
+			m.screen = ScreenBaseURL
 			if m.editMode && m.config.BaseURL != "" {
 				m.textInput.SetValue(m.config.BaseURL)
 			} else {
@@ -553,13 +547,13 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			}
 			m.textInput.Placeholder = "https://..."
 		} else {
-			m.step = ScreenThinking
+			m.screen = ScreenThinking
 			m.cursor = m.findThinkingIndex()
 		}
 
 	case ScreenBaseURL:
 		m.config.BaseURL = m.textInput.Value()
-		m.step = ScreenThinking
+		m.screen = ScreenThinking
 		m.cursor = m.findThinkingIndex()
 
 	case ScreenThinking:
@@ -567,7 +561,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		if m.cursor >= 0 && m.cursor < len(thinkingOptions) {
 			m.config.Thinking = thinkingOptions[m.cursor]
 		}
-		m.step = ScreenSmallLLM
+		m.screen = ScreenSmallLLM
 		if m.config.SmallLLMEnabled {
 			m.cursor = 0 // Yes
 		} else {
@@ -577,10 +571,10 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	case ScreenSmallLLM:
 		m.config.SmallLLMEnabled = m.cursor == 0 // Yes
 		if m.config.SmallLLMEnabled {
-			m.step = ScreenSmallLLMProvider
+			m.screen = ScreenSmallLLMProvider
 			m.cursor = m.findProviderIndex(m.config.SmallLLMProvider)
 		} else {
-			m.step = ScreenWorkspace
+			m.screen = ScreenWorkspace
 			m.textInput.SetValue(m.config.Workspace)
 			m.textInput.Placeholder = "/path/to/workspace"
 		}
@@ -593,13 +587,13 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 				m.setDefaultSmallModel()
 			}
 		}
-		m.step = ScreenSmallLLMModel
+		m.screen = ScreenSmallLLMModel
 		m.textInput.SetValue(m.config.SmallLLMModel)
 		m.textInput.Placeholder = "model name"
 
 	case ScreenSmallLLMModel:
 		m.config.SmallLLMModel = m.textInput.Value()
-		m.step = ScreenWorkspace
+		m.screen = ScreenWorkspace
 		m.textInput.SetValue(m.config.Workspace)
 		m.textInput.Placeholder = "/path/to/workspace"
 
@@ -608,7 +602,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		if m.config.Workspace == "" {
 			m.config.Workspace = "."
 		}
-		m.step = ScreenSecurity
+		m.screen = ScreenSecurity
 		if m.config.DefaultDeny {
 			m.cursor = 1 // Restrictive
 		} else {
@@ -622,7 +616,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.config.AllowBash = false
 			m.config.AllowWeb = false
 		}
-		m.step = ScreenSecurityMode
+		m.screen = ScreenSecurityMode
 		if m.config.SecurityMode == "paranoid" {
 			m.cursor = 1
 		} else {
@@ -634,7 +628,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		if m.cursor >= 0 && m.cursor < len(modes) {
 			m.config.SecurityMode = modes[m.cursor]
 		}
-		m.step = ScreenProfiles
+		m.screen = ScreenProfiles
 		if m.config.UseProfiles {
 			m.cursor = 0 // Yes
 		} else {
@@ -644,10 +638,10 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	case ScreenProfiles:
 		m.config.UseProfiles = m.cursor == 0 // Yes
 		if m.config.UseProfiles {
-			m.step = ScreenProfilesConfig
+			m.screen = ScreenProfilesConfig
 			m.cursor = 0
 		} else {
-			m.step = ScreenFeatures
+			m.screen = ScreenFeatures
 			m.cursor = 0
 			m.initFeatureSelection()
 		}
@@ -655,17 +649,17 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	case ScreenProfilesConfig:
 		// Auto-configure profiles based on provider
 		m.configureDefaultProfiles()
-		m.step = ScreenFeatures
+		m.screen = ScreenFeatures
 		m.cursor = 0
 		m.initFeatureSelection()
 
 	case ScreenFeatures:
 		m.applyFeatureSelection()
 		if m.config.EnableMCP {
-			m.step = ScreenMCPAdd
+			m.screen = ScreenMCPAdd
 			m.cursor = 0
 		} else {
-			m.step = ScreenCredentialMethod
+			m.screen = ScreenCredentialMethod
 			m.cursor = 0
 		}
 
@@ -679,18 +673,18 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			srv := m.config.MCPServers[m.currentMCPName]
 			m.currentMCPCommand = srv.Command
 			m.currentMCPArgs = strings.Join(srv.Args, " ")
-			m.step = ScreenMCPProbe
+			m.screen = ScreenMCPProbe
 			m.probeError = ""
 			m.probedTools = nil
 			return m, m.probeMCPServer()
 		} else if m.cursor == numServers {
 			// Add new server
-			m.step = ScreenMCPName
+			m.screen = ScreenMCPName
 			m.textInput.SetValue("")
 			m.textInput.Focus()
 		} else {
 			// Done
-			m.step = ScreenCredentialMethod
+			m.screen = ScreenCredentialMethod
 			m.cursor = 0
 		}
 
@@ -700,7 +694,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("server name is required")
 		} else {
 			m.err = nil
-			m.step = ScreenMCPCommand
+			m.screen = ScreenMCPCommand
 			m.textInput.SetValue("")
 			m.textInput.Focus()
 		}
@@ -711,14 +705,14 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("command is required")
 		} else {
 			m.err = nil
-			m.step = ScreenMCPArgs
+			m.screen = ScreenMCPArgs
 			m.textInput.SetValue("")
 			m.textInput.Focus()
 		}
 
 	case ScreenMCPArgs:
 		m.currentMCPArgs = m.textInput.Value()
-		m.step = ScreenMCPProbe
+		m.screen = ScreenMCPProbe
 		m.probeError = ""
 		m.probedTools = nil
 		return m, m.probeMCPServer()
@@ -756,7 +750,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		m.currentMCPArgs = ""
 		m.probedTools = nil
 		m.selected = make(map[int]bool)
-		m.step = ScreenMCPAdd
+		m.screen = ScreenMCPAdd
 		m.cursor = 0
 
 	case ScreenCredentialMethod:
@@ -764,16 +758,16 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		if m.cursor >= 0 && m.cursor < len(methods) {
 			m.config.CredentialMethod = methods[m.cursor].name
 		}
-		m.step = ScreenConfirm
+		m.screen = ScreenConfirm
 		m.cursor = 0
 
 	case ScreenConfirm:
 		if m.cursor == 0 { // Confirm
-			m.step = ScreenWriteFiles
+			m.screen = ScreenWriteFiles
 			return m, m.writeFiles()
 		}
 		// Cancel - go back to scenario
-		m.step = ScreenScenario
+		m.screen = ScreenScenario
 		m.cursor = 0
 
 	case ScreenComplete:
@@ -954,8 +948,8 @@ func (m *Model) configureDefaultProfiles() {
 
 // Run starts the setup wizard. opts are passed through to tea.NewProgram,
 // e.g. tea.WithInput/tea.WithOutput for tests.
-func Run(opts ...tea.ProgramOption) error {
-	p := tea.NewProgram(New(), opts...)
+func Run(ctx context.Context, opts ...tea.ProgramOption) error {
+	p := tea.NewProgram(New(ctx), opts...)
 	_, err := p.Run()
 	return err
 }
