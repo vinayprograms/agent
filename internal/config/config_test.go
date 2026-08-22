@@ -35,7 +35,7 @@ func TestNew(t *testing.T) {
 		LLM:       LLMConfig{MaxTokens: 4096},
 		State:     StateConfig{Location: "~/.local/agent"},
 		Telemetry: TelemetryConfig{Protocol: ProtocolNoop},
-		Timeouts:  TimeoutsConfig{MCP: 60, WebSearch: 30, WebFetch: 60},
+		Timeouts:  TimeoutsConfig{MCP: 60, WebSearch: 30, WebFetch: 60, SearchCooldownMS: 2000},
 	}
 	if diff := cmp.Diff(want, New()); diff != "" {
 		t.Errorf("New() mismatch (-want +got):\n%s", diff)
