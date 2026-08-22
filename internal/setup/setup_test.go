@@ -1050,3 +1050,44 @@ func TestWriteCredentials_SaveFailure(t *testing.T) {
 		t.Errorf("expected save failure, got %v", err)
 	}
 }
+
+func TestLoadExistingConfig_LegacyPolicyKeysWarn(t *testing.T) {
+	isolate(t)
+	os.WriteFile("agent.toml", []byte("[llm]\nmodel = \"gpt-4o\"\n"), 0644)
+	os.WriteFile("policy.toml", []byte("default_deny = false\n[bash]\nenabled = false\n"), 0644)
+	m := New()
+	if !strings.Contains(m.policyWarning, "bash") {
+		t.Fatalf("legacy keys must be surfaced, got %q", m.policyWarning)
+	}
+	if !strings.Contains(m.viewWelcome(), "unrecognised keys") {
+		t.Error("welcome screen must show the policy warning")
+	}
+}
+
+func TestWriteCredentials_EmptyExistingFile(t *testing.T) {
+	home := isolate(t)
+	path := filepath.Join(home, ".config", "grid", "credentials.toml")
+	os.MkdirAll(filepath.Dir(path), 0700)
+	os.WriteFile(path, nil, 0600)
+	m := New()
+	m.config.Provider = ProviderOpenAI
+	m.config.APIKey = "k"
+	if _, err := m.writeCredentials(); err != nil {
+		t.Fatalf("empty credentials file must not fail: %v", err)
+	}
+	store, err := credentials.NewFileStore(path)
+	if err != nil || store["openai"].APIKey != "k" {
+		t.Errorf("key not saved: %v %+v", err, store)
+	}
+}
+
+func TestHasClaudeCLICredentials_ExpiredToken(t *testing.T) {
+	home := isolate(t)
+	cli := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"tok","refreshToken":"r","expiresAt":%d}}`,
+		time.Now().Add(-time.Hour).UnixMilli())
+	os.MkdirAll(filepath.Join(home, ".claude"), 0700)
+	os.WriteFile(filepath.Join(home, ".claude", ".credentials.json"), []byte(cli), 0600)
+	if hasClaudeCLICredentials() {
+		t.Error("an expired Claude CLI token must not count as usable credentials")
+	}
+}

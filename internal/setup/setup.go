@@ -183,6 +183,9 @@ type Model struct {
 	// Edit mode - true if loading from existing config
 	editMode     bool
 	existingFile string
+	// policyWarning is shown on the welcome screen when an existing policy.toml
+	// carries keys the current schema does not understand.
+	policyWarning string
 
 	// MCP setup state
 	currentMCPName    string   // Name of MCP server being configured
@@ -350,10 +353,17 @@ func (m *Model) loadExistingConfig() error {
 
 	// Try to load policy.toml too. A tool is enabled when listed under
 	// [tools] or when default_deny is false; pattern expansion is irrelevant here.
-	if pol, err := policy.FromFile("policy.toml", m.config.Workspace, ""); err == nil {
-		m.config.DefaultDeny = pol.DefaultDeny
-		m.config.AllowBash = pol.IsToolEnabled("bash")
-		m.config.AllowWeb = pol.IsToolEnabled("web_search")
+	if raw, err := os.ReadFile("policy.toml"); err == nil {
+		pol, unknown, err := policy.FromTOMLWithUnknownKeys(string(raw), m.config.Workspace, "")
+		if err == nil {
+			m.config.DefaultDeny = pol.DefaultDeny
+			m.config.AllowBash = pol.IsToolEnabled("bash")
+			m.config.AllowWeb = pol.IsToolEnabled("web_search")
+		}
+		if len(unknown) > 0 {
+			m.policyWarning = fmt.Sprintf("policy.toml has unrecognised keys (legacy schema?): %s — the wizard will rewrite it in the current schema",
+				strings.Join(unknown, ", "))
+		}
 	}
 
 	return nil
@@ -1278,6 +1288,10 @@ func (m Model) viewWelcome() string {
 		s.WriteString("\n")
 		s.WriteString(normalStyle.Render("Current values will be pre-filled."))
 		s.WriteString("\n\n")
+		if m.policyWarning != "" {
+			s.WriteString(errorStyle.Render("⚠ " + m.policyWarning))
+			s.WriteString("\n\n")
+		}
 	} else {
 		s.WriteString(normalStyle.Render("This wizard will help you configure your agent."))
 		s.WriteString("\n\n")
@@ -2161,6 +2175,9 @@ func (m Model) writeCredentials() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("load credentials: %w", err)
 	}
+	if store == nil { // an empty file yields a nil store
+		store = credentials.FileStore{}
+	}
 	store.SetAPIKey(m.config.Provider, m.config.APIKey)
 	if err := store.Save(path); err != nil {
 		return "", fmt.Errorf("save credentials: %w", err)
@@ -2171,7 +2188,8 @@ func (m Model) writeCredentials() (string, error) {
 // hasClaudeCLICredentials reports whether the Claude Code CLI has a usable
 // OAuth token (~/.claude/.credentials.json).
 func hasClaudeCLICredentials() bool {
-	return credentials.ClaudeCLICredentials() != nil
+	_, ok := credentials.ClaudeCLICredentials().Resolve("anthropic")
+	return ok
 }
 
 // Run starts the setup wizard
