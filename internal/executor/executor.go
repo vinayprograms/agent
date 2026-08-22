@@ -541,6 +541,13 @@ func (e *Executor) ExecuteGoal(ctx context.Context, goalName string, state *step
 	state.Outputs[goalName] = result.Output
 	e.outputs[goalName] = result.Output
 
+	// Declared `-> var` outputs are keyed by var name, not goal name; bind
+	// them into state.Outputs too so they reach the printed Result.Outputs
+	// (e.outputs already has them, set inside executeGoalWithTracking).
+	for field, value := range result.Vars {
+		state.Outputs[field] = value
+	}
+
 	return nil
 }
 
@@ -548,6 +555,9 @@ func (e *Executor) ExecuteGoal(ctx context.Context, goalName string, state *step
 type GoalResult struct {
 	Output        string
 	ToolCallsMade bool
+	// Vars holds the goal's declared `-> var` structured outputs (empty when
+	// the goal declares none), keyed by var name rather than goal name.
+	Vars map[string]string
 }
 
 // isSupervised determines if a goal should be supervised based on goal settings and workflow defaults.
@@ -592,15 +602,17 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			return nil, err
 		}
 		// Parse structured output if declared
+		var vars map[string]string
 		if len(goal.Outputs) > 0 {
-			for field, value := range parseStructuredOutput(result.Output, goal.Outputs) {
+			vars = parseStructuredOutput(result.Output, goal.Outputs)
+			for field, value := range vars {
 				e.outputs[field] = value
 			}
 		}
 		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": result.Output})
 		e.logGoalEnd(goal.Name, result.Output)
 		e.flushSession()
-		return &GoalResult{Output: result.Output, ToolCallsMade: false}, nil
+		return &GoalResult{Output: result.Output, ToolCallsMade: false, Vars: vars}, nil
 	}
 
 	// Check for multi-agent execution
@@ -610,15 +622,17 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			return nil, err
 		}
 		// Parse structured output if declared (same as regular goals)
+		var vars map[string]string
 		if len(goal.Outputs) > 0 {
-			for field, value := range parseStructuredOutput(output, goal.Outputs) {
+			vars = parseStructuredOutput(output, goal.Outputs)
+			for field, value := range vars {
 				e.outputs[field] = value
 			}
 		}
 		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
 		e.logGoalEnd(goal.Name, output)
 		e.flushSession()
-		return &GoalResult{Output: output, ToolCallsMade: false}, nil
+		return &GoalResult{Output: output, ToolCallsMade: false, Vars: vars}, nil
 	}
 
 	// Build XML-structured prompt with context from previous goals
@@ -670,7 +684,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			// EXECUTE: do the work
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
 				output, toolsUsed, toolCallsMade, err := e.executePhase(ctx, goal, prompt)
-				if e.noteBudget(err) {
+				if e.noteBudget(ctx, err) {
 					err = nil
 				}
 				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed, ToolCallsMade: toolCallsMade}, err
@@ -704,8 +718,10 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	}
 
 	// Parse structured output if declared
+	var vars map[string]string
 	if len(goal.Outputs) > 0 {
-		for field, value := range parseStructuredOutput(output, goal.Outputs) {
+		vars = parseStructuredOutput(output, goal.Outputs)
+		for field, value := range vars {
 			e.outputs[field] = value
 		}
 	}
@@ -714,7 +730,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
 	e.logGoalEnd(goal.Name, output)
 	e.flushSession()
-	return &GoalResult{Output: output, ToolCallsMade: toolCallsMade}, nil
+	return &GoalResult{Output: output, ToolCallsMade: toolCallsMade, Vars: vars}, nil
 }
 
 // commitPhase asks the agent to declare its intent before execution.

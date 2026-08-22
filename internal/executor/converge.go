@@ -52,6 +52,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 	var iterations []ConvergenceIteration
 	var converged bool
 	var iterationCount int
+	var budgetStopped bool
 
 	// Run through the supervision pipeline
 	pipelineResult, err := e.pipeline.Run(
@@ -79,10 +80,11 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 					prompt := e.buildConvergePrompt(goal, iterations, "")
 
 					output, iterErr := e.executeConvergeIteration(ctx, goal, prompt)
-					if e.noteBudget(iterErr) {
+					if e.noteBudget(ctx, iterErr) {
 						// Out of budget: keep this iteration's partial output
 						// and stop refining.
 						iterationCount = i
+						budgetStopped = true
 						if trimmed := strings.TrimSpace(output); trimmed != "" {
 							lastOutput = trimmed
 						}
@@ -108,7 +110,15 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 					}
 				}
 
-				if !converged {
+				switch {
+				case converged:
+					// no-op: already logged above
+				case budgetStopped:
+					// noteBudget already logged the reason; this is not the
+					// same as exhausting the WITHIN limit, so don't record
+					// it as a convergence failure.
+					e.logger.Warn("goal stopped early: budget exhausted before converging", "goal", goal.Name)
+				default:
 					e.logger.Warn("convergence limit reached without converging", "goal", goal.Name, "limit", maxIterations)
 					e.logEvent(session.EventWarning, fmt.Sprintf("Goal %q did not converge within limit (used all iterations)", goal.Name))
 					e.trackConvergenceFailure(goal.Name, maxIterations)
@@ -116,7 +126,10 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 
 				// For convergence, we note iteration count instead of individual tools
 				toolsUsed := []string{fmt.Sprintf("converge:%d_iterations", iterationCount)}
-				if !converged {
+				switch {
+				case budgetStopped:
+					toolsUsed = append(toolsUsed, "converge:budget_exhausted")
+				case !converged:
 					toolsUsed = append(toolsUsed, "converge:limit_reached")
 				}
 

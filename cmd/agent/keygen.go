@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -17,7 +18,7 @@ func newKeygenCmd() *cobra.Command {
 		Short: "Generate signing key pair",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runKeygen(output)
+			return runKeygen(cmd.OutOrStdout(), output)
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "agent-key", "Output path prefix (creates .pem and .pub)")
@@ -25,7 +26,7 @@ func newKeygenCmd() *cobra.Command {
 }
 
 // runKeygen generates a new signing key pair.
-func runKeygen(outputPrefix string) error {
+func runKeygen(w io.Writer, outputPrefix string) error {
 	privPath := outputPrefix + ".pem"
 	pubPath := outputPrefix + ".pub"
 
@@ -42,9 +43,9 @@ func runKeygen(outputPrefix string) error {
 		return fmt.Errorf("saving keys: %w", err)
 	}
 
-	fmt.Printf("✓ Generated key pair\n")
-	fmt.Printf("  Private key: %s (keep secret!)\n", privPath)
-	fmt.Printf("  Public key:  %s (share for verification)\n", pubPath)
+	fmt.Fprintf(w, "✓ Generated key pair\n")
+	fmt.Fprintf(w, "  Private key: %s (keep secret!)\n", privPath)
+	fmt.Fprintf(w, "  Public key:  %s (share for verification)\n", pubPath)
 	return nil
 }
 

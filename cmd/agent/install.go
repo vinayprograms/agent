@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,7 @@ func newInstallCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Package = args[0]
-			return runInstall(&opts)
+			return runInstall(cmd.OutOrStdout(), &opts)
 		},
 	}
 	f := cmd.Flags()
@@ -41,7 +42,7 @@ func newInstallCmd() *cobra.Command {
 }
 
 // runInstall installs a package.
-func runInstall(c *installOptions) error {
+func runInstall(w io.Writer, c *installOptions) error {
 	target := c.Target
 	if target == "" {
 		home, err := os.UserHomeDir()
@@ -70,35 +71,35 @@ func runInstall(c *installOptions) error {
 		return fmt.Errorf("installing package: %w", err)
 	}
 
-	printInstallResult(result, opts)
+	printInstallResult(w, result, opts)
 	return nil
 }
 
-func printInstallResult(result *packaging.InstallResult, opts packaging.InstallOptions) {
+func printInstallResult(w io.Writer, result *packaging.InstallResult, opts packaging.InstallOptions) {
 	if opts.DryRun {
-		fmt.Println("Dry run - would install:")
+		fmt.Fprintln(w, "Dry run - would install:")
 		for _, name := range result.Installed {
-			fmt.Printf("  - %s\n", name)
+			fmt.Fprintf(w, "  - %s\n", name)
 		}
 		if len(result.Dependencies) > 0 && !opts.NoDeps {
-			fmt.Println("Dependencies:")
+			fmt.Fprintln(w, "Dependencies:")
 			for _, dep := range result.Dependencies {
-				fmt.Printf("  - %s\n", dep)
+				fmt.Fprintf(w, "  - %s\n", dep)
 			}
 		}
 		return
 	}
 
-	fmt.Printf("✓ Installed %s\n", strings.Join(result.Installed, ", "))
-	fmt.Printf("  Location: %s\n", result.InstallPath)
+	fmt.Fprintf(w, "✓ Installed %s\n", strings.Join(result.Installed, ", "))
+	fmt.Fprintf(w, "  Location: %s\n", result.InstallPath)
 	if len(result.Dependencies) > 0 {
 		if opts.NoDeps {
-			fmt.Println("  Dependencies (skipped, --no-deps):")
+			fmt.Fprintln(w, "  Dependencies (skipped, --no-deps):")
 		} else {
-			fmt.Println("  Dependencies (require manual install):")
+			fmt.Fprintln(w, "  Dependencies (require manual install):")
 		}
 		for _, dep := range result.Dependencies {
-			fmt.Printf("    - %s\n", dep)
+			fmt.Fprintf(w, "    - %s\n", dep)
 		}
 	}
 }

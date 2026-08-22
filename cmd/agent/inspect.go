@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -18,17 +19,18 @@ func newInspectCmd() *cobra.Command {
 		Short: "Show workflow or package structure",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
 			path := argOr(args, "Agentfile")
 			if isPackageFile(path) {
-				return runInspectPackage(path)
+				return runInspectPackage(out, path)
 			}
-			return runInspectWorkflow(path)
+			return runInspectWorkflow(out, path)
 		},
 	}
 }
 
 // runInspectWorkflow shows the structure of an Agentfile.
-func runInspectWorkflow(path string) error {
+func runInspectWorkflow(w io.Writer, path string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("%s not found", path)
 	}
@@ -38,167 +40,167 @@ func runInspectWorkflow(path string) error {
 		return err
 	}
 
-	printWorkflowInfo(wf)
+	printWorkflowInfo(w, wf)
 	return nil
 }
 
 // runInspectPackage shows the manifest of a package.
-func runInspectPackage(path string) error {
+func runInspectPackage(w io.Writer, path string) error {
 	pkg, err := packaging.Load(path)
 	if err != nil {
 		return fmt.Errorf("loading package: %w", err)
 	}
 
-	printPackageInfo(pkg)
+	printPackageInfo(w, pkg)
 	return nil
 }
 
-func printWorkflowInfo(wf *agentfile.Workflow) {
-	fmt.Printf("Workflow: %s\n\n", wf.Name)
+func printWorkflowInfo(w io.Writer, wf *agentfile.Workflow) {
+	fmt.Fprintf(w, "Workflow: %s\n\n", wf.Name)
 
 	if len(wf.Inputs) > 0 {
-		fmt.Println("Inputs:")
+		fmt.Fprintln(w, "Inputs:")
 		for _, input := range wf.Inputs {
 			if input.Default != nil {
-				fmt.Printf("  - %s (default: %s)\n", input.Name, *input.Default)
+				fmt.Fprintf(w, "  - %s (default: %s)\n", input.Name, *input.Default)
 			} else {
-				fmt.Printf("  - %s (required)\n", input.Name)
+				fmt.Fprintf(w, "  - %s (required)\n", input.Name)
 			}
 		}
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
 
 	if len(wf.Agents) > 0 {
-		fmt.Println("Agents:")
+		fmt.Fprintln(w, "Agents:")
 		for _, agent := range wf.Agents {
-			fmt.Printf("  - %s", agent.Name)
+			fmt.Fprintf(w, "  - %s", agent.Name)
 			if agent.FromPath != "" {
-				fmt.Printf(" (from %s)", agent.FromPath)
+				fmt.Fprintf(w, " (from %s)", agent.FromPath)
 			}
-			fmt.Println()
+			fmt.Fprintln(w)
 		}
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
 
 	if len(wf.Goals) > 0 {
-		fmt.Println("Goals:")
+		fmt.Fprintln(w, "Goals:")
 		for _, goal := range wf.Goals {
-			fmt.Printf("  - %s", goal.Name)
+			fmt.Fprintf(w, "  - %s", goal.Name)
 			if len(goal.UsingAgent) > 0 {
-				fmt.Printf(" [using: %s]", strings.Join(goal.UsingAgent, ", "))
+				fmt.Fprintf(w, " [using: %s]", strings.Join(goal.UsingAgent, ", "))
 			}
-			fmt.Println()
+			fmt.Fprintln(w)
 		}
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
 
 	if len(wf.Steps) > 0 {
-		fmt.Println("Steps:")
+		fmt.Fprintln(w, "Steps:")
 		for _, step := range wf.Steps {
-			printStep(step)
+			printStep(w, step)
 		}
 	}
 }
 
-func printStep(step agentfile.Step) {
+func printStep(w io.Writer, step agentfile.Step) {
 	if step.Type == agentfile.StepRUN {
-		fmt.Printf("  RUN %s: %s\n", step.Name, strings.Join(step.UsingGoals, ", "))
+		fmt.Fprintf(w, "  RUN %s: %s\n", step.Name, strings.Join(step.UsingGoals, ", "))
 	}
 }
 
-func printPackageInfo(pkg *packaging.Package) {
+func printPackageInfo(w io.Writer, pkg *packaging.Package) {
 	m := pkg.Manifest
-	fmt.Printf("Package: %s@%s\n", m.Name, m.Version)
+	fmt.Fprintf(w, "Package: %s@%s\n", m.Name, m.Version)
 	if m.Description != "" {
-		fmt.Printf("Description: %s\n", m.Description)
+		fmt.Fprintf(w, "Description: %s\n", m.Description)
 	}
-	printPackageAuthor(m)
+	printPackageAuthor(w, m)
 	if m.License != "" {
-		fmt.Printf("License: %s\n", m.License)
+		fmt.Fprintf(w, "License: %s\n", m.License)
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 
-	printPackageInputs(m)
-	printPackageOutputs(m)
-	printPackageRequires(m)
-	printPackageDependencies(m)
+	printPackageInputs(w, m)
+	printPackageOutputs(w, m)
+	printPackageRequires(w, m)
+	printPackageDependencies(w, m)
 
-	fmt.Printf("Created: %s\n", m.CreatedAt)
+	fmt.Fprintf(w, "Created: %s\n", m.CreatedAt)
 	if pkg.Signature != nil {
-		fmt.Printf("Signed: yes (%d bytes)\n", len(pkg.Signature))
+		fmt.Fprintf(w, "Signed: yes (%d bytes)\n", len(pkg.Signature))
 	} else {
-		fmt.Println("Signed: no")
+		fmt.Fprintln(w, "Signed: no")
 	}
 }
 
-func printPackageAuthor(m *packaging.Manifest) {
+func printPackageAuthor(w io.Writer, m *packaging.Manifest) {
 	if m.Author == nil {
 		return
 	}
 	if m.Author.Email != "" {
-		fmt.Printf("Author: %s <%s>\n", m.Author.Name, m.Author.Email)
+		fmt.Fprintf(w, "Author: %s <%s>\n", m.Author.Name, m.Author.Email)
 	} else if m.Author.Name != "" {
-		fmt.Printf("Author: %s\n", m.Author.Name)
+		fmt.Fprintf(w, "Author: %s\n", m.Author.Name)
 	}
 	if m.Author.KeyFingerprint != "" {
-		fmt.Printf("Key fingerprint: %s\n", m.Author.KeyFingerprint)
+		fmt.Fprintf(w, "Key fingerprint: %s\n", m.Author.KeyFingerprint)
 	}
 }
 
-func printPackageInputs(m *packaging.Manifest) {
+func printPackageInputs(w io.Writer, m *packaging.Manifest) {
 	if len(m.Inputs) == 0 {
 		return
 	}
-	fmt.Println("Inputs:")
+	fmt.Fprintln(w, "Inputs:")
 	for name, input := range m.Inputs {
 		if input.Required {
-			fmt.Printf("  - %s (required)", name)
+			fmt.Fprintf(w, "  - %s (required)", name)
 		} else {
-			fmt.Printf("  - %s (default: %s)", name, input.Default)
+			fmt.Fprintf(w, "  - %s (default: %s)", name, input.Default)
 		}
 		if input.Description != "" {
-			fmt.Printf(" - %s", input.Description)
+			fmt.Fprintf(w, " - %s", input.Description)
 		}
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 }
 
-func printPackageOutputs(m *packaging.Manifest) {
+func printPackageOutputs(w io.Writer, m *packaging.Manifest) {
 	if len(m.Outputs) == 0 {
 		return
 	}
-	fmt.Println("Outputs:")
+	fmt.Fprintln(w, "Outputs:")
 	for name, output := range m.Outputs {
-		fmt.Printf("  - %s", name)
+		fmt.Fprintf(w, "  - %s", name)
 		if output.Description != "" {
-			fmt.Printf(": %s", output.Description)
+			fmt.Fprintf(w, ": %s", output.Description)
 		}
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 }
 
-func printPackageRequires(m *packaging.Manifest) {
+func printPackageRequires(w io.Writer, m *packaging.Manifest) {
 	if m.Requires == nil {
 		return
 	}
 	if len(m.Requires.Profiles) > 0 {
-		fmt.Printf("Required profiles: %s\n", strings.Join(m.Requires.Profiles, ", "))
+		fmt.Fprintf(w, "Required profiles: %s\n", strings.Join(m.Requires.Profiles, ", "))
 	}
 	if len(m.Requires.Tools) > 0 {
-		fmt.Printf("Required tools: %s\n", strings.Join(m.Requires.Tools, ", "))
+		fmt.Fprintf(w, "Required tools: %s\n", strings.Join(m.Requires.Tools, ", "))
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 }
 
-func printPackageDependencies(m *packaging.Manifest) {
+func printPackageDependencies(w io.Writer, m *packaging.Manifest) {
 	if len(m.Dependencies) == 0 {
 		return
 	}
-	fmt.Println("Dependencies:")
+	fmt.Fprintln(w, "Dependencies:")
 	for name, version := range m.Dependencies {
-		fmt.Printf("  - %s %s\n", name, version)
+		fmt.Fprintf(w, "  - %s %s\n", name, version)
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 }

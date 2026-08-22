@@ -140,7 +140,7 @@ func cmdStats(cmd *cobra.Command, storagePath string) error {
 	graphPath := filepath.Join(storagePath, "semantic_graph.json")
 	if data, err := os.ReadFile(graphPath); err == nil {
 		var graph struct {
-			Terms map[string]interface{} `json:"terms"`
+			Terms map[string]any `json:"terms"`
 		}
 		if json.Unmarshal(data, &graph) == nil {
 			fmt.Fprintf(out, "🕸️  Semantic graph: %d terms\n", len(graph.Terms))

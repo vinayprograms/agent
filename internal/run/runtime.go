@@ -5,6 +5,7 @@ package run
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -215,7 +216,7 @@ func (rt *Runtime) setup(ctx context.Context) error {
 // value and then to defaultMaxTokens.
 func (rt *Runtime) newModel(p config.LLMConfig, retry llm.RetryConfig) (llm.Model, error) {
 	if p.Model == "" {
-		return nil, fmt.Errorf("LLM model not configured")
+		return nil, errors.New("LLM model not configured")
 	}
 	service := p.Provider
 	if service == "" {
@@ -260,7 +261,7 @@ func (rt *Runtime) createSmallLLM() error {
 	}
 	m, err := rt.newModel(rt.cfg.SmallLLM, llm.RetryConfig{})
 	if err != nil {
-		return fmt.Errorf("failed to create small_llm (model=%s): %w", rt.cfg.SmallLLM.Model, err)
+		return fmt.Errorf("creating small_llm (model=%s): %w", rt.cfg.SmallLLM.Model, err)
 	}
 	rt.smallLLM = m
 	fmt.Fprintf(rt.stderr, "✓ Small LLM: %s (for summarization and security triage)\n", rt.cfg.SmallLLM.Model)

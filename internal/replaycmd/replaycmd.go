@@ -4,6 +4,7 @@
 package replaycmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -41,15 +42,32 @@ func New(cfg Config) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:           use + " [options] <session.jsonl>... | <directory>...",
-		Short:         "Replay session logs for forensic analysis",
+		Use:   use + " [options] <session.jsonl>... | <directory>...",
+		Short: "Replay session logs for forensic analysis",
+		Long: `Replay session logs for forensic analysis.
+
+Accepts one or more session .jsonl files, or directories to glob for
+session files (*.jsonl, plus legacy *.json).
+
+Navigation keys in the interactive pager:
+  j / k    scroll down / up one line
+  g / G    jump to top / bottom
+  f        toggle follow mode
+  q        quit
+
+Example:
+  ` + use + ` --cost gpt-4o:5,15 session.jsonl`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if showVersion {
 				return nil
 			}
-			return cobra.MinimumNArgs(1)(cmd, args)
+			if err := cobra.MinimumNArgs(1)(cmd, args); err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), cmd.UsageString())
+				return err
+			}
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if showVersion {
@@ -87,14 +105,14 @@ func run(cmd *cobra.Command, paths []string, verbosity int, noPager, liveMode bo
 
 	if liveMode {
 		if len(paths) != 1 {
-			return fmt.Errorf("--follow only works with a single session file")
+			return errors.New("--follow only works with a single session file")
 		}
 		info, err := os.Stat(paths[0])
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
-			return fmt.Errorf("--follow requires a file, not a directory")
+			return errors.New("--follow requires a file, not a directory")
 		}
 		r := replay.New(verbosity, opts...)
 		return r.ReplayFileLive(paths[0])
@@ -105,7 +123,7 @@ func run(cmd *cobra.Command, paths []string, verbosity int, noPager, liveMode bo
 		return err
 	}
 	if len(sessionFiles) == 0 {
-		return fmt.Errorf("no session files found")
+		return errors.New("no session files found")
 	}
 
 	r := replay.NewMulti(verbosity, opts...)
