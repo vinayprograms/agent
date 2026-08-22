@@ -35,17 +35,29 @@ const (
 
 // newContentGuard builds the verification pipeline for cfg. The security
 // models are wrapped so that per-call token usage reaches the session log.
+//
+// A Reviewer is mandatory: it is the only stage that can turn an escalation
+// into a verdict. Without it the paranoid workflow would allow a call the
+// screener flagged (escalate falls through to its final Allow), and the
+// other workflows would deny every flagged call — neither is a usable
+// security posture, so both are rejected at construction.
 func newContentGuard(cfg *SecurityConfig, registered []string) (*contentguard.Guard, error) {
+	mode := cfg.Mode
+	if mode == "" {
+		mode = SecurityDefault
+	}
+	if cfg.Reviewer == nil {
+		return nil, fmt.Errorf("security: reviewer model is required in %s mode", mode)
+	}
+
 	var stages []contentguard.Stage
 	if cfg.Screener != nil {
 		stages = append(stages, contentguard.NewScreener(countingModel{inner: cfg.Screener, stage: stageScreener}))
 	}
-	if cfg.Reviewer != nil {
-		stages = append(stages, contentguard.NewReviewer(countingModel{inner: cfg.Reviewer, stage: stageReviewer}))
-	}
+	stages = append(stages, contentguard.NewReviewer(countingModel{inner: cfg.Reviewer, stage: stageReviewer}))
 
 	var workflow contentguard.Workflow = contentguard.Escalatory()
-	if cfg.Mode == SecurityParanoid {
+	if mode == SecurityParanoid {
 		workflow = contentguard.Paranoid()
 	}
 
@@ -53,7 +65,7 @@ func newContentGuard(cfg *SecurityConfig, registered []string) (*contentguard.Gu
 		Patterns: cfg.Patterns,
 		Keywords: cfg.Keywords,
 	}
-	if cfg.Mode == SecurityResearch && cfg.Scope != "" {
+	if mode == SecurityResearch && cfg.Scope != "" {
 		gcfg.Context = map[string]string{"scope": cfg.Scope}
 	}
 	for _, name := range registered {

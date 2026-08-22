@@ -79,17 +79,17 @@ func TestNew_ResolverAndModelDerivation(t *testing.T) {
 	m := llmmock.New()
 	wf := &agentfile.Workflow{Name: "x"}
 
-	e := NewExecutor(wf, m, nil, nil)
+	e := mustNewExecutor(t, wf, m, nil, nil)
 	if got, _ := e.resolver.Model("anything"); got != m {
 		t.Error("single resolver must return the default model")
 	}
 
-	e = NewExecutorWithFactory(wf, fakeResolver{models: map[string]llm.Model{"": m}}, nil, nil)
+	e = mustNew(t, Config{Workflow: wf, Resolver: fakeResolver{models: map[string]llm.Model{"": m}}})
 	if e.model != m {
 		t.Error("model must be derived from the resolver's default profile")
 	}
 
-	e = New(Config{Workflow: wf})
+	e = mustNew(t, Config{Workflow: wf})
 	if e.model != nil || e.resolver != nil {
 		t.Error("no model and no resolver stays nil")
 	}
@@ -100,13 +100,13 @@ func TestSpawnAgentWithPrompt_ProfileResolution(t *testing.T) {
 	fast.SetResponse("fast answer")
 	wf := &agentfile.Workflow{Name: "x"}
 
-	exec := New(Config{Workflow: wf, Model: llmmock.New(), Resolver: fakeResolver{models: map[string]llm.Model{"fast": fast}}})
+	exec := mustNew(t, Config{Workflow: wf, Model: llmmock.New(), Resolver: fakeResolver{models: map[string]llm.Model{"fast": fast}}})
 	out, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "task", nil, "fast", nil, false)
 	if err != nil || out != "fast answer" {
 		t.Fatalf("got %q %v", out, err)
 	}
 
-	exec = New(Config{Workflow: wf, Model: llmmock.New(), Resolver: fakeResolver{err: errors.New("unknown profile")}})
+	exec = mustNew(t, Config{Workflow: wf, Model: llmmock.New(), Resolver: fakeResolver{err: errors.New("unknown profile")}})
 	if _, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "task", nil, "slow", nil, false); err == nil || !strings.Contains(err.Error(), "unknown profile") {
 		t.Fatalf("expected resolver error, got %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSpawnAgentWithPrompt_ProfileResolution(t *testing.T) {
 
 func TestSettersAndAccessors(t *testing.T) {
 	sess := &session.Session{}
-	exec := New(Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), Session: sess})
+	exec := mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), Session: sess})
 
 	if exec.Registry() != nil {
 		t.Error("expected nil registry")
@@ -155,7 +155,7 @@ func TestSettersAndAccessors(t *testing.T) {
 	exec.closeSession()
 
 	// Nil-session variants are no-ops.
-	none := NewExecutor(&agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
+	none := mustNewExecutor(t, &agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
 	none.SetEventPublisher(nil)
 	none.ClearEventPublisher()
 	none.flushSession()
@@ -165,7 +165,7 @@ func TestSettersAndAccessors(t *testing.T) {
 func TestExtractAndStoreObservations(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "x"}
 	newExec := func(ex ObservationExtractor, st ObservationStore) *Executor {
-		return New(Config{Workflow: wf, Model: llmmock.New(), ObservationExtractor: ex, ObservationStore: st})
+		return mustNew(t, Config{Workflow: wf, Model: llmmock.New(), ObservationExtractor: ex, ObservationStore: st})
 	}
 
 	store := &fakeStore{done: make(chan string, 1)}
@@ -219,7 +219,7 @@ func newSupervisedExecutor(t *testing.T, wf *agentfile.Workflow, model llm.Model
 		t.Fatal(err)
 	}
 	sess := &session.Session{}
-	exec := New(Config{
+	exec := mustNew(t, Config{
 		Workflow: wf, Model: model, Session: sess, Debug: true,
 		CheckpointStore: store, Supervisor: sup,
 	})
@@ -353,7 +353,7 @@ func TestSupervisedMultiAgentGoal(t *testing.T) {
 
 	// Unknown agent.
 	bad := &agentfile.Workflow{Name: "bad", Steps: wf.Steps, Goals: []agentfile.Goal{{Name: "review", UsingAgent: []string{"ghost"}}}}
-	exec = NewExecutor(bad, model, nil, nil)
+	exec = mustNewExecutor(t, bad, model, nil, nil)
 	if _, err := exec.Run(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "agent not found") {
 		t.Fatalf("expected agent not found, got %v", err)
 	}
@@ -414,13 +414,13 @@ func TestSubAgent_TurnLimitAndLLMError(t *testing.T) {
 		return &llm.ChatResponse{ToolCalls: []llm.ToolCallResponse{{ID: "1", Name: "pwd", Args: map[string]any{}}}}, nil
 	})
 	reg, _ := newTestRegistry(t, t.TempDir())
-	exec := New(Config{Workflow: wf, Model: looping, Registry: reg, Policy: permissivePolicy()})
+	exec := mustNew(t, Config{Workflow: wf, Model: looping, Registry: reg, Policy: permissivePolicy()})
 	out, err := exec.spawnDynamicAgent(context.Background(), "r", "t", nil)
 	if err != nil || !strings.Contains(out, "maximum turn limit") {
 		t.Fatalf("got %q %v", out, err)
 	}
 
-	exec = New(Config{Workflow: wf, Model: modelFunc(func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+	exec = mustNew(t, Config{Workflow: wf, Model: modelFunc(func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
 		return nil, errors.New("llm down")
 	})})
 	if _, err := exec.spawnDynamicAgent(context.Background(), "r", "t", nil); err == nil || !strings.Contains(err.Error(), "sub-agent LLM error") {
@@ -434,7 +434,7 @@ func TestExecutePhase_SkillsInterruptsAndLLMError(t *testing.T) {
 		Steps: []agentfile.Step{{Type: agentfile.StepRUN, UsingGoals: []string{"g"}}},
 		Goals: []agentfile.Goal{{Name: "g", Outcome: "Work"}},
 	}
-	exec := New(Config{Workflow: wf, Model: modelFunc(func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+	exec := mustNew(t, Config{Workflow: wf, Model: modelFunc(func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
 		return nil, errors.New("llm down")
 	}), WorkspaceContext: "WORKSPACE: here"})
 	if res, err := exec.Run(context.Background(), nil); err == nil || res.Status != StatusFailed {
@@ -453,7 +453,7 @@ func TestExecutePhase_SkillsInterruptsAndLLMError(t *testing.T) {
 		}
 		return &llm.ChatResponse{Content: "first"}, nil
 	})
-	exec = New(Config{Workflow: wf, Model: model, InterruptBuffer: buf})
+	exec = mustNew(t, Config{Workflow: wf, Model: model, InterruptBuffer: buf})
 	res, err := exec.Run(context.Background(), nil)
 	if err != nil || res.Outputs["g"] != "reconsidered" || turns != 2 {
 		t.Fatalf("got %+v %v turns=%d", res, err, turns)
@@ -466,7 +466,7 @@ func TestRun_PreFlightFailure(t *testing.T) {
 		Steps: []agentfile.Step{{Type: agentfile.StepRUN, UsingGoals: []string{"g"}}},
 		Goals: []agentfile.Goal{{Name: "g", Outcome: "Deploy"}},
 	}
-	exec := NewExecutor(wf, llmmock.New(), nil, nil)
+	exec := mustNewExecutor(t, wf, llmmock.New(), nil, nil)
 	if res, err := exec.Run(context.Background(), nil); err == nil || res.Status != StatusFailed {
 		t.Fatalf("expected preflight failure, got %+v %v", res, err)
 	}
@@ -474,7 +474,7 @@ func TestRun_PreFlightFailure(t *testing.T) {
 
 func TestGoalOutcomeAndMissingGoal(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "x", Goals: []agentfile.Goal{{Name: "g", Outcome: "Do $thing"}, {Name: "empty"}}}
-	exec := NewExecutor(wf, llmmock.New(), nil, nil)
+	exec := mustNewExecutor(t, wf, llmmock.New(), nil, nil)
 	exec.inputs = map[string]string{"thing": "work"}
 	if got := exec.goalOutcome("g"); got != "Do work" {
 		t.Errorf("got %q", got)

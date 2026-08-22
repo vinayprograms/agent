@@ -36,7 +36,7 @@ func TestExecutor_InputBinding(t *testing.T) {
 	provider := llmmock.New()
 	provider.SetResponse("Analysis complete")
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 	result, err := exec.Run(context.Background(), map[string]string{
 		"topic": "golang",
 	})
@@ -67,7 +67,7 @@ func TestExecutor_DefaultValues(t *testing.T) {
 	provider := llmmock.New()
 	provider.SetResponse("Done")
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 	_, err := exec.Run(context.Background(), nil) // No inputs provided
 
 	if err != nil {
@@ -96,7 +96,7 @@ func TestExecutor_MissingRequiredInput(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, llmmock.New(), nil, nil)
+	exec := mustNewExecutor(t, wf, llmmock.New(), nil, nil)
 	_, err := exec.Run(context.Background(), nil)
 
 	if err == nil {
@@ -128,7 +128,7 @@ func TestExecutor_StepOrder(t *testing.T) {
 	provider := llmmock.New()
 	provider.SetResponse("Done")
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 	exec.Hooks().On(hooks.GoalStart, func(_ context.Context, evt hooks.Event) {
 		name := evt.Data["name"].(string)
 		executionOrder = append(executionOrder, name)
@@ -166,7 +166,7 @@ func TestExecutor_VariableInterpolation(t *testing.T) {
 	provider := llmmock.New()
 	provider.SetResponse("Done")
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 	exec.Run(context.Background(), map[string]string{
 		"name":  "Alice",
 		"count": "5",
@@ -204,7 +204,7 @@ func TestExecutor_GoalOutputReference(t *testing.T) {
 		return &llm.ChatResponse{Content: "Summary complete"}, nil
 	}
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 	exec.Run(context.Background(), nil)
 
 	req := provider.LastRequest()
@@ -250,7 +250,7 @@ func TestExecutor_GoalLoop(t *testing.T) {
 	pol := permissivePolicy()
 	reg, _ := newTestRegistry(t, t.TempDir())
 
-	exec := NewExecutor(wf, provider, reg, pol)
+	exec := mustNewExecutor(t, wf, provider, reg, pol)
 	exec.Run(context.Background(), nil)
 
 	if callCount != 3 {
@@ -288,7 +288,7 @@ func TestExecutor_MultiAgent(t *testing.T) {
 		return &llm.ChatResponse{Content: "Synthesized: Mixed reviews"}, nil
 	})
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 	result, err := exec.Run(context.Background(), nil)
 
 	if err != nil {
@@ -321,7 +321,7 @@ func TestExecutor_PromptInterpolation(t *testing.T) {
 	provider := llmmock.New()
 	provider.SetResponse("Done")
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 	exec.Run(context.Background(), map[string]string{
 		"file_path": "/data/input.json",
 	})
@@ -355,7 +355,7 @@ func TestExecutor_ResultContainsOutputs(t *testing.T) {
 		return &llm.ChatResponse{Content: "Output 2"}, nil
 	}
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 	result, _ := exec.Run(context.Background(), nil)
 
 	if result.Outputs["goal1"] != "Output 1" {
@@ -381,7 +381,7 @@ func TestExecutor_NilMCPManager(t *testing.T) {
 	provider := llmmock.New()
 	provider.SetResponse("Done")
 
-	exec := New(Config{
+	exec := mustNew(t, Config{
 		Workflow: wf,
 		Model:    provider,
 	})
@@ -410,7 +410,7 @@ func TestExecutor_SkillsViaConfig(t *testing.T) {
 	provider := llmmock.New()
 	provider.SetResponse("Done")
 
-	exec := New(Config{
+	exec := mustNew(t, Config{
 		Workflow: wf,
 		Model:    provider,
 		SkillRefs: []skills.SkillRef{
@@ -441,7 +441,7 @@ func TestExecutor_GetAllToolDefinitions(t *testing.T) {
 	pol := permissivePolicy()
 	registry, _ := newTestRegistry(t, t.TempDir())
 
-	exec := NewExecutor(wf, provider, registry, pol)
+	exec := mustNewExecutor(t, wf, provider, registry, pol)
 
 	defs := exec.getAllToolDefinitions()
 
@@ -476,7 +476,7 @@ func TestExecutor_DefaultDenyBlocksToolExecution(t *testing.T) {
 
 	registry, _ := newTestRegistry(t, t.TempDir())
 
-	exec := NewExecutor(wf, provider, registry, pol)
+	exec := mustNewExecutor(t, wf, provider, registry, pol)
 
 	// Definitions should filter out disabled tools
 	defs := exec.getAllToolDefinitions()
@@ -519,7 +519,7 @@ func TestExecutor_DefaultDenyBlocksToolExecution(t *testing.T) {
 func TestExecutor_CheckSkillActivation(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}
 	provider := llmmock.New()
-	exec := New(Config{
+	exec := mustNew(t, Config{
 		Workflow: wf,
 		Model:    provider,
 		SkillRefs: []skills.SkillRef{
@@ -544,7 +544,7 @@ func TestExecutor_CheckSkillActivation(t *testing.T) {
 func TestExecutor_OnSkillLoadedHook(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}
 	provider := llmmock.New()
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 
 	// Register hook
 	hookCalled := false
@@ -563,7 +563,7 @@ func TestExecutor_OnSkillLoadedHook(t *testing.T) {
 func TestExecutor_MCPToolNameParsing(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "test"}
 	provider := llmmock.New()
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 
 	// Without MCP manager, should error
 	_, err := exec.executeMCPTool(context.Background(), llm.ToolCallResponse{
@@ -595,7 +595,7 @@ func TestExecutor_AllCallbacks(t *testing.T) {
 	provider := llmmock.New()
 	provider.SetResponse("Done")
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 
 	var goalStarted, goalCompleted string
 	exec.Hooks().On(hooks.GoalStart, func(_ context.Context, evt hooks.Event) {
@@ -638,7 +638,7 @@ func TestExecutor_SpawnAgentToolRegistered(t *testing.T) {
 		t.Fatal("expected spawn_agents to fail before binding")
 	}
 
-	New(Config{Workflow: wf, Model: provider, Registry: registry, SpawnBinder: binder})
+	mustNew(t, Config{Workflow: wf, Model: provider, Registry: registry, SpawnBinder: binder})
 
 	if !registry.Has("spawn_agents") {
 		t.Fatal("expected spawn_agents tool to be registered")
@@ -671,7 +671,7 @@ func TestExecutor_OrchestratorPromptInjected(t *testing.T) {
 	pol := permissivePolicy()
 	registry, _ := newTestRegistry(t, t.TempDir())
 
-	exec := NewExecutor(wf, provider, registry, pol)
+	exec := mustNewExecutor(t, wf, provider, registry, pol)
 	exec.Run(context.Background(), nil)
 
 	// Check that the system message contains orchestrator guidance
@@ -721,7 +721,7 @@ func TestExecutor_SubAgentCannotSpawn(t *testing.T) {
 
 	pol := permissivePolicy()
 	registry, _ := newTestRegistry(t, t.TempDir())
-	exec := NewExecutor(wf, provider, registry, pol)
+	exec := mustNewExecutor(t, wf, provider, registry, pol)
 
 	// Manually trigger sub-agent spawn to inspect tool filtering
 	_, err := exec.spawnDynamicAgent(context.Background(), "researcher", "test task", nil)
@@ -842,7 +842,7 @@ func TestExecutor_GoalWithStructuredOutput(t *testing.T) {
 	pol := permissivePolicy()
 	registry, _ := newTestRegistry(t, t.TempDir())
 
-	exec := NewExecutor(wf, provider, registry, pol)
+	exec := mustNewExecutor(t, wf, provider, registry, pol)
 	_, err := exec.Run(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("run error: %v", err)
@@ -880,7 +880,7 @@ func TestExecutor_IsSupervised_GoalOverride(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, nil, nil, nil)
+	exec := mustNewExecutor(t, wf, nil, nil, nil)
 
 	// Normal goal inherits from workflow
 	if !exec.isSupervised(&wf.Goals[0]) {
@@ -904,7 +904,7 @@ func TestExecutor_IsSupervised_WorkflowDefault(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, nil, nil, nil)
+	exec := mustNewExecutor(t, wf, nil, nil, nil)
 
 	// Normal goal inherits from workflow (not supervised)
 	if exec.isSupervised(&wf.Goals[0]) {
@@ -929,7 +929,7 @@ func TestExecutor_RequiresHuman(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, nil, nil, nil)
+	exec := mustNewExecutor(t, wf, nil, nil, nil)
 
 	if exec.requiresHuman(&wf.Goals[0]) {
 		t.Error("expected auto goal to NOT require human")
@@ -951,7 +951,7 @@ func TestExecutor_PreFlight_NoHumanRequired(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, nil, nil, nil)
+	exec := mustNewExecutor(t, wf, nil, nil, nil)
 	err := exec.PreFlight()
 
 	if err != nil {
@@ -970,7 +970,7 @@ func TestExecutor_PreFlight_HumanAvailable(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, nil, nil, nil)
+	exec := mustNewExecutor(t, wf, nil, nil, nil)
 	exec.humanAvailable = true
 
 	err := exec.PreFlight()
@@ -990,7 +990,7 @@ func TestExecutor_PreFlight_HumanNotAvailable(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, nil, nil, nil)
+	exec := mustNewExecutor(t, wf, nil, nil, nil)
 	exec.humanAvailable = false
 
 	err := exec.PreFlight()
@@ -1013,7 +1013,7 @@ func TestExecutor_PreFlight_GoalRequiresHuman(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, nil, nil, nil)
+	exec := mustNewExecutor(t, wf, nil, nil, nil)
 	exec.humanAvailable = false
 
 	err := exec.PreFlight()

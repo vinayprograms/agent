@@ -51,7 +51,7 @@ func TestSkillActivation_LoadsAndInjectsContext(t *testing.T) {
 		}
 		return &llm.ChatResponse{Content: "I will [use-skill:code-review] now"}, nil
 	})
-	exec := New(Config{Workflow: wf, Model: model, SkillRefs: []skills.SkillRef{{Name: "code-review", Description: "Review code", Path: dir}}})
+	exec := mustNew(t, Config{Workflow: wf, Model: model, SkillRefs: []skills.SkillRef{{Name: "code-review", Description: "Review code", Path: dir}}})
 	var loaded string
 	exec.Hooks().On(hooks.SkillLoaded, func(_ context.Context, evt hooks.Event) { loaded = evt.Data["name"].(string) })
 
@@ -82,7 +82,7 @@ func TestSkillActivation_LoadsAndInjectsContext(t *testing.T) {
 
 func TestInterpolate_UnresolvedWarnsToSession(t *testing.T) {
 	sess := &session.Session{}
-	exec := New(Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), Session: sess})
+	exec := mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), Session: sess})
 	exec.inputs = map[string]string{"a": "1"}
 	exec.outputs = map[string]string{"b": "2"}
 	if got := exec.interpolate("$a+$b=$c"); got != "1+2=$c" {
@@ -112,7 +112,7 @@ func TestStructuredOutputHelpers(t *testing.T) {
 }
 
 func TestSecurityResearchPrefix(t *testing.T) {
-	exec := NewExecutor(&agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
+	exec := mustNewExecutor(t, &agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
 	if exec.securityResearchPrefix() != "" {
 		t.Error("no scope => no prefix")
 	}
@@ -126,7 +126,7 @@ func TestSecurityResearchPrefix(t *testing.T) {
 		systems = append(systems, req.Messages[0].Content)
 		return &llm.ChatResponse{Content: "ok"}, nil
 	})
-	exec = New(Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: model, Security: &SecurityConfig{Mode: SecurityResearch, Scope: "lab"}})
+	exec = mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: model, Security: &SecurityConfig{Mode: SecurityResearch, Scope: "lab", Reviewer: denyingReviewer()}})
 	exec.spawnDynamicAgent(context.Background(), "r", "t", nil)
 	exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "t", nil, "", []GoalOutput{{ID: "prev", Output: "o"}}, false)
 	for _, s := range systems {
@@ -145,7 +145,7 @@ func TestGuidancePrefixes_ForSubAgents(t *testing.T) {
 		system = req.Messages[0].Content
 		return &llm.ChatResponse{Content: "ok"}, nil
 	})
-	exec := New(Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: model, Registry: reg, WorkspaceContext: "WS"})
+	exec := mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: model, Registry: reg, WorkspaceContext: "WS"})
 	if _, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "t", []string{"f"}, "", nil, false); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestGuidancePrefixes_ForSubAgents(t *testing.T) {
 }
 
 func TestRecordLLMMetrics(t *testing.T) {
-	exec := NewExecutor(&agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
+	exec := mustNewExecutor(t, &agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
 	exec.recordLLMMetrics(&llm.ChatResponse{}, time.Millisecond) // no collector
 	m := &recordingMetrics{}
 	exec.SetMetricsCollector(m)
@@ -179,7 +179,7 @@ func TestExecuteSimpleParallel_AgentErrorAndSynthesisError(t *testing.T) {
 		Goals:  []agentfile.Goal{{Name: "g", Outcome: "Work", UsingAgent: []string{"a1", "a2"}}},
 	}
 	// Profile resolution failure surfaces as the goal error.
-	exec := New(Config{Workflow: wf, Model: llmmock.New(), Resolver: fakeResolver{err: errors.New("no such profile")}})
+	exec := mustNew(t, Config{Workflow: wf, Model: llmmock.New(), Resolver: fakeResolver{err: errors.New("no such profile")}})
 	if _, err := exec.Run(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "no such profile") {
 		t.Fatalf("expected profile error, got %v", err)
 	}
@@ -193,7 +193,7 @@ func TestExecuteSimpleParallel_AgentErrorAndSynthesisError(t *testing.T) {
 		}
 		return &llm.ChatResponse{Content: "agent"}, nil
 	})
-	exec = New(Config{Workflow: wf, Model: model, Resolver: fakeResolver{models: map[string]llm.Model{"fast": fast, "": model}}})
+	exec = mustNew(t, Config{Workflow: wf, Model: model, Resolver: fakeResolver{models: map[string]llm.Model{"fast": fast, "": model}}})
 	if _, err := exec.Run(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "synthesis down") {
 		t.Fatalf("expected synthesis error, got %v", err)
 	}
@@ -205,7 +205,7 @@ func TestExecuteSimpleParallel_AgentErrorAndSynthesisError(t *testing.T) {
 		Steps:  wf.Steps,
 		Goals:  []agentfile.Goal{{Name: "g", Outcome: "Work", UsingAgent: []string{"only"}}},
 	}
-	exec = New(Config{Workflow: single, Model: model})
+	exec = mustNew(t, Config{Workflow: single, Model: model})
 	res, err := exec.Run(context.Background(), nil)
 	if err != nil || res.Outputs["g"] != "agent" {
 		t.Fatalf("got %+v %v", res, err)

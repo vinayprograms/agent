@@ -31,15 +31,19 @@ const (
 )
 
 // SecurityConfig configures content-trust verification of tool calls.
-// The executor builds the contentguard pipeline from it at construction.
+// The executor builds the contentguard pipeline from it at construction;
+// New returns an error if the configuration cannot be honoured (missing
+// Reviewer, invalid Patterns) rather than running unverified.
 type SecurityConfig struct {
 	Mode SecurityMode // empty means SecurityDefault
 	// Scope is the authorized research scope (SecurityResearch only).
 	Scope string
 	// Screener is the cheap triage model. nil disables the screener stage.
 	Screener llm.Model
-	// Reviewer is the full review model. nil disables the reviewer stage.
-	// With no stages at all, any tool call that needs verification is denied.
+	// Reviewer is the full review model. Required whenever Config.Security
+	// is set: it is the stage that resolves escalations, and without it
+	// flagged calls would either always be denied or — in paranoid mode —
+	// allowed.
 	Reviewer llm.Model
 	// Patterns are extra "name:regex" injection patterns; Keywords are extra
 	// sensitive keywords (from policy [content.security]).
@@ -86,7 +90,8 @@ type Config struct {
 	HumanAvailable  bool
 	HumanInputChan  chan string
 
-	// Security. nil disables tool-call verification entirely.
+	// Security. nil disables tool-call verification entirely; when set,
+	// Security.Reviewer must be non-nil or New fails.
 	Security *SecurityConfig
 
 	// Timeouts for network operations (seconds). Zero means use default.

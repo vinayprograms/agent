@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/testutil/llmmock"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/policy"
 	"github.com/vinayprograms/agentkit/tools"
@@ -15,6 +17,30 @@ type modelFunc func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse
 
 func (f modelFunc) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 	return f(ctx, req)
+}
+
+// mustNew constructs an executor or fails the test.
+func mustNew(t *testing.T, cfg Config) *Executor {
+	t.Helper()
+	e, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return e
+}
+
+// mustNewExecutor is the old four-argument constructor shape for tests.
+func mustNewExecutor(t *testing.T, wf *agentfile.Workflow, model llm.Model, reg *tools.Registry, pol *policy.Policy) *Executor {
+	t.Helper()
+	return mustNew(t, Config{Workflow: wf, Model: model, Registry: reg, Policy: pol})
+}
+
+// denyingReviewer is the default reviewer for security tests: escalations
+// are denied unless a test supplies its own reviewer.
+func denyingReviewer() *llmmock.Model {
+	m := llmmock.New()
+	m.SetResponse("DENY: test default reviewer")
+	return m
 }
 
 // permissivePolicy returns a policy with every tool enabled (the old

@@ -45,7 +45,7 @@ func newToolExecutor(t *testing.T, extra ...tools.Tool) (*Executor, *session.Ses
 	t.Helper()
 	sess := &session.Session{}
 	reg, _ := newTestRegistry(t, t.TempDir(), extra...)
-	exec := New(Config{
+	exec := mustNew(t, Config{
 		Workflow: &agentfile.Workflow{Name: "tools"},
 		Model:    llmmock.New(),
 		Registry: reg,
@@ -87,7 +87,7 @@ func TestExecuteTool_UnknownTool(t *testing.T) {
 }
 
 func TestExecuteTool_NoRegistry(t *testing.T) {
-	exec := NewExecutor(&agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
+	exec := mustNewExecutor(t, &agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
 	if _, err := exec.executeTool(context.Background(), llm.ToolCallResponse{Name: "read"}); err == nil || !strings.Contains(err.Error(), "no tool registry") {
 		t.Fatalf("expected no-registry error, got %v", err)
 	}
@@ -117,9 +117,9 @@ func TestExecuteTool_ExternalResultRegisteredAsUntrusted(t *testing.T) {
 	empty := fakeTool{name: "web_search", run: func(context.Context, tools.Args) (string, error) { return "", nil }}
 	sess := &session.Session{}
 	reg, _ := newTestRegistry(t, t.TempDir(), fetch, empty)
-	exec := New(Config{
+	exec := mustNew(t, Config{
 		Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), Registry: reg,
-		Session: sess, Security: &SecurityConfig{},
+		Session: sess, Security: &SecurityConfig{Reviewer: denyingReviewer()},
 	})
 	if _, err := exec.executeTool(context.Background(), llm.ToolCallResponse{Name: "web_fetch"}); err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestExecuteTool_ExternalResultRegisteredAsUntrusted(t *testing.T) {
 	if ids := exec.guard.UntrustedIDs(); len(ids) != 1 {
 		t.Errorf("expected one untrusted block in guard, got %v", ids)
 	}
-	// Security now gates the next high-risk call (no stages => deny).
+	// Security now gates the next high-risk call (reviewer denies).
 	if _, err := exec.executeTool(context.Background(), llm.ToolCallResponse{Name: "web_fetch"}); err == nil || !strings.Contains(err.Error(), "security:") {
 		t.Fatalf("expected security denial, got %v", err)
 	}
@@ -155,9 +155,9 @@ func TestExecuteTool_MCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess := &session.Session{}
-	exec := New(Config{
+	exec := mustNew(t, Config{
 		Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), MCPManager: mgr,
-		Policy: permissivePolicy(), Session: sess, Security: &SecurityConfig{},
+		Policy: permissivePolicy(), Session: sess, Security: &SecurityConfig{Reviewer: denyingReviewer()},
 	})
 
 	defs := exec.getAllToolDefinitions()
@@ -276,7 +276,7 @@ func TestToolClassification(t *testing.T) {
 }
 
 func TestApplyToolTimeout(t *testing.T) {
-	exec := New(Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), TimeoutMCP: 5, TimeoutWebFetch: 5})
+	exec := mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), TimeoutMCP: 5, TimeoutWebFetch: 5})
 	bg := context.Background()
 
 	if _, cancel := exec.applyToolTimeout(bg, "read"); cancel != nil {

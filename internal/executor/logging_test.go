@@ -20,7 +20,7 @@ func newLoggingExecutor(t *testing.T, debug bool) (*Executor, *session.Session, 
 	t.Helper()
 	sess := &session.Session{}
 	var buf bytes.Buffer
-	exec := New(Config{
+	exec := mustNew(t, Config{
 		Workflow: &agentfile.Workflow{Name: "log"},
 		Model:    llmmock.New(),
 		Session:  sess,
@@ -98,7 +98,7 @@ func TestLogBashSecurity(t *testing.T) {
 	}
 
 	// Without a session the call is a no-op.
-	noSess := NewExecutor(&agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
+	noSess := mustNewExecutor(t, &agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
 	noSess.LogBashSecurity("ls", "llm", true, "", 0, 0, 0)
 }
 
@@ -173,7 +173,7 @@ func TestLogHelpers_DebugContent(t *testing.T) {
 }
 
 func TestLogHelpers_NoSessionNoop(t *testing.T) {
-	exec := NewExecutor(&agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
+	exec := mustNewExecutor(t, &agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
 	ctx := context.Background()
 	exec.logEvent("t", "c")
 	exec.logToolCall(ctx, "t", nil)
@@ -196,7 +196,7 @@ func TestLogHelpers_NoSessionNoop(t *testing.T) {
 }
 
 func TestTracingSpans(t *testing.T) {
-	exec := New(Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), Debug: true})
+	exec := mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: llmmock.New(), Debug: true})
 	ctx := context.Background()
 	_, span := exec.startWorkflowSpan(ctx, "wf")
 	exec.endWorkflowSpan(span, "failed", errors.New("e"))

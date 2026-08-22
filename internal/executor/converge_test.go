@@ -53,7 +53,7 @@ func TestConvergeGoal_Converges(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 	result, err := exec.executeConvergeGoal(context.Background(), &wf.Goals[0])
 	if err != nil {
 		t.Fatalf("executeConvergeGoal() error = %v", err)
@@ -94,7 +94,7 @@ func TestConvergeGoal_HitsLimit(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 	result, err := exec.executeConvergeGoal(context.Background(), &wf.Goals[0])
 	if err != nil {
 		t.Fatalf("executeConvergeGoal() error = %v", err)
@@ -137,7 +137,7 @@ func TestConvergeGoal_ContextBuilding(t *testing.T) {
 		responses: []string{"First", "CONVERGED"},
 	}
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 
 	// Override to capture prompts (we can test the context building separately)
 	iterations := []ConvergenceIteration{}
@@ -184,7 +184,7 @@ func TestConvergeGoal_VariableLimit(t *testing.T) {
 		responses: []string{"One", "Two", "CONVERGED"},
 	}
 
-	exec := NewExecutor(wf, provider, nil, nil)
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
 
 	// Initialize inputs map and set the variable
 	if exec.inputs == nil {

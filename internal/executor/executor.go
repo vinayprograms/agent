@@ -259,8 +259,10 @@ func (e *Executor) publishToDiscuss(goalName, content string) {
 }
 
 // New creates an Executor from a Config struct. All dependencies are supplied
-// up front — no Set* methods needed after construction.
-func New(cfg Config) *Executor {
+// up front — no Set* methods needed after construction. It fails when the
+// security configuration cannot be honoured (see SecurityConfig) so that a
+// misconfiguration never silently disables verification.
+func New(cfg Config) (*Executor, error) {
 	model := cfg.Model
 	resolver := cfg.Resolver
 
@@ -321,8 +323,7 @@ func New(cfg Config) *Executor {
 		}
 		guard, err := newContentGuard(cfg.Security, e.registeredToolNames())
 		if err != nil {
-			// Same as the old runtime: warn and run unverified rather than abort.
-			e.logger.Error("failed to create content guard; tool-call verification disabled", "error", err.Error())
+			return nil, err
 		}
 		e.guard = guard
 	}
@@ -350,29 +351,7 @@ func New(cfg Config) *Executor {
 	if cfg.SpawnBinder != nil {
 		cfg.SpawnBinder.Bind(e.spawnDynamicAgent)
 	}
-	return e
-}
-
-// NewExecutor creates an executor with a single model.
-// Deprecated: use New(Config).
-func NewExecutor(wf *agentfile.Workflow, model llm.Model, registry *tools.Registry, pol *policy.Policy) *Executor {
-	return New(Config{
-		Workflow: wf,
-		Model:    model,
-		Registry: registry,
-		Policy:   pol,
-	})
-}
-
-// NewExecutorWithFactory creates an executor with a model resolver for profile support.
-// Deprecated: use New(Config).
-func NewExecutorWithFactory(wf *agentfile.Workflow, resolver llm.Resolver, registry *tools.Registry, pol *policy.Policy) *Executor {
-	return New(Config{
-		Workflow: wf,
-		Resolver: resolver,
-		Registry: registry,
-		Policy:   pol,
-	})
+	return e, nil
 }
 
 // registeredToolNames lists every tool in the registry.
