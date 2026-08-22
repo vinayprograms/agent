@@ -9,9 +9,9 @@ import (
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/executor"
-	"github.com/vinayprograms/agentkit/llm"
+	"github.com/vinayprograms/agent/internal/testutil/llmmock"
+	"github.com/vinayprograms/agent/tests/internal/testkit"
 	"github.com/vinayprograms/agentkit/policy"
-	"github.com/vinayprograms/agentkit/tools"
 )
 
 // BenchmarkLexer benchmarks the lexer performance.
@@ -62,11 +62,9 @@ RUN finish USING summarize
 // BenchmarkPolicyCheck benchmarks policy path checking.
 func BenchmarkPolicyCheck(b *testing.B) {
 	pol := policy.New()
-	pol.Workspace = "/home/user/project"
 	pol.Tools["read"] = &policy.ToolPolicy{
-		Enabled: true,
-		Allow:   []string{"/home/user/project/**"},
-		Deny:    []string{"/home/user/project/.git/**", "**/.env"},
+		Allow: []string{"/home/user/project/**"},
+		Deny:  []string{"/home/user/project/.git/**", "**/.env"},
 	}
 
 	paths := []string{
@@ -85,9 +83,7 @@ func BenchmarkPolicyCheck(b *testing.B) {
 
 // BenchmarkToolRegistry benchmarks tool lookup.
 func BenchmarkToolRegistry(b *testing.B) {
-	pol := policy.New()
-	pol.Workspace = b.TempDir()
-	registry := tools.NewRegistry(pol)
+	registry := testkit.Registry(b, testkit.PermissivePolicy(), b.TempDir())
 
 	toolNames := []string{"read", "write", "edit", "glob", "grep", "ls", "bash"}
 
@@ -112,12 +108,12 @@ func BenchmarkExecutorSimple(b *testing.B) {
 		},
 	}
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		exec := executor.NewExecutor(wf, provider, nil, nil)
+		exec := testkit.Executor(b, executor.Config{Workflow: wf, Model: provider})
 		exec.Run(context.Background(), nil)
 	}
 }
@@ -129,14 +125,12 @@ func BenchmarkToolExecution(b *testing.B) {
 	os.WriteFile(testFile, []byte("test content for benchmark"), 0644)
 
 	pol := policy.New()
-	pol.Workspace = tmpDir
-	pol.Tools["read"] = &policy.ToolPolicy{Enabled: true, Allow: []string{"**"}}
-	registry := tools.NewRegistry(pol)
-	readTool := registry.Get("read")
+	pol.Tools["read"] = &policy.ToolPolicy{Allow: []string{"**"}}
+	registry := testkit.Registry(b, pol, tmpDir)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		readTool.Execute(context.Background(), map[string]interface{}{
+		registry.Execute(context.Background(), "read", map[string]any{
 			"path": testFile,
 		})
 	}
@@ -183,11 +177,11 @@ func TestPerformance_ManyGoals(t *testing.T) {
 		UsingGoals: goalNames,
 	})
 
-	provider := llm.NewMockProvider()
+	provider := llmmock.New()
 	provider.SetResponse("Done")
 
-	exec := executor.NewExecutor(wf, provider, nil, nil)
-	result, err := exec.Run(context.Background(), nil)
+	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
+	result, err := exec.Run(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("execution failed: %v", err)
 	}
