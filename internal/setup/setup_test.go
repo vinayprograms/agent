@@ -14,6 +14,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/vinayprograms/agent/internal/configfile"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/policy"
 )
@@ -122,7 +123,7 @@ func TestGeneratePolicyTOML_RoundTripsWithNoUnknownKeys(t *testing.T) {
 
 func assertPolicyMatchesConfig(t *testing.T, m Model) {
 	t.Helper()
-	content := m.generatePolicyTOML()
+	content := configfile.PolicyTOML(m.config)
 	pol, unknown, err := policy.FromTOMLWithUnknownKeys(content, "/ws", "/home/u")
 	if err != nil {
 		t.Fatalf("parse: %v\n%s", err, content)
@@ -185,7 +186,7 @@ func TestGeneratePolicyTOML_LegacyKeysAbsent(t *testing.T) {
 	m.config.DefaultDeny = true
 	m.config.EnableMCP = true
 	m.config.MCPServers["memory"] = MCPServerSetup{}
-	content := m.generatePolicyTOML()
+	content := configfile.PolicyTOML(m.config)
 	for _, legacy := range []string{"enabled = true\n[", "allowlist", "denylist", "allowed_tools", "mcp.default_deny", "sandbox", "[security]"} {
 		if strings.Contains(content, legacy) {
 			t.Errorf("legacy key %q present:\n%s", legacy, content)
@@ -215,7 +216,7 @@ func TestGenerateAgentTOML(t *testing.T) {
 	}
 
 	var cfg existingConfig
-	if _, err := toml.Decode(m.generateAgentTOML(), &cfg); err != nil {
+	if _, err := toml.Decode(configfile.AgentTOML(m.config), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	if cfg.LLM.Provider != ProviderOpenAI || cfg.LLM.APIKeyEnv != "OPENAI_API_KEY" || cfg.LLM.BaseURL != "http://proxy/v1" {
@@ -238,7 +239,7 @@ func TestGenerateAgentTOML(t *testing.T) {
 	// MCP enabled with no servers emits a commented placeholder only.
 	m.config.MCPServers = map[string]MCPServerSetup{}
 	m.config.CredentialMethod = "file"
-	out := m.generateAgentTOML()
+	out := configfile.AgentTOML(m.config)
 	if !strings.Contains(out, "# [mcp.servers.memory]") || strings.Contains(out, "api_key_env") {
 		t.Errorf("unexpected output:\n%s", out)
 	}
@@ -1167,8 +1168,26 @@ func TestRun_OptionsPassthrough(t *testing.T) {
 	isolate(t)
 	in := strings.NewReader("q")
 	var out bytes.Buffer
-	if err := Run(context.Background(), tea.WithInput(in), tea.WithOutput(&out), tea.WithoutSignals()); err != nil {
+	if err := Run(context.Background(), "", tea.WithInput(in), tea.WithOutput(&out), tea.WithoutSignals()); err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+}
+
+// TestRun_DirTargetsThatDirectory proves `agent setup --dir` reaches the
+// wizard: the run must pre-fill from the given directory, not the cwd.
+func TestRun_DirTargetsThatDirectory(t *testing.T) {
+	isolate(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "agent.toml"), []byte("[llm]\nmodel = \"gpt-4o\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	in := strings.NewReader("q")
+	var out bytes.Buffer
+	if err := Run(context.Background(), dir, tea.WithInput(in), tea.WithOutput(&out), tea.WithoutSignals()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(out.String(), "Found existing configuration") {
+		t.Errorf("Run(dir) must enter edit mode from dir; got %q", out.String())
 	}
 }
 

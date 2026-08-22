@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/vinayprograms/agent/internal/config"
+	"github.com/vinayprograms/agent/internal/configfile"
 	"github.com/vinayprograms/agentkit/credentials"
 )
 
@@ -21,21 +22,12 @@ type errMsg struct {
 
 func (m Model) writeFiles() tea.Cmd {
 	return func() tea.Msg {
-		var files []string
-
-		// Write agent.toml
-		agentTOML := m.generateAgentTOML()
-		if err := os.WriteFile(filepath.Join(m.dir, "agent.toml"), []byte(agentTOML), 0644); err != nil {
+		// The wizard is the user's explicit intent to (re)write these files,
+		// so it overwrites; `agent config init` is the guarded entry point.
+		files, err := configfile.Write(m.dir, m.config, true)
+		if err != nil {
 			return errMsg{err}
 		}
-		files = append(files, "agent.toml")
-
-		// Write policy.toml
-		policyTOML := m.generatePolicyTOML()
-		if err := os.WriteFile(filepath.Join(m.dir, "policy.toml"), []byte(policyTOML), 0644); err != nil {
-			return errMsg{err}
-		}
-		files = append(files, "policy.toml")
 
 		// Write credentials to ~/.config/agent/credentials.toml
 		if m.config.CredentialMethod == "file" && m.config.APIKey != "" {

@@ -12,93 +12,46 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/vinayprograms/agent/internal/config"
+	"github.com/vinayprograms/agent/internal/configfile"
 	"github.com/vinayprograms/agentkit/policy"
+)
+
+// The wizard's vocabulary is defined by internal/configfile, which owns the
+// shape of a generated configuration and renders it as TOML. These aliases
+// keep the wizard's own code (and its tests) reading in setup terms.
+type (
+	// Config is the configuration the wizard collects.
+	Config = configfile.Options
+	// MCPServerSetup holds MCP server configuration during setup.
+	MCPServerSetup = configfile.MCPServerSetup
+	// ProfileConfig holds a capability profile configuration.
+	ProfileConfig = configfile.ProfileConfig
 )
 
 // Deployment scenarios
 const (
-	ScenarioLocal      = "local"      // Personal machine, experimenting
-	ScenarioDev        = "dev"        // Development/testing with cloud LLMs
-	ScenarioTeam       = "team"       // Small team, shared proxy (LiteLLM)
-	ScenarioProduction = "production" // Production with full features
-	ScenarioDocker     = "docker"     // Container deployment
+	ScenarioLocal      = configfile.ScenarioLocal
+	ScenarioDev        = configfile.ScenarioDev
+	ScenarioTeam       = configfile.ScenarioTeam
+	ScenarioProduction = configfile.ScenarioProduction
+	ScenarioDocker     = configfile.ScenarioDocker
 )
 
 // Provider options
 const (
-	ProviderAnthropic   = "anthropic"
-	ProviderOpenAI      = "openai"
-	ProviderGoogle      = "google"
-	ProviderGroq        = "groq"
-	ProviderMistral     = "mistral"
-	ProviderXAI         = "xai"
-	ProviderOpenRouter  = "openrouter"
-	ProviderOllamaCloud = "ollama-cloud"
-	ProviderOllamaLocal = "ollama-local"
-	ProviderLiteLLM     = "litellm"
-	ProviderLMStudio    = "lmstudio"
-	ProviderCustom      = "custom"
+	ProviderAnthropic   = configfile.ProviderAnthropic
+	ProviderOpenAI      = configfile.ProviderOpenAI
+	ProviderGoogle      = configfile.ProviderGoogle
+	ProviderGroq        = configfile.ProviderGroq
+	ProviderMistral     = configfile.ProviderMistral
+	ProviderXAI         = configfile.ProviderXAI
+	ProviderOpenRouter  = configfile.ProviderOpenRouter
+	ProviderOllamaCloud = configfile.ProviderOllamaCloud
+	ProviderOllamaLocal = configfile.ProviderOllamaLocal
+	ProviderLiteLLM     = configfile.ProviderLiteLLM
+	ProviderLMStudio    = configfile.ProviderLMStudio
+	ProviderCustom      = configfile.ProviderCustom
 )
-
-// Config holds the setup configuration
-type Config struct {
-	// Deployment
-	Scenario  string
-	Workspace string
-	ConfigDir string
-
-	// Main LLM
-	Provider string
-	Model    string
-	APIKey   string
-	BaseURL  string
-	Thinking string
-
-	// Small LLM (for summarization, triage)
-	SmallLLMEnabled  bool
-	SmallLLMProvider string
-	SmallLLMModel    string
-	SmallLLMBaseURL  string
-
-	// Profiles
-	UseProfiles bool
-	Profiles    map[string]ProfileConfig
-
-	// Security
-	DefaultDeny  bool
-	AllowBash    bool
-	AllowWeb     bool
-	SecurityMode string // "default" or "paranoid"
-
-	// Features
-	EnableMCP       bool
-	EnableTelemetry bool
-	EnableMemory    bool
-
-	// MCP Servers
-	MCPServers map[string]MCPServerSetup
-
-	// Credentials
-	CredentialMethod string // "file", "env", "claude-cli"
-}
-
-// MCPServerSetup holds MCP server configuration during setup
-type MCPServerSetup struct {
-	Command     string
-	Args        []string
-	Env         map[string]string
-	DeniedTools []string
-	// Discovered tools (not persisted, used during setup)
-	DiscoveredTools []string
-}
-
-// ProfileConfig holds a capability profile configuration
-type ProfileConfig struct {
-	Provider string
-	Model    string
-	BaseURL  string
-	Thinking string
-}
 
 // Model is the bubbletea model for the setup wizard
 type Model struct {
@@ -791,165 +744,24 @@ func (m *Model) applyFeatureSelection() {
 	m.config.EnableTelemetry = m.selected[2]
 }
 
-func (m *Model) applyScenarioDefaults() {
-	switch m.config.Scenario {
-	case ScenarioLocal:
-		m.config.Provider = ProviderOllamaLocal
-		m.config.DefaultDeny = false
-		m.config.AllowBash = true
-		m.config.AllowWeb = true
-		m.config.SecurityMode = "default"
-		m.config.SmallLLMEnabled = false
+func (m *Model) applyScenarioDefaults() { m.config.ApplyScenario() }
 
-	case ScenarioDev:
-		m.config.Provider = ProviderAnthropic
-		m.config.DefaultDeny = false
-		m.config.AllowBash = true
-		m.config.AllowWeb = true
-		m.config.SecurityMode = "default"
-		m.config.SmallLLMEnabled = true
+func (m *Model) setDefaultModel() { m.config.SetDefaultModel() }
 
-	case ScenarioTeam:
-		m.config.Provider = ProviderLiteLLM
-		m.config.DefaultDeny = true
-		m.config.AllowBash = true
-		m.config.AllowWeb = true
-		m.config.SecurityMode = "default"
-		m.config.SmallLLMEnabled = true
-		m.config.UseProfiles = true
+func (m *Model) setDefaultSmallModel() { m.config.SetDefaultSmallModel() }
 
-	case ScenarioProduction:
-		m.config.Provider = ProviderLiteLLM
-		m.config.DefaultDeny = true
-		m.config.AllowBash = false
-		m.config.AllowWeb = true
-		m.config.SecurityMode = "paranoid"
-		m.config.SmallLLMEnabled = true
-		m.config.UseProfiles = true
-		m.config.EnableTelemetry = true
+func (m *Model) configureDefaultProfiles() { m.config.ConfigureDefaultProfiles() }
 
-	case ScenarioDocker:
-		m.config.Provider = ProviderLiteLLM
-		m.config.DefaultDeny = true
-		m.config.AllowBash = true
-		m.config.AllowWeb = true
-		m.config.SecurityMode = "default"
-		m.config.SmallLLMEnabled = true
-		m.config.CredentialMethod = "env"
+// Run starts the setup wizard against dir, the directory agent.toml and
+// policy.toml are read from and written to (empty means the working
+// directory). opts are passed through to tea.NewProgram, e.g.
+// tea.WithInput/tea.WithOutput for tests.
+func Run(ctx context.Context, dir string, opts ...tea.ProgramOption) error {
+	var modelOpts []Option
+	if dir != "" {
+		modelOpts = append(modelOpts, Dir(dir))
 	}
-}
-
-func (m *Model) setDefaultModel() {
-	switch m.config.Provider {
-	case ProviderAnthropic:
-		m.config.Model = "claude-sonnet-4-20250514"
-	case ProviderOpenAI:
-		m.config.Model = "gpt-4o"
-	case ProviderGoogle:
-		m.config.Model = "gemini-2.0-flash"
-	case ProviderGroq:
-		m.config.Model = "llama-3.3-70b-versatile"
-	case ProviderMistral:
-		m.config.Model = "mistral-large-latest"
-	case ProviderXAI:
-		m.config.Model = "grok-2"
-	case ProviderOpenRouter:
-		m.config.Model = "anthropic/claude-sonnet-4"
-	case ProviderOllamaCloud:
-		m.config.Model = "llama3.2"
-	case ProviderOllamaLocal:
-		m.config.Model = "llama3.2"
-	case ProviderLiteLLM:
-		m.config.Model = "claude-sonnet-4-20250514"
-	case ProviderLMStudio:
-		m.config.Model = "local-model"
-	default:
-		m.config.Model = ""
-	}
-}
-
-func (m *Model) setDefaultSmallModel() {
-	switch m.config.SmallLLMProvider {
-	case ProviderAnthropic:
-		m.config.SmallLLMModel = "claude-3-5-haiku-20241022"
-	case ProviderOpenAI:
-		m.config.SmallLLMModel = "gpt-4o-mini"
-	case ProviderGoogle:
-		m.config.SmallLLMModel = "gemini-2.0-flash"
-	case ProviderGroq:
-		m.config.SmallLLMModel = "llama-3.1-8b-instant"
-	case ProviderMistral:
-		m.config.SmallLLMModel = "mistral-small-latest"
-	case ProviderXAI:
-		m.config.SmallLLMModel = "grok-2" // xAI doesn't have a small model yet
-	case ProviderOllamaCloud, ProviderOllamaLocal:
-		m.config.SmallLLMModel = "llama3.2:1b"
-	case ProviderLiteLLM:
-		m.config.SmallLLMModel = "claude-3-5-haiku-20241022"
-	default:
-		m.config.SmallLLMModel = m.config.Model
-	}
-	// Inherit base URL from main LLM if same provider type
-	if m.config.SmallLLMProvider == m.config.Provider {
-		m.config.SmallLLMBaseURL = m.config.BaseURL
-	}
-}
-
-func (m *Model) configureDefaultProfiles() {
-	// Create reasonable default profiles based on main provider
-	switch m.config.Provider {
-	case ProviderAnthropic:
-		m.config.Profiles["reasoning"] = ProfileConfig{
-			Model:    "claude-opus-4-20250514",
-			Thinking: "high",
-		}
-		m.config.Profiles["fast"] = ProfileConfig{
-			Model:    "claude-3-5-haiku-20241022",
-			Thinking: "off",
-		}
-		m.config.Profiles["balanced"] = ProfileConfig{
-			Model:    "claude-sonnet-4-20250514",
-			Thinking: "auto",
-		}
-
-	case ProviderOpenAI:
-		m.config.Profiles["reasoning"] = ProfileConfig{
-			Model:    "o3",
-			Thinking: "high",
-		}
-		m.config.Profiles["fast"] = ProfileConfig{
-			Model:    "gpt-4o-mini",
-			Thinking: "off",
-		}
-		m.config.Profiles["balanced"] = ProfileConfig{
-			Model:    "gpt-4o",
-			Thinking: "auto",
-		}
-
-	case ProviderLiteLLM:
-		// Generic profiles for proxy
-		m.config.Profiles["reasoning"] = ProfileConfig{
-			Model:    "claude-opus-4-20250514",
-			Thinking: "high",
-		}
-		m.config.Profiles["fast"] = ProfileConfig{
-			Model:    "claude-3-5-haiku-20241022",
-			Thinking: "off",
-		}
-
-	default:
-		// Simple fast/slow profiles
-		m.config.Profiles["fast"] = ProfileConfig{
-			Model:    m.config.Model,
-			Thinking: "off",
-		}
-	}
-}
-
-// Run starts the setup wizard. opts are passed through to tea.NewProgram,
-// e.g. tea.WithInput/tea.WithOutput for tests.
-func Run(ctx context.Context, opts ...tea.ProgramOption) error {
-	p := tea.NewProgram(New(ctx), opts...)
+	p := tea.NewProgram(New(ctx, modelOpts...), opts...)
 	_, err := p.Run()
 	return err
 }
