@@ -135,7 +135,7 @@ func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map
 	usage := newTokenUsage()
 	result, err := e.guard.Check(withTokenUsage(ctx, usage), toolName, args, e.currentGoal)
 	if err != nil {
-		return nil, fmt.Errorf("security verification error: %w", err)
+		return nil, fmt.Errorf("security: %w", err)
 	}
 
 	det := result.Findings[0]

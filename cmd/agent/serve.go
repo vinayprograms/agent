@@ -1027,9 +1027,6 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *swarm.TaskMessage)
 		result.Error = fmt.Sprintf("workflow status: %s", execResult.Status)
 		result.Outputs = execResult.Outputs
 		fmt.Fprintf(os.Stderr, "  ✗ Workflow failed with status: %s\n", execResult.Status)
-		if execResult.Error != "" {
-			fmt.Fprintf(os.Stderr, "     Error: %s\n", execResult.Error)
-		}
 	} else {
 		result.Outputs = execResult.Outputs
 	}

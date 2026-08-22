@@ -168,29 +168,30 @@ type toolResult struct {
 	content string
 }
 
-// asyncTools are fire-and-forget tools that don't need to block the LLM turn.
-// They execute in background and always return "OK" immediately.
-var asyncTools = map[string]bool{
-	"remember":         true, // Writes to memory - result not needed for turn
-	"scratchpad_write": true, // Writes to scratchpad - result not needed for turn
-}
+// schedule says how a tool must be run within one LLM turn.
+type schedule int
 
-// serializeTools must NOT be parallelized - they have side effects or are expensive.
-// These run sequentially in the order the LLM requested.
-var serializeTools = map[string]bool{
-	"write":        true, // File writes - potential conflicts
-	"bash":         true, // Arbitrary side effects - unpredictable
-	"spawn_agents": true, // Expensive resource creation
-}
+const (
+	// parallel is the default: safe to run alongside other tools.
+	parallel schedule = iota
+	// serial tools have side effects or are expensive, so they run one at
+	// a time, in the order the model requested them.
+	serial
+	// async tools are fire-and-forget: the turn does not need their result,
+	// so they run in the background and report "OK".
+	async
+)
 
-// isAsyncTool returns true if the tool can be executed asynchronously.
-func isAsyncTool(name string) bool {
-	return asyncTools[name]
-}
-
-// isSerializeTool returns true if the tool must run sequentially.
-func isSerializeTool(name string) bool {
-	return serializeTools[name]
+// scheduleOf classifies a tool by name. The executor decides scheduling
+// this way because the tool interface does not declare it.
+func scheduleOf(name string) schedule {
+	switch name {
+	case "remember", "scratchpad_write": // memory writes; result unused this turn
+		return async
+	case "write", "bash", "spawn_agents": // conflicting, unpredictable, or expensive
+		return serial
+	}
+	return parallel
 }
 
 // executeToolsParallel executes multiple tool calls concurrently and returns
@@ -221,10 +222,10 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 	var serializeCalls []int // indices of tools that must run sequentially
 	var parallelCalls []int  // indices of tools that can run in parallel
 	for i, tc := range toolCalls {
-		switch {
-		case isAsyncTool(tc.Name):
+		switch scheduleOf(tc.Name) {
+		case async:
 			asyncCalls = append(asyncCalls, i)
-		case isSerializeTool(tc.Name):
+		case serial:
 			serializeCalls = append(serializeCalls, i)
 		default:
 			parallelCalls = append(parallelCalls, i)

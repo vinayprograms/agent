@@ -10,6 +10,10 @@ import (
 	"github.com/vinayprograms/agent/internal/session"
 )
 
+// variableRef matches a $name reference left in a prompt after input and
+// output substitution.
+var variableRef = regexp.MustCompile(`\$([a-zA-Z_][a-zA-Z0-9_]*)`)
+
 // truncateForLog truncates a string for logging purposes.
 func truncateForLog(s string, maxLen int) string {
 	if len(s) <= maxLen {
@@ -100,8 +104,7 @@ func (e *Executor) interpolate(text string) string {
 	var unresolved []string
 
 	// Handle any remaining $var patterns
-	re := regexp.MustCompile(`\$([a-zA-Z_][a-zA-Z0-9_]*)`)
-	text = re.ReplaceAllStringFunc(text, func(match string) string {
+	text = variableRef.ReplaceAllStringFunc(text, func(match string) string {
 		varName := strings.TrimPrefix(match, "$")
 		if val, ok := e.inputs[varName]; ok {
 			return val

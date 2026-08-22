@@ -92,11 +92,12 @@ const (
 	StatusFailed   Status = "failed"
 )
 
+// Result reports the outcome of a run. A failure is carried by Run's
+// error; Status distinguishes it from a run that never started.
 type Result struct {
 	Status     Status
 	Outputs    map[string]string
 	Iterations map[string]int
-	Error      string
 }
 
 // Executor is the central orchestrator: it runs the LLM loop, dispatches
@@ -291,9 +292,11 @@ func New(cfg Config) (*Executor, error) {
 		e.guard = guard
 	}
 
-	// Build supervision pipeline if both store and supervisor are available.
+	// The pipeline is built once. Without a store and supervisor it has no
+	// phases to run and simply executes the work.
+	pcfg := supervision.PipelineConfig{Logger: e.logger}
 	if e.supervisor != nil && e.checkpointStore != nil {
-		e.pipeline = supervision.NewPipeline(supervision.PipelineConfig{
+		pcfg = supervision.PipelineConfig{
 			Store:      e.checkpointStore,
 			Supervisor: e.supervisor,
 			Logger:     e.logger,
@@ -305,8 +308,9 @@ func New(cfg Config) (*Executor, error) {
 					"step_id": stepID, "phase": phase, "data": data,
 				})
 			},
-		})
+		}
 	}
+	e.pipeline = supervision.NewPipeline(pcfg)
 
 	if cfg.SpawnBinder != nil {
 		cfg.SpawnBinder.Bind(e.spawnDynamicAgent)
@@ -444,14 +448,14 @@ func (e *Executor) Run(ctx context.Context, opts RunOptions) (*Result, error) {
 	if err := e.PreFlight(); err != nil {
 		e.logExecutionComplete(workflowName, startTime, string(StatusFailed))
 		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
-		return &Result{Status: StatusFailed, Error: err.Error()}, err
+		return &Result{Status: StatusFailed}, err
 	}
 
 	// Bind inputs
 	if err := e.bindInputs(opts.Inputs); err != nil {
 		e.logExecutionComplete(workflowName, startTime, string(StatusFailed))
 		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
-		return &Result{Status: StatusFailed, Error: err.Error()}, err
+		return &Result{Status: StatusFailed}, err
 	}
 
 	// Build and execute the step graph
@@ -461,7 +465,7 @@ func (e *Executor) Run(ctx context.Context, opts RunOptions) (*Result, error) {
 	if err := graph.Execute(ctx, state); err != nil {
 		e.logExecutionComplete(workflowName, startTime, string(StatusFailed))
 		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
-		return &Result{Status: StatusFailed, Error: err.Error()}, err
+		return &Result{Status: StatusFailed}, err
 	}
 
 	// Collect outputs
@@ -526,19 +530,6 @@ func (e *Executor) ExecuteGoal(ctx context.Context, goalName string, state *step
 type GoalResult struct {
 	Output        string
 	ToolCallsMade bool
-}
-
-// getPipeline returns the supervision pipeline. If no pipeline is configured
-// (supervision not enabled), it returns a pipeline with no supervisor/store,
-// which will simply pass through to the execute function.
-func (e *Executor) getPipeline() *supervision.Pipeline {
-	if e.pipeline != nil {
-		return e.pipeline
-	}
-	// Return a passthrough pipeline (no store/supervisor means it just executes)
-	return supervision.NewPipeline(supervision.PipelineConfig{
-		Logger: e.logger,
-	})
 }
 
 // isSupervised determines if a goal should be supervised based on goal settings and workflow defaults.
@@ -650,7 +641,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	e.currentGoalSupervised = supervised
 
 	// Run through the supervision pipeline (or just execute if unsupervised)
-	pipelineResult, err := e.getPipeline().Run(
+	pipelineResult, err := e.pipeline.Run(
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        goal.Name,
@@ -875,7 +866,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 		e.recordLLMMetrics(resp, llmDuration)
 
 		// Check for skill activation in response
-		if skill := e.checkSkillActivation(resp.Content); skill != nil {
+		if skill := e.checkSkillActivation(ctx, resp.Content); skill != nil {
 			skillContext := e.getSkillContext(skill)
 			messages = append(messages, llm.Message{
 				Role:    "assistant",

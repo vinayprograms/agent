@@ -233,13 +233,13 @@ func TestExecutor_GoalLoop(t *testing.T) {
 		case 1:
 			return &llm.ChatResponse{
 				ToolCalls: []llm.ToolCallResponse{
-					{ID: "tc1", Name: "ls", Args: map[string]interface{}{"path": "."}},
+					{ID: "tc1", Name: "ls", Args: map[string]any{"path": "."}},
 				},
 			}, nil
 		case 2:
 			return &llm.ChatResponse{
 				ToolCalls: []llm.ToolCallResponse{
-					{ID: "tc2", Name: "ls", Args: map[string]interface{}{"path": ".."}},
+					{ID: "tc2", Name: "ls", Args: map[string]any{"path": ".."}},
 				},
 			}, nil
 		default:
@@ -490,7 +490,7 @@ func TestExecutor_DefaultDenyBlocksToolExecution(t *testing.T) {
 	tc := llm.ToolCallResponse{
 		ID:   "call_1",
 		Name: "read",
-		Args: map[string]interface{}{"path": "/tmp/test"},
+		Args: map[string]any{"path": "/tmp/test"},
 	}
 	_, err := exec.executeTool(context.Background(), tc)
 	if err == nil {
@@ -504,7 +504,7 @@ func TestExecutor_DefaultDenyBlocksToolExecution(t *testing.T) {
 	tc2 := llm.ToolCallResponse{
 		ID:   "call_2",
 		Name: "pwd",
-		Args: map[string]interface{}{},
+		Args: map[string]any{},
 	}
 	_, err = exec.executeTool(context.Background(), tc2)
 	if err == nil {
@@ -528,13 +528,13 @@ func TestExecutor_CheckSkillActivation(t *testing.T) {
 	})
 
 	// No activation
-	skill := exec.checkSkillActivation("Just a normal response")
+	skill := exec.checkSkillActivation(t.Context(), "Just a normal response")
 	if skill != nil {
 		t.Error("expected no skill activation")
 	}
 
 	// Activation pattern but skill doesn't exist
-	skill = exec.checkSkillActivation("Let me [use-skill:unknown-skill] for this")
+	skill = exec.checkSkillActivation(t.Context(), "Let me [use-skill:unknown-skill] for this")
 	if skill != nil {
 		t.Error("expected no skill for unknown skill")
 	}
@@ -569,7 +569,7 @@ func TestExecutor_MCPToolNameParsing(t *testing.T) {
 	_, err := exec.executeMCPTool(context.Background(), llm.ToolCallResponse{
 		ID:   "call_1",
 		Name: "mcp_filesystem_read_file",
-		Args: map[string]interface{}{"path": "/tmp/test"},
+		Args: map[string]any{"path": "/tmp/test"},
 	})
 
 	if err == nil {

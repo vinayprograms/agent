@@ -68,14 +68,14 @@ func TestSkillActivation_LoadsAndInjectsContext(t *testing.T) {
 	}
 
 	// Second activation is served from the cache; unknown/broken skills are ignored.
-	if exec.checkSkillActivation("[use-skill:code-review]") == nil {
+	if exec.checkSkillActivation(t.Context(), "[use-skill:code-review]") == nil {
 		t.Error("expected cached skill")
 	}
-	if exec.checkSkillActivation("[use-skill:unknown]") != nil {
+	if exec.checkSkillActivation(t.Context(), "[use-skill:unknown]") != nil {
 		t.Error("unknown skill must not activate")
 	}
 	exec.skillRefs = append(exec.skillRefs, skills.SkillRef{Name: "broken", Path: t.TempDir()})
-	if exec.checkSkillActivation("[use-skill:broken]") != nil {
+	if exec.checkSkillActivation(t.Context(), "[use-skill:broken]") != nil {
 		t.Error("unloadable skill must not activate")
 	}
 }

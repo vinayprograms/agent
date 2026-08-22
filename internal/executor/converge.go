@@ -54,7 +54,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 	var iterationCount int
 
 	// Run through the supervision pipeline
-	pipelineResult, err := e.getPipeline().Run(
+	pipelineResult, err := e.pipeline.Run(
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        goal.Name,

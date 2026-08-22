@@ -58,7 +58,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	supervised := e.currentGoalSupervised
 
 	// Run through the supervision pipeline
-	pipelineResult, err := e.getPipeline().Run(
+	pipelineResult, err := e.pipeline.Run(
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        fmt.Sprintf("subagent:%s", role),
@@ -176,7 +176,7 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	supervised := agentSupervised || e.currentGoalSupervised
 
 	// Run through the supervision pipeline
-	pipelineResult, err := e.getPipeline().Run(
+	pipelineResult, err := e.pipeline.Run(
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        fmt.Sprintf("subagent:%s", role),
