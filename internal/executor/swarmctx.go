@@ -9,11 +9,11 @@ import (
 
 // AgentState represents an agent's current state as observed from heartbeats.
 type AgentState struct {
-	AgentID    string
-	Status     string // "replay", "monitoring", "deliberating", "executing"
-	Capability string
+	AgentID     string
+	Status      string // "replay", "monitoring", "deliberating", "executing"
+	Capability  string
 	CurrentTask string
-	LastSeen   time.Time
+	LastSeen    time.Time
 }
 
 // DiscussMessage represents a single message in a task's discussion log.

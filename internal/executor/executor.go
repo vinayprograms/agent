@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -17,11 +18,11 @@ import (
 	"github.com/vinayprograms/agent/internal/skills"
 	"github.com/vinayprograms/agent/internal/step"
 	"github.com/vinayprograms/agent/internal/supervision"
+	"github.com/vinayprograms/agentkit/contentguard"
 	"github.com/vinayprograms/agentkit/llm"
-	"github.com/vinayprograms/agentkit/logging"
 	"github.com/vinayprograms/agentkit/mcp"
+	"github.com/vinayprograms/agentkit/memory"
 	"github.com/vinayprograms/agentkit/policy"
-	"github.com/vinayprograms/agentkit/security"
 	"github.com/vinayprograms/agentkit/tools"
 )
 
@@ -32,16 +33,22 @@ type MetricsCollector interface {
 	SetSubagents(count int)
 }
 
-// ObservationExtractor extracts observations from step outputs.
+// ObservationExtractor extracts findings, insights and lessons from step
+// outputs. *memory.Extractor satisfies it.
 type ObservationExtractor interface {
-	Extract(ctx context.Context, stepName, stepType, output string) (any, error)
+	Extract(ctx context.Context, text string, opts ...memory.ExtractOption) (findings, insights, lessons []string, err error)
 }
 
-// ObservationStore stores and retrieves observations.
+// ObservationStore persists extracted observations. memory stores
+// (*memory.BleveStore, *memory.InMemoryStore) satisfy it.
 type ObservationStore interface {
-	StoreObservation(ctx context.Context, obs any) error
-	QueryRelevantObservations(ctx context.Context, query string, limit int) ([]any, error)
+	RememberFIL(ctx context.Context, findings, insights, lessons []string, source string) ([]string, error)
 }
+
+// singleResolver resolves every profile to one model.
+type singleResolver struct{ m llm.Model }
+
+func (s singleResolver) Model(string) (llm.Model, error) { return s.m, nil }
 
 // Context keys for agent identity (thread-safe via context propagation)
 type ctxKey int
@@ -94,12 +101,12 @@ type Result struct {
 // Executor is the central orchestrator: it runs the LLM loop, dispatches
 // tool calls, manages sub-agents, and coordinates supervision phases.
 type Executor struct {
-	workflow        *agentfile.Workflow
-	provider        llm.Provider        // Default provider (backward compat)
-	providerFactory llm.ProviderFactory // Profile-based providers
-	registry        *tools.Registry
-	policy          *policy.Policy
-	logger          *logging.Logger
+	workflow *agentfile.Workflow
+	model    llm.Model    // Default model
+	resolver llm.Resolver // Profile-based models
+	registry *tools.Registry
+	policy   *policy.Policy
+	logger   *slog.Logger
 
 	// Debug mode - when true, logs full content (prompts, responses, tool outputs)
 	debug bool
@@ -132,8 +139,8 @@ type Executor struct {
 	// Multiple listeners can subscribe to each event type.
 	hooks *hooks.Registry
 
-	// Security verifier
-	securityVerifier *security.Verifier
+	// Content guard (nil = tool-call verification disabled)
+	guard *contentguard.Guard
 
 	// Timeouts for network operations (seconds)
 	timeoutMCP       int
@@ -252,17 +259,19 @@ func (e *Executor) publishToDiscuss(goalName, content string) {
 }
 
 // New creates an Executor from a Config struct. All dependencies are supplied
-// up front — no Set* methods needed after construction.
-func New(cfg Config) *Executor {
-	provider := cfg.Provider
-	factory := cfg.ProviderFactory
+// up front — no Set* methods needed after construction. It fails when the
+// security configuration cannot be honoured (see SecurityConfig) so that a
+// misconfiguration never silently disables verification.
+func New(cfg Config) (*Executor, error) {
+	model := cfg.Model
+	resolver := cfg.Resolver
 
-	// Derive provider / factory from each other when only one is supplied.
-	if factory == nil && provider != nil {
-		factory = llm.NewSingleProviderFactory(provider)
+	// Derive model / resolver from each other when only one is supplied.
+	if resolver == nil && model != nil {
+		resolver = singleResolver{m: model}
 	}
-	if provider == nil && factory != nil {
-		provider, _ = factory.GetProvider("")
+	if model == nil && resolver != nil {
+		model, _ = resolver.Model("")
 	}
 
 	hk := cfg.Hooks
@@ -270,38 +279,53 @@ func New(cfg Config) *Executor {
 		hk = hooks.NewRegistry()
 	}
 
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("component", "executor")
+
 	e := &Executor{
-		workflow:              cfg.Workflow,
-		provider:              provider,
-		providerFactory:       factory,
-		registry:              cfg.Registry,
-		policy:                cfg.Policy,
-		logger:                logging.New().WithComponent("executor"),
-		debug:                 cfg.Debug,
-		mcpManager:            cfg.MCPManager,
-		skillRefs:             cfg.SkillRefs,
-		loadedSkills:          make(map[string]*skills.Skill),
-		session:               cfg.Session,
-		sessionManager:        cfg.SessionManager,
-		persistentSession:     cfg.PersistentSession,
-		outputs:               make(map[string]string),
-		checkpointStore:       cfg.CheckpointStore,
-		supervisor:            cfg.Supervisor,
-		humanAvailable:        cfg.HumanAvailable,
-		humanInputChan:        cfg.HumanInputChan,
-		hooks:                 hk,
-		securityVerifier:      cfg.SecurityVerifier,
-		securityResearchScope: cfg.SecurityResearchScope,
-		timeoutMCP:            cfg.TimeoutMCP,
-		timeoutWebSearch:      cfg.TimeoutWebSearch,
-		timeoutWebFetch:       cfg.TimeoutWebFetch,
-		goalStartTimes:        make(map[string]time.Time),
-		observationExtractor:  cfg.ObservationExtractor,
-		observationStore:      cfg.ObservationStore,
-		metricsCollector:      cfg.MetricsCollector,
-		interruptBuffer:       cfg.InterruptBuffer,
-		discussPublisher:      cfg.DiscussPublisher,
-		workspaceContext:      cfg.WorkspaceContext,
+		workflow:             cfg.Workflow,
+		model:                model,
+		resolver:             resolver,
+		registry:             cfg.Registry,
+		policy:               cfg.Policy,
+		logger:               logger,
+		debug:                cfg.Debug,
+		mcpManager:           cfg.MCPManager,
+		skillRefs:            cfg.SkillRefs,
+		loadedSkills:         make(map[string]*skills.Skill),
+		session:              cfg.Session,
+		sessionManager:       cfg.SessionManager,
+		persistentSession:    cfg.PersistentSession,
+		outputs:              make(map[string]string),
+		checkpointStore:      cfg.CheckpointStore,
+		supervisor:           cfg.Supervisor,
+		humanAvailable:       cfg.HumanAvailable,
+		humanInputChan:       cfg.HumanInputChan,
+		hooks:                hk,
+		timeoutMCP:           cfg.TimeoutMCP,
+		timeoutWebSearch:     cfg.TimeoutWebSearch,
+		timeoutWebFetch:      cfg.TimeoutWebFetch,
+		goalStartTimes:       make(map[string]time.Time),
+		observationExtractor: cfg.ObservationExtractor,
+		observationStore:     cfg.ObservationStore,
+		metricsCollector:     cfg.MetricsCollector,
+		interruptBuffer:      cfg.InterruptBuffer,
+		discussPublisher:     cfg.DiscussPublisher,
+		workspaceContext:     cfg.WorkspaceContext,
+	}
+
+	if cfg.Security != nil {
+		if cfg.Security.Mode == SecurityResearch {
+			e.securityResearchScope = cfg.Security.Scope
+		}
+		guard, err := newContentGuard(cfg.Security, e.registeredToolNames())
+		if err != nil {
+			return nil, err
+		}
+		e.guard = guard
 	}
 
 	// Start session writer if session + manager provided.
@@ -324,30 +348,23 @@ func New(cfg Config) *Executor {
 		})
 	}
 
-	e.initSpawner()
-	return e
+	if cfg.SpawnBinder != nil {
+		cfg.SpawnBinder.Bind(e.spawnDynamicAgent)
+	}
+	return e, nil
 }
 
-// NewExecutor creates an executor with a single provider.
-// Deprecated: use New(Config).
-func NewExecutor(wf *agentfile.Workflow, provider llm.Provider, registry *tools.Registry, pol *policy.Policy) *Executor {
-	return New(Config{
-		Workflow: wf,
-		Provider: provider,
-		Registry: registry,
-		Policy:   pol,
-	})
-}
-
-// NewExecutorWithFactory creates an executor with a provider factory for profile support.
-// Deprecated: use New(Config).
-func NewExecutorWithFactory(wf *agentfile.Workflow, factory llm.ProviderFactory, registry *tools.Registry, pol *policy.Policy) *Executor {
-	return New(Config{
-		Workflow:        wf,
-		ProviderFactory: factory,
-		Registry:        registry,
-		Policy:          pol,
-	})
+// registeredToolNames lists every tool in the registry.
+func (e *Executor) registeredToolNames() []string {
+	if e.registry == nil {
+		return nil
+	}
+	defs := e.registry.Definitions()
+	names := make([]string, 0, len(defs))
+	for _, d := range defs {
+		names = append(names, d.Name)
+	}
+	return names
 }
 
 // SetMetricsCollector sets the metrics collector for heartbeat reporting.
@@ -375,149 +392,16 @@ func (e *Executor) extractAndStoreObservations(ctx context.Context, stepName, st
 	}
 
 	// Run extraction asynchronously to not block execution
+	source := stepType + ":" + stepName
 	go func() {
-		obs, err := e.observationExtractor.Extract(context.Background(), stepName, stepType, output)
-		if err != nil || obs == nil {
+		f, i, l, err := e.observationExtractor.Extract(context.Background(), output, memory.WithSource(source))
+		if err != nil || len(f)+len(i)+len(l) == 0 {
 			return
 		}
-		e.observationStore.StoreObservation(context.Background(), obs)
+		if _, err := e.observationStore.RememberFIL(context.Background(), f, i, l, source); err != nil {
+			e.logger.Warn("failed to store observations", "source", source, "error", err.Error())
+		}
 	}()
-}
-
-// verifyToolCall checks a tool call against the security verifier if configured.
-func (e *Executor) verifyToolCall(ctx context.Context, toolName string, args map[string]any) ([]string, error) {
-	if e.securityVerifier == nil {
-		return nil, nil // No security verifier configured
-	}
-
-	// Use agent role from context for block filtering in multi-agent scenarios
-	agentID := getAgentIdentity(ctx)
-	agentContext := agentID.Role
-	result, err := e.securityVerifier.VerifyToolCall(ctx, toolName, args, e.currentGoal, agentContext)
-	if err != nil {
-		return nil, fmt.Errorf("security verification error: %w", err)
-	}
-
-	// Collect related blocks for taint propagation when registering tool results
-	var relatedBlocks []string
-	if result.Tier1 != nil {
-		for _, b := range result.Tier1.RelatedBlocks {
-			relatedBlocks = append(relatedBlocks, b.ID)
-		}
-	}
-
-	// Log security decision to session
-	if result.Tier1 != nil {
-		blockID := ""
-		var relatedBlockIDs []string
-		if result.Tier1.Block != nil {
-			blockID = result.Tier1.Block.ID
-		}
-		for _, b := range result.Tier1.RelatedBlocks {
-			relatedBlockIDs = append(relatedBlockIDs, b.ID)
-		}
-		e.logSecurityStatic(toolName, blockID, relatedBlockIDs, result.Tier1.Pass, result.Tier1.Reasons, result.Tier1.SkipReason, result.TaintLineage)
-	}
-
-	if result.Tier2 != nil {
-		blockID := ""
-		if result.Tier1 != nil && result.Tier1.Block != nil {
-			blockID = result.Tier1.Block.ID
-		}
-		// Set skip reason if triage determined benign (not escalating to supervisor)
-		skipReason := ""
-		if !result.Tier2.Suspicious {
-			skipReason = "triage_benign"
-		}
-		e.logSecurityTriage(toolName, blockID, result.Tier2.Suspicious, "triage", result.Tier2.LatencyMs, result.Tier2.InputTokens, result.Tier2.OutputTokens, skipReason)
-	}
-
-	if result.Tier3 != nil {
-		blockID := ""
-		if result.Tier1 != nil && result.Tier1.Block != nil {
-			blockID = result.Tier1.Block.ID
-		}
-		e.logSecuritySupervisor(toolName, blockID, string(result.Tier3.Verdict), result.Tier3.Reason, "supervisor", result.Tier3.LatencyMs, result.Tier3.InputTokens, result.Tier3.OutputTokens)
-	}
-
-	// Determine check path - accurately reflect which tiers actually ran
-	checkPath := "static"
-	if result.Tier2 != nil {
-		checkPath = "static→triage"
-	}
-	if result.Tier3 != nil {
-		if result.Tier2 != nil {
-			checkPath = "static→triage→supervisor"
-		} else {
-			checkPath = "static→supervisor"
-		}
-	}
-
-	if !result.Allowed {
-		e.logSecurityDecision(toolName, "deny", result.DenyReason, "", checkPath)
-		if e.metricsCollector != nil {
-			e.metricsCollector.RecordSupervision(false)
-		}
-		return nil, fmt.Errorf("security: %s", result.DenyReason)
-	}
-
-	e.logSecurityDecision(toolName, "allow", "verified", "", checkPath)
-	if e.metricsCollector != nil {
-		e.metricsCollector.RecordSupervision(true)
-	}
-	return relatedBlocks, nil
-}
-
-// AddUntrustedContent registers untrusted content with the security verifier.
-func (e *Executor) AddUntrustedContent(ctx context.Context, content, source string) {
-	e.AddUntrustedContentWithTaint(ctx, content, source, nil)
-}
-
-// AddUntrustedContentWithTaint registers untrusted content with explicit taint lineage.
-func (e *Executor) AddUntrustedContentWithTaint(ctx context.Context, content, source string, taintedBy []string) {
-	if e.securityVerifier == nil {
-		return
-	}
-	// Use agent role from context for block association in multi-agent scenarios
-	agentID := getAgentIdentity(ctx)
-	agentContext := agentID.Role
-
-	// Get current event sequence for correlation
-	var eventSeq uint64
-	if e.session != nil {
-		eventSeq = e.session.CurrentSeqID()
-	}
-
-	block := e.securityVerifier.AddBlockWithTaint(
-		security.TrustUntrusted,
-		security.TypeData,
-		true,
-		content,
-		source,
-		agentContext,
-		eventSeq,
-		taintedBy, // Parent blocks that influenced this content
-	)
-
-	// Log to session with XML representation including taint info
-	taintAttr := ""
-	if len(taintedBy) > 0 {
-		taintAttr = fmt.Sprintf(` tainted-by="%s"`, strings.Join(taintedBy, ","))
-	}
-	xmlBlock := fmt.Sprintf(`<block id="%s" trust="untrusted" type="data" source="%s" mutable="true" agent="%s"%s>%s</block>`,
-		block.ID, source, agentContext, taintAttr, truncateForLog(content, 200))
-	entropy := security.ShannonEntropy([]byte(content))
-	e.logSecurityBlockWithTaint(block.ID, "untrusted", "data", source, xmlBlock, entropy, taintedBy)
-}
-
-// initSpawner wires the tool registry's spawn callback to this executor.
-func (e *Executor) initSpawner() {
-	if e.registry == nil {
-		return
-	}
-	e.registry.SetSpawner(func(ctx context.Context, role, task string, outputs []string) (string, error) {
-		return e.spawnDynamicAgent(ctx, role, task, outputs)
-	})
 }
 
 // SetPersistentSession marks the session as long-lived (serve mode).
@@ -564,7 +448,7 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 	if workflowName == "" {
 		workflowName = "unnamed"
 	}
-	e.logger.ExecutionStart(workflowName)
+	e.logger.Info("execution_start", "workflow", workflowName)
 
 	// Start workflow span
 	ctx, workflowSpan := e.startWorkflowSpan(ctx, workflowName)
@@ -585,14 +469,14 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 
 	// Pre-flight check for SUPERVISED HUMAN requirements
 	if err := e.PreFlight(); err != nil {
-		e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
+		e.logExecutionComplete(workflowName, startTime, string(StatusFailed))
 		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
 		return &Result{Status: StatusFailed, Error: err.Error()}, err
 	}
 
 	// Bind inputs
 	if err := e.bindInputs(inputs); err != nil {
-		e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
+		e.logExecutionComplete(workflowName, startTime, string(StatusFailed))
 		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
 		return &Result{Status: StatusFailed, Error: err.Error()}, err
 	}
@@ -602,7 +486,7 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 	state := step.NewState(e.inputs)
 
 	if err := graph.Execute(ctx, state); err != nil {
-		e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusFailed))
+		e.logExecutionComplete(workflowName, startTime, string(StatusFailed))
 		e.endWorkflowSpan(workflowSpan, string(StatusFailed), err)
 		return &Result{Status: StatusFailed, Error: err.Error()}, err
 	}
@@ -613,7 +497,7 @@ func (e *Executor) Run(ctx context.Context, inputs map[string]string) (*Result, 
 		Outputs:    state.Outputs,
 		Iterations: e.GetConvergenceFailures(),
 	}
-	e.logger.ExecutionComplete(workflowName, time.Since(startTime), string(StatusComplete))
+	e.logExecutionComplete(workflowName, startTime, string(StatusComplete))
 	e.endWorkflowSpan(workflowSpan, string(StatusComplete), nil)
 	return result, nil
 }
@@ -825,10 +709,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	// Handle supervision verdict
 	switch pipelineResult.Verdict {
 	case supervision.VerdictReorient:
-		e.logger.Info("reorienting execution", map[string]any{
-			"goal":       goal.Name,
-			"correction": pipelineResult.Correction,
-		})
+		e.logger.Info("reorienting execution", "goal", goal.Name, "correction", pipelineResult.Correction)
 		xmlBuilder.SetCorrection(pipelineResult.Correction)
 		correctedPrompt := xmlBuilder.Build()
 		output, _, toolCallsMade, err = e.executePhase(ctx, goal, correctedPrompt)
@@ -862,7 +743,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 // commitPhase asks the agent to declare its intent before execution.
 func (e *Executor) commitPhase(ctx context.Context, goal *agentfile.Goal, prompt string) *checkpoint.PreCheckpoint {
 	start := time.Now()
-	e.logger.PhaseStart("COMMIT", goal.Name, "")
+	e.logPhaseStart("COMMIT", goal.Name, "")
 
 	commitPrompt := fmt.Sprintf(`Before executing this goal, declare your intent:
 
@@ -886,7 +767,7 @@ Respond with a JSON object:
 	}
 
 	commitStart := time.Now()
-	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
+	resp, err := e.model.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
 	e.recordLLMMetrics(resp, time.Since(commitStart))
@@ -899,10 +780,10 @@ Respond with a JSON object:
 	}
 
 	if err != nil {
-		e.logger.Warn("commit phase LLM error", map[string]any{"error": err.Error()})
+		e.logger.Warn("commit phase LLM error", "error", err.Error())
 		pre.Confidence = "low"
 		pre.Assumptions = []string{"Failed to get commitment from agent"}
-		e.logger.PhaseComplete("COMMIT", goal.Name, "", time.Since(start), "error")
+		e.logPhaseComplete("COMMIT", goal.Name, "", start, "error")
 		return pre
 	}
 
@@ -955,8 +836,8 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 		systemMsg = prefix + systemMsg
 	}
 
-	// If spawn_agent tool is available, inject orchestrator guidance
-	if e.registry != nil && e.registry.Has("spawn_agent") {
+	// If spawn_agents tool is available, inject orchestrator guidance
+	if e.registry != nil && e.registry.Has("spawn_agents") {
 		systemMsg = OrchestratorSystemPromptPrefix + systemMsg
 	}
 
@@ -995,9 +876,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 
 	// Get tool definitions (built-in + MCP)
 	toolDefs := e.getAllToolDefinitions()
-	e.logger.Debug("tools available", map[string]any{
-		"count": len(toolDefs),
-	})
+	e.logger.Debug("tools available", "count", len(toolDefs))
 
 	// Track tools used
 	toolsUsedMap := make(map[string]bool)
@@ -1005,7 +884,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 	// Execute goal loop
 	for {
 		llmStart := time.Now()
-		resp, err := e.provider.Chat(ctx, llm.ChatRequest{
+		resp, err := e.model.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    toolDefs,
 		})
@@ -1124,7 +1003,7 @@ Respond with a JSON object:
 	}
 
 	reconcileStart := time.Now()
-	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
+	resp, err := e.model.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
 	e.recordLLMMetrics(resp, time.Since(reconcileStart))
@@ -1137,7 +1016,7 @@ Respond with a JSON object:
 	}
 
 	if err != nil {
-		e.logger.Warn("post-checkpoint LLM error", map[string]any{"error": err.Error()})
+		e.logger.Warn("post-checkpoint LLM error", "error", err.Error())
 		post.MetCommitment = false
 		post.Concerns = []string{"Failed to get self-assessment from agent"}
 		return post
@@ -1170,16 +1049,21 @@ Respond with a JSON object:
 }
 
 // getAllToolDefinitions returns tool definitions from registry and MCP servers.
+// Registry definitions are filtered by policy: tools disabled by policy are
+// not advertised to the model.
 func (e *Executor) getAllToolDefinitions() []llm.ToolDef {
 	var toolDefs []llm.ToolDef
 
 	// Built-in tools
 	if e.registry != nil {
 		for _, def := range e.registry.Definitions() {
+			if e.policy != nil && !e.policy.IsToolEnabled(def.Name) {
+				continue
+			}
 			toolDefs = append(toolDefs, llm.ToolDef{
 				Name:        def.Name,
 				Description: def.Description,
-				Parameters:  def.Parameters,
+				Parameters:  def.JSONSchema(),
 			})
 		}
 	}
@@ -1229,9 +1113,7 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 	if supervised && e.checkpointStore != nil {
 		preCheckpoint = e.commitPhase(ctx, goal, prompt)
 		if err := e.checkpointStore.SavePre(preCheckpoint); err != nil {
-			e.logger.Warn("failed to save pre-checkpoint", map[string]any{
-				"error": err.Error(),
-			})
+			e.logger.Warn("failed to save pre-checkpoint", "error", err.Error())
 		} else {
 			e.logCheckpoint("pre", goal.Name, "", preCheckpoint.StepID)
 		}
@@ -1259,9 +1141,7 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 	if e.checkpointStore != nil && preCheckpoint != nil {
 		postCheckpoint = e.createPostCheckpoint(ctx, goal, preCheckpoint, output, toolsUsed)
 		if err := e.checkpointStore.SavePost(postCheckpoint); err != nil {
-			e.logger.Warn("failed to save post-checkpoint", map[string]any{
-				"error": err.Error(),
-			})
+			e.logger.Warn("failed to save post-checkpoint", "error", err.Error())
 		} else {
 			e.logCheckpoint("post", goal.Name, "", postCheckpoint.StepID)
 		}
@@ -1279,9 +1159,7 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 
 		if e.checkpointStore != nil {
 			if err := e.checkpointStore.SaveReconcile(reconcileResult); err != nil {
-				e.logger.Warn("failed to save reconcile result", map[string]any{
-					"error": err.Error(),
-				})
+				e.logger.Warn("failed to save reconcile result", "error", err.Error())
 			}
 		}
 		e.logPhaseReconcile(goal.Name, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
@@ -1305,15 +1183,11 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 			superviseDuration := time.Since(superviseStart).Milliseconds()
 
 			if superviseErr != nil {
-				e.logger.Warn("supervision failed", map[string]any{
-					"error": superviseErr.Error(),
-				})
+				e.logger.Warn("supervision failed", "error", superviseErr.Error())
 			} else {
 				if e.checkpointStore != nil {
 					if err := e.checkpointStore.SaveSupervise(superviseResult); err != nil {
-						e.logger.Warn("failed to save supervise result", map[string]any{
-							"error": err.Error(),
-						})
+						e.logger.Warn("failed to save supervise result", "error", err.Error())
 					}
 				}
 				e.logPhaseSupervise(goal.Name, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, humanRequired, superviseDuration)
@@ -1431,7 +1305,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	}
 
 	synthStart := time.Now()
-	resp, err := e.provider.Chat(ctx, llm.ChatRequest{
+	resp, err := e.model.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
 	e.recordLLMMetrics(resp, time.Since(synthStart))

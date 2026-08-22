@@ -115,10 +115,9 @@ func (e *Executor) interpolate(text string) string {
 
 	// Warn about unresolved variables (both console and session for replay)
 	if len(unresolved) > 0 {
-		e.logger.Warn("unresolved variables in prompt (check Agentfile)", map[string]any{
-			"variables": unresolved,
-			"hint":      "ensure prior goals output these variables with -> syntax",
-		})
+		e.logger.Warn("unresolved variables in prompt (check Agentfile)",
+			"variables", unresolved,
+			"hint", "ensure prior goals output these variables with -> syntax")
 		// Also log to session for replay visibility
 		e.logEvent(session.EventWarning, fmt.Sprintf("Unresolved variables: %v (ensure prior goals output these with -> syntax)", unresolved))
 	}

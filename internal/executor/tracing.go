@@ -3,15 +3,18 @@ package executor
 import (
 	"context"
 
-	"github.com/vinayprograms/agentkit/telemetry"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
+// tracer is a no-op until cmd/agent installs a global tracer provider
+// (internal/telemetry.Init).
+var tracer = otel.Tracer("github.com/vinayprograms/agent/internal/executor")
+
 // startWorkflowSpan starts a span for the workflow execution.
 func (e *Executor) startWorkflowSpan(ctx context.Context, workflowName string) (context.Context, trace.Span) {
-	tracer := telemetry.GetTracer()
-	ctx, span := tracer.StartSpan(ctx, "workflow.run")
+	ctx, span := tracer.Start(ctx, "workflow.run")
 	span.SetAttributes(
 		attribute.String("workflow.name", workflowName),
 	)
@@ -29,8 +32,7 @@ func (e *Executor) endWorkflowSpan(span trace.Span, status string, err error) {
 
 // startGoalSpan starts a span for a goal execution.
 func (e *Executor) startGoalSpan(ctx context.Context, goalName string, supervised bool) (context.Context, trace.Span) {
-	tracer := telemetry.GetTracer()
-	ctx, span := tracer.StartSpan(ctx, "goal."+goalName)
+	ctx, span := tracer.Start(ctx, "goal."+goalName)
 	span.SetAttributes(
 		attribute.String("goal.name", goalName),
 		attribute.Bool("goal.supervised", supervised),
@@ -40,8 +42,7 @@ func (e *Executor) startGoalSpan(ctx context.Context, goalName string, supervise
 
 // endGoalSpan ends the goal span with output info.
 func (e *Executor) endGoalSpan(span trace.Span, output string, err error) {
-	tracer := telemetry.GetTracer()
-	if tracer.Debug() && output != "" {
+	if e.debug && output != "" {
 		span.SetAttributes(attribute.String("goal.output", truncateForLog(output, 2000)))
 	}
 	if err != nil {
@@ -52,8 +53,7 @@ func (e *Executor) endGoalSpan(span trace.Span, output string, err error) {
 
 // startPhaseSpan starts a span for a supervision phase.
 func (e *Executor) startPhaseSpan(ctx context.Context, phase, goalName string) (context.Context, trace.Span) {
-	tracer := telemetry.GetTracer()
-	ctx, span := tracer.StartSpan(ctx, "phase."+phase)
+	ctx, span := tracer.Start(ctx, "phase."+phase)
 	span.SetAttributes(
 		attribute.String("phase.name", phase),
 		attribute.String("phase.goal", goalName),
@@ -74,8 +74,7 @@ func (e *Executor) endPhaseSpan(span trace.Span, attrs map[string]string, err er
 
 // startSubAgentSpan starts a span for a sub-agent execution.
 func (e *Executor) startSubAgentSpan(ctx context.Context, role, model string) (context.Context, trace.Span) {
-	tracer := telemetry.GetTracer()
-	ctx, span := tracer.StartSpan(ctx, "subagent."+role)
+	ctx, span := tracer.Start(ctx, "subagent."+role)
 	span.SetAttributes(
 		attribute.String("subagent.role", role),
 		attribute.String("subagent.model", model),
@@ -85,8 +84,7 @@ func (e *Executor) startSubAgentSpan(ctx context.Context, role, model string) (c
 
 // endSubAgentSpan ends the sub-agent span with output info.
 func (e *Executor) endSubAgentSpan(span trace.Span, output string, err error) {
-	tracer := telemetry.GetTracer()
-	if tracer.Debug() && output != "" {
+	if e.debug && output != "" {
 		span.SetAttributes(attribute.String("subagent.output", truncateForLog(output, 2000)))
 	}
 	if err != nil {

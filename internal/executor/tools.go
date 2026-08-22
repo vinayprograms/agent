@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"strings"
@@ -61,9 +60,9 @@ func (e *Executor) applyToolTimeout(ctx context.Context, toolName string) (conte
 	return ctx, cancel
 }
 
-func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (any, error) {
+func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (string, error) {
 	start := time.Now()
-	
+
 	// Get agent identity early for error callbacks
 	agentID := getAgentIdentity(ctx)
 
@@ -76,9 +75,9 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (an
 	// Security verification before execution
 	relatedBlocks, err := e.verifyToolCall(ctx, tc.Name, tc.Args)
 	if err != nil {
-		e.logToolResult(ctx, tc.Name, tc.Args, "", nil, err, time.Since(start))
+		e.logToolResult(ctx, tc.Name, tc.Args, "", "", err, time.Since(start))
 		e.hooks.Fire(ctx, hooks.ToolError, map[string]any{"name": tc.Name, "args": tc.Args, "error": err, "agent_role": agentID.Role})
-		return nil, err
+		return "", err
 	}
 
 	// Log the tool call (returns correlation ID for linking to result)
@@ -91,7 +90,7 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (an
 		e.logToolResult(ctx, tc.Name, tc.Args, corrID, result, err, duration)
 
 		// MCP tools return external content - register as untrusted
-		if err == nil && result != nil {
+		if err == nil {
 			e.registerUntrustedResult(ctx, tc.Name, result, relatedBlocks)
 		}
 		return result, err
@@ -99,36 +98,32 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (an
 
 	// Built-in tool
 	if e.registry == nil {
-		return nil, fmt.Errorf("no tool registry")
+		return "", fmt.Errorf("no tool registry")
 	}
 
-	tool := e.registry.Get(tc.Name)
-	if tool == nil {
-		var names []string
-		for _, d := range e.registry.Definitions() {
-			names = append(names, d.Name)
-		}
-		return nil, fmt.Errorf("tool '%s' does not exist. Use one of: %s", tc.Name, strings.Join(names, ", "))
+	if !e.registry.Has(tc.Name) {
+		return "", fmt.Errorf("tool '%s' does not exist. Use one of: %s", tc.Name, strings.Join(e.registeredToolNames(), ", "))
 	}
 
 	// Enforce policy: reject tool calls that aren't enabled.
-	// Definitions() filters the LLM's view, but models can hallucinate
-	// tool names from training data. This gate is the enforcement layer.
+	// getAllToolDefinitions filters the LLM's view, but models can
+	// hallucinate tool names from training data. This gate is the enforcement layer.
 	if e.policy != nil && !e.policy.IsToolEnabled(tc.Name) {
 		err := fmt.Errorf("tool %s is not enabled by policy", tc.Name)
-		e.logToolResult(ctx, tc.Name, tc.Args, corrID, nil, err, time.Since(start))
+		e.logToolResult(ctx, tc.Name, tc.Args, corrID, "", err, time.Since(start))
 		e.hooks.Fire(ctx, hooks.ToolError, map[string]any{"name": tc.Name, "args": tc.Args, "error": err, "agent_role": agentID.Role})
-		return nil, err
+		return "", err
 	}
 
-	result, err := tool.Execute(ctx, tc.Args)
+	// The registry validates args and runs the tool's guards before executing.
+	result, err := e.registry.Execute(ctx, tc.Name, tc.Args)
 	duration := time.Since(start)
 
 	// Log the tool result
 	e.logToolResult(ctx, tc.Name, tc.Args, corrID, result, err, duration)
 
 	// Register external tool results as untrusted content
-	if err == nil && result != nil && isExternalTool(tc.Name) {
+	if err == nil && isExternalTool(tc.Name) {
 		e.registerUntrustedResult(ctx, tc.Name, result, relatedBlocks)
 	}
 
@@ -151,25 +146,9 @@ func isExternalTool(name string) bool {
 }
 
 // registerUntrustedResult registers tool result as untrusted content block.
-func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string, result any, relatedBlocks []string) {
-	if e.securityVerifier == nil {
+func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string, content string, relatedBlocks []string) {
+	if e.guard == nil {
 		return
-	}
-
-	// Convert result to string for block registration
-	var content string
-	switch v := result.(type) {
-	case string:
-		content = v
-	case []byte:
-		content = string(v)
-	default:
-		// JSON serialize complex results
-		if data, err := json.Marshal(v); err == nil {
-			content = string(data)
-		} else {
-			content = fmt.Sprintf("%v", v)
-		}
 	}
 
 	// Skip empty results
@@ -192,7 +171,7 @@ type toolResult struct {
 // asyncTools are fire-and-forget tools that don't need to block the LLM turn.
 // They execute in background and always return "OK" immediately.
 var asyncTools = map[string]bool{
-	"remember":  true, // Writes to memory - result not needed for turn
+	"remember":         true, // Writes to memory - result not needed for turn
 	"scratchpad_write": true, // Writes to scratchpad - result not needed for turn
 }
 
@@ -226,18 +205,9 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 	// For single tool call, no need for goroutines
 	if len(toolCalls) == 1 {
 		tc := toolCalls[0]
-		result, err := e.executeTool(ctx, tc)
-		var content string
+		content, err := e.executeTool(ctx, tc)
 		if err != nil {
 			content = fmt.Sprintf("Error: %v", err)
-		} else {
-			switch v := result.(type) {
-			case string:
-				content = v
-			default:
-				data, _ := json.Marshal(v)
-				content = string(data)
-			}
 		}
 		return []llm.Message{{
 			Role:       "tool",
@@ -246,7 +216,7 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 		}}
 	}
 
-// Categorize tools: async, serialize, parallel
+	// Categorize tools: async, serialize, parallel
 	var asyncCalls []int     // indices of async tools (fire-and-forget)
 	var serializeCalls []int // indices of tools that must run sequentially
 	var parallelCalls []int  // indices of tools that can run in parallel
@@ -269,18 +239,9 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 
 	// Helper to run tool and return result
 	runTool := func(idx int, tc llm.ToolCallResponse) toolResult {
-		result, err := e.executeTool(ctx, tc)
-		var content string
+		content, err := e.executeTool(ctx, tc)
 		if err != nil {
 			content = fmt.Sprintf("Error: %v", err)
-		} else {
-			switch v := result.(type) {
-			case string:
-				content = v
-			default:
-				data, _ := json.Marshal(v)
-				content = string(data)
-			}
 		}
 		return toolResult{index: idx, id: tc.ID, content: content}
 	}
@@ -299,11 +260,11 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 			wg.Add(1)
 			go func(idx int, tc llm.ToolCallResponse) {
 				defer wg.Done()
-				
+
 				// Acquire semaphore (blocks if at capacity)
 				sem <- struct{}{}
 				defer func() { <-sem }() // Release when done
-				
+
 				results <- runTool(idx, tc)
 			}(idx, tc)
 		}
@@ -352,32 +313,26 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 func (e *Executor) executeAsyncTool(ctx context.Context, tc llm.ToolCallResponse) {
 	defer func() {
 		if r := recover(); r != nil {
-			e.logger.Error("async tool panic", map[string]any{
-				"tool":  tc.Name,
-				"panic": fmt.Sprintf("%v", r),
-			})
+			e.logger.Error("async tool panic", "tool", tc.Name, "panic", fmt.Sprintf("%v", r))
 		}
 	}()
 
 	_, err := e.executeTool(ctx, tc)
 	if err != nil {
-		e.logger.Warn("async tool failed (non-blocking)", map[string]any{
-			"tool":  tc.Name,
-			"error": err.Error(),
-		})
+		e.logger.Warn("async tool failed (non-blocking)", "tool", tc.Name, "error", err.Error())
 	}
 }
 
 // executeMCPTool executes an MCP tool call.
-func (e *Executor) executeMCPTool(ctx context.Context, tc llm.ToolCallResponse) (any, error) {
+func (e *Executor) executeMCPTool(ctx context.Context, tc llm.ToolCallResponse) (string, error) {
 	if e.mcpManager == nil {
-		return nil, fmt.Errorf("no MCP manager configured")
+		return "", fmt.Errorf("no MCP manager configured")
 	}
 
 	// Parse tool name: mcp_<server>_<tool>
 	parts := strings.SplitN(strings.TrimPrefix(tc.Name, "mcp_"), "_", 2)
 	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid MCP tool name: %s", tc.Name)
+		return "", fmt.Errorf("invalid MCP tool name: %s", tc.Name)
 	}
 
 	server, toolName := parts[0], parts[1]
@@ -386,19 +341,16 @@ func (e *Executor) executeMCPTool(ctx context.Context, tc llm.ToolCallResponse) 
 	if e.policy != nil {
 		allowed, reason, warning := e.policy.CheckMCPTool(server, toolName)
 		if warning != "" {
-			e.logger.SecurityWarning(warning, map[string]any{
-				"server": server,
-				"tool":   toolName,
-			})
+			e.logger.Warn(warning, "server", server, "tool", toolName, "security", true)
 		}
 		if !allowed {
-			return nil, fmt.Errorf("policy denied: %s", reason)
+			return "", fmt.Errorf("policy denied: %s", reason)
 		}
 	}
 
 	result, err := e.mcpManager.CallTool(ctx, server, toolName, tc.Args)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	e.hooks.Fire(ctx, hooks.MCPToolCall, map[string]any{"server": server, "tool": toolName, "args": tc.Args, "result": result})
