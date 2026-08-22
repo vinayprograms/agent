@@ -1,7 +1,6 @@
 package swarm
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -54,14 +53,14 @@ func TestDispatchToolMetadata(t *testing.T) {
 func TestDispatchToolExecute(t *testing.T) {
 	t.Run("missing capability", func(t *testing.T) {
 		tool := NewDispatchTool(&fakeBus{}, "mgr", nil)
-		_, err := tool.Execute(context.Background(), newArgs(t, tool, map[string]any{"task": "x"}))
+		_, err := tool.Execute(t.Context(), newArgs(t, tool, map[string]any{"task": "x"}))
 		if err == nil || err.Error() != "capability is required" {
 			t.Errorf("err = %v", err)
 		}
 	})
 	t.Run("missing task", func(t *testing.T) {
 		tool := NewDispatchTool(&fakeBus{}, "mgr", nil)
-		_, err := tool.Execute(context.Background(), newArgs(t, tool, map[string]any{"capability": "develop"}))
+		_, err := tool.Execute(t.Context(), newArgs(t, tool, map[string]any{"capability": "develop"}))
 		if err == nil || err.Error() != "task description is required" {
 			t.Errorf("err = %v", err)
 		}
@@ -69,7 +68,7 @@ func TestDispatchToolExecute(t *testing.T) {
 	t.Run("publish error", func(t *testing.T) {
 		want := errors.New("down")
 		tool := NewDispatchTool(&fakeBus{err: want}, "mgr", nil)
-		_, err := tool.Execute(context.Background(), newArgs(t, tool, map[string]any{"capability": "develop", "task": "x"}))
+		_, err := tool.Execute(t.Context(), newArgs(t, tool, map[string]any{"capability": "develop", "task": "x"}))
 		if !errors.Is(err, want) || !strings.HasPrefix(err.Error(), "publishing to work.develop.t-") {
 			t.Errorf("err = %v", err)
 		}
@@ -77,7 +76,7 @@ func TestDispatchToolExecute(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		bus := &fakeBus{}
 		tool := NewDispatchTool(bus, "mgr", nil)
-		out, err := tool.Execute(context.Background(), newArgs(t, tool, map[string]any{"capability": "develop", "task": "build it"}))
+		out, err := tool.Execute(t.Context(), newArgs(t, tool, map[string]any{"capability": "develop", "task": "build it"}))
 		if err != nil {
 			t.Fatal(err)
 		}

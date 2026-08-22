@@ -1,9 +1,11 @@
 package swarm
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"sync/atomic"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,8 +67,18 @@ func TestBusSenderDefaults(t *testing.T) {
 	}
 }
 
+// awaitPublish fails the test if the bus sees no Publish within 2s.
+func awaitPublish(t *testing.T, bus *fakeBus) {
+	t.Helper()
+	select {
+	case <-bus.published:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no heartbeat published within 2s")
+	}
+}
+
 func TestBusSenderLifecycle(t *testing.T) {
-	bus := &fakeBus{}
+	bus := &fakeBus{published: make(chan struct{}, 16)}
 	s, err := NewBusSender(SenderConfig{Bus: bus, AgentID: "a", Interval: 10 * time.Millisecond, InitialStatus: "busy"})
 	if err != nil {
 		t.Fatal(err)
@@ -75,8 +87,6 @@ func TestBusSenderLifecycle(t *testing.T) {
 		t.Errorf("Stop before Start = %v, want ErrNotStarted", err)
 	}
 
-	var calls atomic.Int32
-	s.SetCallback(func() { calls.Add(1) })
 	s.SetMetadata("k", "v")
 	s.SetLoad(2)  // clamped to 1
 	s.SetLoad(-1) // clamped to 0
@@ -86,15 +96,13 @@ func TestBusSenderLifecycle(t *testing.T) {
 	if err := s.Start(nil); err != nil { //nolint:staticcheck // nil ctx is tolerated by design
 		t.Fatal(err)
 	}
-	if err := s.Start(context.Background()); !errors.Is(err, ErrAlreadyStarted) {
+	if err := s.Start(t.Context()); !errors.Is(err, ErrAlreadyStarted) {
 		t.Errorf("second Start = %v, want ErrAlreadyStarted", err)
 	}
 
-	// Wait for the immediate beat plus at least one tick.
-	deadline := time.Now().Add(2 * time.Second)
-	for len(bus.messages()) < 2 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	// The immediate beat plus at least one tick.
+	awaitPublish(t, bus)
+	awaitPublish(t, bus)
 	if err := s.Stop(); err != nil {
 		t.Fatal(err)
 	}
@@ -113,9 +121,6 @@ func TestBusSenderLifecycle(t *testing.T) {
 	if hb.AgentID != "a" || hb.Status != "executing" || hb.Load != 0.25 || hb.Metadata["k"] != "v" {
 		t.Errorf("heartbeat payload = %+v", hb)
 	}
-	if calls.Load() == 0 {
-		t.Error("callback never invoked")
-	}
 }
 
 func TestBusSenderContextCancel(t *testing.T) {
@@ -123,7 +128,7 @@ func TestBusSenderContextCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	if err := s.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -139,24 +144,30 @@ func TestBusSenderContextCancel(t *testing.T) {
 
 func TestBusSenderPublishError(t *testing.T) {
 	want := errors.New("boom")
-	s, err := NewBusSender(SenderConfig{Bus: &fakeBus{err: want}, AgentID: "a"})
+	bus := &fakeBus{err: want, published: make(chan struct{}, 16)}
+	var logs bytes.Buffer
+	s, err := NewBusSender(SenderConfig{
+		Bus: bus, AgentID: "a", Interval: time.Hour,
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var called bool
-	s.SetCallback(func() { called = true })
 	if err := s.sendHeartbeat(); !errors.Is(err, want) {
 		t.Errorf("sendHeartbeat = %v, want %v", err, want)
 	}
-	if called {
-		t.Error("callback must not run when publish fails")
-	}
 
-	// The run loop tolerates a failing initial beat.
-	if err := s.Start(context.Background()); err != nil {
+	// The run loop logs a failing initial beat and keeps running.
+	if err := s.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	awaitPublish(t, bus)
 	if err := s.Stop(); err != nil {
 		t.Fatal(err)
+	}
+	for _, want := range []string{"level=WARN", `msg="heartbeat publish failed"`, "error=boom", "component=heartbeat", "agent_id=a"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log missing %q:\n%s", want, logs.String())
+		}
 	}
 }

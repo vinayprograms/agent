@@ -1,7 +1,6 @@
 package swarm
 
 import (
-	"context"
 	"sync"
 	"testing"
 )
@@ -11,10 +10,6 @@ type recordingSender struct {
 	meta map[string]string
 }
 
-func (r *recordingSender) Start(context.Context) error { return nil }
-func (r *recordingSender) Stop() error                 { return nil }
-func (r *recordingSender) SetStatus(string)            {}
-func (r *recordingSender) SetLoad(float64)             {}
 func (r *recordingSender) SetMetadata(k, v string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

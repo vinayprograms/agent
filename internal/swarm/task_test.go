@@ -58,8 +58,8 @@ func TestTaskMessageValidate(t *testing.T) {
 			if !errors.Is(err, tt.err) {
 				t.Fatalf("Validate() = %v, want %v", err, tt.err)
 			}
-			if err == nil && tt.msg.Inputs == nil {
-				t.Error("Validate should initialise nil Inputs")
+			if tt.name == "ok nil inputs" && tt.msg.Inputs != nil {
+				t.Error("Validate must not mutate the message")
 			}
 		})
 	}

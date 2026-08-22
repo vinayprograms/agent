@@ -10,26 +10,31 @@ import (
 )
 
 // fakeBus records publishes; it implements messaging.Bus in-memory.
+// Each Publish (successful or not) sends on published if it is non-nil.
 type fakeBus struct {
 	mu        sync.Mutex
-	published []messaging.Message
-	err       error // returned from Publish when set
+	messages_ []messaging.Message
+	err       error         // returned from Publish when set
+	published chan struct{} // optional: receives one value per Publish call
 }
 
 func (b *fakeBus) Publish(subject string, data []byte) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.published != nil {
+		b.published <- struct{}{}
+	}
 	if b.err != nil {
 		return b.err
 	}
-	b.published = append(b.published, messaging.Message{Subject: subject, Data: data})
+	b.messages_ = append(b.messages_, messaging.Message{Subject: subject, Data: data})
 	return nil
 }
 
 func (b *fakeBus) messages() []messaging.Message {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return append([]messaging.Message(nil), b.published...)
+	return append([]messaging.Message(nil), b.messages_...)
 }
 
 func (b *fakeBus) Subscribe(string) (messaging.Subscription, error) {

@@ -12,6 +12,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,26 +70,6 @@ func (h *Heartbeat) Subject() string {
 	return SubjectPrefix + h.AgentID
 }
 
-// Sender sends periodic heartbeats.
-type Sender interface {
-	// Start begins sending heartbeats at the configured interval.
-	// Returns ErrAlreadyStarted if already running.
-	Start(ctx context.Context) error
-
-	// SetStatus updates the status included in heartbeats.
-	SetStatus(status string)
-
-	// SetLoad updates the load metric (0.0 to 1.0).
-	SetLoad(load float64)
-
-	// SetMetadata updates a metadata field.
-	SetMetadata(key, value string)
-
-	// Stop stops sending heartbeats.
-	// Returns ErrNotStarted if not running.
-	Stop() error
-}
-
 // SenderConfig configures a heartbeat sender.
 type SenderConfig struct {
 	// Bus is the message bus for publishing heartbeats.
@@ -103,6 +85,10 @@ type SenderConfig struct {
 	// InitialStatus is the starting status.
 	// Default: "idle"
 	InitialStatus string
+
+	// Logger receives a warning for every heartbeat that fails to publish.
+	// Default: slog.Default()
+	Logger *slog.Logger
 }
 
 // Validate checks the configuration.
@@ -129,12 +115,12 @@ type BusSender struct {
 	bus      messaging.Bus
 	agentID  string
 	interval time.Duration
+	logger   *slog.Logger
 
 	mu       sync.RWMutex
 	status   string
 	load     float64
 	metadata map[string]string
-	callback func() // Called after each heartbeat send (e.g., registry TTL touch)
 
 	running atomic.Bool
 	stopCh  chan struct{}
@@ -156,11 +142,16 @@ func NewBusSender(cfg SenderConfig) (*BusSender, error) {
 	if status == "" {
 		status = DefaultSenderConfig().InitialStatus
 	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	return &BusSender{
 		bus:      cfg.Bus,
 		agentID:  cfg.AgentID,
 		interval: interval,
+		logger:   logger.With("component", "heartbeat", "agent_id", cfg.AgentID),
 		status:   status,
 		metadata: make(map[string]string),
 	}, nil
@@ -183,14 +174,12 @@ func (s *BusSender) Start(ctx context.Context) error {
 	return nil
 }
 
-// run is the main heartbeat loop.
+// run is the main heartbeat loop: one beat immediately, then one per
+// interval. A failed publish is logged and retried on the next tick.
 func (s *BusSender) run(ctx context.Context) {
 	defer close(s.doneCh)
 
-	// Send initial heartbeat immediately
-	if err := s.sendHeartbeat(); err != nil {
-		// Log but don't fail - will retry on next interval
-	}
+	s.beat()
 
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -203,8 +192,15 @@ func (s *BusSender) run(ctx context.Context) {
 		case <-s.stopCh:
 			return
 		case <-ticker.C:
-			s.sendHeartbeat()
+			s.beat()
 		}
+	}
+}
+
+// beat publishes one heartbeat, logging a failure instead of returning it.
+func (s *BusSender) beat() {
+	if err := s.sendHeartbeat(); err != nil {
+		s.logger.Warn("heartbeat publish failed", "error", err.Error())
 	}
 }
 
@@ -215,19 +211,7 @@ func (s *BusSender) sendHeartbeat() error {
 	if err != nil {
 		return err
 	}
-	if err := s.bus.Publish(hb.Subject(), data); err != nil {
-		return err
-	}
-
-	// Invoke callback (e.g., registry TTL touch)
-	s.mu.RLock()
-	cb := s.callback
-	s.mu.RUnlock()
-	if cb != nil {
-		cb()
-	}
-
-	return nil
+	return s.bus.Publish(hb.Subject(), data)
 }
 
 // buildHeartbeat creates a heartbeat with current state.
@@ -243,10 +227,7 @@ func (s *BusSender) buildHeartbeat() *Heartbeat {
 	}
 
 	if len(s.metadata) > 0 {
-		hb.Metadata = make(map[string]string, len(s.metadata))
-		for k, v := range s.metadata {
-			hb.Metadata[k] = v
-		}
+		hb.Metadata = maps.Clone(s.metadata)
 	}
 
 	return hb
@@ -276,14 +257,6 @@ func (s *BusSender) SetLoad(load float64) {
 func (s *BusSender) SetMetadata(key, value string) {
 	s.mu.Lock()
 	s.metadata[key] = value
-	s.mu.Unlock()
-}
-
-// SetCallback sets a function called after each heartbeat send.
-// Useful for piggybacking operations like registry TTL refresh.
-func (s *BusSender) SetCallback(fn func()) {
-	s.mu.Lock()
-	s.callback = fn
 	s.mu.Unlock()
 }
 
