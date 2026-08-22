@@ -30,6 +30,14 @@ type Skill struct {
 	Path string `yaml:"-"`
 }
 
+// SkillRef is a minimal reference to a skill on disk, used by callers
+// (e.g. internal/executor) that need to name a skill without loading it.
+type SkillRef struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Path        string `json:"path"`
+}
+
 // Load loads a skill from a directory.
 func Load(skillDir string) (*Skill, error) {
 	skillPath := filepath.Join(skillDir, "SKILL.md")
