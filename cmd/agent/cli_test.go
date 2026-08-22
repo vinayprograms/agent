@@ -111,7 +111,7 @@ func TestRoot_CommandSurface(t *testing.T) {
 		"keygen":   {"output"},
 		"config":   nil,
 		"setup":    {"dir", "default"},
-		"replay":   {"verbose", "no-pager", "cost"},
+		"replay":   {"verbose", "no-pager", "cost", "list", "last", "name", "agentfile", "label", "status", "since", "state", "config"},
 		"version":  nil,
 	}
 	if len(root.Commands()) != len(want) {

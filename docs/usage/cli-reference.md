@@ -14,6 +14,7 @@
 | `agent config` | Create and inspect configuration files (see below) |
 | `agent setup` | Interactive setup wizard |
 | `agent serve` | Run as A2A/ACP server |
+| `agent replay [target]...` | List and replay recorded sessions (see below) |
 | `agent help` | Show help |
 | `agent version` | Show version |
 
@@ -28,6 +29,51 @@
 | `--credentials <path>` | Credentials file (`agent run` and `agent serve`); highest precedence, must exist and parse |
 | `--workspace <path>` | Override workspace directory |
 | `--step` | `agent run` only: pause after each goal and ask whether to continue. Needs an interactive terminal (stdin and stderr); the run is refused otherwise. Answer Enter/`y` to continue or `n` to stop — stopping ends the run with "aborted" status and a non-zero exit. |
+
+## Session Replay
+
+`agent replay` reads the sessions recorded under `<state>/sessions` — one
+`<session-id>.jsonl` file per run. The state location comes from `[state]
+location` in the config (`--config <path>` to pick the file, `--state
+<dir>` to override it outright).
+
+With no arguments it lists the recorded sessions:
+
+```
+$ agent replay
+ID                                CREATED              NAME   LABEL  STATUS    DURATION
+6f0e...                           2026-08-22 10:14:07  hello  -      complete  42s
+```
+
+Arguments say what to replay: a session id, a unique id prefix, a session
+file, or a directory to glob for session files. An ambiguous prefix prints
+the candidates and exits non-zero.
+
+| Flag | Description |
+|------|-------------|
+| `--list` | Print the matching sessions as a table instead of replaying them |
+| `--last` | Select the most recently created session |
+| `--name <name>` | Select sessions by workflow NAME |
+| `--agentfile <path>` | Select sessions by Agentfile path or file name |
+| `--label <label>` | Select sessions by deployment label (`agent serve --session-label`) |
+| `--status <status>` | Select sessions by status: `running`, `complete`, `failed`, `aborted` |
+| `--since <duration>` | Select sessions created within a Go duration, e.g. `2h` |
+| `--state <dir>` | Override the state location |
+| `--config <path>` | Config file to read `[state] location` from |
+| `-v`, `-vv` | Verbosity: tool arguments, then full prompts and responses |
+| `-f`, `--follow` | Watch a single session file and reload as it grows |
+| `--no-pager` | Write to stdout instead of the interactive pager |
+| `--cost <model:in,out>` | Model pricing per 1M tokens, repeatable |
+
+When a selection matches several sessions they replay in creation order.
+The standalone `agent-replay` binary has the same surface.
+
+```bash
+agent replay --last                  # replay the most recent run
+agent replay a1b2c3d4                # replay by id prefix
+agent replay --name hello --list     # list one workflow's sessions
+agent replay --status failed --since 24h
+```
 
 ## Configuration Commands
 

@@ -175,11 +175,7 @@ func newLogger(debug bool, w io.Writer) *slog.Logger {
 
 // resolveStoragePath sets up storage and session paths.
 func (rt *Runtime) resolveStoragePath() {
-	rt.storagePath = rt.cfg.State.Location
-	if rt.storagePath == "" {
-		rt.storagePath = config.DefaultStateDir(rt.home)
-	}
-	rt.storagePath = expandHome(rt.storagePath, rt.home)
+	rt.storagePath = rt.cfg.StateDir(rt.home)
 	rt.sessionPath = filepath.Join(rt.storagePath, "sessions")
 }
 

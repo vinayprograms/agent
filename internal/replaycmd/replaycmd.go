@@ -13,7 +13,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/vinayprograms/agent/internal/config"
 	"github.com/vinayprograms/agent/internal/replay"
+	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/term"
 )
 
@@ -40,15 +42,22 @@ func New(cfg Config) *cobra.Command {
 		live        bool
 		costSpecs   []string
 		showVersion bool
+		list        bool
+		stateDir    string
+		configPath  string
+		sel         filter
 	)
 
 	cmd := &cobra.Command{
-		Use:   use + " [options] <session.jsonl>... | <directory>...",
-		Short: "Replay session logs for forensic analysis",
-		Long: `Replay session logs for forensic analysis.
+		Use:   use + " [options] [id | prefix | file | directory]...",
+		Short: "List and replay session logs for forensic analysis",
+		Long: `List and replay session logs for forensic analysis.
 
-Accepts one or more session .jsonl files, or directories to glob for
-session files (*.jsonl, plus legacy *.json).
+With no arguments, lists the recorded sessions of the state directory.
+Arguments select what to replay: a session id, a unique id prefix, a
+session .jsonl file, or a directory to glob for session files. The
+selectors below filter recorded sessions the same way; --list prints the
+matching sessions as a table instead of replaying them.
 
 Navigation keys in the interactive pager:
   j / k    scroll down / up one line
@@ -56,27 +65,25 @@ Navigation keys in the interactive pager:
   f        toggle follow mode
   q        quit
 
-Example:
+Examples:
+  ` + use + `                          list every recorded session
+  ` + use + ` --last                   replay the most recent one
+  ` + use + ` a1b2c3d4                 replay the session with that id prefix
+  ` + use + ` --name hello --list      list the sessions of one workflow
   ` + use + ` --cost gpt-4o:5,15 session.jsonl`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if showVersion {
-				return nil
-			}
-			if err := cobra.MinimumNArgs(1)(cmd, args); err != nil {
-				fmt.Fprintln(cmd.ErrOrStderr(), cmd.UsageString())
-				return err
-			}
-			return nil
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if showVersion {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s version %s (commit: %s, built: %s)\n",
 					use, valueOr(cfg.Version, "dev"), valueOr(cfg.Commit, "unknown"), valueOr(cfg.BuildTime, "unknown"))
 				return nil
 			}
-			return run(cmd, args, verbose, noPager, follow || live, costSpecs)
+			files, err := selectFiles(cmd, args, sel, list, configPath, stateDir)
+			if err != nil || files == nil {
+				return err
+			}
+			return run(cmd, files, verbose, noPager, follow || live, costSpecs)
 		},
 	}
 
@@ -86,6 +93,15 @@ Example:
 	cmd.Flags().BoolVar(&noPager, "no-pager", false, "Disable interactive pager (for piping)")
 	cmd.Flags().StringArrayVar(&costSpecs, "cost", nil, "Model pricing: model:input,output (per 1M tokens). Repeatable.")
 	cmd.Flags().BoolVar(&showVersion, "version", false, "Show version information")
+	cmd.Flags().BoolVar(&list, "list", false, "List matching sessions as a table instead of replaying them")
+	cmd.Flags().BoolVar(&sel.last, "last", false, "Select the most recently created session")
+	cmd.Flags().StringVar(&sel.name, "name", "", "Select sessions by workflow NAME")
+	cmd.Flags().StringVar(&sel.agentfile, "agentfile", "", "Select sessions by Agentfile path or file name")
+	cmd.Flags().StringVar(&sel.label, "label", "", "Select sessions by deployment label")
+	cmd.Flags().StringVar(&sel.status, "status", "", "Select sessions by status (running, complete, failed, aborted)")
+	cmd.Flags().DurationVar(&sel.since, "since", 0, "Select sessions created within this duration (e.g. 2h)")
+	cmd.Flags().StringVar(&stateDir, "state", "", "Override state location (default: [state] location from config)")
+	cmd.Flags().StringVar(&configPath, "config", "", "Config file path")
 
 	return cmd
 }
@@ -95,6 +111,66 @@ func valueOr(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// selectFiles turns the positional arguments and selectors into the
+// session files to replay. It returns nil files when it has already done
+// the work — printing the session table.
+func selectFiles(cmd *cobra.Command, args []string, sel filter, list bool, configPath, stateOverride string) ([]string, error) {
+	// Plain file and directory arguments replay without a state directory.
+	if len(args) > 0 && !sel.active() && !list && allExist(args) {
+		files, err := expandPaths(args)
+		if err != nil {
+			return nil, err
+		}
+		if len(files) == 0 {
+			return nil, errors.New("no session files found")
+		}
+		return files, nil
+	}
+
+	dir, err := config.StateDir(configPath, stateOverride, "")
+	if err != nil {
+		return nil, err
+	}
+	st := openStore(dir, cmd.ErrOrStderr())
+
+	var matched []session.Summary
+	if len(args) > 0 {
+		for _, arg := range args {
+			resolved, err := st.resolve(arg)
+			if err != nil {
+				return nil, err
+			}
+			matched = append(matched, resolved...)
+		}
+		matched = sel.apply(matched)
+	} else {
+		if st.empty() {
+			return nil, fmt.Errorf("no sessions recorded yet in %s — run an agent first, or pass a session file", st.dir)
+		}
+		matched = sel.apply(st.sessions)
+	}
+	if len(matched) == 0 {
+		return nil, errors.New("no sessions match those selectors")
+	}
+	// --list forces the table; so does a bare invocation with nothing to
+	// single out a session.
+	if list || (len(args) == 0 && !sel.active()) {
+		writeTable(cmd.OutOrStdout(), matched)
+		return nil, nil
+	}
+	return paths(matched), nil
+}
+
+// allExist reports whether every argument names an existing path.
+func allExist(args []string) bool {
+	for _, a := range args {
+		if _, err := os.Stat(a); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // run performs the replay after flags have been parsed.

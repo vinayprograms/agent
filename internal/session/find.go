@@ -59,7 +59,7 @@ func Find(root string) ([]Summary, error) {
 		default:
 			return nil
 		}
-		s, err := summarize(path)
+		s, err := Summarize(path)
 		if err != nil {
 			errs = append(errs, err)
 			return nil
@@ -71,8 +71,10 @@ func Find(root string) ([]Summary, error) {
 	return out, errors.Join(errs...)
 }
 
-// summarize reads one session file's header and footer.
-func summarize(path string) (Summary, error) {
+// Summarize reads one session file's identity and outcome from its
+// header and last footer, without parsing its events. It accepts both
+// JSONL and legacy JSON files.
+func Summarize(path string) (Summary, error) {
 	if filepath.Ext(path) == ".json" {
 		s, err := ReadFile(path, ReadOptions{})
 		if err != nil {
