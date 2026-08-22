@@ -55,7 +55,7 @@ Wave A (independent, parallel, each green in isolation):
 4. [x] U4 internal/tools/websearch — new tools.Tool shape, credentials.Lookup
 5. [x] U5 internal/setup — policy generator to new schema (A-C1), credentials FileStore
 Wave B:
-6. [ ] U6 internal/supervision — llm.Model, slog (A-G5), tests on llmmock
+6. [x] U6 internal/supervision — llm.Model, slog (A-G5), tests on llmmock
 7. [ ] U7 cmd/swarm — tasks→internal/swarm envelopes, messaging re-point
 Wave C:
 8. [ ] U8 internal/executor — tools/llm/contentguard/memory/mcp/slog/spawn (largest)
@@ -97,3 +97,7 @@ generator emits v1.2.0 policy schema (bare [tools.X] tables = enabled; deny/allo
 fixes after round 1: loud legacy-key warning in loadExistingConfig (policyWarning on welcome); nil FileStore guard for empty credentials file (panic); expired Claude CLI token no longer offered.
 Confirmed: v1.2.0 policy cannot disable a single tool when default_deny=false (generator notes it). Pre-existing: restrictive policy leaves edit/ls/grep unlisted (same as old generator) → follow-up in refactor phase.
 parked-smells: 2180-line file; m.err never cleared; hand-rolled bubble sort; value-receiver cursor mutation; "mode 0400" hint vs 0600 file; ~/.config/agent vs ~/.config/grid; fresh-mode legacy policy.toml overwritten without warning.
+### U6 internal/supervision — DONE (e536eb0, verifier PASS)
+API: Config.Provider→Config.Model llm.Model; Config.Logger/PipelineConfig.Logger *slog.Logger (nil ⇒ slog.Default(), component=supervisor). Log messages/keys preserved (+additive `step` key on phase_start/phase_complete). coverage 100%.
+NOTE for U8: phase_start/phase_complete/supervisor_verdict helpers are private here; U8 must reuse the same key set (phase, goal, step, duration, result) — consider a tiny shared helper in refactor phase.
+parked-smells: goal always logged ""; PAUSE with HumanAvailable && nil chan has no error; Supervisor iface is producer-side (consumer = executor); log-and-return at supervisor_llm_error; Pipeline.warn nil-logger now writes (was no-op).
