@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/vinayprograms/agent/internal/replay"
+	"github.com/vinayprograms/agent/internal/term"
 )
 
 // Config customises the command for the binary that mounts it.
@@ -186,14 +187,4 @@ func expandPaths(paths []string) ([]string, error) {
 }
 
 // isTerminal reports whether w is an interactive terminal.
-func isTerminal(w io.Writer) bool {
-	f, ok := w.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
-}
+func isTerminal(w io.Writer) bool { return term.IsTerminal(w) }

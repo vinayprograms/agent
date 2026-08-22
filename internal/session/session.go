@@ -18,6 +18,7 @@ const (
 	StatusRunning  = "running"
 	StatusComplete = "complete"
 	StatusFailed   = "failed"
+	StatusAborted  = "aborted"
 )
 
 // Event types for the session log - unified forensic events

@@ -44,6 +44,7 @@ func newHarness(t *testing.T) *harness {
 		home:        t.TempDir(),
 		getenv:      func(string) string { return "" },
 		credentials: func() (credentials.Lookup, error) { return credentials.NewEnvStore(), nil },
+		isTerminal:  func(any) bool { return false },
 		newRuntime: func(_ context.Context, l *run.Loaded, d run.Deps) (runner, error) {
 			h.last, h.lastRun = l, d
 			return h.rt, nil
@@ -100,7 +101,7 @@ func TestRoot_HelpAndVersion(t *testing.T) {
 func TestRoot_CommandSurface(t *testing.T) {
 	root := newRootCmd(newHarness(t).deps)
 	want := map[string][]string{
-		"run":      {"input", "config", "policy", "workspace", "goal", "debug"},
+		"run":      {"input", "config", "policy", "workspace", "goal", "debug", "step"},
 		"serve":    {"config", "policy", "workspace", "state", "http", "bus", "queue-group", "capability", "session-label", "type", "capabilities"},
 		"validate": nil,
 		"inspect":  nil,
