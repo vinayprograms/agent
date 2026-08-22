@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agent/internal/testutil/llmmock"
 	"github.com/vinayprograms/agentkit/llm"
 )
@@ -420,5 +421,62 @@ func TestConvergeGoal_BareMarkerKeepsLastOutput(t *testing.T) {
 	}
 	if result.Output != "Draft one" {
 		t.Errorf("Output = %q, want %q", result.Output, "Draft one")
+	}
+}
+
+// goal.complete fires exactly once per goal, whatever the goal's shape —
+// not once per convergence iteration, and never zero times.
+func TestGoalComplete_FiresOncePerGoal(t *testing.T) {
+	limit := 3
+	tests := []struct {
+		name string
+		goal agentfile.Goal
+	}{
+		{"plain", agentfile.Goal{Name: "g", Outcome: "Do it"}},
+		{"multi-agent", agentfile.Goal{Name: "g", Outcome: "Do it", UsingAgent: []string{"worker"}}},
+		{"converge", agentfile.Goal{Name: "g", Outcome: "Do it", IsConverge: true, WithinLimit: &limit}},
+		{"converge multi-agent", agentfile.Goal{
+			Name: "g", Outcome: "Do it", IsConverge: true, WithinLimit: &limit,
+			UsingAgent: []string{"worker"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wf := &agentfile.Workflow{
+				Name:   "hooks-test",
+				Agents: []agentfile.Agent{{Name: "worker", Prompt: "work"}},
+				Goals:  []agentfile.Goal{tt.goal},
+				Steps:  []agentfile.Step{{Type: agentfile.StepRUN, Name: "main", UsingGoals: []string{"g"}}},
+			}
+			// Two substantive iterations, then converge.
+			var mu sync.Mutex
+			turn := 0
+			provider := modelFunc(func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				turn++
+				if turn >= 3 {
+					return &llm.ChatResponse{Content: "CONVERGED"}, nil
+				}
+				return &llm.ChatResponse{Content: "draft"}, nil
+			})
+
+			exec := mustNewExecutor(t, wf, provider, nil, nil)
+			completions := 0
+			exec.Hooks().On(hooks.GoalComplete, func(_ context.Context, evt hooks.Event) {
+				mu.Lock()
+				defer mu.Unlock()
+				if evt.Data["name"] == "g" {
+					completions++
+				}
+			})
+
+			if _, err := exec.Run(t.Context(), RunOptions{}); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if completions != 1 {
+				t.Errorf("goal.complete fired %d times, want 1", completions)
+			}
+		})
 	}
 }

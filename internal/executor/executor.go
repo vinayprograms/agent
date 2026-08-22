@@ -577,6 +577,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				e.outputs[field] = value
 			}
 		}
+		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": result.Output})
 		e.logGoalEnd(goal.Name, result.Output)
 		e.flushSession()
 		return &GoalResult{Output: result.Output, ToolCallsMade: false}, nil
@@ -594,6 +595,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				e.outputs[field] = value
 			}
 		}
+		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
 		e.logGoalEnd(goal.Name, output)
 		e.flushSession()
 		return &GoalResult{Output: output, ToolCallsMade: false}, nil
@@ -1239,7 +1241,6 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		if len(parts) == 2 {
 			output = parts[1]
 		}
-		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
 		e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
 		return output, nil
 	}
@@ -1265,7 +1266,6 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		return "", err
 	}
 
-	e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": resp.Content})
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", resp.Content)
 
 	return resp.Content, nil
