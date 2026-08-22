@@ -137,3 +137,9 @@ Wave 5:
 - [ ] R7 cmd/replay → delete (Makefile alias) or 5-line main over shared cobra factory; cmd/agentmem cobra; parseCostSpec → replay.ParsePricing; X1 truncate dedupe.
 - [ ] R9 coverage push to 100%: internal/step, internal/hooks, internal/replay (2,420 lines, 0%), internal/setup remaining, cmd/* non-TTY; move tests/integration+failure into package tests where it removes `go run` subprocess tests; adopt synctest for timing tests.
 - [ ] R10 system tests: run every examples/agent/*.agent that needs no MCP/network-only deps via agent.ollama.toml against testdata expected criteria; record results in test-results/; fix Agentfile drift.
+
+## Checkpoint 2 (usage-limit pause)
+Merged: U1–U8, U10–U12. Module builds; `go test -race ./...` green on branch mig/u9 (merged with main).
+In flight: U9 `mig/u9` @14f8760 (+merge of main) — worker done (cmd/agent 55.8%); adversarial verifier running (security wiring, policy legacy error, credentials on fresh machine, serve lifecycle, smoke runs of examples 01/02 via agent.ollama.toml). On PASS → merge, record, then the full verify.md gate on main.
+Phase 2 started early: R4 `ref/r4` (internal/config) and R8 `ref/r8` (skills/packaging/checkpoint/hooks/supervision/swarm/websearch) workers running off main (no cmd/agent overlap). Each needs a verifier before merge; expect call-site conflicts with mig/u9 in cmd/agent — merge U9 first, then rebase/merge R4, R8.
+Remaining: R1, R2, R3, R5, R6, R7, R9, R10 per plan above.
