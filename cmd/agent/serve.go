@@ -42,7 +42,10 @@ type serviceAgent struct {
 
 	// Service-level session (shared across all tasks)
 	serviceRuntime *runtime
-	publishEvent   *atomic.Pointer[session.Sink] // session event sink target; nil until the bus is up
+	// interrupts is the buffer of the task currently executing (nil when
+	// idle) — corrections that arrive between tasks are discarded.
+	interrupts   atomic.Pointer[executor.InterruptBuffer]
+	publishEvent *atomic.Pointer[session.Sink] // session event sink target; nil until the bus is up
 
 	// Runtime state
 	status       string // "idle", "busy", "draining"
@@ -165,6 +168,8 @@ func (cmd *ServeCmd) Run() error {
 	// below); until then the sink drops them.
 	publishEvent := new(atomic.Pointer[session.Sink])
 	serviceRt := newRuntime(wf, creds)
+	// Session persists across tasks — Run() flushes, doesn't close.
+	serviceRt.persistentSession = true
 	serviceRt.eventSink = func(evt session.Event) {
 		if p := publishEvent.Load(); p != nil {
 			(*p)(evt)
@@ -173,8 +178,6 @@ func (cmd *ServeCmd) Run() error {
 	if err := serviceRt.setup(); err != nil {
 		return fmt.Errorf("setting up service runtime: %w", err)
 	}
-	// Session persists across tasks — Run() flushes, doesn't close
-	serviceRt.exec.SetPersistentSession(true)
 
 	// Agent ID uses session ID (or config if specified)
 	agentID := wf.cfg.Agent.ID
@@ -389,8 +392,7 @@ func (a *serviceAgent) runBusMode() error {
 	hbSender.SetMetadata("version", version)
 
 	// Wire metrics collector for dashboard reporting
-	mc := swarm.NewMetricsCollector(hbSender)
-	a.serviceRuntime.exec.SetMetricsCollector(mc)
+	a.serviceRuntime.metrics.set(swarm.NewMetricsCollector(hbSender))
 
 	// Wire event publisher — streams structured session events to NATS
 	// for the swarm UI's real-time event log.
@@ -596,7 +598,7 @@ func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
 // handleInstanceMessage processes a corrective guidance message from
 // work.<instance-id>.* and pushes it into the interrupt buffer.
 func (a *serviceAgent) handleInstanceMessage(msg *messaging.Message) {
-	buf := a.serviceRuntime.exec.InterruptBuffer()
+	buf := a.interrupts.Load()
 	if buf == nil {
 		// Not currently executing — log and discard
 		fmt.Fprintf(os.Stderr, "  ⚠️  Correction received while idle (discarded): %s\n", string(msg.Data))
@@ -861,18 +863,6 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *messaging.Message
 		a.heartbeat.SetMetadata("current_task", task.TaskID)
 	}
 
-	// Set up interrupt buffer for corrective guidance from work.<instance-id>.*
-	interruptBuf := executor.NewInterruptBuffer()
-	a.serviceRuntime.exec.SetInterruptBuffer(interruptBuf)
-	defer a.serviceRuntime.exec.SetInterruptBuffer(nil)
-
-	// Set up discuss publisher — publishes non-tool-call LLM output to discuss.*
-	taskID := task.TaskID
-	a.serviceRuntime.exec.SetDiscussPublisher(func(goalName, content string) {
-		a.publishToDiscuss(taskID, goalName, content)
-	})
-	defer a.serviceRuntime.exec.ClearDiscussPublisher()
-
 	// Execute task
 	result := a.executeTask(ctx, task)
 
@@ -1016,7 +1006,18 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *swarm.TaskMessage)
 		}
 		inputs["_revision_context"] = task.Metadata["revision_context"]
 	}
-	execResult, err := a.serviceRuntime.exec.Run(ctx, inputs)
+	// Corrective guidance from work.<instance-id>.* lands in this buffer for
+	// the duration of the task; handleInstanceMessage reads it.
+	interrupts := executor.NewInterruptBuffer()
+	a.interrupts.Store(interrupts)
+	defer a.interrupts.Store(nil)
+
+	taskID := task.TaskID
+	execResult, err := a.serviceRuntime.exec.Run(ctx, executor.RunOptions{
+		Inputs:     inputs,
+		Interrupts: interrupts,
+		Discuss:    func(goalName, content string) { a.publishToDiscuss(taskID, goalName, content) },
+	})
 	if err != nil {
 		result.Status = swarm.ResultFailed
 		result.Error = err.Error()
@@ -1026,9 +1027,6 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *swarm.TaskMessage)
 		result.Error = fmt.Sprintf("workflow status: %s", execResult.Status)
 		result.Outputs = execResult.Outputs
 		fmt.Fprintf(os.Stderr, "  ✗ Workflow failed with status: %s\n", execResult.Status)
-		if execResult.Error != "" {
-			fmt.Fprintf(os.Stderr, "     Error: %s\n", execResult.Error)
-		}
 	} else {
 		result.Outputs = execResult.Outputs
 	}

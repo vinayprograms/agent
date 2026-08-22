@@ -5,29 +5,22 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agentkit/llm"
+	"golang.org/x/sync/errgroup"
 )
 
-// concurrencyLimit returns the maximum number of concurrent tool executions.
-// Calculated based on CPU count with I/O-bound multiplier.
-// For I/O-bound operations (web_fetch, etc.), we can oversubscribe CPUs.
-var concurrencyLimit = func() int {
-	cpuCount := runtime.NumCPU()
-	// 4x CPU count for I/O-bound workloads (network, disk waits)
-	// Minimum 4, maximum 32 to avoid overwhelming resources
-	limit := cpuCount * 4
-	if limit < 4 {
-		limit = 4
-	}
-	if limit > 32 {
-		limit = 32
-	}
-	return limit
-}()
+// concurrencyLimit caps concurrent tool executions.
+var concurrencyLimit = toolConcurrency(runtime.NumCPU())
+
+// toolConcurrency oversubscribes CPUs 4x — tool work is I/O-bound (network,
+// disk) — within bounds that keep a small machine responsive and a large one
+// from overwhelming the services it calls.
+func toolConcurrency(cpus int) int {
+	return min(max(cpus*4, 4), 32)
+}
 
 // applyToolTimeout wraps the context with a timeout for network-dependent tools.
 // Returns the original context if no timeout is configured for the tool.
@@ -102,7 +95,7 @@ func (e *Executor) executeTool(ctx context.Context, tc llm.ToolCallResponse) (st
 	}
 
 	if !e.registry.Has(tc.Name) {
-		return "", fmt.Errorf("tool '%s' does not exist. Use one of: %s", tc.Name, strings.Join(e.registeredToolNames(), ", "))
+		return "", fmt.Errorf("tool %q does not exist. Use one of: %s", tc.Name, strings.Join(e.registeredToolNames(), ", "))
 	}
 
 	// Enforce policy: reject tool calls that aren't enabled.
@@ -158,7 +151,7 @@ func (e *Executor) registerUntrustedResult(ctx context.Context, toolName string,
 
 	// Register as untrusted content block with taint from influencing blocks
 	source := fmt.Sprintf("tool:%s", toolName)
-	e.AddUntrustedContentWithTaint(ctx, content, source, relatedBlocks)
+	e.AddUntrustedContent(ctx, content, source, relatedBlocks...)
 }
 
 // toolResult holds the result of a parallel tool execution.
@@ -168,29 +161,30 @@ type toolResult struct {
 	content string
 }
 
-// asyncTools are fire-and-forget tools that don't need to block the LLM turn.
-// They execute in background and always return "OK" immediately.
-var asyncTools = map[string]bool{
-	"remember":         true, // Writes to memory - result not needed for turn
-	"scratchpad_write": true, // Writes to scratchpad - result not needed for turn
-}
+// schedule says how a tool must be run within one LLM turn.
+type schedule int
 
-// serializeTools must NOT be parallelized - they have side effects or are expensive.
-// These run sequentially in the order the LLM requested.
-var serializeTools = map[string]bool{
-	"write":        true, // File writes - potential conflicts
-	"bash":         true, // Arbitrary side effects - unpredictable
-	"spawn_agents": true, // Expensive resource creation
-}
+const (
+	// parallel is the default: safe to run alongside other tools.
+	parallel schedule = iota
+	// serial tools have side effects or are expensive, so they run one at
+	// a time, in the order the model requested them.
+	serial
+	// async tools are fire-and-forget: the turn does not need their result,
+	// so they run in the background and report "OK".
+	async
+)
 
-// isAsyncTool returns true if the tool can be executed asynchronously.
-func isAsyncTool(name string) bool {
-	return asyncTools[name]
-}
-
-// isSerializeTool returns true if the tool must run sequentially.
-func isSerializeTool(name string) bool {
-	return serializeTools[name]
+// scheduleOf classifies a tool by name. The executor decides scheduling
+// this way because the tool interface does not declare it.
+func scheduleOf(name string) schedule {
+	switch name {
+	case "remember", "scratchpad_write": // memory writes; result unused this turn
+		return async
+	case "write", "bash", "spawn_agents": // conflicting, unpredictable, or expensive
+		return serial
+	}
+	return parallel
 }
 
 // executeToolsParallel executes multiple tool calls concurrently and returns
@@ -221,20 +215,22 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 	var serializeCalls []int // indices of tools that must run sequentially
 	var parallelCalls []int  // indices of tools that can run in parallel
 	for i, tc := range toolCalls {
-		switch {
-		case isAsyncTool(tc.Name):
+		switch scheduleOf(tc.Name) {
+		case async:
 			asyncCalls = append(asyncCalls, i)
-		case isSerializeTool(tc.Name):
+		case serial:
 			serializeCalls = append(serializeCalls, i)
 		default:
 			parallelCalls = append(parallelCalls, i)
 		}
 	}
 
-	// Fire async tools in background (fire-and-forget)
+	// Fire async tools in the background. The executor owns them (Run waits),
+	// and cancellation is detached so a write in flight completes.
+	asyncCtx := context.WithoutCancel(ctx)
 	for _, idx := range asyncCalls {
 		tc := toolCalls[idx]
-		go e.executeAsyncTool(ctx, tc)
+		e.background.Go(func() { e.executeAsyncTool(asyncCtx, tc) })
 	}
 
 	// Helper to run tool and return result
@@ -249,34 +245,20 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 	// Prepare messages array
 	messages := make([]llm.Message, len(toolCalls))
 
-	// Execute parallel tools with concurrency limit
+	// Execute parallel tools with a concurrency limit.
 	if len(parallelCalls) > 0 {
-		sem := make(chan struct{}, concurrencyLimit)
-		results := make(chan toolResult, len(parallelCalls))
-		var wg sync.WaitGroup
-
-		for _, idx := range parallelCalls {
+		var g errgroup.Group
+		g.SetLimit(concurrencyLimit)
+		results := make([]toolResult, len(parallelCalls))
+		for i, idx := range parallelCalls {
 			tc := toolCalls[idx]
-			wg.Add(1)
-			go func(idx int, tc llm.ToolCallResponse) {
-				defer wg.Done()
-
-				// Acquire semaphore (blocks if at capacity)
-				sem <- struct{}{}
-				defer func() { <-sem }() // Release when done
-
-				results <- runTool(idx, tc)
-			}(idx, tc)
+			g.Go(func() error {
+				results[i] = runTool(idx, tc)
+				return nil
+			})
 		}
-
-		// Wait for parallel tools to complete
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
-
-		// Collect parallel results
-		for r := range results {
+		_ = g.Wait() // runTool never returns an error; failures become tool content.
+		for _, r := range results {
 			messages[r.index] = llm.Message{
 				Role:       "tool",
 				ToolCallID: r.id,

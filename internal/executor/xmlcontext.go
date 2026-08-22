@@ -24,21 +24,13 @@ type ConvergenceIteration struct {
 	Output string // The output from this iteration
 }
 
-// AgentContribution represents an agent's output in a discuss round.
-type AgentContribution struct {
-	ID         string // Agent identifier
-	Capability string // Agent's announced capability
-	Round      int    // Which round this was (0 = first contribution from another agent)
-	Output     string // The agent's output
-}
-
-// XMLContextBuilder builds XML-structured prompts for LLM communication.
-type XMLContextBuilder struct {
+// brief accumulates the XML-structured goal briefing sent to the model.
+// Every value written into it is escaped, so model- or supervisor-authored
+// text cannot forge an element.
+type brief struct {
 	workflowName          string
 	priorGoals            []GoalOutput
 	convergenceIterations []ConvergenceIteration
-	discussContributions  []AgentContribution
-	discussTaskID         string
 	isConverge            bool
 	currentGoal           struct {
 		id          string
@@ -47,55 +39,39 @@ type XMLContextBuilder struct {
 	correction string
 }
 
-// NewXMLContextBuilder creates a new context builder for a workflow.
-func NewXMLContextBuilder(workflowName string) *XMLContextBuilder {
-	return &XMLContextBuilder{
-		workflowName: workflowName,
-		priorGoals:   make([]GoalOutput, 0),
-	}
+// newBrief starts a goal briefing for a workflow.
+func newBrief(workflowName string) *brief {
+	return &brief{workflowName: workflowName}
 }
 
 // AddPriorGoal adds a completed goal's output to the context.
-func (b *XMLContextBuilder) AddPriorGoal(id, output string) {
+func (b *brief) AddPriorGoal(id, output string) {
 	b.priorGoals = append(b.priorGoals, GoalOutput{ID: id, Output: output})
 }
 
 // SetConvergenceMode enables convergence mode for the context builder.
-func (b *XMLContextBuilder) SetConvergenceMode() {
+func (b *brief) SetConvergenceMode() {
 	b.isConverge = true
 }
 
 // AddConvergenceIteration adds a completed convergence iteration to the context.
-func (b *XMLContextBuilder) AddConvergenceIteration(n int, output string) {
+func (b *brief) AddConvergenceIteration(n int, output string) {
 	b.convergenceIterations = append(b.convergenceIterations, ConvergenceIteration{N: n, Output: output})
 }
 
 // SetCurrentGoal sets the current goal to be executed.
-func (b *XMLContextBuilder) SetCurrentGoal(id, description string) {
+func (b *brief) SetCurrentGoal(id, description string) {
 	b.currentGoal.id = id
 	b.currentGoal.description = description
 }
 
 // SetCorrection sets the supervisor correction for the current goal.
-func (b *XMLContextBuilder) SetCorrection(correction string) {
+func (b *brief) SetCorrection(correction string) {
 	b.correction = correction
 }
 
-// AddDiscussContribution adds an agent's output from a discuss round.
-func (b *XMLContextBuilder) AddDiscussContribution(id, capability string, round int, output string) {
-	b.discussContributions = append(b.discussContributions, AgentContribution{
-		ID: id, Capability: capability, Round: round, Output: output,
-	})
-}
-
-// SetDiscussTaskID sets the task ID for discuss context.
-func (b *XMLContextBuilder) SetDiscussTaskID(taskID string) {
-	b.discussTaskID = taskID
-}
-
-// Build generates the XML-structured prompt.
-// All data content is escaped to prevent injection attacks.
-func (b *XMLContextBuilder) Build() string {
+// String renders the briefing as XML.
+func (b *brief) String() string {
 	var buf strings.Builder
 
 	buf.WriteString(fmt.Sprintf("<workflow name=%q>\n", escapeXML(b.workflowName)))
@@ -161,25 +137,6 @@ func (b *XMLContextBuilder) Build() string {
 			buf.WriteString("\n")
 		}
 		buf.WriteString("</correction>\n")
-	}
-
-	// Add discuss context if present (swarm collaboration)
-	if len(b.discussContributions) > 0 {
-		buf.WriteString(fmt.Sprintf("\n<discuss-context task=%q>\n", escapeXML(b.discussTaskID)))
-		for _, c := range b.discussContributions {
-			if c.Round > 0 {
-				buf.WriteString(fmt.Sprintf("  <agent id=%q capability=%q round=\"%d\">\n", escapeXML(c.ID), escapeXML(c.Capability), c.Round))
-			} else {
-				buf.WriteString(fmt.Sprintf("  <agent id=%q capability=%q>\n", escapeXML(c.ID), escapeXML(c.Capability)))
-			}
-			escaped := escapeXML(c.Output)
-			buf.WriteString(escaped)
-			if !strings.HasSuffix(escaped, "\n") {
-				buf.WriteString("\n")
-			}
-			buf.WriteString("  </agent>\n")
-		}
-		buf.WriteString("</discuss-context>\n")
 	}
 
 	buf.WriteString("\n</workflow>")

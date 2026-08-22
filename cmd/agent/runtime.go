@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
@@ -53,6 +54,12 @@ type runtime struct {
 	exec       *executor.Executor
 	mcpManager *mcp.Manager
 	eventSink  session.Sink // optional; set before setup (serve mode)
+	// persistentSession keeps the session open across runs (serve mode):
+	// Run flushes but does not close it.
+	persistentSession bool
+	// metrics forwards LLM/supervision metrics to the heartbeat sender,
+	// which only exists once the bus is up — after the executor is built.
+	metrics    *deferredMetrics
 	sessionMgr *session.Recorder
 	sess       *session.Session
 
@@ -78,6 +85,7 @@ func newRuntime(w *workflow, creds credentials.Lookup) *runtime {
 		cfg:          w.cfg,
 		pol:          w.pol,
 		creds:        creds,
+		metrics:      &deferredMetrics{},
 		inputs:       w.inputs,
 		debug:        w.debug,
 		sessionLabel: w.sessionLabel,
@@ -433,6 +441,8 @@ func (rt *runtime) createExecutor() error {
 		ObservationExtractor: obsExtractor,
 		ObservationStore:     obsStore,
 		WorkspaceContext:     wsCtx,
+		PersistentSession:    rt.persistentSession,
+		MetricsCollector:     rt.metrics,
 	}
 	rt.exec, err = executor.New(cfg)
 	if err != nil {
@@ -444,6 +454,40 @@ func (rt *runtime) createExecutor() error {
 		rt.bashGate.OnDecision = rt.exec.LogBashSecurity
 	}
 	return nil
+}
+
+// deferredMetrics forwards to a collector wired after the executor exists
+// (serve mode builds the heartbeat sender only once the bus is up).
+// The zero value drops every metric.
+type deferredMetrics struct {
+	target atomic.Pointer[executor.MetricsCollector]
+}
+
+func (d *deferredMetrics) set(mc executor.MetricsCollector) { d.target.Store(&mc) }
+
+func (d *deferredMetrics) collector() executor.MetricsCollector {
+	if p := d.target.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+func (d *deferredMetrics) RecordLLMCall(in, out, cacheCreation, cacheRead int, latencyMs int64) {
+	if c := d.collector(); c != nil {
+		c.RecordLLMCall(in, out, cacheCreation, cacheRead, latencyMs)
+	}
+}
+
+func (d *deferredMetrics) RecordSupervision(approved bool) {
+	if c := d.collector(); c != nil {
+		c.RecordSupervision(approved)
+	}
+}
+
+func (d *deferredMetrics) SetSubagents(count int) {
+	if c := d.collector(); c != nil {
+		c.SetSubagents(count)
+	}
 }
 
 // profileResolver creates models based on capability profiles.
@@ -571,7 +615,7 @@ func (rt *runtime) setupCallbacks() {
 func (rt *runtime) run(ctx context.Context) int {
 	fmt.Fprintf(os.Stderr, "Running workflow: %s (session: %s)\n\n", rt.wf.Name, rt.sess.ID)
 
-	result, err := rt.exec.Run(ctx, rt.inputs)
+	result, err := rt.exec.Run(ctx, executor.RunOptions{Inputs: rt.inputs})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nerror: %v\n", err)
 		rt.sess.Status = "failed"
@@ -585,7 +629,7 @@ func (rt *runtime) run(ctx context.Context) int {
 	rt.sessionMgr.Update(rt.sess)
 
 	// Report convergence failures if any
-	if failures := rt.exec.GetConvergenceFailures(); len(failures) > 0 {
+	if failures := rt.exec.ConvergenceFailures(); len(failures) > 0 {
 		fmt.Fprintf(os.Stderr, "\n⚠ Convergence warnings:\n")
 		for goal, iterations := range failures {
 			fmt.Fprintf(os.Stderr, "  • Goal %q did not converge (used all %d iterations)\n", goal, iterations)

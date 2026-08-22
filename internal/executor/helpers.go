@@ -10,6 +10,10 @@ import (
 	"github.com/vinayprograms/agent/internal/session"
 )
 
+// variableRef matches a $name reference left in a prompt after input and
+// output substitution.
+var variableRef = regexp.MustCompile(`\$([a-zA-Z_][a-zA-Z0-9_]*)`)
+
 // truncateForLog truncates a string for logging purposes.
 func truncateForLog(s string, maxLen int) string {
 	if len(s) <= maxLen {
@@ -26,8 +30,10 @@ func buildStructuredOutputInstruction(outputs []string) string {
 	return "Return your response as JSON with the following fields: " + strings.Join(outputs, ", ")
 }
 
-// parseStructuredOutput parses JSON output into expected fields.
-func parseStructuredOutput(content string, expectedFields []string) (map[string]string, error) {
+// parseStructuredOutput parses JSON output into the expected fields. Content
+// that is not JSON is not an error: the whole answer stands in for every
+// field, which is what a model that ignored the format instruction meant.
+func parseStructuredOutput(content string, expectedFields []string) map[string]string {
 	// Try to extract JSON from content
 	jsonStr := extractJSON(content)
 	if jsonStr == "" {
@@ -41,7 +47,7 @@ func parseStructuredOutput(content string, expectedFields []string) (map[string]
 		for _, field := range expectedFields {
 			result[field] = content
 		}
-		return result, nil
+		return result
 	}
 
 	result := make(map[string]string)
@@ -56,7 +62,7 @@ func parseStructuredOutput(content string, expectedFields []string) (map[string]
 			}
 		}
 	}
-	return result, nil
+	return result
 }
 
 // extractJSON extracts a JSON object from content that may contain surrounding text.
@@ -86,22 +92,11 @@ func extractJSON(content string) string {
 // interpolate replaces variable placeholders in text.
 // Warns about unresolved variables that might indicate Agentfile bugs.
 func (e *Executor) interpolate(text string) string {
-	// Replace input variables
-	for name, value := range e.inputs {
-		text = strings.ReplaceAll(text, "$"+name, value)
-	}
-
-	// Replace goal output variables
-	for name, value := range e.outputs {
-		text = strings.ReplaceAll(text, "$"+name, value)
-	}
-
-	// Track unresolved variables for warning
+	// One pass over every $name: inputs first, then goal outputs. A value
+	// that itself names a variable is left alone — expanding it would make
+	// the result depend on map iteration order.
 	var unresolved []string
-
-	// Handle any remaining $var patterns
-	re := regexp.MustCompile(`\$([a-zA-Z_][a-zA-Z0-9_]*)`)
-	text = re.ReplaceAllStringFunc(text, func(match string) string {
+	text = variableRef.ReplaceAllStringFunc(text, func(match string) string {
 		varName := strings.TrimPrefix(match, "$")
 		if val, ok := e.inputs[varName]; ok {
 			return val

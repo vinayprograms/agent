@@ -37,9 +37,9 @@ func TestExecutor_InputBinding(t *testing.T) {
 	provider.SetResponse("Analysis complete")
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	result, err := exec.Run(context.Background(), map[string]string{
+	result, err := exec.Run(context.Background(), RunOptions{Inputs: map[string]string{
 		"topic": "golang",
-	})
+	}})
 
 	if err != nil {
 		t.Fatalf("run error: %v", err)
@@ -68,7 +68,7 @@ func TestExecutor_DefaultValues(t *testing.T) {
 	provider.SetResponse("Done")
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	_, err := exec.Run(context.Background(), nil) // No inputs provided
+	_, err := exec.Run(context.Background(), RunOptions{}) // No inputs provided
 
 	if err != nil {
 		t.Fatalf("run error: %v", err)
@@ -97,7 +97,7 @@ func TestExecutor_MissingRequiredInput(t *testing.T) {
 	}
 
 	exec := mustNewExecutor(t, wf, llmmock.New(), nil, nil)
-	_, err := exec.Run(context.Background(), nil)
+	_, err := exec.Run(context.Background(), RunOptions{})
 
 	if err == nil {
 		t.Error("expected error for missing required input")
@@ -134,7 +134,7 @@ func TestExecutor_StepOrder(t *testing.T) {
 		executionOrder = append(executionOrder, name)
 	})
 
-	exec.Run(context.Background(), nil)
+	exec.Run(context.Background(), RunOptions{})
 
 	expected := []string{"first", "second", "third"}
 	if len(executionOrder) != 3 {
@@ -167,10 +167,10 @@ func TestExecutor_VariableInterpolation(t *testing.T) {
 	provider.SetResponse("Done")
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	exec.Run(context.Background(), map[string]string{
+	exec.Run(context.Background(), RunOptions{Inputs: map[string]string{
 		"name":  "Alice",
 		"count": "5",
-	})
+	}})
 
 	req := provider.LastRequest()
 	if !strings.Contains(req.Messages[1].Content, "Hello Alice") {
@@ -205,7 +205,7 @@ func TestExecutor_GoalOutputReference(t *testing.T) {
 	}
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	exec.Run(context.Background(), nil)
+	exec.Run(context.Background(), RunOptions{})
 
 	req := provider.LastRequest()
 	if !strings.Contains(req.Messages[1].Content, "Analysis result: good code") {
@@ -233,13 +233,13 @@ func TestExecutor_GoalLoop(t *testing.T) {
 		case 1:
 			return &llm.ChatResponse{
 				ToolCalls: []llm.ToolCallResponse{
-					{ID: "tc1", Name: "ls", Args: map[string]interface{}{"path": "."}},
+					{ID: "tc1", Name: "ls", Args: map[string]any{"path": "."}},
 				},
 			}, nil
 		case 2:
 			return &llm.ChatResponse{
 				ToolCalls: []llm.ToolCallResponse{
-					{ID: "tc2", Name: "ls", Args: map[string]interface{}{"path": ".."}},
+					{ID: "tc2", Name: "ls", Args: map[string]any{"path": ".."}},
 				},
 			}, nil
 		default:
@@ -251,7 +251,7 @@ func TestExecutor_GoalLoop(t *testing.T) {
 	reg, _ := newTestRegistry(t, t.TempDir())
 
 	exec := mustNewExecutor(t, wf, provider, reg, pol)
-	exec.Run(context.Background(), nil)
+	exec.Run(context.Background(), RunOptions{})
 
 	if callCount != 3 {
 		t.Errorf("expected 3 LLM calls, got %d", callCount)
@@ -289,7 +289,7 @@ func TestExecutor_MultiAgent(t *testing.T) {
 	})
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	result, err := exec.Run(context.Background(), nil)
+	result, err := exec.Run(context.Background(), RunOptions{})
 
 	if err != nil {
 		t.Fatalf("run error: %v", err)
@@ -322,9 +322,9 @@ func TestExecutor_PromptInterpolation(t *testing.T) {
 	provider.SetResponse("Done")
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	exec.Run(context.Background(), map[string]string{
+	exec.Run(context.Background(), RunOptions{Inputs: map[string]string{
 		"file_path": "/data/input.json",
-	})
+	}})
 
 	req := provider.LastRequest()
 	if !strings.Contains(req.Messages[1].Content, "/data/input.json") {
@@ -356,7 +356,7 @@ func TestExecutor_ResultContainsOutputs(t *testing.T) {
 	}
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
-	result, _ := exec.Run(context.Background(), nil)
+	result, _ := exec.Run(context.Background(), RunOptions{})
 
 	if result.Outputs["goal1"] != "Output 1" {
 		t.Errorf("expected goal1 output 'Output 1', got %s", result.Outputs["goal1"])
@@ -386,7 +386,7 @@ func TestExecutor_NilMCPManager(t *testing.T) {
 		Model:    provider,
 	})
 
-	result, err := exec.Run(context.Background(), nil)
+	result, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestExecutor_SkillsViaConfig(t *testing.T) {
 		},
 	})
 
-	result, err := exec.Run(context.Background(), nil)
+	result, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestExecutor_DefaultDenyBlocksToolExecution(t *testing.T) {
 	tc := llm.ToolCallResponse{
 		ID:   "call_1",
 		Name: "read",
-		Args: map[string]interface{}{"path": "/tmp/test"},
+		Args: map[string]any{"path": "/tmp/test"},
 	}
 	_, err := exec.executeTool(context.Background(), tc)
 	if err == nil {
@@ -504,7 +504,7 @@ func TestExecutor_DefaultDenyBlocksToolExecution(t *testing.T) {
 	tc2 := llm.ToolCallResponse{
 		ID:   "call_2",
 		Name: "pwd",
-		Args: map[string]interface{}{},
+		Args: map[string]any{},
 	}
 	_, err = exec.executeTool(context.Background(), tc2)
 	if err == nil {
@@ -528,13 +528,13 @@ func TestExecutor_CheckSkillActivation(t *testing.T) {
 	})
 
 	// No activation
-	skill := exec.checkSkillActivation("Just a normal response")
+	skill := exec.checkSkillActivation(t.Context(), "Just a normal response")
 	if skill != nil {
 		t.Error("expected no skill activation")
 	}
 
 	// Activation pattern but skill doesn't exist
-	skill = exec.checkSkillActivation("Let me [use-skill:unknown-skill] for this")
+	skill = exec.checkSkillActivation(t.Context(), "Let me [use-skill:unknown-skill] for this")
 	if skill != nil {
 		t.Error("expected no skill for unknown skill")
 	}
@@ -569,7 +569,7 @@ func TestExecutor_MCPToolNameParsing(t *testing.T) {
 	_, err := exec.executeMCPTool(context.Background(), llm.ToolCallResponse{
 		ID:   "call_1",
 		Name: "mcp_filesystem_read_file",
-		Args: map[string]interface{}{"path": "/tmp/test"},
+		Args: map[string]any{"path": "/tmp/test"},
 	})
 
 	if err == nil {
@@ -605,7 +605,7 @@ func TestExecutor_AllCallbacks(t *testing.T) {
 		goalCompleted = evt.Data["name"].(string)
 	})
 
-	exec.Run(context.Background(), nil)
+	exec.Run(context.Background(), RunOptions{})
 
 	if goalStarted != "goal1" {
 		t.Errorf("expected goalStarted 'goal1', got %q", goalStarted)
@@ -672,7 +672,7 @@ func TestExecutor_OrchestratorPromptInjected(t *testing.T) {
 	registry, _ := newTestRegistry(t, t.TempDir())
 
 	exec := mustNewExecutor(t, wf, provider, registry, pol)
-	exec.Run(context.Background(), nil)
+	exec.Run(context.Background(), RunOptions{})
 
 	// Check that the system message contains orchestrator guidance
 	messages := provider.LastRequest().Messages
@@ -805,11 +805,7 @@ func TestParseStructuredOutput(t *testing.T) {
 	content := `{"findings": "test result", "sources": ["a", "b"], "count": 42}`
 	fields := []string{"findings", "sources", "count"}
 
-	result, err := parseStructuredOutput(content, fields)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
+	result := parseStructuredOutput(content, fields)
 	if result["findings"] != "test result" {
 		t.Errorf("expected findings='test result', got %q", result["findings"])
 	}
@@ -843,7 +839,7 @@ func TestExecutor_GoalWithStructuredOutput(t *testing.T) {
 	registry, _ := newTestRegistry(t, t.TempDir())
 
 	exec := mustNewExecutor(t, wf, provider, registry, pol)
-	_, err := exec.Run(context.Background(), nil)
+	_, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}

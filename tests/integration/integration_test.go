@@ -68,7 +68,7 @@ RUN main USING analyze, summarize
 	registry := testkit.Registry(t, pol, tmpDir)
 
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider, Registry: registry, Policy: pol})
-	result, err := exec.Run(t.Context(), nil)
+	result, err := exec.Run(t.Context(), executor.RunOptions{})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -132,7 +132,7 @@ RUN main USING read_file
 	registry := testkit.Registry(t, pol, tmpDir)
 
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider, Registry: registry, Policy: pol})
-	_, err = exec.Run(t.Context(), nil)
+	_, err = exec.Run(t.Context(), executor.RunOptions{})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -191,7 +191,7 @@ RUN main USING write_sensitive
 	registry := testkit.Registry(t, pol, tmpDir)
 
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider, Registry: registry, Policy: pol})
-	_, err = exec.Run(t.Context(), nil)
+	_, err = exec.Run(t.Context(), executor.RunOptions{})
 	// Should complete (policy error is reported to LLM, not fatal)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -254,7 +254,7 @@ RUN main USING review
 	})
 
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider})
-	result, err := exec.Run(t.Context(), nil)
+	result, err := exec.Run(t.Context(), executor.RunOptions{})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -318,7 +318,7 @@ RUN main USING research
 	registry := testkit.Registry(t, testkit.PermissivePolicy(), tmpDir)
 
 	exec := testkit.Executor(t, executor.Config{Workflow: wf, Model: provider, Registry: registry})
-	result, err := exec.Run(t.Context(), nil)
+	result, err := exec.Run(t.Context(), executor.RunOptions{})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}

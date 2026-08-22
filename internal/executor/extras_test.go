@@ -55,7 +55,7 @@ func TestSkillActivation_LoadsAndInjectsContext(t *testing.T) {
 	var loaded string
 	exec.Hooks().On(hooks.SkillLoaded, func(_ context.Context, evt hooks.Event) { loaded = evt.Data["name"].(string) })
 
-	res, err := exec.Run(context.Background(), nil)
+	res, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil || res.Outputs["g"] != "done with skill" {
 		t.Fatalf("got %+v %v", res, err)
 	}
@@ -68,14 +68,14 @@ func TestSkillActivation_LoadsAndInjectsContext(t *testing.T) {
 	}
 
 	// Second activation is served from the cache; unknown/broken skills are ignored.
-	if exec.checkSkillActivation("[use-skill:code-review]") == nil {
+	if exec.checkSkillActivation(t.Context(), "[use-skill:code-review]") == nil {
 		t.Error("expected cached skill")
 	}
-	if exec.checkSkillActivation("[use-skill:unknown]") != nil {
+	if exec.checkSkillActivation(t.Context(), "[use-skill:unknown]") != nil {
 		t.Error("unknown skill must not activate")
 	}
 	exec.skillRefs = append(exec.skillRefs, skills.SkillRef{Name: "broken", Path: t.TempDir()})
-	if exec.checkSkillActivation("[use-skill:broken]") != nil {
+	if exec.checkSkillActivation(t.Context(), "[use-skill:broken]") != nil {
 		t.Error("unloadable skill must not activate")
 	}
 }
@@ -98,11 +98,11 @@ func TestStructuredOutputHelpers(t *testing.T) {
 	if buildStructuredOutputInstruction(nil) != "" {
 		t.Error("no outputs => no instruction")
 	}
-	got, err := parseStructuredOutput("plain text answer", []string{"a", "b"})
-	if err != nil || got["a"] != "plain text answer" || got["b"] != "plain text answer" {
-		t.Errorf("plain-text fallback: %v %v", got, err)
+	got := parseStructuredOutput("plain text answer", []string{"a", "b"})
+	if got["a"] != "plain text answer" || got["b"] != "plain text answer" {
+		t.Errorf("plain-text fallback: %v", got)
 	}
-	got, _ = parseStructuredOutput(`{"a": 1}`, []string{"a", "missing"})
+	got = parseStructuredOutput(`{"a": 1}`, []string{"a", "missing"})
 	if got["a"] != "1" {
 		t.Errorf("non-string field: %v", got)
 	}
@@ -166,7 +166,7 @@ func TestRecordLLMMetrics(t *testing.T) {
 	exec := mustNewExecutor(t, &agentfile.Workflow{Name: "x"}, llmmock.New(), nil, nil)
 	exec.recordLLMMetrics(&llm.ChatResponse{}, time.Millisecond) // no collector
 	m := &recordingMetrics{}
-	exec.SetMetricsCollector(m)
+	exec.metricsCollector = m
 	exec.recordLLMMetrics(nil, time.Millisecond) // nil response
 	exec.recordLLMMetrics(&llm.ChatResponse{InputTokens: 1}, time.Millisecond)
 }
@@ -180,7 +180,7 @@ func TestExecuteSimpleParallel_AgentErrorAndSynthesisError(t *testing.T) {
 	}
 	// Profile resolution failure surfaces as the goal error.
 	exec := mustNew(t, Config{Workflow: wf, Model: llmmock.New(), Resolver: fakeResolver{err: errors.New("no such profile")}})
-	if _, err := exec.Run(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "no such profile") {
+	if _, err := exec.Run(context.Background(), RunOptions{}); err == nil || !strings.Contains(err.Error(), "no such profile") {
 		t.Fatalf("expected profile error, got %v", err)
 	}
 
@@ -194,7 +194,7 @@ func TestExecuteSimpleParallel_AgentErrorAndSynthesisError(t *testing.T) {
 		return &llm.ChatResponse{Content: "agent"}, nil
 	})
 	exec = mustNew(t, Config{Workflow: wf, Model: model, Resolver: fakeResolver{models: map[string]llm.Model{"fast": fast, "": model}}})
-	if _, err := exec.Run(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "synthesis down") {
+	if _, err := exec.Run(context.Background(), RunOptions{}); err == nil || !strings.Contains(err.Error(), "synthesis down") {
 		t.Fatalf("expected synthesis error, got %v", err)
 	}
 
@@ -206,7 +206,7 @@ func TestExecuteSimpleParallel_AgentErrorAndSynthesisError(t *testing.T) {
 		Goals:  []agentfile.Goal{{Name: "g", Outcome: "Work", UsingAgent: []string{"only"}}},
 	}
 	exec = mustNew(t, Config{Workflow: single, Model: model})
-	res, err := exec.Run(context.Background(), nil)
+	res, err := exec.Run(context.Background(), RunOptions{})
 	if err != nil || res.Outputs["g"] != "agent" {
 		t.Fatalf("got %+v %v", res, err)
 	}

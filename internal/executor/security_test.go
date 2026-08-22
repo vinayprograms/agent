@@ -14,7 +14,10 @@ import (
 )
 
 // recordingMetrics captures RecordSupervision outcomes.
-type recordingMetrics struct{ approved, denied int }
+type recordingMetrics struct {
+	approved, denied int
+	maxSubagents     int
+}
 
 func (m *recordingMetrics) RecordLLMCall(int, int, int, int, int64) {}
 func (m *recordingMetrics) RecordSupervision(approved bool) {
@@ -24,7 +27,7 @@ func (m *recordingMetrics) RecordSupervision(approved bool) {
 		m.denied++
 	}
 }
-func (m *recordingMetrics) SetSubagents(int) {}
+func (m *recordingMetrics) SetSubagents(n int) { m.maxSubagents = max(m.maxSubagents, n) }
 
 // newSecuredExecutor builds an executor with a session and a content guard.
 func newSecuredExecutor(t *testing.T, sec *SecurityConfig) (*Executor, *session.Session) {
@@ -90,7 +93,7 @@ func TestVerifyToolCall_NoUntrustedContentAllows(t *testing.T) {
 func TestVerifyToolCall_EscalationDenied(t *testing.T) {
 	exec, sess := newSecuredExecutor(t, &SecurityConfig{})
 	metrics := &recordingMetrics{}
-	exec.SetMetricsCollector(metrics)
+	exec.metricsCollector = metrics
 	exec.AddUntrustedContent(context.Background(), injected, "tool:web_fetch")
 
 	_, err := exec.verifyToolCall(context.Background(), "bash", map[string]any{"command": "ls"})
@@ -137,7 +140,7 @@ func TestVerifyToolCall_ScreenerBenignAllows(t *testing.T) {
 	screener.SetTokenCounts(11, 2)
 	exec, sess := newSecuredExecutor(t, &SecurityConfig{Screener: screener})
 	metrics := &recordingMetrics{}
-	exec.SetMetricsCollector(metrics)
+	exec.metricsCollector = metrics
 	exec.AddUntrustedContent(context.Background(), injected, "tool:web_fetch")
 
 	if _, err := exec.verifyToolCall(context.Background(), "bash", map[string]any{"command": "ls"}); err != nil {
@@ -315,7 +318,7 @@ func TestVerifyToolCall_CorrelatesArgsWithBlocks(t *testing.T) {
 	const page = "see https://docs.example.com/very/long/path/to/resource.html for details"
 	exec.AddUntrustedContent(ctx, page, "tool:web_fetch")
 	// Derived content tainted by the page.
-	exec.AddUntrustedContentWithTaint(ctx, "summary of the page", "llm:summary", []string{"b0002"})
+	exec.AddUntrustedContent(ctx, "summary of the page", "llm:summary", "b0002")
 
 	related, err := exec.verifyToolCall(ctx, "web_fetch", map[string]any{"url": "https://docs.example.com/very/long/path/to/resource.html"})
 	if err != nil {

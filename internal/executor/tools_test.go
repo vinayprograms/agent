@@ -264,11 +264,14 @@ func TestExecuteAsyncTool_RecoversPanic(t *testing.T) {
 }
 
 func TestToolClassification(t *testing.T) {
-	if !isAsyncTool("remember") || !isAsyncTool("scratchpad_write") || isAsyncTool("read") {
-		t.Error("async classification")
-	}
-	if !isSerializeTool("bash") || !isSerializeTool("spawn_agents") || isSerializeTool("read") {
-		t.Error("serialize classification")
+	for name, want := range map[string]schedule{
+		"remember": async, "scratchpad_write": async,
+		"bash": serial, "write": serial, "spawn_agents": serial,
+		"read": parallel, "web_fetch": parallel,
+	} {
+		if got := scheduleOf(name); got != want {
+			t.Errorf("scheduleOf(%q) = %v, want %v", name, got, want)
+		}
 	}
 	if !isExternalTool("web_fetch") || isExternalTool("read") {
 		t.Error("external classification")
