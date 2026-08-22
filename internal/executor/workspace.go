@@ -1,10 +1,12 @@
 package executor
 
 import (
+	"cmp"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -110,19 +112,11 @@ func extractProjectMeta(root string) string {
 
 	// Node: extract name from package.json
 	if data, err := os.ReadFile(filepath.Join(root, "package.json")); err == nil {
-		// Simple extraction without JSON parsing to keep it lightweight
-		content := string(data)
-		if idx := strings.Index(content, `"name"`); idx >= 0 {
-			rest := content[idx:]
-			if start := strings.Index(rest, `"`); start >= 0 {
-				rest = rest[start+1:]
-				if start = strings.Index(rest, `"`); start >= 0 {
-					rest = rest[start+1:]
-					if end := strings.Index(rest, `"`); end >= 0 {
-						parts = append(parts, "Package: "+rest[:end])
-					}
-				}
-			}
+		var pkg struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(data, &pkg) == nil && pkg.Name != "" {
+			parts = append(parts, "Package: "+pkg.Name)
 		}
 	}
 
@@ -163,8 +157,7 @@ func extractProjectMeta(root string) string {
 // buildTreeListing produces a compact directory tree listing.
 // Only includes directories and key files, skipping hidden dirs and vendored deps.
 func buildTreeListing(root string, maxDepth int) string {
-	var lines []string
-	buildTreeLines(root, root, 0, maxDepth, &lines)
+	lines := buildTreeLines(root, 0, maxDepth)
 	if len(lines) == 0 {
 		return ""
 	}
@@ -205,14 +198,16 @@ var keyFiles = map[string]bool{
 	"LICENSE":             true,
 }
 
-func buildTreeLines(root, dir string, depth, maxDepth int, lines *[]string) {
+// buildTreeLines lists dir's directories (recursively, to maxDepth) and, at
+// the root only, its key files.
+func buildTreeLines(dir string, depth, maxDepth int) []string {
 	if depth > maxDepth {
-		return
+		return nil
 	}
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return
+		return nil
 	}
 
 	// Separate dirs and files, sort alphabetically
@@ -232,28 +227,31 @@ func buildTreeLines(root, dir string, depth, maxDepth int, lines *[]string) {
 		}
 	}
 
-	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name() < dirs[j].Name() })
-	sort.Slice(files, func(i, j int) bool { return files[i].Name() < files[j].Name() })
+	byName := func(a, b os.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) }
+	slices.SortFunc(dirs, byName)
+	slices.SortFunc(files, byName)
 
 	indent := strings.Repeat("  ", depth)
 
-	// List directories (cap at 15 per level to keep output concise)
-	maxShow := 15
+	// List directories, capped per level to keep the listing concise.
+	const maxShow = 15
+	var lines []string
 	for i, d := range dirs {
 		if i >= maxShow {
-			*lines = append(*lines, fmt.Sprintf("%s... and %d more directories", indent, len(dirs)-maxShow))
+			lines = append(lines, fmt.Sprintf("%s... and %d more directories", indent, len(dirs)-maxShow))
 			break
 		}
-		*lines = append(*lines, fmt.Sprintf("%s%s/", indent, d.Name()))
-		buildTreeLines(root, filepath.Join(dir, d.Name()), depth+1, maxDepth, lines)
+		lines = append(lines, fmt.Sprintf("%s%s/", indent, d.Name()))
+		lines = append(lines, buildTreeLines(filepath.Join(dir, d.Name()), depth+1, maxDepth)...)
 	}
 
-	// Only list key files at root level; skip files at deeper levels
+	// Key files are listed at the root only.
 	if depth == 0 {
 		for _, f := range files {
 			if keyFiles[f.Name()] {
-				*lines = append(*lines, fmt.Sprintf("%s%s", indent, f.Name()))
+				lines = append(lines, indent+f.Name())
 			}
 		}
 	}
+	return lines
 }
