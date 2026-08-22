@@ -490,3 +490,54 @@ func TestRun_ExecutorErrorMarksSessionFailed(t *testing.T) {
 		t.Fatal("expected the executor error")
 	}
 }
+
+func TestNew_AccessorsAndClose(t *testing.T) {
+	l := testWorkflow(t, nil)
+	var out, errBuf strings.Builder
+	rt, err := New(t.Context(), l, Deps{Creds: credentials.NewEnvStore(), Stdout: &out, Stderr: &errBuf, Version: "v1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer rt.Close()
+
+	if rt.Executor() == nil || rt.Registry() == nil || rt.Policy() != l.Policy || rt.Session() == nil {
+		t.Error("accessors should expose the wired components")
+	}
+	if !strings.Contains(errBuf.String(), "🧠 Memory") {
+		t.Errorf("status lines should reach the injected stderr: %q", errBuf.String())
+	}
+
+	// New reports setup failures rather than returning a half-built runtime.
+	broken := testWorkflow(t, func(c *config.Config) { c.LLM.Model = "" })
+	if _, err := New(t.Context(), broken, Deps{Creds: credentials.NewEnvStore()}); err == nil {
+		t.Error("expected a setup error")
+	}
+}
+
+func TestDeferredMetrics(t *testing.T) {
+	var d deferredMetrics
+	// The zero value drops every metric.
+	d.RecordLLMCall(1, 2, 3, 4, 5)
+	d.RecordSupervision(true)
+	d.SetSubagents(2)
+
+	spy := &metricsSpy{}
+	d.set(spy)
+	d.RecordLLMCall(1, 2, 3, 4, 5)
+	d.RecordSupervision(true)
+	d.SetSubagents(2)
+	if spy.llm != 1 || spy.supervision != 1 || spy.subagents != 2 {
+		t.Errorf("metrics not forwarded: %+v", spy)
+	}
+}
+
+// metricsSpy counts the metrics forwarded to it.
+type metricsSpy struct {
+	llm         int
+	supervision int
+	subagents   int
+}
+
+func (m *metricsSpy) RecordLLMCall(_, _, _, _ int, _ int64) { m.llm++ }
+func (m *metricsSpy) RecordSupervision(bool)                { m.supervision++ }
+func (m *metricsSpy) SetSubagents(n int)                    { m.subagents = n }
