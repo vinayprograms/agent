@@ -340,7 +340,7 @@ func New(cfg Config) (*Executor, error) {
 			Supervisor: e.supervisor,
 			Logger:     e.logger,
 			Phase:      &phaseLoggerAdapter{e: e},
-			OnEvent: func(stepID string, phase string, data any) {
+			Event: func(stepID string, phase string, data any) {
 				e.hooks.Fire(context.Background(), hooks.SupervisionEvent, map[string]any{
 					"step_id": stepID, "phase": phase, "data": data,
 				})
@@ -685,18 +685,20 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			Supervised:    supervised,
 			HumanRequired: humanRequired,
 		},
-		// COMMIT: declare intent
-		func(ctx context.Context) *checkpoint.PreCheckpoint {
-			return e.commitPhase(ctx, goal, prompt)
-		},
-		// EXECUTE: do the work
-		func(ctx context.Context) (*supervision.ExecuteResult, error) {
-			output, toolsUsed, toolCallsMade, err := e.executePhase(ctx, goal, prompt)
-			return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed, ToolCallsMade: toolCallsMade}, err
-		},
-		// POST-CHECKPOINT: self-assessment
-		func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
-			return e.createPostCheckpoint(ctx, goal, pre, output, toolsUsed)
+		supervision.Work{
+			// COMMIT: declare intent
+			Commit: func(ctx context.Context) *checkpoint.PreCheckpoint {
+				return e.commitPhase(ctx, goal, prompt)
+			},
+			// EXECUTE: do the work
+			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
+				output, toolsUsed, toolCallsMade, err := e.executePhase(ctx, goal, prompt)
+				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed, ToolCallsMade: toolCallsMade}, err
+			},
+			// POST-CHECKPOINT: self-assessment
+			Post: func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
+				return e.createPostCheckpoint(ctx, goal, pre, output, toolsUsed)
+			},
 		},
 	)
 	if err != nil {

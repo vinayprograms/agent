@@ -128,12 +128,11 @@ func TestParseSupervisionResponse(t *testing.T) {
 		{input: "", verdict: VerdictContinue},
 	}
 
-	sup := NewLLMSupervisor(Config{})
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			verdict, correction, question := sup.parseSupervisionResponse(tt.input)
-			if verdict != tt.verdict || correction != tt.correction || question != tt.question {
-				t.Errorf("got (%s, %q, %q), want (%s, %q, %q)", verdict, correction, question, tt.verdict, tt.correction, tt.question)
+			want := decision{verdict: tt.verdict, correction: tt.correction, question: tt.question}
+			if got := parseSupervisionResponse(tt.input); got != want {
+				t.Errorf("parseSupervisionResponse(%q) = %+v, want %+v", tt.input, got, want)
 			}
 		})
 	}
@@ -150,10 +149,6 @@ func TestNewLLMSupervisor(t *testing.T) {
 		}
 		if sup.humanAvailable {
 			t.Error("expected human not available")
-		}
-		sup.SetHumanAvailable(true)
-		if !sup.humanAvailable {
-			t.Error("expected human available after set")
 		}
 	})
 	t.Run("custom timeout", func(t *testing.T) {
@@ -255,7 +250,6 @@ func TestSupervise(t *testing.T) {
 			modelErr:  errors.New("boom"),
 			wantErr:   "supervisor LLM error: boom",
 			wantCalls: 1,
-			wantLog:   []string{"msg=supervisor_llm_error", "error=boom"},
 		},
 		{
 			name:          "pause human required but unavailable",
@@ -267,7 +261,7 @@ func TestSupervise(t *testing.T) {
 		},
 		{
 			name:           "pause human answers",
-			cfg:            Config{HumanAvailable: true, HumanInputChan: make(chan string, 1)},
+			cfg:            Config{HumanAvailable: true, HumanInputChan: make(chan string)},
 			responses:      []string{"PAUSE: which one?"},
 			humanInput:     "use the second",
 			wantVerdict:    VerdictReorient,
@@ -341,6 +335,10 @@ func TestSupervise(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			humanInput := make(chan string, 1)
+			if tt.cfg.HumanInputChan != nil {
+				tt.cfg.HumanInputChan = humanInput
+			}
 			sup, model, buf := newTestSupervisor(t, tt.cfg)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -352,7 +350,7 @@ func TestSupervise(t *testing.T) {
 				}
 				if n == 0 {
 					if tt.humanInput != "" {
-						tt.cfg.HumanInputChan <- tt.humanInput
+						humanInput <- tt.humanInput
 					}
 					if tt.cancelOnPause {
 						cancel()

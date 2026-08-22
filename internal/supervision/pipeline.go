@@ -21,21 +21,11 @@ type PhaseLogger interface {
 	LogCheckpoint(checkpointType, goal, step, checkpointID string)
 }
 
-// CommitResult is returned by the caller-supplied commit function.
-type CommitResult struct {
-	Pre *checkpoint.PreCheckpoint
-}
-
 // ExecuteResult is returned by the caller-supplied execute function.
 type ExecuteResult struct {
 	Output        string
 	ToolsUsed     []string
 	ToolCallsMade bool // only meaningful for goal execution
-}
-
-// PostCheckpointResult is returned by the caller-supplied post-checkpoint function.
-type PostCheckpointResult struct {
-	Post *checkpoint.PostCheckpoint
 }
 
 // Store is what the pipeline needs from a checkpoint store; *checkpoint.Store
@@ -55,7 +45,7 @@ type PipelineConfig struct {
 	Supervisor Supervisor
 	Logger     *slog.Logger // warnings (store failures); nil means slog.Default()
 	Phase      PhaseLogger  // phase-level session logging
-	OnEvent    EventHook    // optional event callback
+	Event      EventHook    // optional event callback
 }
 
 // PipelineRequest contains the inputs for a single pipeline run.
@@ -78,12 +68,22 @@ type PipelineResult struct {
 	Question   string  // non-empty for PAUSE
 }
 
+// Work is the caller-supplied half of a pipeline run: how to declare intent,
+// do the work, and self-assess. These differ across goal types and
+// sub-agents; the pipeline supplies the common save/log/event/reconcile/
+// supervise flow around them.
+type Work struct {
+	// Commit declares intent before execution. A nil result skips supervision.
+	Commit func(ctx context.Context) *checkpoint.PreCheckpoint
+	// Execute performs the actual work.
+	Execute func(ctx context.Context) (*ExecuteResult, error)
+	// Post creates a self-assessment after execution. A nil result skips
+	// reconcile and supervise.
+	Post func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint
+}
+
 // Pipeline manages the four-phase supervision flow:
 // COMMIT -> EXECUTE -> RECONCILE -> SUPERVISE.
-//
-// The actual commit, execute, and post-checkpoint logic is provided by the
-// caller as functions, since these differ across goal types and sub-agents.
-// The pipeline handles the common save/log/event/reconcile/supervise flow.
 type Pipeline struct {
 	cfg PipelineConfig
 }
@@ -97,30 +97,14 @@ func NewPipeline(cfg PipelineConfig) *Pipeline {
 	return &Pipeline{cfg: cfg}
 }
 
-// CommitFunc declares intent before execution. Returns nil PreCheckpoint on failure.
-type CommitFunc func(ctx context.Context) *checkpoint.PreCheckpoint
-
-// ExecuteFunc performs the actual work.
-type ExecuteFunc func(ctx context.Context) (*ExecuteResult, error)
-
-// PostCheckpointFunc creates a self-assessment after execution.
-type PostCheckpointFunc func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint
-
-// Run executes the full supervision pipeline around the given work functions.
+// Run executes the full supervision pipeline around work.
 //
-// If not supervised (or infrastructure is missing), it just calls execute directly.
+// If not supervised (or infrastructure is missing), it just calls work.Execute.
 // If supervised, it runs: COMMIT -> EXECUTE -> RECONCILE -> (optionally) SUPERVISE.
 //
 // The caller is responsible for handling the verdict in PipelineResult
 // (e.g., re-executing with a correction for REORIENT, or returning an error for PAUSE).
-func (p *Pipeline) Run(
-	ctx context.Context,
-	req PipelineRequest,
-	commit CommitFunc,
-	execute ExecuteFunc,
-	postCheckpoint PostCheckpointFunc,
-) (*PipelineResult, error) {
-
+func (p *Pipeline) Run(ctx context.Context, req PipelineRequest, work Work) (*PipelineResult, error) {
 	supervised := req.Supervised && p.cfg.Supervisor != nil && p.cfg.Store != nil
 
 	// ============================================
@@ -128,7 +112,7 @@ func (p *Pipeline) Run(
 	// ============================================
 	var pre *checkpoint.PreCheckpoint
 	if supervised {
-		pre = commit(ctx)
+		pre = work.Commit(ctx)
 		if pre != nil {
 			if err := p.cfg.Store.SavePre(pre); err != nil {
 				p.warn("failed to save pre-checkpoint", req.StepID, err)
@@ -142,7 +126,7 @@ func (p *Pipeline) Run(
 	// ============================================
 	// PHASE 2: EXECUTE - Do the work
 	// ============================================
-	execResult, execErr := execute(ctx)
+	execResult, execErr := work.Execute(ctx)
 	if execErr != nil {
 		result := &PipelineResult{Verdict: VerdictContinue}
 		if execResult != nil {
@@ -160,7 +144,7 @@ func (p *Pipeline) Run(
 	// Create post-checkpoint with self-assessment
 	var post *checkpoint.PostCheckpoint
 	if supervised && pre != nil {
-		post = postCheckpoint(ctx, pre, output, toolsUsed)
+		post = work.Post(ctx, pre, output, toolsUsed)
 		if post != nil {
 			if err := p.cfg.Store.SavePost(post); err != nil {
 				p.warn("failed to save post-checkpoint", req.StepID, err)
@@ -252,8 +236,8 @@ func (p *Pipeline) Run(
 }
 
 func (p *Pipeline) fireEvent(stepID, phase string, data any) {
-	if p.cfg.OnEvent != nil {
-		p.cfg.OnEvent(stepID, phase, data)
+	if p.cfg.Event != nil {
+		p.cfg.Event(stepID, phase, data)
 	}
 }
 
