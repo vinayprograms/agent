@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -178,9 +179,15 @@ Instructions.
 	os.MkdirAll(otherDir, 0755)
 	os.WriteFile(filepath.Join(otherDir, "README.md"), []byte("not a skill"), 0644)
 
-	refs, err := Discover(tmpDir)
+	// Plain files at the top level are ignored.
+	os.WriteFile(filepath.Join(tmpDir, "notes.txt"), []byte("x"), 0644)
+
+	refs, invalid, err := Discover(tmpDir)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
+	}
+	if len(invalid) != 0 {
+		t.Errorf("Discover invalid = %v, want none", invalid)
 	}
 
 	if len(refs) != 2 {
@@ -203,7 +210,7 @@ Instructions.
 func TestDiscoverEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	refs, err := Discover(tmpDir)
+	refs, _, err := Discover(tmpDir)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -214,7 +221,7 @@ func TestDiscoverEmpty(t *testing.T) {
 }
 
 func TestDiscoverNonexistent(t *testing.T) {
-	refs, err := Discover("/nonexistent/path")
+	refs, _, err := Discover("/nonexistent/path")
 	if err != nil {
 		t.Fatalf("Discover should not error for nonexistent path: %v", err)
 	}
@@ -255,7 +262,10 @@ Use the scripts.
 		t.Errorf("expected 2 scripts, got %d", len(scripts))
 	}
 
-	scriptPath := skill.ScriptPath("run.sh")
+	scriptPath, err := skill.ScriptPath("run.sh")
+	if err != nil {
+		t.Fatalf("ScriptPath: %v", err)
+	}
 	expectedPath := filepath.Join(scriptsDir, "run.sh")
 	if scriptPath != expectedPath {
 		t.Errorf("expected script path %q, got %q", expectedPath, scriptPath)
@@ -290,5 +300,122 @@ See references.
 
 	if content != "# Reference\n\nDetailed docs." {
 		t.Errorf("unexpected reference content: %q", content)
+	}
+}
+
+func TestParseErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"no delimiter", "name: x\n"},
+		{"unclosed", "---\nname: x\n"},
+		{"bad yaml", "---\nname: [\n---\nbody"},
+		{"bad name", "---\nname: Bad_Name\ndescription: d\n---\nbody"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Parse(tt.content); err == nil {
+				t.Errorf("Parse(%q) = nil error, want error", tt.content)
+			}
+		})
+	}
+}
+
+func TestParseNoBody(t *testing.T) {
+	skill, err := Parse("---\nname: x\ndescription: d\n---")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if skill.Instructions != "" {
+		t.Errorf("Instructions = %q, want empty", skill.Instructions)
+	}
+}
+
+func TestLoadErrors(t *testing.T) {
+	if _, err := Load(filepath.Join(t.TempDir(), "nope")); err == nil {
+		t.Error("Load(missing) = nil error, want error")
+	}
+	bad := filepath.Join(t.TempDir(), "bad")
+	os.MkdirAll(bad, 0755)
+	os.WriteFile(filepath.Join(bad, "SKILL.md"), []byte("no frontmatter"), 0644)
+	if _, err := Load(bad); err == nil {
+		t.Error("Load(unparseable) = nil error, want error")
+	}
+}
+
+func TestDiscoverInvalid(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeSkill := func(dir, frontmatter string) {
+		t.Helper()
+		os.MkdirAll(filepath.Join(tmpDir, dir), 0755)
+		os.WriteFile(filepath.Join(tmpDir, dir, "SKILL.md"), []byte(frontmatter), 0644)
+	}
+	writeSkill("good", "---\nname: good\ndescription: ok\n---\nbody")
+	writeSkill("bad-yaml", "---\nname: [\n---\nbody")
+	// SKILL.md that is a directory: opens, but cannot be scanned.
+	os.MkdirAll(filepath.Join(tmpDir, "dir-skill", "SKILL.md"), 0755)
+	// Unreadable SKILL.md.
+	writeSkill("unreadable", "---\nname: unreadable\ndescription: d\n---")
+	os.Chmod(filepath.Join(tmpDir, "unreadable", "SKILL.md"), 0)
+
+	refs, invalid, err := Discover(tmpDir)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(refs) != 1 || refs[0].Name != "good" {
+		t.Errorf("Discover refs = %+v, want only good", refs)
+	}
+	if len(invalid) != 3 {
+		t.Errorf("Discover invalid = %v, want 3 errors", invalid)
+	}
+	for _, e := range invalid {
+		if !strings.Contains(e.Error(), tmpDir) {
+			t.Errorf("invalid error %q does not name the skill path", e)
+		}
+	}
+}
+
+func TestDiscoverNotADir(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	os.WriteFile(file, []byte("x"), 0644)
+	if _, _, err := Discover(file); err == nil {
+		t.Error("Discover(file) = nil error, want error")
+	}
+}
+
+func TestListScriptsError(t *testing.T) {
+	skillDir := t.TempDir()
+	os.WriteFile(filepath.Join(skillDir, "scripts"), []byte("not a dir"), 0644)
+	skill := &Skill{Path: skillDir}
+	if _, err := skill.ListScripts(); err == nil {
+		t.Error("ListScripts with scripts file = nil error, want error")
+	}
+	if scripts, err := (&Skill{Path: filepath.Join(skillDir, "none")}).ListScripts(); err != nil || scripts != nil {
+		t.Errorf("ListScripts(no dir) = %v, %v; want nil, nil", scripts, err)
+	}
+}
+
+func TestReadReferenceMissing(t *testing.T) {
+	skill := &Skill{Path: t.TempDir()}
+	if _, err := skill.ReadReference("nope.md"); err == nil {
+		t.Error("ReadReference(missing) = nil error, want error")
+	}
+}
+
+func TestPathTraversalRejected(t *testing.T) {
+	skill := &Skill{Path: t.TempDir()}
+	for _, name := range []string{"", "../SKILL.md", "../../etc/passwd", "..", "/etc/passwd", "sub/../../x"} {
+		if _, err := skill.ReadReference(name); err == nil {
+			t.Errorf("ReadReference(%q) = nil error, want rejection", name)
+		}
+		if _, err := skill.ScriptPath(name); err == nil {
+			t.Errorf("ScriptPath(%q) = nil error, want rejection", name)
+		}
+	}
+	// Nested names that stay inside the directory are fine.
+	got, err := skill.ScriptPath("sub/../run.sh")
+	if want := filepath.Join(skill.Path, "scripts", "run.sh"); err != nil || got != want {
+		t.Errorf("ScriptPath(sub/../run.sh) = %q, %v; want %q", got, err, want)
 	}
 }
