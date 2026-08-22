@@ -24,7 +24,7 @@ func TestResolveStoragePath_Default(t *testing.T) {
 	}
 	rt.resolveStoragePath()
 
-	expected := filepath.Join(home, ".local", "grid")
+	expected := config.DefaultStateDir(home)
 	if rt.storagePath != expected {
 		t.Errorf("expected %q, got %q", expected, rt.storagePath)
 	}
