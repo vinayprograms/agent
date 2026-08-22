@@ -120,7 +120,6 @@ type Executor struct {
 
 	// Session logging
 	session               *session.Session
-	sessionManager        session.SessionManager
 	persistentSession     bool // When true, Run() does not close the session (serve mode)
 	currentGoal           string
 	currentGoalSupervised bool // Whether the current goal is supervised (inherited by sub-agents)
@@ -236,21 +235,6 @@ func (e *Executor) ClearDiscussPublisher() {
 	e.discussPublisher = nil
 }
 
-// SetEventPublisher attaches a callback that fires for every session event.
-// Used by swarm mode to publish structured events to NATS in real time.
-func (e *Executor) SetEventPublisher(fn func(event session.Event)) {
-	if e.session != nil {
-		e.session.OnEvent = fn
-	}
-}
-
-// ClearEventPublisher removes the event publisher.
-func (e *Executor) ClearEventPublisher() {
-	if e.session != nil {
-		e.session.OnEvent = nil
-	}
-}
-
 // publishToDiscuss calls the discuss publisher if set.
 func (e *Executor) publishToDiscuss(goalName, content string) {
 	if e.discussPublisher != nil && content != "" {
@@ -297,7 +281,6 @@ func New(cfg Config) (*Executor, error) {
 		skillRefs:            cfg.SkillRefs,
 		loadedSkills:         make(map[string]*skills.Skill),
 		session:              cfg.Session,
-		sessionManager:       cfg.SessionManager,
 		persistentSession:    cfg.PersistentSession,
 		outputs:              make(map[string]string),
 		checkpointStore:      cfg.CheckpointStore,
@@ -326,11 +309,6 @@ func New(cfg Config) (*Executor, error) {
 			return nil, err
 		}
 		e.guard = guard
-	}
-
-	// Start session writer if session + manager provided.
-	if e.session != nil && e.sessionManager != nil {
-		e.session.Start(e.sessionManager)
 	}
 
 	// Build supervision pipeline if both store and supervisor are available.

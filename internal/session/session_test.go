@@ -1,497 +1,391 @@
-// Package session provides session management and persistence.
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
-// R7.1.1: Create new session for workflow run
-func TestSession_Create(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
+func mustOpen(t *testing.T, dir string, sink Sink) *Recorder {
+	t.Helper()
+	rec, err := Open(dir, sink)
 	if err != nil {
-		t.Fatalf("create store error: %v", err)
+		t.Fatalf("Open(%q) error: %v", dir, err)
 	}
-	mgr := NewManager(store)
-
-	sess, err := mgr.Create("test-workflow", map[string]string{"input1": "value1"})
-	if err != nil {
-		t.Fatalf("create error: %v", err)
-	}
-
-	if sess.ID == "" {
-		t.Error("session ID should not be empty")
-	}
-	if sess.WorkflowName != "test-workflow" {
-		t.Errorf("expected workflow name 'test-workflow', got %s", sess.WorkflowName)
-	}
-	if sess.Status != StatusRunning {
-		t.Errorf("expected status Running, got %s", sess.Status)
-	}
-	if sess.Inputs["input1"] != "value1" {
-		t.Errorf("expected input1='value1', got %s", sess.Inputs["input1"])
-	}
+	return rec
 }
 
-// R7.1.2: Generate unique session ID
-func TestSession_UniqueIDs(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
+// eventsOnDisk reads back the session file and returns its event types.
+func eventsOnDisk(t *testing.T, rec *Recorder, id string) []string {
+	t.Helper()
+	s, err := rec.Get(id)
 	if err != nil {
-		t.Fatalf("create store error: %v", err)
+		t.Fatalf("Get(%q) error: %v", id, err)
 	}
-	mgr := NewManager(store)
+	types := make([]string, len(s.Events))
+	for i, e := range s.Events {
+		types[i] = e.Type
+	}
+	return types
+}
 
-	ids := make(map[string]bool)
-	for i := 0; i < 100; i++ {
-		sess, _ := mgr.Create("workflow", nil)
-		if ids[sess.ID] {
-			t.Errorf("duplicate session ID: %s", sess.ID)
+func TestOpen(t *testing.T) {
+	t.Run("creates dir", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "a", "b")
+		mustOpen(t, dir, nil)
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			t.Errorf("Open did not create %s: %v", dir, err)
 		}
-		ids[sess.ID] = true
-	}
+	})
+	t.Run("error", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "f")
+		os.WriteFile(file, nil, 0o644)
+		if _, err := Open(filepath.Join(file, "x"), nil); err == nil {
+			t.Error("Open under a file: want error")
+		}
+	})
 }
 
-// R7.1.5: Mark session complete or failed
-func TestSession_Complete(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
-	}
-	mgr := NewManager(store)
-
-	sess, _ := mgr.Create("workflow", nil)
-	
-	sess.Status = StatusComplete
-	sess.Result = "result data"
-	err = mgr.Update(sess)
-	if err != nil {
-		t.Fatalf("update error: %v", err)
-	}
-
-	loaded, _ := mgr.Get(sess.ID)
-	if loaded.Status != StatusComplete {
-		t.Errorf("expected status Complete, got %s", loaded.Status)
-	}
-	if loaded.Result != "result data" {
-		t.Errorf("expected result 'result data', got %s", loaded.Result)
-	}
-}
-
-func TestSession_Fail(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
-	}
-	mgr := NewManager(store)
-
-	sess, _ := mgr.Create("workflow", nil)
-	
-	sess.Status = StatusFailed
-	sess.Error = "something went wrong"
-	err = mgr.Update(sess)
-	if err != nil {
-		t.Fatalf("update error: %v", err)
-	}
-
-	loaded, _ := mgr.Get(sess.ID)
-	if loaded.Status != StatusFailed {
-		t.Errorf("expected status Failed, got %s", loaded.Status)
-	}
-	if loaded.Error != "something went wrong" {
-		t.Errorf("expected error 'something went wrong', got %s", loaded.Error)
-	}
-}
-
-// R7.2.1: Persist execution state after each goal
-func TestSession_UpdateState(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
-	}
-	mgr := NewManager(store)
-
-	sess, _ := mgr.Create("workflow", nil)
-	
-	sess.State["goal1"] = "result1"
-	sess.State["iteration"] = 5
-	err = mgr.Update(sess)
-	if err != nil {
-		t.Fatalf("update state error: %v", err)
-	}
-
-	loaded, _ := mgr.Get(sess.ID)
-	if loaded.State["goal1"] != "result1" {
-		t.Errorf("expected goal1='result1', got %v", loaded.State["goal1"])
-	}
-}
-
-// R7.2.2: Persist events (formerly messages)
-func TestSession_AddEvent(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
-	}
-	mgr := NewManager(store)
-
-	sess, _ := mgr.Create("workflow", nil)
-	
-	event := Event{
-		Type:      EventUser,
-		Content:   "Hello",
-		Goal:      "goal1",
-		Timestamp: time.Now(),
-	}
-	err = mgr.AddEvent(sess.ID, event)
-	if err != nil {
-		t.Fatalf("add event error: %v", err)
-	}
-
-	loaded, _ := mgr.Get(sess.ID)
-	if len(loaded.Events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(loaded.Events))
-	}
-	if loaded.Events[0].Type != EventUser {
-		t.Errorf("expected type 'user', got %s", loaded.Events[0].Type)
-	}
-	if loaded.Events[0].Content != "Hello" {
-		t.Errorf("expected content 'Hello', got %s", loaded.Events[0].Content)
-	}
-}
-
-// R7.2.3: Persist tool call events
-func TestSession_AddToolCallEvent(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
-	}
-	mgr := NewManager(store)
-
-	sess, _ := mgr.Create("workflow", nil)
-	
-	event := Event{
-		Type:       EventToolCall,
-		Tool:       "read",
-		Args:       map[string]interface{}{"path": "/test.txt"},
-		Goal:       "goal1",
-		Timestamp:  time.Now(),
-	}
-	err = mgr.AddEvent(sess.ID, event)
-	if err != nil {
-		t.Fatalf("add tool call event error: %v", err)
-	}
-
-	loaded, _ := mgr.Get(sess.ID)
-	if len(loaded.Events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(loaded.Events))
-	}
-	if loaded.Events[0].Tool != "read" {
-		t.Errorf("expected tool 'read', got %s", loaded.Events[0].Tool)
-	}
-}
-
-// R7.3.5 / R7.4.1: Query session by ID
-func TestSession_GetByID(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
-	}
-	mgr := NewManager(store)
-
-	sess, _ := mgr.Create("workflow", nil)
-	
-	loaded, err := mgr.Get(sess.ID)
-	if err != nil {
-		t.Fatalf("get error: %v", err)
-	}
-
-	if loaded.ID != sess.ID {
-		t.Errorf("expected ID %s, got %s", sess.ID, loaded.ID)
-	}
-}
-
-func TestSession_GetNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
-	}
-	mgr := NewManager(store)
-
-	_, err = mgr.Get("nonexistent")
-	if err == nil {
-		t.Error("expected error for nonexistent session")
-	}
-}
-
-// R7.4.1-R7.4.3: FileStore implementation
-func TestFileStore_AtomicWrite(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
-	}
-	mgr := NewManager(store)
-
-	sess, _ := mgr.Create("workflow", nil)
-	
-	// Verify file exists
-	files, _ := os.ReadDir(tmpDir)
-	if len(files) != 1 {
-		t.Errorf("expected 1 file, got %d", len(files))
-	}
-
-	// Verify filename includes session ID and uses .jsonl extension
-	found := false
-	for _, f := range files {
-		if filepath.Ext(f.Name()) == ".jsonl" {
-			found = true
+func TestRecorder_Create(t *testing.T) {
+	rec := mustOpen(t, t.TempDir(), nil)
+	ids := map[string]bool{}
+	for range 50 {
+		s, err := rec.Create("wf")
+		if err != nil {
+			t.Fatalf("Create error: %v", err)
+		}
+		s.Close()
+		if len(s.ID) != 32 || ids[s.ID] {
+			t.Errorf("Create ID %q: want 32 hex chars, unique", s.ID)
+		}
+		ids[s.ID] = true
+		if s.WorkflowName != "wf" || s.Status != StatusRunning || s.CreatedAt.IsZero() {
+			t.Errorf("Create session = %+v", s)
 		}
 	}
-	if !found {
-		t.Error("expected .jsonl file")
+	// Header + footer exist before any event.
+	s, _ := rec.Create("wf")
+	defer s.Close()
+	got, err := rec.Get(s.ID)
+	if err != nil {
+		t.Fatalf("Get error: %v", err)
+	}
+	if got.ID != s.ID || got.WorkflowName != "wf" || got.Status != StatusRunning || len(got.Events) != 0 {
+		t.Errorf("Get after Create = %+v", got)
 	}
 
-	// Update and verify atomic write
-	mgr.AddEvent(sess.ID, Event{Type: EventUser, Content: "test", Timestamp: time.Now()})
-	
-	// Should still be only 1 file (no temp files left)
-	files, _ = os.ReadDir(tmpDir)
-	jsonlCount := 0
-	for _, f := range files {
-		if filepath.Ext(f.Name()) == ".jsonl" {
-			jsonlCount++
+	t.Run("error", func(t *testing.T) {
+		dir := t.TempDir()
+		rec := mustOpen(t, dir, nil)
+		os.RemoveAll(dir)
+		if _, err := rec.Create("wf"); err == nil {
+			t.Error("Create with missing dir: want error")
 		}
-	}
-	if jsonlCount != 1 {
-		t.Errorf("expected 1 jsonl file after update, got %d", jsonlCount)
-	}
+	})
 }
 
-// Test sequence ID generation
-func TestSession_SequenceIDs(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
-	}
-	mgr := NewManager(store)
-
-	sess, _ := mgr.Create("workflow", nil)
-	
-	// Add multiple events
-	for i := 0; i < 5; i++ {
-		mgr.AddEvent(sess.ID, Event{Type: EventUser, Content: "test", Timestamp: time.Now()})
-	}
-
-	loaded, _ := mgr.Get(sess.ID)
-	if len(loaded.Events) != 5 {
-		t.Fatalf("expected 5 events, got %d", len(loaded.Events))
-	}
-	
-	// Verify sequence IDs are monotonic
-	for i := 0; i < len(loaded.Events); i++ {
-		if loaded.Events[i].SeqID != uint64(i+1) {
-			t.Errorf("event %d: expected seq %d, got %d", i, i+1, loaded.Events[i].SeqID)
+func TestRecorder_Update(t *testing.T) {
+	t.Run("append only", func(t *testing.T) {
+		rec := mustOpen(t, t.TempDir(), nil)
+		s := &Session{ID: "s1", Status: StatusRunning}
+		s.AddEvent(Event{Type: EventGoalStart})
+		if err := rec.Update(s); err != nil {
+			t.Fatal(err)
 		}
+		s.AddEvent(Event{Type: EventGoalEnd})
+		s.Status = StatusFailed
+		s.Error = "x"
+		if err := rec.Update(s); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := os.ReadFile(filepath.Join(rec.dir, "s1.jsonl"))
+		lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+		if len(lines) != 5 { // header, event, footer, event, footer
+			t.Fatalf("file has %d lines, want 5:\n%s", len(lines), raw)
+		}
+		got, err := rec.Get("s1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != StatusFailed || got.Error != "x" || len(got.Events) != 2 || got.UpdatedAt.IsZero() {
+			t.Errorf("Get = %+v", got)
+		}
+		if got.seq.Load() != 2 || got.written != 2 {
+			t.Errorf("seq=%d written=%d, want 2, 2", got.seq.Load(), got.written)
+		}
+	})
+	t.Run("marshal error", func(t *testing.T) {
+		rec := mustOpen(t, t.TempDir(), nil)
+		s := &Session{ID: "bad"}
+		s.AddEvent(Event{Args: map[string]any{"ch": make(chan int)}})
+		if err := rec.Update(s); err == nil || !strings.Contains(err.Error(), "marshal event") {
+			t.Errorf("Update error = %v, want marshal event error", err)
+		}
+	})
+	t.Run("open error", func(t *testing.T) {
+		dir := t.TempDir()
+		rec := mustOpen(t, dir, nil)
+		os.MkdirAll(filepath.Join(dir, "d.jsonl"), 0o755)
+		if err := rec.Update(&Session{ID: "d"}); err == nil {
+			t.Error("Update on a directory path: want error")
+		}
+	})
+	t.Run("sync error", func(t *testing.T) {
+		if runtime.GOOS != "darwin" {
+			t.Skip("fsync on /dev/null only fails on darwin")
+		}
+		dir := t.TempDir()
+		rec := mustOpen(t, dir, nil)
+		os.Symlink("/dev/null", filepath.Join(dir, "null.jsonl"))
+		if err := rec.Update(&Session{ID: "null"}); err == nil || !strings.Contains(err.Error(), "write file") {
+			t.Errorf("Update error = %v, want write error", err)
+		}
+	})
+}
+
+func TestRecorder_Get(t *testing.T) {
+	rec := mustOpen(t, t.TempDir(), nil)
+	legacy := `{"id":"old","workflow_name":"w","status":"complete","events":[{"seq":7,"type":"goal_end"}]}`
+	os.WriteFile(filepath.Join(rec.dir, "old.json"), []byte(legacy), 0o644)
+	got, err := rec.Get("old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "old" || len(got.Events) != 1 || got.seq.Load() != 7 {
+		t.Errorf("Get legacy = %+v", got)
+	}
+	if _, err := rec.Get("missing"); err == nil {
+		t.Error("Get missing: want error")
 	}
 }
 
-// Test correlation IDs
-func TestSession_CorrelationID(t *testing.T) {
-	sess := &Session{}
-	
-	corr1 := sess.StartCorrelation()
-	corr2 := sess.StartCorrelation()
-	
-	if corr1 == "" {
-		t.Error("correlation ID should not be empty")
+func TestSession_ZeroValue(t *testing.T) {
+	var s Session
+	fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if seq := s.AddEvent(Event{Type: EventUser, Timestamp: fixed}); seq != 1 {
+		t.Errorf("first SeqID = %d, want 1", seq)
 	}
-	if corr1 == corr2 {
-		t.Error("correlation IDs should be unique")
+	if seq := s.AddEvent(Event{Type: EventAssistant}); seq != 2 {
+		t.Errorf("second SeqID = %d, want 2", seq)
 	}
-}
-
-// Test JSONL format save and load
-func TestFileStore_JSONL(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
+	s.Flush()
+	s.Close()
+	if len(s.Events) != 2 || !s.Events[0].Timestamp.Equal(fixed) || s.Events[1].Timestamp.IsZero() {
+		t.Errorf("events = %+v", s.Events)
 	}
-
-	// Create session with events
-	sess := &Session{
-		ID:           "test-jsonl",
-		WorkflowName: "test-workflow",
-		Inputs:       map[string]string{"key": "value"},
-		State:        map[string]interface{}{},
-		Outputs:      map[string]string{"result": "success"},
-		Status:       StatusComplete,
-		Events:       []Event{},
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+	if s.UpdatedAt.IsZero() {
+		t.Error("UpdatedAt not set")
 	}
-	sess.AddEvent(Event{Type: EventWorkflowStart, Timestamp: time.Now()})
-	sess.AddEvent(Event{Type: EventGoalStart, Goal: "test-goal", Timestamp: time.Now()})
-	sess.AddEvent(Event{Type: EventToolCall, Tool: "bash", Content: "echo hello", Timestamp: time.Now()})
-	sess.AddEvent(Event{Type: EventGoalEnd, Goal: "test-goal", Timestamp: time.Now()})
-	sess.AddEvent(Event{Type: EventWorkflowEnd, Timestamp: time.Now()})
-
-	// Save
-	if err := store.Save(sess); err != nil {
-		t.Fatalf("save error: %v", err)
-	}
-
-	// Verify file is JSONL
-	path := filepath.Join(tmpDir, "test-jsonl.jsonl")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		t.Fatal("expected .jsonl file to exist")
-	}
-
-	// Load and verify
-	loaded, err := store.Load("test-jsonl")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	if loaded.ID != sess.ID {
-		t.Errorf("ID mismatch: got %s, want %s", loaded.ID, sess.ID)
-	}
-	if loaded.WorkflowName != sess.WorkflowName {
-		t.Errorf("WorkflowName mismatch: got %s, want %s", loaded.WorkflowName, sess.WorkflowName)
-	}
-	if len(loaded.Events) != len(sess.Events) {
-		t.Errorf("Events count mismatch: got %d, want %d", len(loaded.Events), len(sess.Events))
-	}
-	if loaded.Status != sess.Status {
-		t.Errorf("Status mismatch: got %s, want %s", loaded.Status, sess.Status)
+	if a, b := s.StartCorrelation(), s.StartCorrelation(); len(a) != 8 || a == b {
+		t.Errorf("StartCorrelation = %q, %q: want 8 hex chars, unique", a, b)
 	}
 }
 
-// Test legacy JSON format loading
-func TestFileStore_LegacyJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
-	}
+func TestWriter(t *testing.T) {
+	t.Run("batch size", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			var seen []uint64
+			rec := mustOpen(t, t.TempDir(), func(e Event) { seen = append(seen, e.SeqID) })
+			s, _ := rec.Create("wf")
+			defer s.Close()
+			for range batchSizeMax - 1 {
+				s.AddEvent(Event{Type: EventUser})
+			}
+			synctest.Wait()
+			if n := len(eventsOnDisk(t, rec, s.ID)); n != 0 {
+				t.Errorf("%d events on disk before batch full, want 0", n)
+			}
+			s.AddEvent(Event{Type: EventUser})
+			synctest.Wait()
+			if n := len(eventsOnDisk(t, rec, s.ID)); n != batchSizeMax {
+				t.Errorf("%d events on disk after batch full, want %d", n, batchSizeMax)
+			}
+			if len(seen) != batchSizeMax || seen[0] != 1 || seen[batchSizeMax-1] != batchSizeMax {
+				t.Errorf("sink saw %v", seen)
+			}
+		})
+	})
+	t.Run("ticker", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rec := mustOpen(t, t.TempDir(), nil)
+			s, _ := rec.Create("wf")
+			defer s.Close()
+			s.AddEvent(Event{Type: EventUser})
+			time.Sleep(flushInterval - time.Millisecond)
+			synctest.Wait()
+			if n := len(eventsOnDisk(t, rec, s.ID)); n != 0 {
+				t.Errorf("%d events on disk before tick, want 0", n)
+			}
+			time.Sleep(time.Millisecond)
+			synctest.Wait()
+			if n := len(eventsOnDisk(t, rec, s.ID)); n != 1 {
+				t.Errorf("%d events on disk after tick, want 1", n)
+			}
+			time.Sleep(flushInterval) // empty tick persists nothing
+			synctest.Wait()
+		})
+	})
+	t.Run("flush and close", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rec := mustOpen(t, t.TempDir(), nil)
+			s, _ := rec.Create("wf")
+			s.AddEvent(Event{Type: EventUser})
+			s.AddEvent(Event{Type: EventAssistant})
+			s.Flush()
+			if got := eventsOnDisk(t, rec, s.ID); len(got) != 2 {
+				t.Errorf("after Flush on disk = %v", got)
+			}
+			s.AddEvent(Event{Type: EventToolCall})
+			s.Close()
+			s.Close() // idempotent
+			if got := eventsOnDisk(t, rec, s.ID); len(got) != 3 {
+				t.Errorf("after Close on disk = %v", got)
+			}
 
-	// Create legacy JSON file directly
-	legacyJSON := `{
-		"id": "legacy-test",
-		"workflow_name": "legacy-workflow",
-		"inputs": {"input1": "value1"},
-		"state": {},
-		"outputs": {},
-		"status": "complete",
-		"events": [
-			{"seq": 1, "type": "workflow_start", "timestamp": "2024-01-01T00:00:00Z"},
-			{"seq": 2, "type": "goal_start", "goal": "test", "timestamp": "2024-01-01T00:00:01Z"},
-			{"seq": 3, "type": "goal_end", "goal": "test", "timestamp": "2024-01-01T00:00:02Z"}
-		],
-		"created_at": "2024-01-01T00:00:00Z",
-		"updated_at": "2024-01-01T00:00:02Z"
-	}`
-
-	path := filepath.Join(tmpDir, "legacy-test.json")
-	if err := os.WriteFile(path, []byte(legacyJSON), 0644); err != nil {
-		t.Fatalf("failed to write legacy file: %v", err)
-	}
-
-	// Load legacy format
-	loaded, err := store.Load("legacy-test")
-	if err != nil {
-		t.Fatalf("load error: %v", err)
-	}
-
-	if loaded.ID != "legacy-test" {
-		t.Errorf("ID mismatch: got %s", loaded.ID)
-	}
-	if loaded.WorkflowName != "legacy-workflow" {
-		t.Errorf("WorkflowName mismatch: got %s", loaded.WorkflowName)
-	}
-	if len(loaded.Events) != 3 {
-		t.Errorf("Events count mismatch: got %d, want 3", len(loaded.Events))
-	}
+			// After Close: AddEvent appends in memory without blocking, Flush
+			// is a no-op, and a later Update persists the appended events.
+			for range eventChSize + 1 {
+				s.AddEvent(Event{Type: EventWarning})
+			}
+			s.Flush()
+			if got := eventsOnDisk(t, rec, s.ID); len(got) != 3 {
+				t.Errorf("after Close+AddEvent on disk = %d, want 3 (not persisted yet)", len(got))
+			}
+			if len(s.Events) != 3+eventChSize+1 {
+				t.Errorf("in memory = %d events", len(s.Events))
+			}
+			s.Status = StatusComplete
+			if err := rec.Update(s); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := rec.Get(s.ID)
+			if len(got.Events) != 3+eventChSize+1 || got.Status != StatusComplete {
+				t.Errorf("after final Update: %d events, status %q", len(got.Events), got.Status)
+			}
+		})
+	})
+	t.Run("persist error is dropped", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			dir := t.TempDir()
+			rec := mustOpen(t, dir, nil)
+			s, _ := rec.Create("wf")
+			os.RemoveAll(dir)
+			s.AddEvent(Event{Type: EventUser})
+			s.Close()
+			if len(s.Events) != 1 {
+				t.Errorf("events kept in memory = %d, want 1", len(s.Events))
+			}
+		})
+	})
 }
 
-// Test format detection
 func TestDetectFormat(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// JSONL file
-	jsonlPath := filepath.Join(tmpDir, "test.jsonl")
-	os.WriteFile(jsonlPath, []byte(`{"_type":"header","id":"test"}`), 0644)
-	
-	format, err := DetectFormat(jsonlPath)
-	if err != nil {
-		t.Fatalf("detect error: %v", err)
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, []byte(content), 0o644)
+		return p
 	}
-	if format != "jsonl" {
-		t.Errorf("expected jsonl, got %s", format)
+	tests := []struct {
+		name    string
+		path    string
+		want    string
+		wantErr error
+	}{
+		{"jsonl ext", write("a.jsonl", "x"), "jsonl", nil},
+		{"json ext", write("a.json", "x"), "json", nil},
+		{"sniff jsonl", write("a", `{"_type":"header"}`), "jsonl", nil},
+		{"sniff json", write("b", `{"id":"x","events":[]}`), "json", nil},
+		{"unknown", write("c", `hello`), "", ErrUnknownFormat},
+		{"empty", write("d", ``), "", ErrUnknownFormat},
+		{"missing", filepath.Join(dir, "nope"), "", os.ErrNotExist},
 	}
-
-	// JSON file
-	jsonPath := filepath.Join(tmpDir, "test.json")
-	os.WriteFile(jsonPath, []byte(`{"id":"test","events":[]}`), 0644)
-	
-	format, err = DetectFormat(jsonPath)
-	if err != nil {
-		t.Fatalf("detect error: %v", err)
-	}
-	if format != "json" {
-		t.Errorf("expected json, got %s", format)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := DetectFormat(tt.path)
+			if got != tt.want || !errors.Is(err, tt.wantErr) {
+				t.Errorf("DetectFormat(%q) = %q, %v; want %q, %v", tt.path, got, err, tt.want, tt.wantErr)
+			}
+		})
 	}
 }
 
-// Test large event lines (>10MB) - verifies bufio.Reader handles arbitrary line sizes
-func TestFileStore_LargeLine(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := NewFileStore(tmpDir)
-	if err != nil {
-		t.Fatalf("create store error: %v", err)
+func TestReadFile(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, []byte(content), 0o644)
+		return p
 	}
+	long := strings.Repeat("x", 20)
+	jsonl := "{\"_type\":\"header\",\"id\":\"j\",\"workflow_name\":\"w\",\"inputs\":{\"a\":\"b\"}}\n" +
+		"\n" + // blank line skipped
+		"{\"_type\":\"event\"}\n" + // event record without event body: skipped
+		"{\"_type\":\"bogus\"}\n" + // unknown record type: ignored
+		"{\"_type\":\"event\",\"seq\":1,\"type\":\"user\",\"content\":\"" + long + "\"}\n" +
+		"{\"_type\":\"footer\",\"status\":\"running\"}\n" +
+		"{\"_type\":\"footer\",\"status\":\"complete\",\"outputs\":{\"o\":\"v\"}}" // no trailing newline
+	legacy := `{"id":"l","events":[{"seq":3,"type":"user","content":"` + long + `"}]}`
+	os.Mkdir(filepath.Join(dir, "dir.jsonl"), 0o755)
 
-	// Create session with a large event (15MB content)
-	largeContent := string(make([]byte, 15*1024*1024)) // 15MB of null bytes
-	sess := &Session{
-		ID:           "large-line-test",
-		WorkflowName: "test",
-		Inputs:       map[string]string{},
-		State:        map[string]interface{}{},
-		Outputs:      map[string]string{},
-		Status:       StatusComplete,
-		Events:       []Event{},
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+	truncated := long[:5] + "\n... [truncated, 20 bytes total]"
+	tests := []struct {
+		name    string
+		path    string
+		opts    ReadOptions
+		want    *Session
+		wantErr string
+	}{
+		{name: "jsonl", path: write("j.jsonl", jsonl), want: &Session{
+			ID: "j", WorkflowName: "w", Inputs: map[string]string{"a": "b"}, Status: StatusComplete,
+			Outputs: map[string]string{"o": "v"}, Events: []Event{{SeqID: 1, Type: EventUser, Content: long}},
+		}},
+		{name: "jsonl truncated", path: write("j.jsonl", jsonl), opts: ReadOptions{MaxContentSize: 5}, want: &Session{
+			ID: "j", WorkflowName: "w", Inputs: map[string]string{"a": "b"}, Status: StatusComplete,
+			Outputs: map[string]string{"o": "v"}, Events: []Event{{SeqID: 1, Type: EventUser, Content: truncated}},
+		}},
+		{name: "legacy", path: write("l.json", legacy), want: &Session{
+			ID: "l", Events: []Event{{SeqID: 3, Type: EventUser, Content: long}},
+		}},
+		{name: "legacy truncated", path: write("l.json", legacy), opts: ReadOptions{MaxContentSize: 5}, want: &Session{
+			ID: "l", Events: []Event{{SeqID: 3, Type: EventUser, Content: truncated}},
+		}},
+		{name: "unknown format", path: write("u", "?"), wantErr: "unknown file format"},
+		{name: "jsonl missing", path: filepath.Join(dir, "nope.jsonl"), wantErr: "read file"},
+		{name: "jsonl is a directory", path: filepath.Join(dir, "dir.jsonl"), wantErr: "read file"},
+		{name: "jsonl malformed", path: write("m.jsonl", "{\"_type\":\"header\"}\nnot json\n"), wantErr: "parse JSONL line"},
+		{name: "legacy missing", path: filepath.Join(dir, "nope.json"), wantErr: "read file"},
+		{name: "legacy malformed", path: write("m.json", "{"), wantErr: "parse legacy JSON"},
 	}
-	sess.AddEvent(Event{Type: EventToolResult, Content: largeContent, Timestamp: time.Now()})
-
-	// Save
-	if err := store.Save(sess); err != nil {
-		t.Fatalf("save error: %v", err)
-	}
-
-	// Load - should not fail with "token too long"
-	loaded, err := store.Load("large-line-test")
-	if err != nil {
-		t.Fatalf("load error (should handle large lines): %v", err)
-	}
-
-	if len(loaded.Events) != 1 {
-		t.Errorf("expected 1 event, got %d", len(loaded.Events))
-	}
-	if len(loaded.Events[0].Content) != 15*1024*1024 {
-		t.Errorf("content size mismatch: got %d bytes", len(loaded.Events[0].Content))
+	ignore := cmp.Options{cmp.AllowUnexported(Session{}), cmp.FilterPath(func(p cmp.Path) bool {
+		return p.Last().String() == ".seq" || p.Last().String() == ".written" || p.Last().String() == ".mu"
+	}, cmp.Ignore())}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ReadFile(tt.path, tt.opts)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("ReadFile(%q) error = %v, want containing %q", tt.path, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReadFile(%q) error: %v", tt.path, err)
+			}
+			if diff := cmp.Diff(tt.want, got, ignore); diff != "" {
+				t.Errorf("ReadFile(%q) (-want +got):\n%s", tt.path, diff)
+			}
+			last := tt.want.Events[len(tt.want.Events)-1].SeqID
+			if got.seq.Load() != last || got.written != len(tt.want.Events) {
+				t.Errorf("seq=%d written=%d, want %d, %d", got.seq.Load(), got.written, last, len(tt.want.Events))
+			}
+		})
 	}
 }
