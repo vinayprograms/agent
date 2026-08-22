@@ -261,16 +261,14 @@ RUN main USING main
 }
 
 func TestLoadFile_SkillPathTildeExpansion(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no home directory available")
-	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	skillsRoot := filepath.Join(home, ".agentfile-test-skills-"+t.Name())
 	skillDir := filepath.Join(skillsRoot, "tilde-skill")
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	t.Cleanup(func() { os.RemoveAll(skillsRoot) })
 
 	skillMd := `---
 name: tilde-skill

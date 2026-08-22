@@ -71,15 +71,12 @@ func (l *Lexer) NextToken() Token {
 	for l.ch == '#' || (l.ch == '\n' && l.isEmptyLineAhead()) {
 		if l.ch == '#' {
 			l.skipComment()
-			l.skipWhitespace()
-		} else if l.ch == '\n' && l.isEmptyLineAhead() {
+		} else {
 			l.readChar()
 			l.line++
 			l.column = 1
-			l.skipWhitespace()
-		} else {
-			break
 		}
+		l.skipWhitespace()
 	}
 
 	l.startColumn = l.column
@@ -154,11 +151,9 @@ func (l *Lexer) skipComment() {
 	}
 }
 
-// isEmptyLineAhead returns true if we're at a newline and the next line is empty or whitespace-only.
+// isEmptyLineAhead reports whether the line after the current newline (l.ch)
+// is empty or whitespace-only. Callers must only call it when l.ch == '\n'.
 func (l *Lexer) isEmptyLineAhead() bool {
-	if l.ch != '\n' {
-		return false
-	}
 	// Look ahead to see if next line is empty
 	pos := l.readPosition
 	for pos < len(l.input) {

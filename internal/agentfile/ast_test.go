@@ -162,18 +162,3 @@ func TestWorkflow_HasSupervisedGoals(t *testing.T) {
 		})
 	}
 }
-
-// TestNode_Marker exercises the unexported node() marker methods that only
-// exist to satisfy the Node interface (no observable behavior beyond that).
-func TestNode_Marker(t *testing.T) {
-	var nodes = []Node{
-		&Workflow{},
-		&Input{},
-		&Agent{},
-		&Goal{},
-		&Step{},
-	}
-	for _, n := range nodes {
-		n.node() // must not panic
-	}
-}
