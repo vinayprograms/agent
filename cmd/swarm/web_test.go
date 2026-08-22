@@ -259,10 +259,19 @@ func TestHandleHumanReply(t *testing.T) {
 func sessionsFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	// alpha keeps the old nested layout: <agent>/sessions/<label>/<id>.jsonl
 	dir := filepath.Join(root, "agents", "alpha", "sessions", "label1")
 	os.MkdirAll(dir, 0o755)
-	os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte("{\"a\":1}\n\n{\"b\":2}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(
+		`{"_type":"header","id":"s1","workflow_name":"w","label":"label1","created_at":"2026-01-01T00:00:00Z"}`+"\n\n"+
+			`{"_type":"footer","status":"complete","updated_at":"2026-01-01T00:00:10Z"}`+"\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "notes.txt"), nil, 0o644)
+	// beta records flat: <agent>/sessions/<id>.jsonl
+	flat := filepath.Join(root, "agents", "beta", "sessions")
+	os.MkdirAll(flat, 0o755)
+	os.WriteFile(filepath.Join(flat, "f1.jsonl"), []byte(
+		`{"_type":"header","id":"f1","workflow_name":"w","label":"beta","created_at":"2026-01-02T00:00:00Z"}`+"\n"+
+			`{"_type":"footer","status":"complete","updated_at":"2026-01-02T00:00:10Z"}`+"\n"), 0o644)
 	os.MkdirAll(filepath.Join(root, "agents", "stray-file-holder"), 0o755)
 	os.WriteFile(filepath.Join(root, "agents", "file"), nil, 0o644)
 	return root
@@ -315,6 +324,8 @@ func TestHandleSessionLogs(t *testing.T) {
 		"/api/sessions/alpha/s1":      200,
 		"/api/sessions/alpha/s1/":     200,
 		"/api/sessions/other/s1":      200, // fallback scan across agents
+		"/api/sessions/beta/f1":       200, // flat layout: <agent>/sessions/<id>.jsonl
+		"/api/sessions/alpha/f1":      200, // flat layout via the fallback scan
 		"/api/sessions/alpha/missing": 404,
 		"/api/sessions/ghost/missing": 404,
 	}

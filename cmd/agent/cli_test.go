@@ -101,7 +101,7 @@ func TestRoot_HelpAndVersion(t *testing.T) {
 func TestRoot_CommandSurface(t *testing.T) {
 	root := newRootCmd(newHarness(t).deps)
 	want := map[string][]string{
-		"run":      {"input", "config", "policy", "credentials", "workspace", "goal", "debug", "step"},
+		"run":      {"input", "config", "policy", "credentials", "workspace", "goal", "debug", "step", "session-label"},
 		"serve":    {"config", "policy", "credentials", "workspace", "state", "http", "bus", "queue-group", "capability", "session-label", "type", "capabilities"},
 		"validate": nil,
 		"inspect":  nil,
@@ -233,6 +233,26 @@ func TestRun_LoadsAndRuns(t *testing.T) {
 	}
 	if h.lastRun.Version != version || h.lastRun.Creds == nil {
 		t.Errorf("run deps = %+v", h.lastRun)
+	}
+}
+
+// TestRun_SessionLabel pins that --session-label reaches the loaded
+// workflow, and that a run without it records no label.
+func TestRun_SessionLabel(t *testing.T) {
+	path := writeAgentfile(t, validAgentfile)
+	h := newHarness(t)
+	if err := h.exec("run", path, "--workspace", t.TempDir()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if h.last.SessionLabel != "" {
+		t.Errorf("SessionLabel = %q, want empty without the flag", h.last.SessionLabel)
+	}
+	h = newHarness(t)
+	if err := h.exec("run", path, "--session-label", "nightly", "--workspace", t.TempDir()); err != nil {
+		t.Fatalf("run --session-label: %v", err)
+	}
+	if h.last.SessionLabel != "nightly" {
+		t.Errorf("SessionLabel = %q, want %q", h.last.SessionLabel, "nightly")
 	}
 }
 

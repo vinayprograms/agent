@@ -160,7 +160,7 @@ func newServeCmd(d deps) *cobra.Command {
 	f.StringVar(&opts.bus, "bus", "", "Message bus URL (e.g., nats://localhost:4222)")
 	f.StringVar(&opts.queueGroup, "queue-group", "", "Queue group name for load balancing")
 	f.StringVar(&opts.capability, "capability", "", "Capability name (default: Agentfile NAME)")
-	f.StringVar(&opts.sessionLabel, "session-label", "", "Label for session directory (default: Agentfile NAME)")
+	f.StringVar(&opts.sessionLabel, "session-label", "", "Label recorded in the session header, identifying the deployment that produced the run")
 	f.StringVar(&opts.agentType, "type", "", "Agent type: worker or manager (default: worker)")
 	f.StringVar(&opts.capabilities, "capabilities", "", "Worker capabilities for manager dispatch (format: cap1:n,cap2:n)")
 	return cmd

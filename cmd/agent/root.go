@@ -120,6 +120,8 @@ type runOptions struct {
 	goal        string
 	debug       bool
 	step        bool
+
+	sessionLabel string
 }
 
 // newRunCmd runs a workflow once and exits.
@@ -149,6 +151,7 @@ func newRunCmd(d deps) *cobra.Command {
 				Goal:          opts.goal,
 				Inputs:        opts.inputs,
 				Debug:         opts.debug,
+				SessionLabel:  opts.sessionLabel,
 				Home:          d.home,
 				Stderr:        cmd.ErrOrStderr(),
 			})
@@ -177,6 +180,7 @@ func newRunCmd(d deps) *cobra.Command {
 	f.StringVar(&opts.workspace, "workspace", "", "Workspace directory")
 	f.StringVar(&opts.goal, "goal", "", "Inline goal description (skips Agentfile)")
 	f.BoolVar(&opts.debug, "debug", false, "Enable verbose logging (prompts, responses, tool outputs)")
+	f.StringVar(&opts.sessionLabel, "session-label", "", "Label recorded in the session header, identifying the deployment that produced the run")
 	f.BoolVar(&opts.step, "step", false, "Pause after each goal and ask whether to continue (interactive terminal only)")
 	return cmd
 }
