@@ -57,7 +57,10 @@ type SearchResult struct {
 }
 
 // ErrNoProvider is returned (wrapped) when no search provider is configured
-// and the keyless DuckDuckGo fallback produced nothing usable.
+// and the keyless DuckDuckGo fallback produced nothing usable. Set
+// [web].searxng_url, or provide a Brave/Tavily API key (credentials
+// [brave]/[tavily] or BRAVE_API_KEY/TAVILY_API_KEY) for reliable results;
+// DuckDuckGo is a best-effort fallback subject to rate limiting.
 var ErrNoProvider = errors.New("no search provider configured")
 
 // Provider endpoints. Fields on Tool so tests can point them at httptest servers.
@@ -263,21 +266,16 @@ func (t *Tool) search(ctx context.Context, query string, count int) ([]SearchRes
 		// so failures aren't a silent mystery.
 		results, err := t.searchDuckDuckGo(ctx, query, count)
 		if err != nil {
-			return nil, fmt.Errorf("web_search: %w (DuckDuckGo fallback: %w). %s", ErrNoProvider, err, noProviderHint)
+			return nil, fmt.Errorf("web_search: %w (DuckDuckGo fallback: %w)", ErrNoProvider, err)
 		}
 		if len(results) == 0 {
-			return nil, fmt.Errorf("web_search: %w (no results from DuckDuckGo fallback). %s", ErrNoProvider, noProviderHint)
+			return nil, fmt.Errorf("web_search: %w (no results from DuckDuckGo fallback)", ErrNoProvider)
 		}
 		return results, nil
 	default:
 		return nil, fmt.Errorf("web_search: unknown search_provider %q (want auto|searxng|brave|tavily|duckduckgo)", t.provider)
 	}
 }
-
-// noProviderHint tells the caller how to get off the best-effort fallback.
-const noProviderHint = "Set [web].searxng_url, or provide a Brave/Tavily API key " +
-	"(credentials [brave]/[tavily] or BRAVE_API_KEY/TAVILY_API_KEY) for reliable results; " +
-	"DuckDuckGo is a best-effort fallback subject to rate limiting"
 
 // formatResults renders results in the same text layout as agentkit's built-in
 // web_search, so prompts tuned against the built-in keep working.
