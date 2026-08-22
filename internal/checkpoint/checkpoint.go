@@ -154,7 +154,9 @@ func (s *Store) upsert(stepID string, set func(*Checkpoint)) error {
 		return fmt.Errorf("encoding checkpoint %q: %w", stepID, err)
 	}
 	// Step IDs such as "subagent:role" or "a/b" must not steer the path.
-	path := filepath.Join(s.dir, url.PathEscape(stepID)+".json")
+	// QueryEscape (not PathEscape) is used because PathEscape leaves ':'
+	// unescaped, which Windows rejects in filenames.
+	path := filepath.Join(s.dir, url.QueryEscape(stepID)+".json")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("writing checkpoint: %w", err)
 	}
