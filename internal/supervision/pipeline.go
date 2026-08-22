@@ -3,10 +3,10 @@ package supervision
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/checkpoint"
-	"github.com/vinayprograms/agentkit/logging"
 )
 
 // EventHook receives supervision phase events (optional callback).
@@ -42,9 +42,9 @@ type PostCheckpointResult struct {
 type PipelineConfig struct {
 	Store      checkpoint.CheckpointStore
 	Supervisor Supervisor
-	Logger     *logging.Logger // structured logger (for warnings)
-	Phase      PhaseLogger     // phase-level session logging
-	OnEvent    EventHook       // optional event callback
+	Logger     *slog.Logger // warnings (store failures); nil means slog.Default()
+	Phase      PhaseLogger  // phase-level session logging
+	OnEvent    EventHook    // optional event callback
 }
 
 // PipelineRequest contains the inputs for a single pipeline run.
@@ -77,8 +77,12 @@ type Pipeline struct {
 	cfg PipelineConfig
 }
 
-// NewPipeline creates a supervision pipeline.
+// NewPipeline creates a supervision pipeline. A nil cfg.Logger falls back to
+// slog.Default().
 func NewPipeline(cfg PipelineConfig) *Pipeline {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
 	return &Pipeline{cfg: cfg}
 }
 
@@ -116,10 +120,7 @@ func (p *Pipeline) Run(
 		pre = commit(ctx)
 		if pre != nil {
 			if err := p.cfg.Store.SavePre(pre); err != nil {
-				p.warn("failed to save pre-checkpoint", map[string]any{
-					"step":  req.StepID,
-					"error": err.Error(),
-				})
+				p.warn("failed to save pre-checkpoint", req.StepID, err)
 			} else if p.cfg.Phase != nil {
 				p.cfg.Phase.LogCheckpoint("pre", req.StepID, "", pre.StepID)
 			}
@@ -151,10 +152,7 @@ func (p *Pipeline) Run(
 		post = postCheckpoint(ctx, pre, output, toolsUsed)
 		if post != nil {
 			if err := p.cfg.Store.SavePost(post); err != nil {
-				p.warn("failed to save post-checkpoint", map[string]any{
-					"step":  req.StepID,
-					"error": err.Error(),
-				})
+				p.warn("failed to save post-checkpoint", req.StepID, err)
 			} else if p.cfg.Phase != nil {
 				p.cfg.Phase.LogCheckpoint("post", req.StepID, "", post.StepID)
 			}
@@ -180,10 +178,7 @@ func (p *Pipeline) Run(
 	reconcileDuration := time.Since(reconcileStart).Milliseconds()
 
 	if err := p.cfg.Store.SaveReconcile(reconcileResult); err != nil {
-		p.warn("failed to save reconcile result", map[string]any{
-			"step":  req.StepID,
-			"error": err.Error(),
-		})
+		p.warn("failed to save reconcile result", req.StepID, err)
 	}
 	if p.cfg.Phase != nil {
 		p.cfg.Phase.LogPhaseReconcile(req.StepID, reconcileResult.StepID, reconcileResult.Triggers, reconcileResult.Supervise, reconcileDuration)
@@ -226,10 +221,7 @@ func (p *Pipeline) Run(
 	}
 
 	if err := p.cfg.Store.SaveSupervise(superviseResult); err != nil {
-		p.warn("failed to save supervise result", map[string]any{
-			"step":  req.StepID,
-			"error": err.Error(),
-		})
+		p.warn("failed to save supervise result", req.StepID, err)
 	}
 	if p.cfg.Phase != nil {
 		p.cfg.Phase.LogPhaseSupervise(req.StepID, superviseResult.StepID, superviseResult.Verdict, superviseResult.Correction, req.HumanRequired, superviseDuration)
@@ -254,8 +246,6 @@ func (p *Pipeline) fireEvent(stepID, phase string, data any) {
 	}
 }
 
-func (p *Pipeline) warn(msg string, fields map[string]any) {
-	if p.cfg.Logger != nil {
-		p.cfg.Logger.Warn(msg, fields)
-	}
+func (p *Pipeline) warn(msg, step string, err error) {
+	p.cfg.Logger.Warn(msg, "step", step, "error", err.Error())
 }
