@@ -1,6 +1,7 @@
 package agentfile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,8 @@ import (
 // R1.3.1: Verify all agents referenced in USING clauses are defined
 func TestValidation_UndefinedAgent(t *testing.T) {
 	input := `NAME test
-GOAL analyze "test" USING undefined_agent`
+GOAL analyze "test" USING undefined_agent
+RUN setup USING analyze`
 
 	wf, err := ParseString(input)
 	if err != nil {
@@ -23,6 +25,13 @@ GOAL analyze "test" USING undefined_agent`
 	}
 	if !strings.Contains(err.Error(), "undefined_agent") {
 		t.Errorf("error should mention undefined agent: %v", err)
+	}
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected errors.As to recover a *ValidationError, got %T", err)
+	}
+	if ve.Line != wf.Goals[0].Line {
+		t.Errorf("Line = %d, want %d", ve.Line, wf.Goals[0].Line)
 	}
 }
 
@@ -43,6 +52,13 @@ RUN setup USING analyze, undefined_goal`
 	}
 	if !strings.Contains(err.Error(), "undefined_goal") {
 		t.Errorf("error should mention undefined goal: %v", err)
+	}
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected errors.As to recover a *ValidationError, got %T", err)
+	}
+	if ve.Line != wf.Steps[0].Line {
+		t.Errorf("Line = %d, want %d", ve.Line, wf.Steps[0].Line)
 	}
 }
 

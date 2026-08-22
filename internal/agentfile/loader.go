@@ -1,7 +1,6 @@
 package agentfile
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,6 +21,30 @@ func (e *ValidationError) Error() string {
 		return e.Msg
 	}
 	return fmt.Sprintf("line %d: %s", e.Line, e.Msg)
+}
+
+// ValidationErrors collects the ValidationErrors found while validating a
+// workflow. It renders with the traditional "validation errors:" header and
+// still supports errors.Is/errors.As over its members via Unwrap.
+type ValidationErrors []*ValidationError
+
+func (e ValidationErrors) Error() string {
+	var b strings.Builder
+	b.WriteString("validation errors:")
+	for _, ve := range e {
+		b.WriteString("\n  ")
+		b.WriteString(ve.Error())
+	}
+	return b.String()
+}
+
+// Unwrap exposes the individual failures for errors.Is/errors.As.
+func (e ValidationErrors) Unwrap() []error {
+	errs := make([]error, len(e))
+	for i, ve := range e {
+		errs[i] = ve
+	}
+	return errs
 }
 
 // LoadOptions configures how Agentfiles are loaded.
@@ -178,10 +201,11 @@ func loadAgentFromSkillDir(agent *Agent, skillDir string) error {
 	return nil
 }
 
-// Validate validates the workflow AST, returning errors.Join of any
-// ValidationError found. Use errors.As to recover individual failures.
+// Validate validates the workflow AST, returning a ValidationErrors
+// collecting every failure found. Use errors.As to recover individual
+// *ValidationError values.
 func Validate(wf *Workflow) error {
-	var errs []error
+	var errs []*ValidationError
 
 	// R1.3.6: Verify NAME is specified
 	if wf.Name == "" {
@@ -258,5 +282,8 @@ func Validate(wf *Workflow) error {
 		}
 	}
 
-	return errors.Join(errs...)
+	if len(errs) == 0 {
+		return nil
+	}
+	return ValidationErrors(errs)
 }

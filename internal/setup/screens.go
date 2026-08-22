@@ -39,9 +39,9 @@ const (
 	ScreenComplete
 )
 
-func (m Model) previousStep() Screen {
+func (m Model) previousScreen() Screen {
 	// Handle conditional step skipping when going back
-	prev := m.step - 1
+	prev := m.screen - 1
 
 	// Skip small LLM steps if not enabled
 	if prev == ScreenSmallLLMModel && !m.config.SmallLLMEnabled {
@@ -64,8 +64,8 @@ func (m Model) previousStep() Screen {
 	return prev
 }
 
-func (m Model) maxCursorForStep() int {
-	switch m.step {
+func (m Model) maxCursorForScreen() int {
+	switch m.screen {
 	case ScreenScenario:
 		return len(m.getScenarios()) - 1
 	case ScreenProvider:
@@ -102,8 +102,8 @@ func (m Model) maxCursorForStep() int {
 	}
 }
 
-func (m Model) isTextInputStep() bool {
-	switch m.step {
+func (m Model) isTextInputScreen() bool {
+	switch m.screen {
 	case ScreenAPIKey, ScreenBaseURL, ScreenWorkspace, ScreenSmallLLMModel,
 		ScreenMCPName, ScreenMCPCommand, ScreenMCPArgs, ScreenCustomModel:
 		return true

@@ -199,7 +199,7 @@ func TestStepIDEscapedInFilename(t *testing.T) {
 		t.Fatalf("SavePre: %v", err)
 	}
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 1 || entries[0].Name() != "..%2Fescape%2Fsubagent:role.json" {
+	if len(entries) != 1 || entries[0].Name() != "..%2Fescape%2Fsubagent%3Arole.json" {
 		t.Errorf("files in dir = %v, want one escaped name", entries)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "..", "escape")); err == nil {

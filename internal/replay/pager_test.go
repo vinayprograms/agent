@@ -35,6 +35,41 @@ func TestPagerModel_View_NotReady(t *testing.T) {
 	}
 }
 
+func TestPagerModel_View_SearchInput(t *testing.T) {
+	m := newReadyPagerModel("content")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = updated.(*pagerModel)
+	if got := m.View(); !strings.Contains(got, "/") {
+		t.Errorf("View() during search = %q, want the search prompt", got)
+	}
+}
+
+func TestPagerModel_View_SearchFailed(t *testing.T) {
+	m := newReadyPagerModel("alpha\nbeta\n")
+	m.searchQuery = "zzz"
+	m.executeSearch()
+	if got := m.View(); !strings.Contains(got, "not found") {
+		t.Errorf("View() with a failed search = %q, want a not-found footer", got)
+	}
+}
+
+func TestPagerModel_View_MatchInfo(t *testing.T) {
+	m := newReadyPagerModel("alpha\nbeta\nalpha\n")
+	m.searchQuery = "alpha"
+	m.executeSearch()
+	if got := m.View(); !strings.Contains(got, "1/2") {
+		t.Errorf("View() with matches = %q, want a [1/2] footer", got)
+	}
+}
+
+func TestPagerModel_View_LiveIndicator(t *testing.T) {
+	m := newReadyPagerModel("content")
+	m.live = true
+	if got := m.View(); !strings.Contains(got, "LIVE") {
+		t.Errorf("View() in live mode = %q, want a LIVE indicator", got)
+	}
+}
+
 func TestPagerModel_Update_Quit(t *testing.T) {
 	m := newReadyPagerModel("content")
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
@@ -98,6 +133,115 @@ func TestPagerModel_Update_SearchNoMatch(t *testing.T) {
 	}
 }
 
+func TestPagerModel_Update_EscClearsCompletedSearch(t *testing.T) {
+	m := newReadyPagerModel("alpha\nbeta\nalpha again\n")
+	m.searchQuery = "alpha"
+	m.executeSearch()
+	if len(m.searchLines) == 0 {
+		t.Fatal("setup: expected matches")
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(*pagerModel)
+	if m.searchQuery != "" {
+		t.Errorf("searchQuery after esc = %q, want empty", m.searchQuery)
+	}
+	if cmd != nil {
+		if msg := cmd(); msg == tea.Quit() {
+			t.Error("esc with an active search must not quit")
+		}
+	}
+}
+
+func TestPagerModel_Update_EscQuitsWithoutSearch(t *testing.T) {
+	m := newReadyPagerModel("content")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil || cmd() != tea.Quit() {
+		t.Error("esc with no active search must quit")
+	}
+}
+
+func TestPagerModel_Update_Navigation(t *testing.T) {
+	content := strings.Repeat("line\n", 200)
+	m := newReadyPagerModel(content)
+	m.viewport.GotoBottom()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	m = updated.(*pagerModel)
+	if m.viewport.YOffset != 0 {
+		t.Errorf("after 'g', YOffset = %d, want 0", m.viewport.YOffset)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
+	m = updated.(*pagerModel)
+	if !m.viewport.AtBottom() {
+		t.Error("after 'G', expected viewport at bottom")
+	}
+}
+
+func TestPagerModel_Update_FollowModeLive(t *testing.T) {
+	content := strings.Repeat("line\n", 200)
+	m := newReadyPagerModel(content)
+	m.live = true
+	m.viewport.GotoTop()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	m = updated.(*pagerModel)
+	if !m.viewport.AtBottom() {
+		t.Error("'f' in live mode must jump to bottom")
+	}
+}
+
+func TestPagerModel_Update_FollowModeNotLive(t *testing.T) {
+	content := strings.Repeat("line\n", 200)
+	m := newReadyPagerModel(content)
+	m.viewport.GotoTop()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	m = updated.(*pagerModel)
+	if m.viewport.AtBottom() {
+		t.Error("'f' outside live mode must not jump")
+	}
+}
+
+func TestPagerModel_Update_NextPrevMatch(t *testing.T) {
+	m := newReadyPagerModel("alpha\nbeta\nalpha\ngamma\nalpha\n")
+	m.searchQuery = "alpha"
+	m.executeSearch()
+	if len(m.searchLines) != 3 {
+		t.Fatalf("setup: expected 3 matches, got %d", len(m.searchLines))
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	m = updated.(*pagerModel)
+	if m.searchIndex != 1 {
+		t.Errorf("after 'n', searchIndex = %d, want 1", m.searchIndex)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("N")})
+	m = updated.(*pagerModel)
+	if m.searchIndex != 0 {
+		t.Errorf("after 'N', searchIndex = %d, want 0", m.searchIndex)
+	}
+
+	// N wraps to the end from index 0.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("N")})
+	m = updated.(*pagerModel)
+	if m.searchIndex != 2 {
+		t.Errorf("after wrapping 'N', searchIndex = %d, want 2", m.searchIndex)
+	}
+}
+
+func TestPagerModel_Update_SearchCancelViaCtrlC(t *testing.T) {
+	m := newReadyPagerModel("content")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = updated.(*pagerModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(*pagerModel)
+	if m.searching {
+		t.Error("ctrl+c during search must cancel searching")
+	}
+}
+
 func TestPagerModel_Update_FileChanged(t *testing.T) {
 	calls := 0
 	m := newReadyPagerModel("v1")
@@ -152,6 +296,43 @@ func TestWatchFile(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("watchFile() did not report the write within 2s")
+	}
+}
+
+func TestPager_Run_QuitsOnQ(t *testing.T) {
+	p := newPager("test title")
+	in := strings.NewReader("q")
+	if err := p.Run("hello world", tea.WithInput(in), tea.WithoutRenderer(), tea.WithoutSignals()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+func TestPager_RunLive_QuitsOnQ(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/live.txt"
+	if err := os.WriteFile(path, []byte("initial"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	p := newPager("live title")
+	in := strings.NewReader("q")
+	renderFunc := func() (string, error) { return "rendered", nil }
+	if err := p.RunLive(path, renderFunc, tea.WithInput(in), tea.WithoutRenderer(), tea.WithoutSignals()); err != nil {
+		t.Fatalf("RunLive: %v", err)
+	}
+}
+
+func TestPager_RunLive_MissingFile(t *testing.T) {
+	p := newPager("live title")
+	renderFunc := func() (string, error) { return "rendered", nil }
+	if err := p.RunLive("/nonexistent/path/for/test", renderFunc); err == nil {
+		t.Fatal("RunLive with a nonexistent file must fail to add a watch")
+	}
+}
+
+func TestNewPager(t *testing.T) {
+	p := newPager("my title")
+	if p.title != "my title" {
+		t.Errorf("title = %q, want %q", p.title, "my title")
 	}
 }
 

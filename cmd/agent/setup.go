@@ -12,8 +12,8 @@ func newSetupCmd() *cobra.Command {
 		Use:   "setup",
 		Short: "Interactive setup wizard",
 		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return setup.Run()
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return setup.Run(cmd.Context())
 		},
 	}
 }
