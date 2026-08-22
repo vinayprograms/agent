@@ -150,11 +150,6 @@ func (c *SetupCmd) Run() error {
 	return nil
 }
 
-// Run executes the replay command.
-func (c *ReplayCmd) Run() error {
-	return runReplay(c.Session, c.Verbose, c.NoPager, c.Cost)
-}
-
 // Run executes the version command.
 func (c *VersionCmd) Run() error {
 	fmt.Printf("agent version %s (commit: %s, built: %s)\n", version, commit, buildTime)

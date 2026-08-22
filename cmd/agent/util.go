@@ -7,15 +7,6 @@ import (
 	"github.com/vinayprograms/agentkit/llm"
 )
 
-// isTerminal checks if the given file is a terminal.
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
-}
-
 // isPackageFile checks if a file is a zip package (not a text Agentfile).
 func isPackageFile(path string) bool {
 	f, err := os.Open(path)

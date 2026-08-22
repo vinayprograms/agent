@@ -6,20 +6,6 @@ import (
 	"time"
 )
 
-func TestIsTerminal(t *testing.T) {
-	// Create a temp file - definitely not a terminal
-	f, err := os.CreateTemp("", "test-terminal-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-
-	if isTerminal(f) {
-		t.Error("expected temp file to not be a terminal")
-	}
-}
-
 func TestIsPackageFile(t *testing.T) {
 	tests := []struct {
 		name     string

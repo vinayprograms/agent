@@ -2,11 +2,11 @@
 package main
 
 import (
-	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/vinayprograms/agent/internal/replaycmd"
 )
 
 // CLI holds the parsed state for all subcommands.
@@ -21,7 +21,6 @@ type CLI struct {
 	Install  InstallCmd
 	Keygen   KeygenCmd
 	Setup    SetupCmd
-	Replay   ReplayCmd
 	Version  VersionCmd
 }
 
@@ -100,14 +99,6 @@ type KeygenCmd struct {
 
 // SetupCmd runs the interactive setup wizard.
 type SetupCmd struct{}
-
-// ReplayCmd replays a session for analysis.
-type ReplayCmd struct {
-	Session string
-	Verbose int
-	NoPager bool
-	Cost    []string
-}
 
 // VersionCmd shows version information.
 type VersionCmd struct{}
@@ -306,26 +297,6 @@ func buildSetupCmd(cli *CLI, action func() error) *cobra.Command {
 	return cmd
 }
 
-// buildReplayCmd creates the replay subcommand.
-func buildReplayCmd(cli *CLI, action func() error) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "replay <session>",
-		Short: "Replay session for forensic analysis",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cli.Replay.Session = args[0]
-			if action != nil {
-				return action()
-			}
-			return nil
-		},
-	}
-	cmd.Flags().CountVarP(&cli.Replay.Verbose, "verbose", "v", "Verbosity level (-v, -vv)")
-	cmd.Flags().BoolVar(&cli.Replay.NoPager, "no-pager", false, "Disable pager for output")
-	cmd.Flags().StringSliceVar(&cli.Replay.Cost, "cost", nil, "Model pricing: model:input,output (per 1M tokens). Repeatable.")
-	return cmd
-}
-
 // buildVersionCmd creates the version subcommand.
 func buildVersionCmd(cli *CLI, action func() error) *cobra.Command {
 	cmd := &cobra.Command{
@@ -361,7 +332,7 @@ func newRootCmd() (*cobra.Command, *CLI) {
 		buildInstallCmd(cli, func() error { return cli.Install.Run() }),
 		buildKeygenCmd(cli, func() error { return cli.Keygen.Run() }),
 		buildSetupCmd(cli, func() error { return cli.Setup.Run() }),
-		buildReplayCmd(cli, func() error { return cli.Replay.Run() }),
+		replaycmd.New(replaycmd.Config{Version: version, Commit: commit, BuildTime: buildTime}),
 		buildVersionCmd(cli, func() error { return cli.Version.Run() }),
 	)
 	return root, cli
@@ -386,7 +357,7 @@ func parseTestRoot() (*cobra.Command, *CLI) {
 		buildInstallCmd(cli, nil),
 		buildKeygenCmd(cli, nil),
 		buildSetupCmd(cli, nil),
-		buildReplayCmd(cli, nil),
+		replaycmd.New(replaycmd.Config{}),
 		buildVersionCmd(cli, nil),
 	)
 	return root, cli
@@ -400,10 +371,4 @@ func parseArgs(args []string) (CLI, error) {
 	root.SetErr(&strings.Builder{})
 	err := root.Execute()
 	return *cli, err
-}
-
-// printErrAndExit prints an error message and exits with code 1.
-func printErrAndExit(err error) {
-	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-	os.Exit(1)
 }
