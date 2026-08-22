@@ -171,7 +171,7 @@ func (l *Loaded) loadPolicy(explicitPath, baseDir string, warn io.Writer) error 
 		if err != nil {
 			return err
 		}
-		if err := validatePolicyKeys(policyPath, unknown); err != nil {
+		if err := ValidatePolicyKeys(policyPath, unknown); err != nil {
 			return fmt.Errorf("policy validation: %w", err)
 		}
 		l.Policy = pol
@@ -239,7 +239,7 @@ var legacyPolicyKeys = map[string]string{
 // validatePolicyKeys turns the unknown keys reported by the policy parser
 // into one error naming every key and its replacement. sandbox/timeout are
 // valid schema keys and never appear here.
-func validatePolicyKeys(path string, unknown []string) error {
+func ValidatePolicyKeys(path string, unknown []string) error {
 	if len(unknown) == 0 {
 		return nil
 	}
