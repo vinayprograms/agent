@@ -12,7 +12,7 @@ deny = ["docker", "kubectl"]
 
 Without this table (and with `default_deny = true`), bash is not registered and the agent never sees it. Policy is the single source of truth for tool availability.
 
-There is no bash **allowlist** and no **sandbox** (`bwrap`/`docker`) option: both were removed in the agentkit v1.2.0 migration. Legacy `allowlist`/`sandbox` keys are rejected at load time.
+There is no bash **allowlist** and no **sandbox** (`bwrap`/`docker`): both were removed in the agentkit v1.2.0 migration. The legacy `allowlist`/`denylist` keys are rejected at load time with a message naming the replacement; `sandbox` and `timeout` are accepted by the schema but not enforced by this agent.
 
 ## Security Model
 

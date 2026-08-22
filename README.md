@@ -60,7 +60,7 @@ The `provider` field is optional — it is inferred from the model name (`claude
 | **Capability Profiles** | Route agents to different models by declared intent | [Profiles](docs/configuration/profiles.md) |
 | **Adaptive Thinking** | Per-request reasoning depth via heuristic classifier | [Thinking](docs/configuration/thinking.md) |
 | **Semantic Memory** | Persistent BM25 + semantic graph memory across sessions | [Memory](docs/memory/semantic-memory.md) |
-| **Security Framework** | Trust-tagged blocks, tiered verification, audit trail | [Security](docs/security/README.md) |
+| **Security Framework** | Trust-tagged blocks, tiered verification, session security events | [Security](docs/security/README.md) |
 | **Supervision** | Four-phase execution with drift detection and human approval | [Execution](docs/execution/README.md) |
 | **Packaging** | Signed, distributable agent packages | [Packaging](docs/usage/packaging.md) |
 | **MCP / ACP** | External tool servers and editor integration | [Protocols](docs/configuration/protocols.md) |

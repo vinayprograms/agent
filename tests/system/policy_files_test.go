@@ -26,7 +26,7 @@ func TestPolicy_FilesUseCurrentSchema(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", "storage":
+			case ".git", "node_modules", "storage", "test-results":
 				return filepath.SkipDir
 			}
 			return nil
@@ -45,7 +45,10 @@ func TestPolicy_FilesUseCurrentSchema(t *testing.T) {
 	}
 
 	for _, path := range files {
-		rel, _ := filepath.Rel(root, path)
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			t.Fatalf("rel %s: %v", path, err)
+		}
 		t.Run(rel, func(t *testing.T) {
 			content, err := os.ReadFile(path)
 			if err != nil {

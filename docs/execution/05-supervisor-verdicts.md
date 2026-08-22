@@ -97,9 +97,9 @@ timeout_seconds = 30
 | max_reorient_attempts | Limit before escalating to PAUSE |
 | timeout_seconds | Supervisor LLM call timeout |
 
-## Signed Verdicts
+## Recorded Verdicts
 
-Every verdict is cryptographically signed for the audit trail:
+Every verdict is recorded as a `supervisor_verdict` event in the session JSONL log:
 
 | Field | Description |
 |-------|-------------|
@@ -109,9 +109,8 @@ Every verdict is cryptographically signed for the audit trail:
 | verdict | CONTINUE, REORIENT, or PAUSE |
 | reasoning | Supervisor's explanation |
 | correction | Guidance (for REORIENT only) |
-| signature | Ed25519 signature |
 
-See [Cryptographic Audit Trail](../security/06-audit-trail.md) for signing details.
+See [Security Events](../security/06-audit-trail.md) for the session-log trail.
 
 ---
 

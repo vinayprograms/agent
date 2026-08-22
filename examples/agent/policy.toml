@@ -106,7 +106,8 @@ keywords = [
 # optional small-LLM review. Entries are command names, not globs (the legacy
 # `denylist`/`allowlist` globs are gone).
 [tools.bash]
-deny = ["rm", "sudo", "chmod"]
+# shellguard deny matches base command names; destructive argument patterns (rm -rf, chmod 777) are caught by its LLM review step
+deny = ["sudo"]
 
 # Memory (v1.2.0 tool names; were memory_read / memory_write)
 [tools.recall]

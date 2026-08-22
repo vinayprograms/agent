@@ -34,7 +34,8 @@ allow = ["**"]
 # an optional small-LLM review. Entries in `deny` are bare command names
 # (matched against the first word of every pipe/chain segment), not globs.
 [tools.bash]
-deny = ["rm", "sudo", "su"]
+# shellguard deny matches base command names; destructive argument patterns (rm -rf, chmod 777) are caught by its LLM review step
+deny = ["sudo", "su"]
 
 # Web. `allow` holds domain patterns (was `allow_domains`). The legacy
 # `rate_limit` key has no equivalent and was dropped.

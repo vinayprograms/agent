@@ -116,8 +116,10 @@ deny = ["rm", "sudo"]
 allow = ["api.github.com", "*.example.com"]
 ```
 
-Legacy keys (`enabled`, `allowlist`, `denylist`, `allow_domains`, `rate_limit`)
-are rejected at load time with a message naming the replacement.
+Legacy keys (`enabled`, `allowlist`, `denylist`, `allow_domains`, `rate_limit`,
+`[mcp] default_deny`/`allowed_tools`, `[security] extra_*`) are rejected by the
+agent's policy loader with a message naming the replacement. `sandbox` and
+`timeout` are accepted by the schema but not enforced by this agent.
 
 ## MCP Tool Security
 

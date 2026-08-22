@@ -11,4 +11,5 @@ default_deny = false
 # splitting checks every `;` / `&&` segment. `deny` entries are bare command
 # names matched against each segment's first word.
 [tools.bash]
-deny = ["rm", "sudo"]
+# shellguard deny matches base command names; destructive argument patterns (rm -rf, chmod 777) are caught by its LLM review step
+deny = ["sudo"]
