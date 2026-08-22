@@ -1,26 +1,31 @@
-package main
+package run
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/config"
 	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/testutil/llmmock"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/policy"
 )
 
 func TestResolveStoragePath_Default(t *testing.T) {
-	home, _ := os.UserHomeDir()
-	rt := &runtime{
-		cfg: &config.Config{},
-		wf:  &agentfile.Workflow{Name: "test"},
+	home := "/home/tester"
+	rt := &Runtime{
+		cfg:  &config.Config{},
+		wf:   &agentfile.Workflow{Name: "test"},
+		home: home,
 	}
 	rt.resolveStoragePath()
 
@@ -34,7 +39,7 @@ func TestResolveStoragePath_Default(t *testing.T) {
 }
 
 func TestResolveStoragePath_Custom(t *testing.T) {
-	rt := &runtime{
+	rt := &Runtime{
 		cfg: &config.Config{State: config.StateConfig{Location: "/custom/path"}},
 		wf:  &agentfile.Workflow{Name: "myworkflow"},
 	}
@@ -46,10 +51,11 @@ func TestResolveStoragePath_Custom(t *testing.T) {
 }
 
 func TestResolveStoragePath_TildeExpansion(t *testing.T) {
-	home, _ := os.UserHomeDir()
-	rt := &runtime{
-		cfg: &config.Config{State: config.StateConfig{Location: "~/mydata"}},
-		wf:  &agentfile.Workflow{Name: "test"},
+	home := "/home/tester"
+	rt := &Runtime{
+		cfg:  &config.Config{State: config.StateConfig{Location: "~/mydata"}},
+		wf:   &agentfile.Workflow{Name: "test"},
+		home: home,
 	}
 	rt.resolveStoragePath()
 
@@ -60,7 +66,7 @@ func TestResolveStoragePath_TildeExpansion(t *testing.T) {
 }
 
 func TestDetermineSecurityConfig_Default(t *testing.T) {
-	rt := &runtime{
+	rt := &Runtime{
 		cfg: &config.Config{},
 		wf:  &agentfile.Workflow{},
 	}
@@ -78,7 +84,7 @@ func TestDetermineSecurityConfig_Default(t *testing.T) {
 }
 
 func TestDetermineSecurityConfig_Paranoid(t *testing.T) {
-	rt := &runtime{
+	rt := &Runtime{
 		cfg: &config.Config{Security: config.SecurityConfig{Mode: "paranoid"}},
 		wf:  &agentfile.Workflow{},
 	}
@@ -90,7 +96,7 @@ func TestDetermineSecurityConfig_Paranoid(t *testing.T) {
 }
 
 func TestDetermineSecurityConfig_Research(t *testing.T) {
-	rt := &runtime{
+	rt := &Runtime{
 		cfg: &config.Config{},
 		wf:  &agentfile.Workflow{SecurityMode: "research", SecurityScope: "OWASP Top 10"},
 	}
@@ -115,7 +121,7 @@ func TestDetermineSecurityConfig_TrustLevels(t *testing.T) {
 		{"bogus", "untrusted"},
 	}
 	for _, tt := range tests {
-		rt := &runtime{
+		rt := &Runtime{
 			cfg: &config.Config{Security: config.SecurityConfig{UserTrust: tt.userTrust}},
 			wf:  &agentfile.Workflow{},
 		}
@@ -128,13 +134,13 @@ func TestDetermineSecurityConfig_TrustLevels(t *testing.T) {
 
 func TestAddCloserAndCleanup(t *testing.T) {
 	var calls []int
-	rt := &runtime{}
+	rt := &Runtime{}
 
 	rt.addCloser(func() { calls = append(calls, 1) })
 	rt.addCloser(func() { calls = append(calls, 2) })
 	rt.addCloser(func() { calls = append(calls, 3) })
 
-	rt.cleanup()
+	rt.Close()
 
 	// Should run in reverse order
 	if len(calls) != 3 {
@@ -148,9 +154,10 @@ func TestAddCloserAndCleanup(t *testing.T) {
 // testWorkflow returns a loaded workflow rooted in a temp dir: local
 // (ollama) models so no credentials or network are needed at construction,
 // a permissive policy, and state under the temp dir.
-func testWorkflow(t *testing.T, mutate func(*config.Config)) *workflow {
+func testWorkflow(t *testing.T, mutate func(*config.Config)) *Loaded {
 	t.Helper()
 	dir := t.TempDir()
+	home, _ := os.UserHomeDir()
 	cfg := config.New()
 	cfg.Agent.Workspace = dir
 	cfg.State.Location = filepath.Join(dir, "state")
@@ -161,29 +168,36 @@ func testWorkflow(t *testing.T, mutate func(*config.Config)) *workflow {
 	pol := policy.New()
 	pol.DefaultDeny = false
 	pol.AllowedDirs = []string{dir}
-	return &workflow{
-		wf: &agentfile.Workflow{
+	return &Loaded{
+		Workflow: &agentfile.Workflow{
 			Name:  "rt-test",
 			Goals: []agentfile.Goal{{Name: "g", Outcome: "do it"}},
 			Steps: []agentfile.Step{{Type: agentfile.StepRUN, Name: "s", UsingGoals: []string{"g"}}},
 		},
-		cfg: cfg,
-		pol: pol,
+		Config: cfg,
+		Policy: pol,
+		home:   home,
 	}
 }
 
+// testDeps are the dependencies for a runtime under test: env credentials
+// and discarded output.
+func testDeps() Deps {
+	return Deps{Creds: credentials.NewEnvStore()}
+}
+
 func TestNewLogger_Level(t *testing.T) {
-	if !newLogger(true).Enabled(context.Background(), slog.LevelDebug) {
+	if !newLogger(true, io.Discard).Enabled(context.Background(), slog.LevelDebug) {
 		t.Error("debug logger should enable Debug")
 	}
-	if newLogger(false).Enabled(context.Background(), slog.LevelDebug) {
+	if newLogger(false, io.Discard).Enabled(context.Background(), slog.LevelDebug) {
 		t.Error("info logger should not enable Debug")
 	}
 }
 
 func TestNewModel_DefaultsAndErrors(t *testing.T) {
 	w := testWorkflow(t, nil)
-	rt := newRuntime(w, credentials.NewEnvStore())
+	rt := newRuntime(w, testDeps())
 
 	// MaxTokens 0 in both profile and default config falls back to defaultMaxTokens.
 	rt.cfg.LLM.MaxTokens = 0
@@ -204,7 +218,7 @@ func TestNewModel_DefaultsAndErrors(t *testing.T) {
 
 func TestCreateProvider_Error(t *testing.T) {
 	w := testWorkflow(t, func(c *config.Config) { c.LLM.Model = "" })
-	rt := newRuntime(w, credentials.NewEnvStore())
+	rt := newRuntime(w, testDeps())
 	if err := rt.createProvider(); err == nil {
 		t.Error("expected error")
 	}
@@ -212,7 +226,7 @@ func TestCreateProvider_Error(t *testing.T) {
 
 func TestCreateSmallLLM(t *testing.T) {
 	w := testWorkflow(t, nil)
-	rt := newRuntime(w, credentials.NewEnvStore())
+	rt := newRuntime(w, testDeps())
 	if err := rt.createSmallLLM(); err != nil || rt.smallLLM != nil {
 		t.Errorf("unconfigured small_llm: err=%v model=%v", err, rt.smallLLM)
 	}
@@ -227,7 +241,7 @@ func TestCreateSmallLLM(t *testing.T) {
 }
 
 func TestHTTPTimeout(t *testing.T) {
-	rt := &runtime{cfg: &config.Config{}}
+	rt := &Runtime{cfg: &config.Config{}}
 	if got := rt.httpTimeout(); got != 0 {
 		t.Errorf("zero timeouts: got %v", got)
 	}
@@ -239,15 +253,15 @@ func TestHTTPTimeout(t *testing.T) {
 
 func TestSetupTelemetry(t *testing.T) {
 	w := testWorkflow(t, nil)
-	rt := newRuntime(w, credentials.NewEnvStore())
-	if err := rt.setupTelemetry(); err != nil || len(rt.closers) != 0 {
+	rt := newRuntime(w, testDeps())
+	if err := rt.setupTelemetry(t.Context()); err != nil || len(rt.closers) != 0 {
 		t.Errorf("disabled telemetry: err=%v closers=%d", err, len(rt.closers))
 	}
 	rt.cfg.Telemetry = config.TelemetryConfig{Enabled: true, Endpoint: "localhost:1", Protocol: "http", Insecure: true}
-	if err := rt.setupTelemetry(); err != nil || len(rt.closers) != 1 {
+	if err := rt.setupTelemetry(t.Context()); err != nil || len(rt.closers) != 1 {
 		t.Errorf("enabled telemetry: err=%v closers=%d", err, len(rt.closers))
 	}
-	rt.cleanup()
+	rt.Close()
 }
 
 func TestProfileResolver(t *testing.T) {
@@ -257,7 +271,7 @@ func TestProfileResolver(t *testing.T) {
 			"broken": {Provider: "anthropic", Model: "claude-opus"},
 		}
 	})
-	rt := newRuntime(w, credentials.NewEnvStore())
+	rt := newRuntime(w, testDeps())
 	if err := rt.createProvider(); err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +304,7 @@ func TestCreateTriageProvider(t *testing.T) {
 			"broken": {Provider: "anthropic", Model: "claude-opus"},
 		}
 	})
-	rt := newRuntime(w, credentials.NewEnvStore())
+	rt := newRuntime(w, testDeps())
 	if rt.createTriageProvider() != nil {
 		t.Error("no triage/small llm: want nil")
 	}
@@ -313,13 +327,13 @@ func TestRuntimeSetup_FullWiring(t *testing.T) {
 		c.SmallLLM = config.LLMConfig{Provider: "ollama-local", Model: "small"}
 		c.Security.Mode = "paranoid"
 	})
-	w.wf.Supervised = true
-	w.pol.Tools["bash"] = &policy.ToolPolicy{Deny: []string{"curl"}}
-	w.pol.Content.Security.Patterns = []string{"custom:ignore\\s+previous"}
-	rt := newRuntime(w, credentials.NewEnvStore())
-	defer rt.cleanup()
+	w.Workflow.Supervised = true
+	w.Policy.Tools["bash"] = &policy.ToolPolicy{Deny: []string{"curl"}}
+	w.Policy.Content.Security.Patterns = []string{"custom:ignore\\s+previous"}
+	rt := newRuntime(w, testDeps())
+	defer rt.Close()
 
-	if err := rt.setup(); err != nil {
+	if err := rt.setup(t.Context()); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	if rt.exec == nil || rt.sess == nil || rt.registry == nil || rt.bleveStore == nil {
@@ -351,10 +365,10 @@ func TestRuntimeSetup_FullWiring(t *testing.T) {
 
 func TestRuntimeSetup_InvalidSecurityPatternFails(t *testing.T) {
 	w := testWorkflow(t, nil)
-	w.pol.Content.Security.Patterns = []string{"bad:("}
-	rt := newRuntime(w, credentials.NewEnvStore())
-	defer rt.cleanup()
-	if err := rt.setup(); err == nil {
+	w.Policy.Content.Security.Patterns = []string{"bad:("}
+	rt := newRuntime(w, testDeps())
+	defer rt.Close()
+	if err := rt.setup(t.Context()); err == nil {
 		t.Fatal("expected executor creation to fail on invalid pattern")
 	}
 }
@@ -365,9 +379,9 @@ func TestRuntimeSetup_MCPConnectFailureIsWarning(t *testing.T) {
 			"nope": {Command: "/nonexistent/mcp-server", DeniedTools: []string{"x"}},
 		}
 	})
-	rt := newRuntime(w, credentials.NewEnvStore())
-	defer rt.cleanup()
-	if err := rt.setup(); err != nil {
+	rt := newRuntime(w, testDeps())
+	defer rt.Close()
+	if err := rt.setup(t.Context()); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	if rt.mcpManager == nil || rt.mcpManager.ServerCount() != 0 {
@@ -381,23 +395,98 @@ func TestRuntimeSetup_StorageDirError(t *testing.T) {
 	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	w.cfg.State.Location = filepath.Join(blocker, "state")
-	rt := newRuntime(w, credentials.NewEnvStore())
-	if err := rt.setup(); err == nil {
+	w.Config.State.Location = filepath.Join(blocker, "state")
+	rt := newRuntime(w, testDeps())
+	if err := rt.setup(t.Context()); err == nil {
 		t.Fatal("expected storage dir error")
 	}
 }
 
 func TestRuntimeSetup_ResearchScopeReachesGate(t *testing.T) {
 	w := testWorkflow(t, nil)
-	w.wf.SecurityMode = "research"
-	w.wf.SecurityScope = "OWASP"
-	rt := newRuntime(w, credentials.NewEnvStore())
-	defer rt.cleanup()
-	if err := rt.setup(); err != nil {
+	w.Workflow.SecurityMode = "research"
+	w.Workflow.SecurityScope = "OWASP"
+	rt := newRuntime(w, testDeps())
+	defer rt.Close()
+	if err := rt.setup(t.Context()); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	if rt.secMode != executor.SecurityResearch || rt.secScope != "OWASP" {
 		t.Errorf("mode=%q scope=%q", rt.secMode, rt.secScope)
+	}
+}
+
+func TestParseRetryConfig(t *testing.T) {
+	cases := []struct {
+		backoff string
+		want    time.Duration
+	}{{"", 0}, {"30s", 30 * time.Second}, {"invalid", 0}}
+	for _, tc := range cases {
+		cfg := parseRetryConfig(3, tc.backoff)
+		if cfg.MaxRetries != 3 || cfg.MaxBackoff != tc.want {
+			t.Errorf("backoff %q: %+v", tc.backoff, cfg)
+		}
+	}
+}
+
+// runWith builds a runtime over a mock model and runs it, returning the
+// stdout it produced.
+func runWith(t *testing.T, l *Loaded, model llm.Model) (string, error) {
+	t.Helper()
+	var out strings.Builder
+	rt := newRuntime(l, Deps{Creds: credentials.NewEnvStore(), Stdout: &out})
+	t.Cleanup(rt.Close)
+	if err := rt.setup(t.Context()); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	exec, err := executor.New(executor.Config{
+		Workflow: rt.wf,
+		Model:    model,
+		Registry: rt.registry,
+		Policy:   rt.pol,
+		Logger:   rt.logger,
+		Session:  rt.sess,
+	})
+	if err != nil {
+		t.Fatalf("executor: %v", err)
+	}
+	rt.exec = exec
+	runErr := rt.Run(t.Context())
+	return out.String(), runErr
+}
+
+func TestRun_WorkflowPrintsJSONResult(t *testing.T) {
+	l := testWorkflow(t, nil)
+	model := llmmock.New()
+	model.SetResponse("all done")
+	out, err := runWith(t, l, model)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(out, "\"Status\"") || !strings.Contains(out, "all done") {
+		t.Errorf("expected a JSON result on stdout, got %q", out)
+	}
+}
+
+func TestRun_InlineGoalPrintsRawOutputs(t *testing.T) {
+	l := testWorkflow(t, nil)
+	l.Workflow = inlineGoal("say hello")
+	model := llmmock.New()
+	model.SetResponse("hello there")
+	out, err := runWith(t, l, model)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(out, "\"Status\"") || !strings.Contains(out, "hello there") {
+		t.Errorf("expected raw outputs on stdout, got %q", out)
+	}
+}
+
+func TestRun_ExecutorErrorMarksSessionFailed(t *testing.T) {
+	l := testWorkflow(t, nil)
+	model := llmmock.New()
+	model.SetError(errors.New("model exploded"))
+	if _, err := runWith(t, l, model); err == nil {
+		t.Fatal("expected the executor error")
 	}
 }

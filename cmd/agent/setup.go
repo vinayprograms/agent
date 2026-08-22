@@ -1,16 +1,19 @@
 package main
 
 import (
-	"fmt"
-	"os"
+	"github.com/spf13/cobra"
 
 	"github.com/vinayprograms/agent/internal/setup"
 )
 
-// runSetup launches the interactive setup wizard.
-func runSetup() {
-	if err := setup.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+// newSetupCmd launches the interactive setup wizard.
+func newSetupCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup",
+		Short: "Interactive setup wizard",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return setup.Run()
+		},
 	}
 }

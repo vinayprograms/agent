@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/run"
 	"github.com/vinayprograms/agent/internal/swarm"
 	"github.com/vinayprograms/agentkit/policy"
 )
@@ -62,8 +63,13 @@ func TestParseSwarmCapabilities(t *testing.T) {
 	if got := parseSwarmCapabilities(""); got != nil {
 		t.Errorf("empty: got %v", got)
 	}
-	got := parseSwarmCapabilities("develop:3,test,review:x")
-	want := []swarm.WorkerCapability{{Name: "develop", Replicas: 3}, {Name: "test", Replicas: 1}, {Name: "review", Replicas: 1}}
+	got := parseSwarmCapabilities("develop:3,test,review:x,none:0")
+	want := []swarm.WorkerCapability{
+		{Name: "develop", Replicas: 3},
+		{Name: "test", Replicas: 1},
+		{Name: "review", Replicas: 1},
+		{Name: "none", Replicas: 1},
+	}
 	if len(got) != len(want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
@@ -100,13 +106,6 @@ func TestTruncateStr(t *testing.T) {
 	}
 	if got := truncateStr("hello world", 5); got != "hello..." {
 		t.Errorf("got %q", got)
-	}
-}
-
-func TestGenerateShortID(t *testing.T) {
-	a, b := generateShortID(), generateShortID()
-	if len(a) != 8 || a == b {
-		t.Errorf("ids %q %q", a, b)
 	}
 }
 
@@ -156,7 +155,7 @@ func TestRegistryEntry(t *testing.T) {
 
 	// Capability falls back to the workflow name.
 	a.capability = capabilitySchema{}
-	a.wf = &workflow{wf: &agentfile.Workflow{Name: "wfname"}}
+	a.loaded = &run.Loaded{Workflow: &agentfile.Workflow{Name: "wfname"}}
 	if got := a.registryEntry().Skills[0].ID; got != "wfname" {
 		t.Errorf("fallback skill id %q", got)
 	}

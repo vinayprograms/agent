@@ -2,35 +2,37 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"os"
-	"os/signal"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/spf13/cobra"
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/run"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/swarm"
-	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/policy"
 	"github.com/vinayprograms/agentkit/tools"
 	"github.com/vinayprograms/swarmkit/messaging"
 	"github.com/vinayprograms/swarmkit/registry"
 )
 
+// maxTaskBody caps an HTTP task submission (1 MiB): task inputs are text,
+// and an unbounded body is a denial-of-service invitation.
+const maxTaskBody = 1 << 20
+
 // serviceAgent holds the state for a running service agent.
 type serviceAgent struct {
-	// Reuse workflow loading infrastructure
-	wf    *workflow
-	creds credentials.Lookup
+	loaded *run.Loaded
+	stderr io.Writer
 
 	// Agent identity (uses session ID)
 	agentID         string
@@ -41,15 +43,19 @@ type serviceAgent struct {
 	capability      capabilitySchema
 
 	// Service-level session (shared across all tasks)
-	serviceRuntime *runtime
+	serviceRuntime *run.Runtime
 	// interrupts is the buffer of the task currently executing (nil when
 	// idle) — corrections that arrive between tasks are discarded.
 	interrupts   atomic.Pointer[executor.InterruptBuffer]
 	publishEvent *atomic.Pointer[session.Sink] // session event sink target; nil until the bus is up
 
-	// Runtime state
+	// Runtime state. mu guards status and currentTask, which the HTTP
+	// handlers, the bus loop and the shutdown path all touch; exec
+	// serialises task execution onto the single shared executor.
+	mu           sync.Mutex
 	status       string // "idle", "busy", "draining"
 	currentTask  *swarm.TaskMessage
+	exec         sync.Mutex
 	taskDone     chan struct{}
 	drainTimeout time.Duration
 
@@ -102,63 +108,110 @@ func (c capabilitySchema) skill() registry.Skill {
 	return s
 }
 
-// Run executes the serve command.
-func (cmd *ServeCmd) Run() error {
-	// Create workflow struct (reuses existing loading infrastructure)
-	wf := &workflow{
-		agentfilePath: cmd.File,
-		configPath:    cmd.Config,
-		policyPath:    cmd.Policy,
-		workspacePath: cmd.Workspace,
-		statePath:     cmd.State,
-		inputs:        make(map[string]string), // Will be set per-task
-		debug:         false,
-	}
+// serveOptions are the serve command's flags, plus the positional
+// Agentfile and the streams the command runs on.
+type serveOptions struct {
+	file      string
+	stdout    io.Writer
+	stderr    io.Writer
+	config    string
+	policy    string
+	workspace string
+	state     string
 
-	// Load config, policy, and agentfile
-	if err := wf.load(); err != nil {
+	// Transport
+	http string
+	bus  string
+
+	// Service
+	queueGroup   string
+	capability   string
+	sessionLabel string
+
+	// Swarm integration
+	agentType    string
+	capabilities string
+}
+
+// newServeCmd runs the agent as a long-running service.
+func newServeCmd(d deps) *cobra.Command {
+	var opts serveOptions
+	cmd := &cobra.Command{
+		Use:   "serve [file]",
+		Short: "Run as a service agent (long-running)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.file = argOr(args, "Agentfile")
+			opts.stdout, opts.stderr = cmd.OutOrStdout(), cmd.ErrOrStderr()
+			return runServe(cmd.Context(), d, opts)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&opts.config, "config", "", "Config file path")
+	f.StringVar(&opts.policy, "policy", "", "Policy file path")
+	f.StringVar(&opts.workspace, "workspace", "", "Workspace directory")
+	f.StringVar(&opts.state, "state", "", "Override state location (isolate per-agent when needed)")
+	f.StringVar(&opts.http, "http", "", "Run HTTP server on this address (e.g., :8080)")
+	f.StringVar(&opts.bus, "bus", "", "Message bus URL (e.g., nats://localhost:4222)")
+	f.StringVar(&opts.queueGroup, "queue-group", "", "Queue group name for load balancing")
+	f.StringVar(&opts.capability, "capability", "", "Capability name (default: Agentfile NAME)")
+	f.StringVar(&opts.sessionLabel, "session-label", "", "Label for session directory (default: Agentfile NAME)")
+	f.StringVar(&opts.agentType, "type", "", "Agent type: worker or manager (default: worker)")
+	f.StringVar(&opts.capabilities, "capabilities", "", "Worker capabilities for manager dispatch (format: cap1:n,cap2:n)")
+	return cmd
+}
+
+// runServe loads the workflow, builds the service agent and serves on the
+// configured transport until ctx is cancelled.
+func runServe(ctx context.Context, d deps, opts serveOptions) error {
+	loaded, err := run.Load(run.LoadOptions{
+		AgentfilePath: opts.file,
+		ConfigPath:    opts.config,
+		PolicyPath:    opts.policy,
+		Workspace:     opts.workspace,
+		Inputs:        map[string]string{}, // set per task
+		SessionLabel:  opts.sessionLabel,
+		Home:          d.home,
+		Stderr:        opts.stderr,
+	})
+	if err != nil {
 		return err
 	}
 
 	// Apply command-line overrides for service config
-	if cmd.HTTP != "" {
-		wf.cfg.Service.HTTPAddr = cmd.HTTP
+	svc := &loaded.Config.Service
+	if opts.http != "" {
+		svc.HTTPAddr = opts.http
 	}
-	if cmd.Bus != "" {
-		wf.cfg.Service.BusURL = cmd.Bus
+	if opts.bus != "" {
+		svc.BusURL = opts.bus
 	}
-	if cmd.QueueGroup != "" {
-		wf.cfg.Service.QueueGroup = cmd.QueueGroup
+	if opts.queueGroup != "" {
+		svc.QueueGroup = opts.queueGroup
 	}
-	if cmd.Capability != "" {
-		wf.cfg.Service.Capability = cmd.Capability
+	if opts.capability != "" {
+		svc.Capability = opts.capability
 	}
-	if cmd.State != "" {
-		wf.cfg.State.Location = cmd.State
-	}
-	if cmd.SessionLabel != "" {
-		wf.sessionLabel = cmd.SessionLabel
+	if opts.state != "" {
+		loaded.Config.State.Location = opts.state
 	}
 
 	// Determine capability name
-	capabilityName := wf.cfg.Service.Capability
+	capabilityName := svc.Capability
 	if capabilityName == "" {
-		capabilityName = wf.wf.Name
+		capabilityName = loaded.Workflow.Name
 	}
-
-	// Extract capability schema from Agentfile
-	capability := extractCapabilitySchema(wf.wf, capabilityName)
+	capability := extractCapabilitySchema(loaded.Workflow, capabilityName)
 
 	// Parse drain timeout
 	drainTimeout := 30 * time.Second
-	if wf.cfg.Service.DrainTimeout != "" {
-		if d, err := time.ParseDuration(wf.cfg.Service.DrainTimeout); err == nil {
-			drainTimeout = d
+	if svc.DrainTimeout != "" {
+		if dur, err := time.ParseDuration(svc.DrainTimeout); err == nil {
+			drainTimeout = dur
 		}
 	}
 
-	// Load credentials (same as run mode)
-	creds, err := loadCredentials()
+	creds, err := d.credentials()
 	if err != nil {
 		return err
 	}
@@ -167,55 +220,55 @@ func (cmd *ServeCmd) Run() error {
 	// Session events stream to NATS once the bus is up (see publishEvent
 	// below); until then the sink drops them.
 	publishEvent := new(atomic.Pointer[session.Sink])
-	serviceRt := newRuntime(wf, creds)
-	// Session persists across tasks — Run() flushes, doesn't close.
-	serviceRt.persistentSession = true
-	serviceRt.eventSink = func(evt session.Event) {
-		if p := publishEvent.Load(); p != nil {
-			(*p)(evt)
-		}
-	}
-	if err := serviceRt.setup(); err != nil {
+	serviceRt, err := run.New(ctx, loaded, run.Deps{
+		Creds:   creds,
+		Stdout:  opts.stdout,
+		Stderr:  opts.stderr,
+		Version: version,
+		Sink: func(evt session.Event) {
+			if p := publishEvent.Load(); p != nil {
+				(*p)(evt)
+			}
+		},
+		KeepSession: true, // session persists across tasks
+	})
+	if err != nil {
 		return fmt.Errorf("setting up service runtime: %w", err)
 	}
+	defer serviceRt.Close()
+
+	sessID := serviceRt.Session().ID
 
 	// Agent ID uses session ID (or config if specified)
-	agentID := wf.cfg.Agent.ID
+	agentID := loaded.Config.Agent.ID
 	if agentID == "" {
-		// Auto-generate: <capability>-<session-id>
-		agentID = fmt.Sprintf("%s-%s", capabilityName, serviceRt.sess.ID)
+		agentID = fmt.Sprintf("%s-%s", capabilityName, sessID)
 	}
 
 	// Display name: swarm agent name if available, otherwise Agentfile NAME
-	displayName := wf.wf.Name
-	if wf.sessionLabel != "" {
-		displayName = wf.sessionLabel
+	displayName := loaded.Workflow.Name
+	if opts.sessionLabel != "" {
+		displayName = opts.sessionLabel
 	}
 
-	// Determine agent type: CLI flag takes precedence, env var as fallback
-	agentType := cmd.Type
+	// Agent type and capabilities: CLI flag first, env var as fallback.
+	agentType := opts.agentType
 	if agentType == "" {
-		agentType = os.Getenv("AGENT_TYPE")
+		agentType = d.getenv("AGENT_TYPE")
 	}
 	if agentType == "" {
 		agentType = "worker"
 	}
-
-	// Instance ID: <displayName>-<session-id> for swarm addressing
-	instanceID := fmt.Sprintf("%s-%s", displayName, serviceRt.sess.ID)
-
-	// Determine capabilities string: CLI flag takes precedence, env var as fallback
-	capabilitiesStr := cmd.Capabilities
+	capabilitiesStr := opts.capabilities
 	if capabilitiesStr == "" {
-		capabilitiesStr = os.Getenv("SWARM_CAPABILITIES")
+		capabilitiesStr = d.getenv("SWARM_CAPABILITIES")
 	}
 
-	// Create service agent
 	agent := &serviceAgent{
-		wf:              wf,
-		creds:           creds,
+		loaded:          loaded,
+		stderr:          opts.stderr,
 		agentID:         agentID,
-		instanceID:      instanceID,
+		instanceID:      fmt.Sprintf("%s-%s", displayName, sessID),
 		displayName:     displayName,
 		agentType:       agentType,
 		capabilitiesStr: capabilitiesStr,
@@ -223,32 +276,29 @@ func (cmd *ServeCmd) Run() error {
 		serviceRuntime:  serviceRt,
 		publishEvent:    publishEvent,
 		status:          "idle",
-		taskDone:        make(chan struct{}),
+		taskDone:        make(chan struct{}, 1),
 		drainTimeout:    drainTimeout,
 	}
 
-	// Ensure cleanup on exit
-	defer serviceRt.cleanup()
-
-	// Determine mode and run
-	if wf.cfg.Service.BusURL != "" {
-		return agent.runBusMode()
-	} else if wf.cfg.Service.HTTPAddr != "" {
-		return agent.runHTTPMode()
-	} else {
+	switch {
+	case svc.BusURL != "":
+		return agent.runBusMode(ctx)
+	case svc.HTTPAddr != "":
+		return agent.runHTTPMode(ctx)
+	default:
 		return fmt.Errorf("no transport configured: specify --http or --bus, or set [service].http_addr or [service].bus_url in config")
 	}
 }
 
-// runHTTPMode runs the agent as an HTTP server.
-func (a *serviceAgent) runHTTPMode() error {
+// handler builds the service agent's HTTP mux.
+func (a *serviceAgent) handler() http.Handler {
 	mux := http.NewServeMux()
 
 	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":     a.status,
+			"status":     a.state(),
 			"capability": a.capability.Name,
 		})
 	})
@@ -267,14 +317,14 @@ func (a *serviceAgent) runHTTPMode() error {
 		}
 
 		// Check if draining
-		if a.status == "draining" {
+		if a.state() == "draining" {
 			http.Error(w, "agent is draining, not accepting tasks", http.StatusServiceUnavailable)
 			return
 		}
 
 		// Parse task message
 		var task swarm.TaskMessage
-		if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxTaskBody)).Decode(&task); err != nil {
 			http.Error(w, fmt.Sprintf("invalid task: %v", err), http.StatusBadRequest)
 			return
 		}
@@ -295,47 +345,47 @@ func (a *serviceAgent) runHTTPMode() error {
 		}
 		json.NewEncoder(w).Encode(result)
 	})
+	return mux
+}
 
+// runHTTPMode runs the agent as an HTTP server until ctx is cancelled.
+func (a *serviceAgent) runHTTPMode(ctx context.Context) error {
 	a.httpServer = &http.Server{
-		Addr:    a.wf.cfg.Service.HTTPAddr,
-		Handler: mux,
+		Addr:              a.loaded.Config.Service.HTTPAddr,
+		Handler:           a.handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
-	// Handle shutdown signals
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	fmt.Fprintf(a.stderr, "Service agent: %s (ID: %s, capability: %s)\n", a.loaded.Workflow.Name, a.agentID, a.capability.Name)
+	fmt.Fprintf(a.stderr, "HTTP server listening on %s\n", a.loaded.Config.Service.HTTPAddr)
+	fmt.Fprintf(a.stderr, "Endpoints:\n")
+	fmt.Fprintf(a.stderr, "  GET  /health     - Health check\n")
+	fmt.Fprintf(a.stderr, "  GET  /capability - Capability schema\n")
+	fmt.Fprintf(a.stderr, "  POST /task       - Submit task\n")
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- a.httpServer.ListenAndServe() }()
 
-	go func() {
-		<-sigCh
-		fmt.Fprintf(os.Stderr, "\nReceived shutdown signal, draining...\n")
-		a.initiateShutdown(ctx)
-	}()
-
-	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s, capability: %s)\n", a.wf.wf.Name, a.agentID, a.capability.Name)
-	fmt.Fprintf(os.Stderr, "HTTP server listening on %s\n", a.wf.cfg.Service.HTTPAddr)
-	fmt.Fprintf(os.Stderr, "Endpoints:\n")
-	fmt.Fprintf(os.Stderr, "  GET  /health     - Health check\n")
-	fmt.Fprintf(os.Stderr, "  GET  /capability - Capability schema\n")
-	fmt.Fprintf(os.Stderr, "  POST /task       - Submit task\n")
-
-	if err := a.httpServer.ListenAndServe(); err != http.ErrServerClosed {
-		return fmt.Errorf("HTTP server error: %w", err)
+	select {
+	case err := <-serverErr:
+		if err != http.ErrServerClosed {
+			return fmt.Errorf("HTTP server error: %w", err)
+		}
+	case <-ctx.Done():
+		fmt.Fprintf(a.stderr, "\nReceived shutdown signal, draining...\n")
+		a.initiateShutdown(context.WithoutCancel(ctx))
+		<-serverErr
 	}
-
 	return nil
 }
 
 // runBusMode runs the agent connected to a message bus (swarm mode).
-func (a *serviceAgent) runBusMode() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+func (a *serviceAgent) runBusMode(ctx context.Context) error {
 	// Connect to NATS
 	cfg := messaging.NATSDefaults()
-	cfg.URL = a.wf.cfg.Service.BusURL
+	cfg.URL = a.loaded.Config.Service.BusURL
 	cfg.Name = fmt.Sprintf("agent-%s", a.agentID)
 	natsBus, err := messaging.NATS(cfg)
 	if err != nil {
@@ -348,27 +398,27 @@ func (a *serviceAgent) runBusMode() error {
 	if a.agentType == "manager" {
 		caps := parseSwarmCapabilities(a.capabilitiesStr)
 		dispatchTool := swarm.NewDispatchTool(natsBus, a.displayName, caps)
-		if err := a.serviceRuntime.registry.Register(tools.New(dispatchTool)); err != nil {
+		if err := a.serviceRuntime.Registry().Register(tools.New(dispatchTool)); err != nil {
 			return fmt.Errorf("registering dispatch tool: %w", err)
 		}
-		enableTool(a.serviceRuntime.pol, dispatchTool.Name())
-		fmt.Fprintf(os.Stderr, "✓ Dispatch tool registered (manager-only)\n")
+		enableTool(a.serviceRuntime.Policy(), dispatchTool.Name())
+		fmt.Fprintf(a.stderr, "✓ Dispatch tool registered (manager-only)\n")
 		for _, c := range caps {
-			fmt.Fprintf(os.Stderr, "  capability: %s (%d workers)\n", c.Name, c.Replicas)
+			fmt.Fprintf(a.stderr, "  capability: %s (%d workers)\n", c.Name, c.Replicas)
 		}
 	}
 
 	// Register with NATS KV registry (for discovery)
 	if err := a.registerWithRegistry(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Registry registration failed: %v (continuing without registry)\n", err)
+		fmt.Fprintf(a.stderr, "⚠️  Registry registration failed: %v (continuing without registry)\n", err)
 	} else {
 		defer a.reg.Close()
 	}
 
 	// Parse heartbeat interval
 	heartbeatInterval := 5 * time.Second
-	if a.wf.cfg.Service.HeartbeatInterval != "" {
-		if d, err := time.ParseDuration(a.wf.cfg.Service.HeartbeatInterval); err == nil {
+	if a.loaded.Config.Service.HeartbeatInterval != "" {
+		if d, err := time.ParseDuration(a.loaded.Config.Service.HeartbeatInterval); err == nil {
 			heartbeatInterval = d
 		}
 	}
@@ -386,13 +436,13 @@ func (a *serviceAgent) runBusMode() error {
 	a.heartbeat = hbSender
 	hbSender.SetMetadata("name", a.displayName)
 	hbSender.SetMetadata("instance_id", a.instanceID)
-	hbSender.SetMetadata("session_id", a.serviceRuntime.sess.ID)
+	hbSender.SetMetadata("session_id", a.serviceRuntime.Session().ID)
 	hbSender.SetMetadata("capability", a.capability.Name)
 	hbSender.SetMetadata("type", a.agentType)
 	hbSender.SetMetadata("version", version)
 
 	// Wire metrics collector for dashboard reporting
-	a.serviceRuntime.metrics.set(swarm.NewMetricsCollector(hbSender))
+	a.serviceRuntime.SetMetricsCollector(swarm.NewMetricsCollector(hbSender))
 
 	// Wire event publisher — streams structured session events to NATS
 	// for the swarm UI's real-time event log.
@@ -410,7 +460,7 @@ func (a *serviceAgent) runBusMode() error {
 	if err := hbSender.Start(ctx); err != nil {
 		return fmt.Errorf("starting heartbeat: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "📡 Heartbeat started on subject: heartbeat.%s\n", a.agentID)
+	fmt.Fprintf(a.stderr, "📡 Heartbeat started on subject: heartbeat.%s\n", a.agentID)
 	defer hbSender.Stop()
 
 	// Ensure JetStream stream exists for durable messaging. JetStream needs
@@ -422,12 +472,12 @@ func (a *serviceAgent) runBusMode() error {
 		js, jsErr = swarm.EnsureStream(nc)
 	}
 	if jsErr != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  JetStream unavailable: %v (falling back to queue groups)\n", jsErr)
+		fmt.Fprintf(a.stderr, "⚠️  JetStream unavailable: %v (falling back to queue groups)\n", jsErr)
 	}
 	a.js = js
 
 	// Determine queue group (used as fallback if JetStream unavailable)
-	a.queueGroup = a.wf.cfg.Service.QueueGroup
+	a.queueGroup = a.loaded.Config.Service.QueueGroup
 	if a.queueGroup == "" {
 		a.queueGroup = a.capability.Name + "-workers"
 	}
@@ -439,10 +489,10 @@ func (a *serviceAgent) runBusMode() error {
 	if js != nil {
 		pullSub, err := swarm.EnsureWorkConsumer(js, cap)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️  JetStream pull consumer failed: %v (falling back to queue groups)\n", err)
+			fmt.Fprintf(a.stderr, "⚠️  JetStream pull consumer failed: %v (falling back to queue groups)\n", err)
 		} else {
 			a.workPullSub = pullSub
-			fmt.Fprintf(os.Stderr, "✓ JetStream pull consumer: work.%s.* (ack-based delivery)\n", cap)
+			fmt.Fprintf(a.stderr, "✓ JetStream pull consumer: work.%s.* (ack-based delivery)\n", cap)
 		}
 	}
 	if a.workPullSub == nil {
@@ -453,7 +503,7 @@ func (a *serviceAgent) runBusMode() error {
 			return fmt.Errorf("subscribing to %s: %w", workSubject, err)
 		}
 		a.taskSubs = append(a.taskSubs, workSub)
-		fmt.Fprintf(os.Stderr, "⚠️  Using queue group fallback: work.%s.* (push-based)\n", cap)
+		fmt.Fprintf(a.stderr, "⚠️  Using queue group fallback: work.%s.* (push-based)\n", cap)
 	}
 	defer func() {
 		if a.workPullSub != nil {
@@ -468,7 +518,7 @@ func (a *serviceAgent) runBusMode() error {
 	instanceSubject := fmt.Sprintf("work.%s.*", a.instanceID)
 	instanceSub, err := natsBus.Subscribe(instanceSubject)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Failed to subscribe to %s: %v\n", instanceSubject, err)
+		fmt.Fprintf(a.stderr, "⚠️  Failed to subscribe to %s: %v\n", instanceSubject, err)
 	} else {
 		a.instanceSub = instanceSub
 		defer instanceSub.Unsubscribe()
@@ -478,7 +528,7 @@ func (a *serviceAgent) runBusMode() error {
 	if a.agentType == "manager" {
 		discussSub, err := natsBus.Subscribe("discuss.*")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️  Failed to subscribe to discuss.*: %v\n", err)
+			fmt.Fprintf(a.stderr, "⚠️  Failed to subscribe to discuss.*: %v\n", err)
 		} else {
 			a.discussSub = discussSub
 			defer discussSub.Unsubscribe()
@@ -489,36 +539,32 @@ func (a *serviceAgent) runBusMode() error {
 	controlSubject := fmt.Sprintf("control.%s.shutdown", a.agentID)
 	controlSub, err := natsBus.Subscribe(controlSubject)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Failed to subscribe to %s: %v\n", controlSubject, err)
+		fmt.Fprintf(a.stderr, "⚠️  Failed to subscribe to %s: %v\n", controlSubject, err)
 	} else {
 		a.controlSub = controlSub
 		defer controlSub.Unsubscribe()
 	}
 
-	// Handle shutdown signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
-	fmt.Fprintf(os.Stderr, "Service agent: %s (ID: %s, instance: %s, type: %s, capability: %s)\n",
-		a.wf.wf.Name, a.agentID, a.instanceID, a.agentType, a.capability.Name)
-	fmt.Fprintf(os.Stderr, "Connected to bus: %s\n", a.wf.cfg.Service.BusURL)
+	fmt.Fprintf(a.stderr, "Service agent: %s (ID: %s, instance: %s, type: %s, capability: %s)\n",
+		a.loaded.Workflow.Name, a.agentID, a.instanceID, a.agentType, a.capability.Name)
+	fmt.Fprintf(a.stderr, "Connected to bus: %s\n", a.loaded.Config.Service.BusURL)
 	if a.workPullSub != nil {
-		fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (JetStream pull consumer)\n", cap)
+		fmt.Fprintf(a.stderr, "Listening on: work.%s.* (JetStream pull consumer)\n", cap)
 	} else {
-		fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (queue: %s)\n", cap, a.queueGroup)
+		fmt.Fprintf(a.stderr, "Listening on: work.%s.* (queue: %s)\n", cap, a.queueGroup)
 	}
-	fmt.Fprintf(os.Stderr, "Listening on: work.%s.* (corrections)\n", a.instanceID)
+	fmt.Fprintf(a.stderr, "Listening on: work.%s.* (corrections)\n", a.instanceID)
 	if a.agentType == "manager" {
-		fmt.Fprintf(os.Stderr, "Listening on: discuss.* (manager — monitoring workers)\n")
+		fmt.Fprintf(a.stderr, "Listening on: discuss.* (manager — monitoring workers)\n")
 	}
-	fmt.Fprintf(os.Stderr, "Heartbeat interval: %s\n", heartbeatInterval)
+	fmt.Fprintf(a.stderr, "Heartbeat interval: %s\n", heartbeatInterval)
 
 	// Main loop
-	a.runMainLoop(ctx, sigCh)
+	a.runMainLoop(ctx)
 	return nil
 }
 
-func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
+func (a *serviceAgent) runMainLoop(ctx context.Context) {
 	// Work channel — fed by either JetStream pull or queue group push
 	workCh := make(chan *messaging.Message, 16)
 
@@ -556,9 +602,9 @@ func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
 
 	for {
 		select {
-		case <-sigCh:
-			fmt.Fprintf(os.Stderr, "\nReceived shutdown signal, draining...\n")
-			a.initiateBusShutdown(ctx)
+		case <-ctx.Done():
+			fmt.Fprintf(a.stderr, "\nReceived shutdown signal, draining...\n")
+			a.initiateBusShutdown(context.WithoutCancel(ctx))
 			return
 
 		case _, ok := <-controlCh:
@@ -566,7 +612,7 @@ func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
 				controlCh = nil
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "\nReceived remote shutdown signal, draining...\n")
+			fmt.Fprintf(a.stderr, "\nReceived remote shutdown signal, draining...\n")
 			a.initiateBusShutdown(ctx)
 			return
 
@@ -600,8 +646,13 @@ func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
 func (a *serviceAgent) handleInstanceMessage(msg *messaging.Message) {
 	buf := a.interrupts.Load()
 	if buf == nil {
-		// Not currently executing — log and discard
-		fmt.Fprintf(os.Stderr, "  ⚠️  Correction received while idle (discarded): %s\n", string(msg.Data))
+		// Not currently executing: there is no run to correct, so record
+		// the message in the session log rather than dropping it.
+		fmt.Fprintf(a.stderr, "  ⚠️  Correction received while idle (discarded): %s\n", string(msg.Data))
+		a.serviceRuntime.Session().AddEvent(session.Event{
+			Type:    session.EventWarning,
+			Content: "correction received while idle (no task in flight): " + string(msg.Data),
+		})
 		return
 	}
 
@@ -628,7 +679,7 @@ func (a *serviceAgent) handleInstanceMessage(msg *messaging.Message) {
 		Content:   content,
 		TaskID:    extractTaskIDFromSubject(msg.Subject),
 	})
-	fmt.Fprintf(os.Stderr, "  📨 Correction received from %s → interrupt buffer\n", from)
+	fmt.Fprintf(a.stderr, "  📨 Correction received from %s → interrupt buffer\n", from)
 }
 
 // handleManagerDiscussMessage processes worker updates on discuss.* (manager only).
@@ -648,12 +699,12 @@ func (a *serviceAgent) handleManagerDiscussMessage(ctx context.Context, msg *mes
 		if err := json.Unmarshal(msg.Data, &result); err != nil {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "  📢 [%s] %s: %v\n", result.AgentID, result.TaskID, result.Outputs)
+		fmt.Fprintf(a.stderr, "  📢 [%s] %s: %v\n", result.AgentID, result.TaskID, result.Outputs)
 		return
 	}
 
 	if update.InstanceID != "" {
-		fmt.Fprintf(os.Stderr, "  📢 [%s] %s/%s: %s\n",
+		fmt.Fprintf(a.stderr, "  📢 [%s] %s/%s: %s\n",
 			update.InstanceID, update.TaskID, update.Goal,
 			truncateStr(update.Content, 120))
 	}
@@ -679,9 +730,11 @@ func parseSwarmCapabilities(env string) []swarm.WorkerCapability {
 		name := parts[0]
 		replicas := 1
 		if len(parts) == 2 {
-			if n, err := fmt.Sscanf(parts[1], "%d", &replicas); n == 0 || err != nil {
-				replicas = 1
+			n, err := strconv.Atoi(parts[1])
+			if err != nil || n < 1 {
+				n = 1
 			}
+			replicas = n
 		}
 		caps = append(caps, swarm.WorkerCapability{Name: name, Replicas: replicas})
 	}
@@ -711,7 +764,7 @@ func (a *serviceAgent) registerWithRegistry(cfg messaging.NATSConfig) error {
 	}
 	a.reg = reg
 
-	fmt.Fprintf(os.Stderr, "📝 Registered with NATS KV registry\n")
+	fmt.Fprintf(a.stderr, "📝 Registered with NATS KV registry\n")
 	return nil
 }
 
@@ -754,7 +807,7 @@ func (a *serviceAgent) getCapabilities() []string {
 	if a.capability.Name != "" {
 		return []string{a.capability.Name}
 	}
-	return []string{a.wf.wf.Name}
+	return []string{a.loaded.Workflow.Name}
 }
 
 // buildTaskText extracts a readable text representation from a task message.
@@ -798,9 +851,9 @@ func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *messagin
 			}
 			consecutiveErrors++
 			if consecutiveErrors <= 3 {
-				fmt.Fprintf(os.Stderr, "  ⚠️  JetStream fetch error: %v\n", err)
+				fmt.Fprintf(a.stderr, "  ⚠️  JetStream fetch error: %v\n", err)
 			} else if consecutiveErrors == 4 {
-				fmt.Fprintf(os.Stderr, "  ⚠️  JetStream fetch errors suppressed (repeating)\n")
+				fmt.Fprintf(a.stderr, "  ⚠️  JetStream fetch errors suppressed (repeating)\n")
 			}
 			// Backoff on repeated errors to avoid tight spin loop
 			select {
@@ -838,7 +891,7 @@ func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *messagin
 
 			// Ack the message — NATS won't redeliver to any worker
 			if err := natsMsg.Ack(); err != nil {
-				fmt.Fprintf(os.Stderr, "  ⚠️  JetStream ack error: %v\n", err)
+				fmt.Fprintf(a.stderr, "  ⚠️  JetStream ack error: %v\n", err)
 			}
 		}
 	}
@@ -849,11 +902,11 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *messaging.Message
 	// Parse task message
 	task, err := swarm.UnmarshalTaskMessage(msg.Data)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  ✗ Invalid task message: %v\n", err)
+		fmt.Fprintf(a.stderr, "  ✗ Invalid task message: %v\n", err)
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "  → Task received: %s\n", task.TaskID)
+	fmt.Fprintf(a.stderr, "  → Task received: %s\n", task.TaskID)
 
 	// Update heartbeat status
 	if a.heartbeat != nil {
@@ -877,7 +930,7 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *messaging.Message
 	// Publish result to done.<capability>.<task_id>
 	resultData, err := result.Marshal()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  ✗ Failed to marshal result: %v\n", err)
+		fmt.Fprintf(a.stderr, "  ✗ Failed to marshal result: %v\n", err)
 		return
 	}
 
@@ -887,7 +940,7 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *messaging.Message
 	}
 
 	if err := a.bus.Publish(resultSubject, resultData); err != nil {
-		fmt.Fprintf(os.Stderr, "  ✗ Failed to publish result: %v\n", err)
+		fmt.Fprintf(a.stderr, "  ✗ Failed to publish result: %v\n", err)
 		return
 	}
 
@@ -902,7 +955,7 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *messaging.Message
 	if result.Status == swarm.ResultFailed {
 		statusIcon = "✗"
 	}
-	fmt.Fprintf(os.Stderr, "  %s Task complete: %s (%s, %dms)\n",
+	fmt.Fprintf(a.stderr, "  %s Task complete: %s (%s, %dms)\n",
 		statusIcon, task.TaskID, result.Status, result.DurationMs)
 }
 
@@ -927,13 +980,14 @@ func (a *serviceAgent) publishToDiscuss(taskID, goalName, content string) {
 
 	subject := fmt.Sprintf("discuss.%s", taskID)
 	if err := a.bus.Publish(subject, data); err != nil {
-		fmt.Fprintf(os.Stderr, "  ⚠️  Failed to publish to discuss: %v\n", err)
+		fmt.Fprintf(a.stderr, "  ⚠️  Failed to publish to discuss: %v\n", err)
 	}
 }
 
 // initiateBusShutdown handles graceful shutdown in bus mode.
 func (a *serviceAgent) initiateBusShutdown(ctx context.Context) {
-	a.status = "draining"
+	inFlight := a.busy()
+	a.setStatus("draining")
 
 	// Update heartbeat to draining
 	if a.heartbeat != nil {
@@ -943,9 +997,9 @@ func (a *serviceAgent) initiateBusShutdown(ctx context.Context) {
 	// Deregister from NATS KV registry
 	if a.reg != nil {
 		if err := a.reg.Deregister(a.agentID); err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️  Registry deregister failed: %v\n", err)
+			fmt.Fprintf(a.stderr, "⚠️  Registry deregister failed: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "📝 Deregistered from registry\n")
+			fmt.Fprintf(a.stderr, "📝 Deregistered from registry\n")
 		}
 	}
 
@@ -964,27 +1018,59 @@ func (a *serviceAgent) initiateBusShutdown(ctx context.Context) {
 	}
 
 	// Wait for current task to complete (with timeout)
-	if a.currentTask != nil {
-		fmt.Fprintf(os.Stderr, "Waiting for current task to complete (timeout: %s)...\n", a.drainTimeout)
+	if inFlight {
+		fmt.Fprintf(a.stderr, "Waiting for current task to complete (timeout: %s)...\n", a.drainTimeout)
 		select {
 		case <-a.taskDone:
-			fmt.Fprintf(os.Stderr, "Task completed, shutting down.\n")
+			fmt.Fprintf(a.stderr, "Task completed, shutting down.\n")
 		case <-time.After(a.drainTimeout):
-			fmt.Fprintf(os.Stderr, "Drain timeout reached, forcing shutdown.\n")
+			fmt.Fprintf(a.stderr, "Drain timeout reached, forcing shutdown.\n")
 		}
 	}
 
 	// Heartbeat and bus will be closed by deferred calls in runBusMode
 }
 
-// executeTask runs a single task through the workflow.
-func (a *serviceAgent) executeTask(ctx context.Context, task *swarm.TaskMessage) *swarm.TaskResult {
-	start := time.Now()
-	a.status = "busy"
+// state reports the agent's lifecycle state: "idle", "busy" or "draining".
+func (a *serviceAgent) state() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.status
+}
+
+// setState records the lifecycle state and the task in flight (nil when
+// there is none).
+func (a *serviceAgent) setState(status string, task *swarm.TaskMessage) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.status = status
 	a.currentTask = task
+}
+
+// setStatus records the lifecycle state, leaving the task in flight alone.
+func (a *serviceAgent) setStatus(status string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.status = status
+}
+
+// busy reports whether a task is in flight.
+func (a *serviceAgent) busy() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.currentTask != nil
+}
+
+// executeTask runs a single task through the workflow. The executor and
+// its session are shared, so tasks run one at a time.
+func (a *serviceAgent) executeTask(ctx context.Context, task *swarm.TaskMessage) *swarm.TaskResult {
+	a.exec.Lock()
+	defer a.exec.Unlock()
+
+	start := time.Now()
+	a.setState("busy", task)
 	defer func() {
-		a.status = "idle"
-		a.currentTask = nil
+		a.setState("idle", nil)
 		select {
 		case a.taskDone <- struct{}{}:
 		default:
@@ -1013,7 +1099,7 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *swarm.TaskMessage)
 	defer a.interrupts.Store(nil)
 
 	taskID := task.TaskID
-	execResult, err := a.serviceRuntime.exec.Run(ctx, executor.RunOptions{
+	execResult, err := a.serviceRuntime.Executor().Run(ctx, executor.RunOptions{
 		Inputs:     inputs,
 		Interrupts: interrupts,
 		Discuss:    func(goalName, content string) { a.publishToDiscuss(taskID, goalName, content) },
@@ -1021,12 +1107,12 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *swarm.TaskMessage)
 	if err != nil {
 		result.Status = swarm.ResultFailed
 		result.Error = err.Error()
-		fmt.Fprintf(os.Stderr, "  ✗ Execution error: %v\n", err)
+		fmt.Fprintf(a.stderr, "  ✗ Execution error: %v\n", err)
 	} else if execResult.Status != "complete" {
 		result.Status = swarm.ResultFailed
 		result.Error = fmt.Sprintf("workflow status: %s", execResult.Status)
 		result.Outputs = execResult.Outputs
-		fmt.Fprintf(os.Stderr, "  ✗ Workflow failed with status: %s\n", execResult.Status)
+		fmt.Fprintf(a.stderr, "  ✗ Workflow failed with status: %s\n", execResult.Status)
 	} else {
 		result.Outputs = execResult.Outputs
 	}
@@ -1042,16 +1128,17 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *swarm.TaskMessage)
 
 // initiateShutdown handles graceful shutdown.
 func (a *serviceAgent) initiateShutdown(ctx context.Context) {
-	a.status = "draining"
+	inFlight := a.busy()
+	a.setStatus("draining")
 
 	// Wait for current task to complete (with timeout)
-	if a.currentTask != nil {
-		fmt.Fprintf(os.Stderr, "Waiting for current task to complete (timeout: %s)...\n", a.drainTimeout)
+	if inFlight {
+		fmt.Fprintf(a.stderr, "Waiting for current task to complete (timeout: %s)...\n", a.drainTimeout)
 		select {
 		case <-a.taskDone:
-			fmt.Fprintf(os.Stderr, "Task completed, shutting down.\n")
+			fmt.Fprintf(a.stderr, "Task completed, shutting down.\n")
 		case <-time.After(a.drainTimeout):
-			fmt.Fprintf(os.Stderr, "Drain timeout reached, forcing shutdown.\n")
+			fmt.Fprintf(a.stderr, "Drain timeout reached, forcing shutdown.\n")
 		}
 	}
 
@@ -1095,16 +1182,6 @@ func extractCapabilitySchema(wf *agentfile.Workflow, name string) capabilitySche
 	}
 
 	return schema
-}
-
-// generateShortID generates a short random ID (8 hex chars).
-func generateShortID() string {
-	b := make([]byte, 4)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback to timestamp if crypto/rand fails
-		return fmt.Sprintf("%08x", time.Now().UnixNano()&0xFFFFFFFF)
-	}
-	return hex.EncodeToString(b)
 }
 
 // stripMarkdownFences removes ```lang ... ``` wrapping from LLM responses.

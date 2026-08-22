@@ -5,9 +5,27 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/packaging"
 )
+
+// newInspectCmd shows the structure of a workflow or a package.
+func newInspectCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "inspect [path]",
+		Short: "Show workflow or package structure",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := argOr(args, "Agentfile")
+			if isPackageFile(path) {
+				return runInspectPackage(path)
+			}
+			return runInspectWorkflow(path)
+		},
+	}
+}
 
 // runInspectWorkflow shows the structure of an Agentfile.
 func runInspectWorkflow(path string) error {

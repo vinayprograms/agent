@@ -1,16 +1,25 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/config"
 	"github.com/vinayprograms/agent/internal/executor"
+	"github.com/vinayprograms/agent/internal/run"
+	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/swarm"
 	"github.com/vinayprograms/agentkit/credentials"
+	"github.com/vinayprograms/agentkit/policy"
 	"github.com/vinayprograms/swarmkit/messaging"
 )
 
@@ -40,14 +49,14 @@ func TestPackVerifyInstall_RoundTrip(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "pkg.agent")
-	err := runPack(&PackCmd{Dir: src, Output: out, Sign: keys + ".pem", Author: "a", Email: "a@b", License: "MIT"})
+	err := runPack(&packOptions{Dir: src, Output: out, Sign: keys + ".pem", Author: "a", Email: "a@b", License: "MIT"})
 	if err != nil {
 		t.Fatalf("pack: %v", err)
 	}
-	if err := runPack(&PackCmd{Dir: src, Output: out, Sign: "/nonexistent.pem"}); err == nil {
+	if err := runPack(&packOptions{Dir: src, Output: out, Sign: "/nonexistent.pem"}); err == nil {
 		t.Error("pack with missing key should fail")
 	}
-	if err := runPack(&PackCmd{Dir: t.TempDir(), Output: out}); err == nil {
+	if err := runPack(&packOptions{Dir: t.TempDir(), Output: out}); err == nil {
 		t.Error("pack without Agentfile should fail")
 	}
 
@@ -65,16 +74,16 @@ func TestPackVerifyInstall_RoundTrip(t *testing.T) {
 	}
 
 	target := t.TempDir()
-	if err := runInstall(&InstallCmd{Package: out, Target: target, Key: keys + ".pub", DryRun: true}); err != nil {
+	if err := runInstall(&installOptions{Package: out, Target: target, Key: keys + ".pub", DryRun: true}); err != nil {
 		t.Errorf("install dry-run: %v", err)
 	}
-	if err := runInstall(&InstallCmd{Package: out, Target: target, NoDeps: true}); err != nil {
+	if err := runInstall(&installOptions{Package: out, Target: target, NoDeps: true}); err != nil {
 		t.Errorf("install: %v", err)
 	}
-	if err := runInstall(&InstallCmd{Package: out, Target: target, Key: "/nonexistent.pub"}); err == nil {
+	if err := runInstall(&installOptions{Package: out, Target: target, Key: "/nonexistent.pub"}); err == nil {
 		t.Error("install with missing key should fail")
 	}
-	if err := runInstall(&InstallCmd{Package: "/nonexistent.agent", Target: target}); err == nil {
+	if err := runInstall(&installOptions{Package: "/nonexistent.agent", Target: target}); err == nil {
 		t.Error("install of missing package should fail")
 	}
 
@@ -88,134 +97,68 @@ func TestPackVerifyInstall_RoundTrip(t *testing.T) {
 	if !isPackageFile(out) {
 		t.Error("packed file should be detected as a package")
 	}
-	if err := (&InspectCmd{Path: out}).Run(); err != nil {
-		t.Errorf("InspectCmd package: %v", err)
-	}
-	if err := (&InspectCmd{Path: filepath.Join(src, "Agentfile")}).Run(); err != nil {
-		t.Errorf("InspectCmd workflow: %v", err)
-	}
 }
 
-func TestCommandRuns_Simple(t *testing.T) {
-	src := writeAgentDir(t)
-	if err := (&ValidateCmd{File: filepath.Join(src, "Agentfile")}).Run(); err != nil {
-		t.Errorf("validate: %v", err)
+// serveRuntime builds a real runtime over local (ollama) models — no
+// credentials or network are needed to construct one — and the service
+// agent that wraps it.
+func serveRuntime(t *testing.T) (*serviceAgent, *[]session.Event) {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := config.New()
+	cfg.Agent.Workspace = dir
+	cfg.State.Location = filepath.Join(dir, "state")
+	cfg.LLM = config.LLMConfig{Provider: "ollama-local", Model: "llama3"}
+	pol := policy.New()
+	pol.DefaultDeny = false
+	pol.AllowedDirs = []string{dir}
+	loaded := &run.Loaded{
+		Workflow: &agentfile.Workflow{
+			Name:  "serve-test",
+			Goals: []agentfile.Goal{{Name: "g", Outcome: "do it"}},
+			Steps: []agentfile.Step{{Type: agentfile.StepRUN, Name: "s", UsingGoals: []string{"g"}}},
+		},
+		Config: cfg,
+		Policy: pol,
 	}
-	if err := (&ValidateCmd{File: filepath.Join(src, "missing")}).Run(); err == nil {
-		t.Error("validate missing file should fail")
+	var (
+		mu     sync.Mutex
+		events []session.Event
+	)
+	rt, err := run.New(t.Context(), loaded, run.Deps{
+		Creds: credentials.NewEnvStore(),
+		Sink: func(e session.Event) {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, e)
+		},
+	})
+	if err != nil {
+		t.Fatalf("run.New: %v", err)
 	}
-	if err := (&VersionCmd{}).Run(); err != nil {
-		t.Errorf("version: %v", err)
-	}
-	if err := (&RunCmd{File: filepath.Join(src, "missing")}).Run(); err == nil {
-		t.Error("run with missing Agentfile should fail")
-	}
-	if err := (&KeygenCmd{Output: filepath.Join(t.TempDir(), "k")}).Run(); err != nil {
-		t.Errorf("keygen cmd: %v", err)
-	}
-
-	root, cli := newRootCmd()
-	if root == nil || cli == nil || len(root.Commands()) != 11 {
-		t.Errorf("root command tree: %v", root)
-	}
-}
-
-func TestWorkflowLoad(t *testing.T) {
-	src := writeAgentDir(t)
-	cfgPath := filepath.Join(src, "agent.toml")
-	if err := os.WriteFile(cfgPath, []byte("[agent]\nworkspace = \""+src+"\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	w := &workflow{agentfilePath: filepath.Join(src, "Agentfile"), configPath: cfgPath, workspacePath: src}
-	if err := w.load(); err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if w.wf.Name != "pkg-test" || w.cfg.Agent.Workspace != src || w.pol == nil {
-		t.Errorf("loaded: wf=%v ws=%q pol=%v", w.wf, w.cfg.Agent.Workspace, w.pol)
-	}
-
-	// Conflicting --workspace vs agent.toml is an error.
-	w2 := &workflow{agentfilePath: filepath.Join(src, "Agentfile"), configPath: cfgPath, workspacePath: t.TempDir()}
-	if err := w2.load(); err == nil || !strings.Contains(err.Error(), "workspace conflict") {
-		t.Errorf("expected workspace conflict, got %v", err)
-	}
-
-	// Missing config path and missing Agentfile are errors.
-	if err := (&workflow{agentfilePath: filepath.Join(src, "Agentfile"), configPath: "/nonexistent.toml"}).load(); err == nil {
-		t.Error("expected config error")
-	}
-	if err := (&workflow{agentfilePath: "/nonexistent/Agentfile"}).load(); err == nil {
-		t.Error("expected Agentfile error")
-	}
-
-	// Unset workspace defaults to the working directory.
-	w3 := &workflow{agentfilePath: filepath.Join(src, "Agentfile")}
-	if err := w3.loadConfig(); err != nil {
-		t.Fatal(err)
-	}
-	cwd, _ := os.Getwd()
-	if w3.cfg.Agent.Workspace != expandAbsPath(cwd) {
-		t.Errorf("workspace = %q", w3.cfg.Agent.Workspace)
-	}
-}
-
-func TestExpandAbsPath(t *testing.T) {
-	home, _ := os.UserHomeDir()
-	if got := expandAbsPath("~/x"); got != filepath.Join(home, "x") {
-		t.Errorf("tilde: %q", got)
-	}
-	if got := expandAbsPath("rel"); !filepath.IsAbs(got) {
-		t.Errorf("relative: %q", got)
-	}
-	if got := expandAbsPath("/abs"); got != "/abs" {
-		t.Errorf("absolute: %q", got)
-	}
-}
-
-func TestEnsureWorkspaceInAllowedDirs(t *testing.T) {
-	ws := "/ws/project"
-	cases := []struct {
-		name string
-		in   []string
-		want []string
-	}{
-		{"empty", nil, []string{ws}},
-		{"exact", []string{ws}, []string{ws}},
-		{"parent", []string{"/ws"}, []string{"/ws"}},
-		{"placeholder", []string{"$WORKSPACE"}, []string{"$WORKSPACE"}},
-		{"other", []string{"/tmp"}, []string{"/tmp", ws}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := testWorkflow(t, func(c *config.Config) { c.Agent.Workspace = ws })
-			w.pol.AllowedDirs = tc.in
-			w.ensureWorkspaceInAllowedDirs()
-			if strings.Join(w.pol.AllowedDirs, ",") != strings.Join(tc.want, ",") {
-				t.Errorf("got %v want %v", w.pol.AllowedDirs, tc.want)
-			}
-		})
-	}
-	w := testWorkflow(t, func(c *config.Config) { c.Agent.Workspace = "" })
-	w.pol.AllowedDirs = nil
-	w.ensureWorkspaceInAllowedDirs()
-	if w.pol.AllowedDirs != nil {
-		t.Errorf("empty workspace should not add dirs: %v", w.pol.AllowedDirs)
-	}
+	t.Cleanup(rt.Close)
+	return &serviceAgent{
+		loaded:         loaded,
+		serviceRuntime: rt,
+		stderr:         io.Discard,
+		capability:     capabilitySchema{Name: "cap"},
+		status:         "idle",
+		taskDone:       make(chan struct{}, 1),
+	}, &events
 }
 
 func TestServeAgent_IdleHandlers(t *testing.T) {
-	w := testWorkflow(t, nil)
-	rt := newRuntime(w, credentials.NewEnvStore())
-	defer rt.cleanup()
-	if err := rt.setup(); err != nil {
-		t.Fatal(err)
-	}
-	a := &serviceAgent{wf: w, serviceRuntime: rt, capability: capabilitySchema{Name: "cap"}, taskDone: make(chan struct{})}
+	a, events := serveRuntime(t)
 
 	// Nil bus / empty content: publishToDiscuss is a no-op.
 	a.publishToDiscuss("t", "g", "content")
-	// Idle correction is discarded without panicking.
+	// An idle correction is recorded in the session rather than dropped.
 	a.handleInstanceMessage(&messaging.Message{Subject: "work.inst.t1", Data: []byte("fix it")})
+	last := (*events)[len(*events)-1]
+	if last.Type != session.EventWarning || !strings.Contains(last.Content, "fix it") {
+		t.Errorf("idle correction not logged to the session: %+v", *events)
+	}
+
 	// While executing, corrections land in the interrupt buffer.
 	buf := executor.NewInterruptBuffer()
 	a.interrupts.Store(buf)
@@ -236,8 +179,91 @@ func TestServeAgent_IdleHandlers(t *testing.T) {
 	// Shutdown paths with nothing in flight.
 	a.initiateShutdown(t.Context())
 	a.initiateBusShutdown(t.Context())
-	if a.status != "draining" {
-		t.Errorf("status %q", a.status)
+	if a.state() != "draining" {
+		t.Errorf("status %q", a.state())
+	}
+}
+
+// TestServeAgent_HTTPHandler exercises the HTTP surface end to end: the
+// task endpoint runs through the shared executor, so a task that needs the
+// (absent) model fails rather than hanging.
+func TestServeAgent_HTTPHandler(t *testing.T) {
+	a, _ := serveRuntime(t)
+	srv := httptest.NewServer(a.handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var health map[string]any
+	json.NewDecoder(resp.Body).Decode(&health)
+	resp.Body.Close()
+	if health["status"] != "idle" || health["capability"] != "cap" {
+		t.Errorf("health = %v", health)
+	}
+
+	resp, err = http.Get(srv.URL + "/capability")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema capabilitySchema
+	json.NewDecoder(resp.Body).Decode(&schema)
+	resp.Body.Close()
+	if schema.Name != "cap" {
+		t.Errorf("capability = %+v", schema)
+	}
+
+	// Wrong method, oversized body and invalid payloads are all rejected.
+	resp, err = http.Get(srv.URL + "/task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("GET /task = %d", resp.StatusCode)
+	}
+	for _, body := range []string{"not json", `{"task_id":""}`, `{"x":"` + strings.Repeat("y", maxTaskBody) + `"}`} {
+		resp, err := http.Post(srv.URL+"/task", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("POST /task %.20q = %d", body, resp.StatusCode)
+		}
+	}
+
+	// Draining refuses new work.
+	a.setStatus("draining")
+	resp, err = http.Post(srv.URL+"/task", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("draining POST /task = %d", resp.StatusCode)
+	}
+}
+
+// TestServeAgent_ExecuteTaskSerialises pins that concurrent submissions do
+// not run on the shared executor at the same time.
+func TestServeAgent_ExecuteTaskSerialises(t *testing.T) {
+	a, _ := serveRuntime(t)
+	var wg sync.WaitGroup
+	for i := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			task := swarm.NewTaskMessage(fmt.Sprintf("t%d", i), "cap", map[string]string{"k": "v"})
+			if res := a.executeTask(t.Context(), task); res == nil {
+				t.Error("nil result")
+			}
+		}()
+	}
+	wg.Wait()
+	if a.state() != "idle" || a.busy() {
+		t.Errorf("state after tasks: %q busy=%v", a.state(), a.busy())
 	}
 }
 
@@ -246,7 +272,7 @@ func TestGetCapabilities(t *testing.T) {
 	if got := a.getCapabilities(); len(got) != 1 || got[0] != "cap" {
 		t.Errorf("got %v", got)
 	}
-	a = &serviceAgent{wf: &workflow{wf: &agentfile.Workflow{Name: "wfname"}}}
+	a = &serviceAgent{loaded: &run.Loaded{Workflow: &agentfile.Workflow{Name: "wfname"}}}
 	if got := a.getCapabilities(); len(got) != 1 || got[0] != "wfname" {
 		t.Errorf("got %v", got)
 	}

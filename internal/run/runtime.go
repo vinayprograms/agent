@@ -1,11 +1,12 @@
 // Runtime execution: setup reads as a checklist (models, memory, security
-// mode, tool set, telemetry, executor), then run dispatches the workflow.
-package main
+// mode, tool set, telemetry, executor), then Run dispatches the workflow.
+package run
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -34,8 +35,23 @@ import (
 // llm.New rejects a zero value.
 const defaultMaxTokens = 4096
 
-// runtime handles the execution phase of a workflow.
-type runtime struct {
+// Deps are the process-level collaborators the runtime needs but does not
+// own: credentials, the streams it reports on, and the optional session
+// event sink.
+type Deps struct {
+	Creds   credentials.Lookup
+	Stdout  io.Writer    // workflow result; nil discards
+	Stderr  io.Writer    // status lines and warnings; nil discards
+	Version string       // reported to telemetry as the service version
+	Sink    session.Sink // optional: session events (serve mode streams them to the bus)
+	// KeepSession leaves the session open across runs (serve mode): Run
+	// flushes but does not close it.
+	KeepSession bool
+}
+
+// Runtime executes a loaded workflow. New returns one ready to Run; Close
+// releases everything it opened.
+type Runtime struct {
 	wf           *agentfile.Workflow
 	cfg          *config.Config
 	pol          *policy.Policy
@@ -43,19 +59,21 @@ type runtime struct {
 	inputs       map[string]string
 	debug        bool
 	sessionLabel string // Override session directory name
+	home         string
+	stdout       io.Writer
+	stderr       io.Writer
+	version      string
 
 	// Components
-	logger     *slog.Logger
-	provider   llm.Model
-	smallLLM   llm.Model
-	registry   *tools.Registry
-	spawn      *tools.SpawnBinder
-	bashGate   *shellguard.Gate
-	exec       *executor.Executor
-	mcpManager *mcp.Manager
-	eventSink  session.Sink // optional; set before setup (serve mode)
-	// persistentSession keeps the session open across runs (serve mode):
-	// Run flushes but does not close it.
+	logger            *slog.Logger
+	provider          llm.Model
+	smallLLM          llm.Model
+	registry          *tools.Registry
+	spawn             *tools.SpawnBinder
+	bashGate          *shellguard.Gate
+	exec              *executor.Executor
+	mcpManager        *mcp.Manager
+	eventSink         session.Sink // optional; set before setup (serve mode)
 	persistentSession bool
 	// metrics forwards LLM/supervision metrics to the heartbeat sender,
 	// which only exists once the bus is up — after the executor is built.
@@ -78,44 +96,84 @@ type runtime struct {
 	closers []func()
 }
 
-// newRuntime creates a runtime from loaded workflow configuration.
-func newRuntime(w *workflow, creds credentials.Lookup) *runtime {
-	rt := &runtime{
-		wf:           w.wf,
-		cfg:          w.cfg,
-		pol:          w.pol,
-		creds:        creds,
-		metrics:      &deferredMetrics{},
-		inputs:       w.inputs,
-		debug:        w.debug,
-		sessionLabel: w.sessionLabel,
+// New wires every runtime component for the loaded workflow and returns a
+// runtime ready to Run. The caller must Close it.
+func New(ctx context.Context, l *Loaded, deps Deps) (*Runtime, error) {
+	rt := newRuntime(l, deps)
+	if err := rt.setup(ctx); err != nil {
+		rt.Close()
+		return nil, err
 	}
-	rt.logger = newLogger(w.debug)
+	return rt, nil
+}
+
+// newRuntime builds the runtime shell — identity, paths and streams — with
+// no component wired yet.
+func newRuntime(l *Loaded, deps Deps) *Runtime {
+	rt := &Runtime{
+		wf:                l.Workflow,
+		cfg:               l.Config,
+		pol:               l.Policy,
+		creds:             deps.Creds,
+		metrics:           &deferredMetrics{},
+		inputs:            l.Inputs,
+		debug:             l.Debug,
+		sessionLabel:      l.SessionLabel,
+		home:              l.home,
+		stdout:            orDiscard(deps.Stdout),
+		stderr:            orDiscard(deps.Stderr),
+		version:           deps.Version,
+		eventSink:         deps.Sink,
+		persistentSession: deps.KeepSession,
+	}
+	rt.logger = newLogger(l.Debug, rt.stderr)
 	rt.resolveStoragePath()
 	return rt
 }
 
+// orDiscard substitutes io.Discard for a nil writer.
+func orDiscard(w io.Writer) io.Writer {
+	if w == nil {
+		return io.Discard
+	}
+	return w
+}
+
+// Executor is the executor the workflow runs on. Serve mode registers
+// extra tools and runs tasks through it directly.
+func (rt *Runtime) Executor() *executor.Executor { return rt.exec }
+
+// Registry is the tool set the executor advertises.
+func (rt *Runtime) Registry() *tools.Registry { return rt.registry }
+
+// Policy is the loaded policy, which serve mode extends for the tools it
+// registers itself.
+func (rt *Runtime) Policy() *policy.Policy { return rt.pol }
+
+// Session is the record of this run; its ID identifies the agent.
+func (rt *Runtime) Session() *session.Session { return rt.sess }
+
+// SetMetricsCollector directs executor metrics to mc. Serve mode calls it
+// once the heartbeat sender exists.
+func (rt *Runtime) SetMetricsCollector(mc executor.MetricsCollector) { rt.metrics.set(mc) }
+
 // newLogger returns the process logger: text to stderr, Debug level when
 // --debug is set.
-func newLogger(debug bool) *slog.Logger {
+func newLogger(debug bool, w io.Writer) *slog.Logger {
 	level := slog.LevelInfo
 	if debug {
 		level = slog.LevelDebug
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}))
 }
 
 // resolveStoragePath sets up storage and session paths.
-func (rt *runtime) resolveStoragePath() {
+func (rt *Runtime) resolveStoragePath() {
 	rt.storagePath = rt.cfg.State.Location
 	if rt.storagePath == "" {
-		home, _ := os.UserHomeDir()
-		rt.storagePath = config.DefaultStateDir(home)
+		rt.storagePath = config.DefaultStateDir(rt.home)
 	}
-	if len(rt.storagePath) > 0 && rt.storagePath[0] == '~' {
-		home, _ := os.UserHomeDir()
-		rt.storagePath = filepath.Join(home, rt.storagePath[1:])
-	}
+	rt.storagePath = expandHome(rt.storagePath, rt.home)
 	// Use sessionLabel if provided (swarm passes agent name), otherwise workflow name
 	sessDir := rt.wf.Name
 	if rt.sessionLabel != "" {
@@ -125,7 +183,7 @@ func (rt *runtime) resolveStoragePath() {
 }
 
 // setup initializes all runtime components. Returns error on failure.
-func (rt *runtime) setup() error {
+func (rt *Runtime) setup(ctx context.Context) error {
 	if err := os.MkdirAll(rt.storagePath, 0755); err != nil {
 		return fmt.Errorf("creating storage directory: %w", err)
 	}
@@ -143,10 +201,10 @@ func (rt *runtime) setup() error {
 	if err := rt.setupRegistry(); err != nil {
 		return err
 	}
-	if err := rt.setupTelemetry(); err != nil {
+	if err := rt.setupTelemetry(ctx); err != nil {
 		return err
 	}
-	if err := rt.createExecutor(); err != nil {
+	if err := rt.createExecutor(ctx); err != nil {
 		return err
 	}
 	rt.setupCallbacks()
@@ -157,7 +215,7 @@ func (rt *runtime) setup() error {
 // inferred from the model name when unset, credentials are resolved through
 // the credential lookup, and max_tokens falls back to the default model's
 // value and then to defaultMaxTokens.
-func (rt *runtime) newModel(p config.LLMConfig, retry llm.RetryConfig) (llm.Model, error) {
+func (rt *Runtime) newModel(p config.LLMConfig, retry llm.RetryConfig) (llm.Model, error) {
 	if p.Model == "" {
 		return nil, fmt.Errorf("LLM model not configured")
 	}
@@ -186,7 +244,7 @@ func (rt *runtime) newModel(p config.LLMConfig, retry llm.RetryConfig) (llm.Mode
 }
 
 // createProvider creates the main LLM model.
-func (rt *runtime) createProvider() error {
+func (rt *Runtime) createProvider() error {
 	m, err := rt.newModel(rt.cfg.LLM, parseRetryConfig(rt.cfg.LLM.MaxRetries, rt.cfg.LLM.RetryBackoff))
 	if err != nil {
 		return fmt.Errorf("creating LLM provider: %w", err)
@@ -197,7 +255,7 @@ func (rt *runtime) createProvider() error {
 
 // createSmallLLM creates the small LLM for summarization and triage.
 // Returns error if small_llm is configured but fails to create.
-func (rt *runtime) createSmallLLM() error {
+func (rt *Runtime) createSmallLLM() error {
 	if rt.cfg.SmallLLM.Model == "" {
 		// Not configured - this is fine, proceed without it
 		return nil
@@ -207,7 +265,7 @@ func (rt *runtime) createSmallLLM() error {
 		return fmt.Errorf("failed to create small_llm (model=%s): %w", rt.cfg.SmallLLM.Model, err)
 	}
 	rt.smallLLM = m
-	fmt.Fprintf(os.Stderr, "✓ Small LLM: %s (for summarization and security triage)\n", rt.cfg.SmallLLM.Model)
+	fmt.Fprintf(rt.stderr, "✓ Small LLM: %s (for summarization and security triage)\n", rt.cfg.SmallLLM.Model)
 	return nil
 }
 
@@ -215,7 +273,7 @@ func (rt *runtime) createSmallLLM() error {
 // Design:
 //   - Scratchpad: always ephemeral (session-scoped, agent-decided working memory)
 //   - BM25 memory: always persistent (cross-session, "remember"/"recall" implies persistence)
-func (rt *runtime) setupMemory() error {
+func (rt *Runtime) setupMemory() error {
 	rt.scratchpad = memory.NewInMemoryStore()
 
 	var err error
@@ -227,17 +285,17 @@ func (rt *runtime) setupMemory() error {
 	}
 	rt.addCloser(func() { rt.bleveStore.Close() })
 
-	fmt.Println("🧠 Memory: scratchpad (session) + BM25 (persistent)")
+	fmt.Fprintln(rt.stderr, "🧠 Memory: scratchpad (session) + BM25 (persistent)")
 	return nil
 }
 
 // setupRegistry builds the tool set from the policy, attaching the bash
 // gate (shellguard) when the policy enables bash.
-func (rt *runtime) setupRegistry() error {
+func (rt *Runtime) setupRegistry() error {
 	workspace := rt.cfg.Agent.Workspace
 
 	if rt.pol.IsToolEnabled("bash") {
-		fmt.Println("⚠️  bash enabled by policy")
+		fmt.Fprintln(rt.stderr, "⚠️  bash enabled by policy")
 		var denied []string
 		if tp := rt.pol.GetToolPolicy("bash"); tp != nil {
 			denied = tp.Deny
@@ -271,7 +329,7 @@ func (rt *runtime) setupRegistry() error {
 
 // httpTimeout is the HTTP client timeout for web tools: the largest of the
 // configured network timeouts. Zero means the kit default.
-func (rt *runtime) httpTimeout() time.Duration {
+func (rt *Runtime) httpTimeout() time.Duration {
 	secs := max(rt.cfg.Timeouts.MCP, rt.cfg.Timeouts.WebSearch, rt.cfg.Timeouts.WebFetch)
 	if secs <= 0 {
 		return 0
@@ -281,7 +339,7 @@ func (rt *runtime) httpTimeout() time.Duration {
 
 // setupTelemetry installs the OpenTelemetry tracer provider when telemetry
 // is enabled with an endpoint. Failure is a warning: tracing is optional.
-func (rt *runtime) setupTelemetry() error {
+func (rt *Runtime) setupTelemetry(ctx context.Context) error {
 	if !rt.cfg.Telemetry.Enabled || rt.cfg.Telemetry.Endpoint == "" {
 		return nil
 	}
@@ -289,16 +347,16 @@ func (rt *runtime) setupTelemetry() error {
 	if protocol == "" {
 		protocol = config.ProtocolGRPC
 	}
-	shutdown, err := telemetry.Init(context.Background(), telemetry.Config{
+	shutdown, err := telemetry.Init(ctx, telemetry.Config{
 		ServiceName:    "agent",
-		ServiceVersion: version,
+		ServiceVersion: rt.version,
 		Endpoint:       rt.cfg.Telemetry.Endpoint,
 		Protocol:       string(protocol),
 		Insecure:       rt.cfg.Telemetry.Insecure,
 		Headers:        rt.cfg.Telemetry.Headers,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: failed to initialize OpenTelemetry: %v\n", err)
+		fmt.Fprintf(rt.stderr, "WARN: failed to initialize OpenTelemetry: %v\n", err)
 		return nil
 	}
 	rt.addCloser(func() {
@@ -314,12 +372,12 @@ func (rt *runtime) setupTelemetry() error {
 // connectMCP connects every configured MCP server (stdio transport) and
 // applies the per-server denied tool lists. A server that fails to connect
 // is skipped with a warning.
-func (rt *runtime) connectMCP() *mcp.Manager {
+func (rt *Runtime) connectMCP(ctx context.Context) *mcp.Manager {
 	if len(rt.cfg.MCP.Servers) == 0 {
 		return nil
 	}
 	mgr := mcp.NewManager()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	for name, serverCfg := range rt.cfg.MCP.Servers {
@@ -329,18 +387,18 @@ func (rt *runtime) connectMCP() *mcp.Manager {
 			Env:     serverCfg.Env,
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to connect MCP server %q: %v\n", name, err)
+			fmt.Fprintf(rt.stderr, "warning: failed to connect MCP server %q: %v\n", name, err)
 			continue
 		}
 		if err := mgr.Register(name, client); err != nil {
 			client.Close()
-			fmt.Fprintf(os.Stderr, "warning: failed to register MCP server %q: %v\n", name, err)
+			fmt.Fprintf(rt.stderr, "warning: failed to register MCP server %q: %v\n", name, err)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "✓ Connected MCP server: %s\n", name)
+		fmt.Fprintf(rt.stderr, "✓ Connected MCP server: %s\n", name)
 		if len(serverCfg.DeniedTools) > 0 {
 			mgr.Deny(name, serverCfg.DeniedTools)
-			fmt.Fprintf(os.Stderr, "  └─ Denied %d tools\n", len(serverCfg.DeniedTools))
+			fmt.Fprintf(rt.stderr, "  └─ Denied %d tools\n", len(serverCfg.DeniedTools))
 		}
 	}
 	rt.mcpManager = mgr
@@ -350,7 +408,7 @@ func (rt *runtime) connectMCP() *mcp.Manager {
 
 // securityConfig builds the executor's content-trust configuration from the
 // resolved mode, the triage model and the policy's [content.security] extras.
-func (rt *runtime) securityConfig() *executor.SecurityConfig {
+func (rt *Runtime) securityConfig() *executor.SecurityConfig {
 	sec := &executor.SecurityConfig{
 		Mode:     rt.secMode,
 		Scope:    rt.secScope,
@@ -362,17 +420,17 @@ func (rt *runtime) securityConfig() *executor.SecurityConfig {
 		sec.Keywords = rt.pol.Content.Security.Keywords
 	}
 	if rt.secMode == executor.SecurityResearch {
-		fmt.Fprintf(os.Stderr, "🔓 Security: mode=research, scope=%q\n", rt.secScope)
+		fmt.Fprintf(rt.stderr, "🔓 Security: mode=research, scope=%q\n", rt.secScope)
 	} else {
-		fmt.Fprintf(os.Stderr, "🔒 Security: mode=%s, user_trust=%s\n", rt.secMode, rt.secTrust)
+		fmt.Fprintf(rt.stderr, "🔒 Security: mode=%s, user_trust=%s\n", rt.secMode, rt.secTrust)
 	}
 	return sec
 }
 
 // createExecutor builds an executor.Config, wiring up MCP, session, security,
 // supervision, and observations, then creates the executor in one shot.
-func (rt *runtime) createExecutor() error {
-	mcpMgr := rt.connectMCP()
+func (rt *Runtime) createExecutor(ctx context.Context) error {
+	mcpMgr := rt.connectMCP(ctx)
 
 	// --- Session ---
 	var err error
@@ -392,14 +450,14 @@ func (rt *runtime) createExecutor() error {
 		checkpointDir := filepath.Join(rt.sessionPath, "checkpoints", rt.sess.ID)
 		cs, csErr := checkpoint.NewStore(checkpointDir)
 		if csErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to create checkpoint store: %v\n", csErr)
+			fmt.Fprintf(rt.stderr, "warning: failed to create checkpoint store: %v\n", csErr)
 		} else {
 			checkpointStore = cs
 			supervisor = supervision.NewLLMSupervisor(supervision.Config{
 				Model:  rt.provider,
 				Logger: rt.logger,
 			})
-			fmt.Fprintf(os.Stderr, "👁 Supervision: enabled (four-phase execution)\n")
+			fmt.Fprintf(rt.stderr, "👁 Supervision: enabled (four-phase execution)\n")
 		}
 	}
 
@@ -409,7 +467,7 @@ func (rt *runtime) createExecutor() error {
 	if rt.smallLLM != nil && rt.bleveStore != nil {
 		obsExtractor = memory.NewExtractor(rt.smallLLM)
 		obsStore = rt.bleveStore
-		fmt.Fprintf(os.Stderr, "🔍 Observations: enabled (extracting insights after each step)\n")
+		fmt.Fprintf(rt.stderr, "🔍 Observations: enabled (extracting insights after each step)\n")
 	}
 
 	// --- Workspace context ---
@@ -417,7 +475,7 @@ func (rt *runtime) createExecutor() error {
 	workspace := rt.cfg.Agent.Workspace
 	if wc := executor.BuildWorkspaceContext(workspace); wc != "" {
 		wsCtx = wc
-		fmt.Fprintf(os.Stderr, "📂 Workspace context: %s\n", workspace)
+		fmt.Fprintf(rt.stderr, "📂 Workspace context: %s\n", workspace)
 	}
 
 	// --- Build Config & create executor ---
@@ -493,7 +551,7 @@ func (d *deferredMetrics) SetSubagents(count int) {
 // profileResolver creates models based on capability profiles.
 type profileResolver struct {
 	mu       sync.Mutex
-	rt       *runtime
+	rt       *Runtime
 	fallback llm.Model
 	cache    map[string]llm.Model
 }
@@ -532,7 +590,7 @@ func (f *profileResolver) Model(profile string) (llm.Model, error) {
 
 // determineSecurityConfig resolves the security mode, research scope and
 // the user trust label (trust is reported at startup only).
-func (rt *runtime) determineSecurityConfig() (executor.SecurityMode, string, string) {
+func (rt *Runtime) determineSecurityConfig() (executor.SecurityMode, string, string) {
 	mode := executor.SecurityDefault
 	var scope string
 	if rt.cfg.Security.Mode == "paranoid" || rt.wf.SecurityMode == "paranoid" {
@@ -552,11 +610,11 @@ func (rt *runtime) determineSecurityConfig() (executor.SecurityMode, string, str
 
 // createTriageProvider creates the model for security triage: the configured
 // triage profile, else the small LLM (may be nil).
-func (rt *runtime) createTriageProvider() llm.Model {
+func (rt *Runtime) createTriageProvider() llm.Model {
 	if rt.cfg.Security.TriageLLM != "" {
 		m, err := rt.newModel(rt.cfg.Profile(rt.cfg.Security.TriageLLM), llm.RetryConfig{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: triage_llm %q unavailable, using small_llm: %v\n", rt.cfg.Security.TriageLLM, err)
+			fmt.Fprintf(rt.stderr, "warning: triage_llm %q unavailable, using small_llm: %v\n", rt.cfg.Security.TriageLLM, err)
 			return rt.smallLLM
 		}
 		return m
@@ -565,26 +623,26 @@ func (rt *runtime) createTriageProvider() llm.Model {
 }
 
 // setupCallbacks wires progress output to executor hooks.
-func (rt *runtime) setupCallbacks() {
+func (rt *Runtime) setupCallbacks() {
 	rt.exec.Hooks().On(hooks.SubAgentStart, func(_ context.Context, evt hooks.Event) {
-		fmt.Fprintf(os.Stderr, "  ⊕ Spawning sub-agent: %s\n", evt.Data["name"])
+		fmt.Fprintf(rt.stderr, "  ⊕ Spawning sub-agent: %s\n", evt.Data["name"])
 	})
 	rt.exec.Hooks().On(hooks.SubAgentComplete, func(_ context.Context, evt hooks.Event) {
-		fmt.Fprintf(os.Stderr, "  ⊖ Sub-agent complete: %s\n", evt.Data["name"])
+		fmt.Fprintf(rt.stderr, "  ⊖ Sub-agent complete: %s\n", evt.Data["name"])
 	})
 	rt.exec.Hooks().On(hooks.GoalStart, func(_ context.Context, evt hooks.Event) {
-		fmt.Fprintf(os.Stderr, "▶ Starting goal: %s\n", evt.Data["name"])
+		fmt.Fprintf(rt.stderr, "▶ Starting goal: %s\n", evt.Data["name"])
 	})
 	rt.exec.Hooks().On(hooks.GoalComplete, func(_ context.Context, evt hooks.Event) {
-		fmt.Fprintf(os.Stderr, "✓ Completed goal: %s\n", evt.Data["name"])
+		fmt.Fprintf(rt.stderr, "✓ Completed goal: %s\n", evt.Data["name"])
 	})
 	rt.exec.Hooks().On(hooks.ToolCall, func(_ context.Context, evt hooks.Event) {
 		name := evt.Data["name"]
 		agentRole, _ := evt.Data["agent_role"].(string)
 		if agentRole != "" && agentRole != "main" {
-			fmt.Fprintf(os.Stderr, "  → [%s] Tool: %s\n", agentRole, name)
+			fmt.Fprintf(rt.stderr, "  → [%s] Tool: %s\n", agentRole, name)
 		} else {
-			fmt.Fprintf(os.Stderr, "  → Tool: %s\n", name)
+			fmt.Fprintf(rt.stderr, "  → Tool: %s\n", name)
 		}
 	})
 	rt.exec.Hooks().On(hooks.ToolError, func(_ context.Context, evt hooks.Event) {
@@ -592,36 +650,36 @@ func (rt *runtime) setupCallbacks() {
 		err := evt.Data["error"]
 		agentRole, _ := evt.Data["agent_role"].(string)
 		if agentRole != "" && agentRole != "main" {
-			fmt.Fprintf(os.Stderr, "  ✗ [%s] Tool error [%s]: %v\n", agentRole, name, err)
+			fmt.Fprintf(rt.stderr, "  ✗ [%s] Tool error [%s]: %v\n", agentRole, name, err)
 		} else {
-			fmt.Fprintf(os.Stderr, "  ✗ Tool error [%s]: %v\n", name, err)
+			fmt.Fprintf(rt.stderr, "  ✗ Tool error [%s]: %v\n", name, err)
 		}
 	})
 	rt.exec.Hooks().On(hooks.MCPToolCall, func(_ context.Context, evt hooks.Event) {
-		fmt.Fprintf(os.Stderr, "  → MCP Tool: %s/%s\n", evt.Data["server"], evt.Data["tool"])
+		fmt.Fprintf(rt.stderr, "  → MCP Tool: %s/%s\n", evt.Data["server"], evt.Data["tool"])
 	})
 	rt.exec.Hooks().On(hooks.SkillLoaded, func(_ context.Context, evt hooks.Event) {
-		fmt.Fprintf(os.Stderr, "  → Skill loaded: %s\n", evt.Data["name"])
+		fmt.Fprintf(rt.stderr, "  → Skill loaded: %s\n", evt.Data["name"])
 	})
 	rt.exec.Hooks().On(hooks.SupervisionEvent, func(_ context.Context, evt hooks.Event) {
-		fmt.Fprintf(os.Stderr, "  ⊙ Supervision [%s]: %s\n", evt.Data["step_id"], evt.Data["phase"])
+		fmt.Fprintf(rt.stderr, "  ⊙ Supervision [%s]: %s\n", evt.Data["step_id"], evt.Data["phase"])
 	})
 	rt.exec.Hooks().On(hooks.LLMError, func(_ context.Context, evt hooks.Event) {
-		fmt.Fprintf(os.Stderr, "  ✗ LLM error: %v\n", evt.Data["error"])
+		fmt.Fprintf(rt.stderr, "  ✗ LLM error: %v\n", evt.Data["error"])
 	})
 }
 
-// run executes the workflow and returns exit code.
-func (rt *runtime) run(ctx context.Context) int {
-	fmt.Fprintf(os.Stderr, "Running workflow: %s (session: %s)\n\n", rt.wf.Name, rt.sess.ID)
+// Run executes the workflow, records the outcome in the session and writes
+// the result: raw outputs for an inline goal, the JSON result otherwise.
+func (rt *Runtime) Run(ctx context.Context) error {
+	fmt.Fprintf(rt.stderr, "Running workflow: %s (session: %s)\n\n", rt.wf.Name, rt.sess.ID)
 
 	result, err := rt.exec.Run(ctx, executor.RunOptions{Inputs: rt.inputs})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nerror: %v\n", err)
 		rt.sess.Status = "failed"
 		rt.sess.Error = err.Error()
 		rt.sessionMgr.Update(rt.sess)
-		return 1
+		return err
 	}
 
 	rt.sess.Status = string(result.Status)
@@ -630,35 +688,46 @@ func (rt *runtime) run(ctx context.Context) int {
 
 	// Report convergence failures if any
 	if failures := rt.exec.ConvergenceFailures(); len(failures) > 0 {
-		fmt.Fprintf(os.Stderr, "\n⚠ Convergence warnings:\n")
+		fmt.Fprintf(rt.stderr, "\n⚠ Convergence warnings:\n")
 		for goal, iterations := range failures {
-			fmt.Fprintf(os.Stderr, "  • Goal %q did not converge (used all %d iterations)\n", goal, iterations)
+			fmt.Fprintf(rt.stderr, "  • Goal %q did not converge (used all %d iterations)\n", goal, iterations)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\n✓ Workflow complete\n\n")
+	fmt.Fprintf(rt.stderr, "\n✓ Workflow complete\n\n")
 
 	// For inline goals, print the output directly in a user-friendly format
-	if rt.wf.Name == "inline-goal" && len(result.Outputs) > 0 {
+	if rt.wf.Name == inlineGoalName && len(result.Outputs) > 0 {
 		for _, output := range result.Outputs {
-			fmt.Println(output)
+			fmt.Fprintln(rt.stdout, output)
 		}
-	} else {
-		// For regular workflows, print full JSON result
-		output, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(output))
+		return nil
 	}
-	return 0
+	output, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Fprintln(rt.stdout, string(output))
+	return nil
 }
 
-// cleanup runs all registered cleanup functions.
-func (rt *runtime) cleanup() {
+// Close runs every registered cleanup function, most recent first.
+func (rt *Runtime) Close() {
 	for i := len(rt.closers) - 1; i >= 0; i-- {
 		rt.closers[i]()
 	}
 }
 
 // addCloser registers a cleanup function.
-func (rt *runtime) addCloser(fn func()) {
+func (rt *Runtime) addCloser(fn func()) {
 	rt.closers = append(rt.closers, fn)
+}
+
+// parseRetryConfig converts config values to an llm.RetryConfig. An
+// unparseable backoff leaves the kit default in place.
+func parseRetryConfig(maxRetries int, backoffStr string) llm.RetryConfig {
+	cfg := llm.RetryConfig{MaxRetries: maxRetries}
+	if backoffStr != "" {
+		if d, err := time.ParseDuration(backoffStr); err == nil {
+			cfg.MaxBackoff = d
+		}
+	}
+	return cfg
 }

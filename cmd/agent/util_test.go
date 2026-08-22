@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"testing"
-	"time"
 )
 
 func TestIsPackageFile(t *testing.T) {
@@ -53,49 +52,5 @@ func TestIsPackageFile(t *testing.T) {
 func TestIsPackageFile_NonExistent(t *testing.T) {
 	if isPackageFile("/nonexistent/path/file.zip") {
 		t.Error("expected false for non-existent file")
-	}
-}
-
-func TestParseRetryConfig(t *testing.T) {
-	tests := []struct {
-		name        string
-		maxRetries  int
-		backoffStr  string
-		wantMax     int
-		wantBackoff time.Duration
-	}{
-		{
-			name:        "defaults",
-			maxRetries:  3,
-			backoffStr:  "",
-			wantMax:     3,
-			wantBackoff: 0,
-		},
-		{
-			name:        "with backoff",
-			maxRetries:  5,
-			backoffStr:  "30s",
-			wantMax:     5,
-			wantBackoff: 30 * time.Second,
-		},
-		{
-			name:        "invalid backoff",
-			maxRetries:  2,
-			backoffStr:  "invalid",
-			wantMax:     2,
-			wantBackoff: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := parseRetryConfig(tt.maxRetries, tt.backoffStr)
-			if cfg.MaxRetries != tt.wantMax {
-				t.Errorf("MaxRetries = %v, want %v", cfg.MaxRetries, tt.wantMax)
-			}
-			if cfg.MaxBackoff != tt.wantBackoff {
-				t.Errorf("MaxBackoff = %v, want %v", cfg.MaxBackoff, tt.wantBackoff)
-			}
-		})
 	}
 }
