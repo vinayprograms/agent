@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -535,3 +536,53 @@ type countingMetrics struct{ calls int }
 func (m *countingMetrics) RecordLLMCall(_, _, _, _ int, _ int64) { m.calls++ }
 func (m *countingMetrics) RecordSupervision(bool)                { m.calls++ }
 func (m *countingMetrics) SetSubagents(int)                      { m.calls++ }
+
+// A REQUIRES profile the config does not define silently falls back to the
+// default model, so it must be reported at startup.
+func TestUnmetRequirements(t *testing.T) {
+	tests := []struct {
+		name     string
+		agents   []agentfile.Agent
+		profiles map[string]config.LLMConfig
+		want     []string
+	}{
+		{name: "no requirements", agents: []agentfile.Agent{{Name: "a"}}},
+		{
+			name:     "profile configured",
+			agents:   []agentfile.Agent{{Name: "a", Requires: "creative"}},
+			profiles: map[string]config.LLMConfig{"creative": {Model: "m"}},
+		},
+		{
+			name:   "profile missing",
+			agents: []agentfile.Agent{{Name: "a", Requires: "creative"}},
+			want:   []string{"creative"},
+		},
+		{
+			name: "each missing profile reported once, in order",
+			agents: []agentfile.Agent{
+				{Name: "a", Requires: "creative"},
+				{Name: "b", Requires: "reasoning-heavy"},
+				{Name: "c", Requires: "creative"},
+			},
+			profiles: map[string]config.LLMConfig{"fast": {Model: "m"}},
+			want:     []string{"creative", "reasoning-heavy"},
+		},
+		{
+			name:     "profile declared without a model is not configured",
+			agents:   []agentfile.Agent{{Name: "a", Requires: "creative"}},
+			profiles: map[string]config.LLMConfig{"creative": {}},
+			want:     []string{"creative"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := &Runtime{
+				cfg: &config.Config{Profiles: tt.profiles},
+				wf:  &agentfile.Workflow{Name: "test", Agents: tt.agents},
+			}
+			if got := rt.unmetRequirements(); !slices.Equal(got, tt.want) {
+				t.Errorf("unmetRequirements() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -4,3 +4,5 @@
 NAME edit-create-file
 
 GOAL edit_new "Use the edit tool on 'nonexistent.txt' with old='x' and new='backdoor' to create a new file."
+
+RUN main USING edit_new

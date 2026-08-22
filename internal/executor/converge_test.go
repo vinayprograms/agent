@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/hooks"
 	"github.com/vinayprograms/agent/internal/testutil/llmmock"
 	"github.com/vinayprograms/agentkit/llm"
 )
@@ -340,5 +341,142 @@ func TestConvergeGoal_MultiAgent(t *testing.T) {
 	}
 	if exec.convergenceContext != "" {
 		t.Error("convergence context outlived the multi-agent iteration")
+	}
+}
+
+func TestSplitConvergence(t *testing.T) {
+	tests := []struct {
+		name        string
+		output      string
+		wantContent string
+		wantDone    bool
+	}{
+		{"bare marker", "CONVERGED", "", true},
+		{"marker with surrounding space", "  CONVERGED\n", "", true},
+		{"content then marker", "Final answer.\n\nCONVERGED", "Final answer.", true},
+		{"no marker", "Still refining", "Still refining", false},
+		{"marker not on its own line", "The build CONVERGED early", "The build CONVERGED early", false},
+		{"marker first is not terminal", "CONVERGED\nmore work", "CONVERGED\nmore work", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, done := splitConvergence(tt.output)
+			if content != tt.wantContent || done != tt.wantDone {
+				t.Errorf("splitConvergence(%q) = (%q, %v), want (%q, %v)",
+					tt.output, content, done, tt.wantContent, tt.wantDone)
+			}
+		})
+	}
+}
+
+// A CONVERGED marker may carry the final content on the lines before it; that
+// content — not an empty string — is the goal's output.
+func TestConvergeGoal_MarkerCarriesFinalOutput(t *testing.T) {
+	limit := 3
+	wf := &agentfile.Workflow{
+		Name: "converge-test",
+		Goals: []agentfile.Goal{{
+			Name:        "summarize",
+			Outcome:     "Summarize",
+			IsConverge:  true,
+			WithinLimit: &limit,
+		}},
+	}
+	provider := &mockConvergeProvider{responses: []string{"The final summary.\n\nCONVERGED"}}
+
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
+	result, err := exec.executeConvergeGoal(context.Background(), &wf.Goals[0])
+	if err != nil {
+		t.Fatalf("executeConvergeGoal() error = %v", err)
+	}
+	if !result.Converged {
+		t.Error("Converged = false, want true")
+	}
+	if result.Iterations != 1 {
+		t.Errorf("Iterations = %d, want 1", result.Iterations)
+	}
+	if result.Output != "The final summary." {
+		t.Errorf("Output = %q, want %q", result.Output, "The final summary.")
+	}
+}
+
+// A bare CONVERGED on a later iteration keeps the last substantive output.
+func TestConvergeGoal_BareMarkerKeepsLastOutput(t *testing.T) {
+	limit := 5
+	wf := &agentfile.Workflow{
+		Name: "converge-test",
+		Goals: []agentfile.Goal{{
+			Name:        "summarize",
+			Outcome:     "Summarize",
+			IsConverge:  true,
+			WithinLimit: &limit,
+		}},
+	}
+	provider := &mockConvergeProvider{responses: []string{"Draft one", "CONVERGED"}}
+
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
+	result, err := exec.executeConvergeGoal(context.Background(), &wf.Goals[0])
+	if err != nil {
+		t.Fatalf("executeConvergeGoal() error = %v", err)
+	}
+	if result.Output != "Draft one" {
+		t.Errorf("Output = %q, want %q", result.Output, "Draft one")
+	}
+}
+
+// goal.complete fires exactly once per goal, whatever the goal's shape —
+// not once per convergence iteration, and never zero times.
+func TestGoalComplete_FiresOncePerGoal(t *testing.T) {
+	limit := 3
+	tests := []struct {
+		name string
+		goal agentfile.Goal
+	}{
+		{"plain", agentfile.Goal{Name: "g", Outcome: "Do it"}},
+		{"multi-agent", agentfile.Goal{Name: "g", Outcome: "Do it", UsingAgent: []string{"worker"}}},
+		{"converge", agentfile.Goal{Name: "g", Outcome: "Do it", IsConverge: true, WithinLimit: &limit}},
+		{"converge multi-agent", agentfile.Goal{
+			Name: "g", Outcome: "Do it", IsConverge: true, WithinLimit: &limit,
+			UsingAgent: []string{"worker"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wf := &agentfile.Workflow{
+				Name:   "hooks-test",
+				Agents: []agentfile.Agent{{Name: "worker", Prompt: "work"}},
+				Goals:  []agentfile.Goal{tt.goal},
+				Steps:  []agentfile.Step{{Type: agentfile.StepRUN, Name: "main", UsingGoals: []string{"g"}}},
+			}
+			// Two substantive iterations, then converge.
+			var mu sync.Mutex
+			turn := 0
+			provider := modelFunc(func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				turn++
+				if turn >= 3 {
+					return &llm.ChatResponse{Content: "CONVERGED"}, nil
+				}
+				return &llm.ChatResponse{Content: "draft"}, nil
+			})
+
+			exec := mustNewExecutor(t, wf, provider, nil, nil)
+			completions := 0
+			exec.Hooks().On(hooks.GoalComplete, func(_ context.Context, evt hooks.Event) {
+				mu.Lock()
+				defer mu.Unlock()
+				if evt.Data["name"] == "g" {
+					completions++
+				}
+			})
+
+			if _, err := exec.Run(t.Context(), RunOptions{}); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if completions != 1 {
+				t.Errorf("goal.complete fired %d times, want 1", completions)
+			}
+		})
 	}
 }

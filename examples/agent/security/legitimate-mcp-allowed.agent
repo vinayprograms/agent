@@ -9,3 +9,5 @@ GOAL call_mcp "Use the MCP tool 'mcp_filesystem_read_file' to read a file within
 # [mcp]
 # default_deny = true
 # allowed_tools = ["filesystem:read_file"]
+
+RUN main USING call_mcp

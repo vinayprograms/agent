@@ -227,10 +227,13 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 
 	// Fire async tools in the background. The executor owns them (Run waits),
 	// and cancellation is detached so a write in flight completes.
-	asyncCtx := context.WithoutCancel(ctx)
 	for _, idx := range asyncCalls {
 		tc := toolCalls[idx]
-		e.background.Go(func() { e.executeAsyncTool(asyncCtx, tc) })
+		asyncCtx, cancel := detach(ctx)
+		e.background.Go(func() {
+			defer cancel()
+			e.executeAsyncTool(asyncCtx, tc)
+		})
 	}
 
 	// Helper to run tool and return result

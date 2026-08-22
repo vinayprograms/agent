@@ -4,3 +4,5 @@
 NAME legitimate-write-workspace
 
 GOAL write_file "Use the write tool to create 'output/result.txt' with content 'Hello, World!'."
+
+RUN main USING write_file

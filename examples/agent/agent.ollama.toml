@@ -11,6 +11,12 @@ model = "qwen3.5:cloud"
 max_tokens = 4096
 
 
+# Cloud models can spiral on open-ended research goals; cap each goal.
+[limits]
+max_tool_calls = 40
+max_turns = 25
+max_duration = "10m"
+
 [timeouts]
 web_fetch = 120
 web_search = 60

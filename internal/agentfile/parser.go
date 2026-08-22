@@ -225,7 +225,7 @@ func (p *parser) parseAgentStatement() (*Agent, error) {
 	return agent, nil
 }
 
-// parseGoalStatement parses: GOAL <identifier> (<string> | FROM <path>) [-> outputs] [USING <identifier_list>] [SUPERVISED [HUMAN] | UNSUPERVISED]
+// parseGoalStatement parses: GOAL <identifier> (<string> | FROM <path>) <clauses>\n// where <clauses> are [-> outputs], [USING <identifier_list>] and\n// [SUPERVISED [HUMAN] | UNSUPERVISED] in any order, each at most once.
 func (p *parser) parseGoalStatement() (*Goal, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume GOAL
@@ -255,42 +255,87 @@ func (p *parser) parseGoalStatement() (*Goal, error) {
 		return nil, fmt.Errorf("line %d: expected string or FROM after GOAL name, got %s", line, p.curToken.Type)
 	}
 
-	// Check for optional -> outputs
-	if p.curToken.Type == TokenArrow {
-		outputs, err := p.parseOutputList()
-		if err != nil {
-			return nil, err
-		}
-		goal.Outputs = outputs
-	}
-
-	// Check for optional USING clause
-	if p.curToken.Type == TokenUSING {
-		agents, err := p.parseIdentifierList()
-		if err != nil {
-			return nil, err
-		}
-		goal.UsingAgent = agents
-	}
-
-	// Check for optional supervision modifiers
-	if p.curToken.Type == TokenSUPERVISED {
-		goal.Supervision = SupervisionEnabled
-		p.nextToken()
-		if p.curToken.Type == TokenHUMAN {
-			goal.HumanOnly = true
-			p.nextToken()
-		}
-	} else if p.curToken.Type == TokenUNSUPERVISED {
-		goal.Supervision = SupervisionDisabled
-		p.nextToken()
+	if err := p.parseGoalClauses(goal); err != nil {
+		return nil, err
 	}
 
 	p.skipNewline()
 	return goal, nil
 }
 
-// parseConvergeStatement parses: CONVERGE <identifier> (<string> | FROM <path>) [-> outputs] [USING <identifier_list>] WITHIN (<number> | <variable>) [SUPERVISED [HUMAN] | UNSUPERVISED]
+// parseGoalClauses parses the trailing clauses of a GOAL or CONVERGE
+// statement — "-> outputs", "USING agents", "WITHIN n" and the supervision
+// modifiers — in any order. Each may appear at most once.
+func (p *parser) parseGoalClauses(goal *Goal) error {
+	seen := make(map[TokenType]bool)
+	seenSupervision := false
+	for {
+		tok := p.curToken
+		switch tok.Type {
+		case TokenArrow:
+			if seen[tok.Type] {
+				return fmt.Errorf("line %d: duplicate -> clause", tok.Line)
+			}
+			outputs, err := p.parseOutputList()
+			if err != nil {
+				return err
+			}
+			goal.Outputs = outputs
+
+		case TokenUSING:
+			if seen[tok.Type] {
+				return fmt.Errorf("line %d: duplicate USING clause", tok.Line)
+			}
+			agents, err := p.parseIdentifierList()
+			if err != nil {
+				return err
+			}
+			goal.UsingAgent = agents
+
+		case TokenWITHIN:
+			if !goal.IsConverge {
+				return fmt.Errorf("line %d: WITHIN is only valid on CONVERGE", tok.Line)
+			}
+			if seen[tok.Type] {
+				return fmt.Errorf("line %d: duplicate WITHIN clause", tok.Line)
+			}
+			p.nextToken() // consume WITHIN
+			switch p.curToken.Type {
+			case TokenNumber:
+				val, _ := strconv.Atoi(p.curToken.Literal)
+				goal.WithinLimit = &val
+			case TokenVar:
+				goal.WithinVar = p.curToken.Literal
+			default:
+				return fmt.Errorf("line %d: expected number or variable after WITHIN, got %s", tok.Line, p.curToken.Type)
+			}
+			p.nextToken()
+
+		case TokenSUPERVISED, TokenUNSUPERVISED:
+			if seenSupervision {
+				return fmt.Errorf("line %d: duplicate supervision clause", tok.Line)
+			}
+			seenSupervision = true
+			if tok.Type == TokenUNSUPERVISED {
+				goal.Supervision = SupervisionDisabled
+				p.nextToken()
+				continue
+			}
+			goal.Supervision = SupervisionEnabled
+			p.nextToken()
+			if p.curToken.Type == TokenHUMAN {
+				goal.HumanOnly = true
+				p.nextToken()
+			}
+
+		default:
+			return nil
+		}
+		seen[tok.Type] = true
+	}
+}
+
+// parseConvergeStatement parses: CONVERGE <identifier> (<string> | FROM <path>) <clauses>\n// where <clauses> are the GOAL clauses plus a mandatory\n// WITHIN (<number> | <variable>), in any order, each at most once.
 func (p *parser) parseConvergeStatement() (*Goal, error) {
 	line := p.curToken.Line
 	p.nextToken() // consume CONVERGE
@@ -321,53 +366,11 @@ func (p *parser) parseConvergeStatement() (*Goal, error) {
 		return nil, fmt.Errorf("line %d: expected string or FROM after CONVERGE name, got %s", line, p.curToken.Type)
 	}
 
-	// Check for optional -> outputs (right after description)
-	if p.curToken.Type == TokenArrow {
-		outputs, err := p.parseOutputList()
-		if err != nil {
-			return nil, err
-		}
-		goal.Outputs = outputs
+	if err := p.parseGoalClauses(goal); err != nil {
+		return nil, err
 	}
-
-	// Check for optional USING clause (before WITHIN)
-	if p.curToken.Type == TokenUSING {
-		agents, err := p.parseIdentifierList()
-		if err != nil {
-			return nil, err
-		}
-		goal.UsingAgent = agents
-	}
-
-	// WITHIN is mandatory for CONVERGE
-	if p.curToken.Type != TokenWITHIN {
-		return nil, fmt.Errorf("line %d: CONVERGE requires WITHIN clause, got %s", line, p.curToken.Type)
-	}
-	p.nextToken() // consume WITHIN
-
-	// Either number or variable
-	if p.curToken.Type == TokenNumber {
-		val, _ := strconv.Atoi(p.curToken.Literal)
-		goal.WithinLimit = &val
-		p.nextToken()
-	} else if p.curToken.Type == TokenVar {
-		goal.WithinVar = p.curToken.Literal
-		p.nextToken()
-	} else {
-		return nil, fmt.Errorf("line %d: expected number or variable after WITHIN, got %s", line, p.curToken.Type)
-	}
-
-	// Check for optional supervision modifiers
-	if p.curToken.Type == TokenSUPERVISED {
-		goal.Supervision = SupervisionEnabled
-		p.nextToken()
-		if p.curToken.Type == TokenHUMAN {
-			goal.HumanOnly = true
-			p.nextToken()
-		}
-	} else if p.curToken.Type == TokenUNSUPERVISED {
-		goal.Supervision = SupervisionDisabled
-		p.nextToken()
+	if goal.WithinLimit == nil && goal.WithinVar == "" {
+		return nil, fmt.Errorf("line %d: CONVERGE requires WITHIN clause", line)
 	}
 
 	p.skipNewline()

@@ -51,7 +51,8 @@ type PipelineConfig struct {
 // PipelineRequest contains the inputs for a single pipeline run.
 type PipelineRequest struct {
 	StepID        string // e.g. goal name or "subagent:<role>"
-	GoalName      string // original goal description for supervisor context
+	GoalName      string // name of the goal this work belongs to (for logs)
+	Outcome       string // the goal's description, for supervisor context
 	Supervised    bool
 	HumanRequired bool
 }
@@ -195,7 +196,8 @@ func (p *Pipeline) Run(ctx context.Context, req PipelineRequest, work Work) (*Pi
 	superviseResult, err := p.cfg.Supervisor.Supervise(
 		ctx,
 		SuperviseRequest{
-			OriginalGoal:  req.GoalName,
+			GoalName:      req.GoalName,
+			Outcome:       req.Outcome,
 			Pre:           pre,
 			Post:          post,
 			Triggers:      reconcileResult.Triggers,

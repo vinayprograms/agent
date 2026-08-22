@@ -92,6 +92,10 @@ type Config struct {
 	// Security.Reviewer must be non-nil or New fails.
 	Security *SecurityConfig
 
+	// Budget bounds each goal's tool calls, LLM turns and wall-clock time.
+	// The zero Budget is unlimited.
+	Budget Budget
+
 	// Timeouts for network operations (seconds). Zero means use default.
 	TimeoutMCP       int
 	TimeoutWebSearch int

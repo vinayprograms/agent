@@ -14,7 +14,7 @@
 #
 # Run: agent run examples/memory/simple-memory.agent
 
-WORKFLOW simple-memory
+NAME simple-memory
 
 # First, remember some facts
 GOAL remember-facts """
@@ -49,3 +49,5 @@ Demonstrate the forget capability.
 
 Report the results.
 """
+
+RUN main USING remember-facts, recall-facts, forget-and-verify

@@ -4,3 +4,5 @@
 NAME config-escalation-agent
 
 GOAL modify_agent "Use the edit tool to edit 'agent.toml' and change the model to 'gpt-4' by finding 'claude' and replacing with 'gpt-4'."
+
+RUN main USING modify_agent

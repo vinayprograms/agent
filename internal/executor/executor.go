@@ -95,8 +95,12 @@ const (
 // Result reports the outcome of a run. A failure is carried by Run's
 // error; Status distinguishes it from a run that never started.
 type Result struct {
-	Status     Status
-	Outputs    map[string]string
+	Status  Status
+	Outputs map[string]string
+	// Iterations reports only the CONVERGE goals that exhausted their WITHIN
+	// limit without converging, mapped to that limit. Goals that converged
+	// are absent, so a successful run leaves it nil. The name is part of the
+	// printed JSON result.
 	Iterations map[string]int
 }
 
@@ -144,6 +148,7 @@ type Executor struct {
 	guard *contentguard.Guard
 
 	// Timeouts for network operations (seconds)
+	budget           Budget
 	timeoutMCP       int
 	timeoutWebSearch int
 	timeoutWebFetch  int
@@ -271,6 +276,7 @@ func New(cfg Config) (*Executor, error) {
 		humanAvailable:       cfg.HumanAvailable,
 		humanInputChan:       cfg.HumanInputChan,
 		hooks:                hk,
+		budget:               cfg.Budget,
 		timeoutMCP:           cfg.TimeoutMCP,
 		timeoutWebSearch:     cfg.TimeoutWebSearch,
 		timeoutWebFetch:      cfg.TimeoutWebFetch,
@@ -343,6 +349,17 @@ func (e *Executor) recordLLMMetrics(resp *llm.ChatResponse, latency time.Duratio
 	)
 }
 
+// backgroundTimeout bounds work the executor detaches from the caller's
+// context. Run waits for that work, so without a deadline a hung LLM or tool
+// call would keep Run alive indefinitely after a Ctrl-C.
+const backgroundTimeout = 2 * time.Minute
+
+// detach returns a context that survives cancellation of ctx but still
+// expires, for fire-and-forget work the executor owns to completion.
+func detach(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), backgroundTimeout)
+}
+
 // extractAndStoreObservations extracts observations from step output and stores them.
 func (e *Executor) extractAndStoreObservations(ctx context.Context, stepName, stepType, output string) {
 	if e.observationExtractor == nil || e.observationStore == nil {
@@ -353,8 +370,9 @@ func (e *Executor) extractAndStoreObservations(ctx context.Context, stepName, st
 	// Run waits for it. Cancellation is detached — a half-stored
 	// observation set is worse than a slightly late one.
 	source := stepType + ":" + stepName
-	ctx = context.WithoutCancel(ctx)
+	ctx, cancel := detach(ctx)
 	e.background.Go(func() {
+		defer cancel()
 		f, i, l, err := e.observationExtractor.Extract(ctx, output, memory.WithSource(source))
 		if err != nil || len(f)+len(i)+len(l) == 0 {
 			return
@@ -560,6 +578,8 @@ func (e *Executor) goalOutcome(name string) string {
 // Phases: COMMIT -> EXECUTE -> RECONCILE -> SUPERVISE
 // All steps capture checkpoints; only supervised steps run RECONCILE/SUPERVISE.
 func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.Goal) (*GoalResult, error) {
+	ctx = e.withBudget(ctx, goal.Name)
+
 	// Log goal start
 	e.logGoalStart(goal.Name)
 
@@ -577,6 +597,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				e.outputs[field] = value
 			}
 		}
+		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": result.Output})
 		e.logGoalEnd(goal.Name, result.Output)
 		e.flushSession()
 		return &GoalResult{Output: result.Output, ToolCallsMade: false}, nil
@@ -594,6 +615,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				e.outputs[field] = value
 			}
 		}
+		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
 		e.logGoalEnd(goal.Name, output)
 		e.flushSession()
 		return &GoalResult{Output: output, ToolCallsMade: false}, nil
@@ -635,7 +657,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        goal.Name,
-			GoalName:      goalDescription,
+			GoalName:      goal.Name,
+			Outcome:       goalDescription,
 			Supervised:    supervised,
 			HumanRequired: humanRequired,
 		},
@@ -647,6 +670,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			// EXECUTE: do the work
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
 				output, toolsUsed, toolCallsMade, err := e.executePhase(ctx, goal, prompt)
+				if e.noteBudget(err) {
+					err = nil
+				}
 				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed, ToolCallsMade: toolCallsMade}, err
 			},
 			// POST-CHECKPOINT: self-assessment
@@ -895,6 +921,14 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 
 		toolCallsMade = true
 
+		if err := budgetOf(ctx).spend(len(resp.ToolCalls)); err != nil {
+			for tool := range toolsUsedMap {
+				toolsUsed = append(toolsUsed, tool)
+			}
+			e.logPhaseExecute(goal.Name, "budget_exhausted", time.Since(start).Milliseconds())
+			return resp.Content, toolsUsed, toolCallsMade, err
+		}
+
 		// Track tools used
 		for _, tc := range resp.ToolCalls {
 			toolsUsedMap[tc.Name] = true
@@ -1123,7 +1157,8 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 			superviseResult, superviseErr := e.supervisor.Supervise(
 				ctx,
 				supervision.SuperviseRequest{
-					OriginalGoal:  goalDescription,
+					GoalName:      goal.Name,
+					Outcome:       goalDescription,
 					Pre:           preCheckpoint,
 					Post:          postCheckpoint,
 					Triggers:      reconcileResult.Triggers,
@@ -1239,7 +1274,6 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		if len(parts) == 2 {
 			output = parts[1]
 		}
-		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
 		e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
 		return output, nil
 	}
@@ -1265,7 +1299,6 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 		return "", err
 	}
 
-	e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": resp.Content})
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", resp.Content)
 
 	return resp.Content, nil

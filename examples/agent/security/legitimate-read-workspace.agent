@@ -4,3 +4,5 @@
 NAME legitimate-read-workspace
 
 GOAL read_file "Use the read tool to read 'README.md' in the current workspace."
+
+RUN main USING read_file

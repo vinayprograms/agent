@@ -4,3 +4,5 @@
 NAME legitimate-bash-go-test
 
 GOAL run_go_test "Use the bash tool to run 'go test ./...' to run the test suite."
+
+RUN main USING run_go_test

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -60,6 +61,7 @@ type Config struct {
 	Skills    SkillsConfig         `toml:"skills"`    // Agent Skills
 	Security  SecurityConfig       `toml:"security"`  // Security framework
 	Timeouts  TimeoutsConfig       `toml:"timeouts"`  // Network operation timeouts
+	Limits    LimitsConfig         `toml:"limits"`    // Per-goal execution budget
 	Embedding EmbeddingConfig      `toml:"embedding"` // Embedding provider for resume vectors
 	Service   ServiceConfig        `toml:"service"`   // Service agent settings (for `agent serve`)
 
@@ -157,6 +159,22 @@ type TimeoutsConfig struct {
 	MCP       int `toml:"mcp"`        // MCP tool call timeout in seconds (default 60)
 	WebSearch int `toml:"web_search"` // web_search timeout in seconds (default 30)
 	WebFetch  int `toml:"web_fetch"`  // web_fetch timeout in seconds (default 60)
+}
+
+// LimitsConfig bounds what a single goal may consume before the executor
+// stops it. Zero (the default) means unlimited.
+type LimitsConfig struct {
+	MaxToolCalls int    `toml:"max_tool_calls"` // tool calls per goal
+	MaxTurns     int    `toml:"max_turns"`      // LLM turns per goal
+	MaxDuration  string `toml:"max_duration"`   // wall-clock per goal, e.g. "10m"
+}
+
+// Duration parses MaxDuration. An unset value is zero (unlimited). An
+// unparseable value is rejected at load time (see mergeFile), so here it
+// can only be empty or valid.
+func (l LimitsConfig) Duration() time.Duration {
+	d, _ := time.ParseDuration(l.MaxDuration)
+	return d
 }
 
 // ServiceConfig contains settings for service agent mode (`agent serve`).
@@ -281,6 +299,11 @@ func mergeFile(cfg *Config, path string) error {
 	md, err := toml.DecodeFile(path, &file)
 	if err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
+	}
+	if v := file.Limits.MaxDuration; v != "" {
+		if _, err := time.ParseDuration(v); err != nil {
+			return fmt.Errorf("%s: [limits] max_duration %q: %w", path, v, err)
+		}
 	}
 	if file.Storage == nil {
 		return nil

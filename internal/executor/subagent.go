@@ -62,7 +62,8 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        fmt.Sprintf("subagent:%s", role),
-			GoalName:      e.goalOutcome(e.currentGoal),
+			GoalName:      e.currentGoal,
+			Outcome:       e.goalOutcome(e.currentGoal),
 			Supervised:    supervised,
 			HumanRequired: false, // Dynamic sub-agents don't require human approval
 		},
@@ -180,7 +181,8 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        fmt.Sprintf("subagent:%s", role),
-			GoalName:      e.goalOutcome(e.currentGoal),
+			GoalName:      e.currentGoal,
+			Outcome:       e.goalOutcome(e.currentGoal),
 			Supervised:    supervised,
 			HumanRequired: false,
 		},
@@ -192,6 +194,9 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 			// EXECUTE
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
 				output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt)
+				if e.noteBudget(err) {
+					err = nil
+				}
 				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
 			},
 			// POST-CHECKPOINT
@@ -280,6 +285,14 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 			}
 			e.logPhaseComplete("EXECUTE", role, stepID, start, "complete")
 			return resp.Content, toolsUsed, nil
+		}
+
+		if err := budgetOf(ctx).spend(len(resp.ToolCalls)); err != nil {
+			for tool := range toolsUsedMap {
+				toolsUsed = append(toolsUsed, tool)
+			}
+			e.logPhaseComplete("EXECUTE", role, stepID, start, "budget_exhausted")
+			return resp.Content, toolsUsed, err
 		}
 
 		// Track tools used

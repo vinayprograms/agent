@@ -281,13 +281,13 @@ func TestPipelineRun_SuperviseRequest(t *testing.T) {
 	sup := &fakeSupervisor{triggers: []string{"low_confidence"}, result: &checkpoint.SuperviseResult{StepID: "s1", Verdict: "CONTINUE"}}
 	p := NewPipeline(PipelineConfig{Store: &fakeStore{trail: trail}, Supervisor: sup})
 
-	_, err := p.Run(t.Context(), PipelineRequest{StepID: "s1", GoalName: "the goal", Supervised: true, HumanRequired: true}, Work{Commit: commitPre, Execute: execOK, Post: postOK})
+	_, err := p.Run(t.Context(), PipelineRequest{StepID: "s1", GoalName: "g1", Outcome: "the goal", Supervised: true, HumanRequired: true}, Work{Commit: commitPre, Execute: execOK, Post: postOK})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	got := sup.lastRequest
-	if got.OriginalGoal != "the goal" || got.Pre != testPre || got.Post != testPost || !got.HumanRequired ||
+	if got.GoalName != "g1" || got.Outcome != "the goal" || got.Pre != testPre || got.Post != testPost || !got.HumanRequired ||
 		len(got.DecisionTrail) != 1 || strings.Join(got.Triggers, ",") != "low_confidence" {
 		t.Errorf("unexpected SuperviseRequest: %+v", got)
 	}

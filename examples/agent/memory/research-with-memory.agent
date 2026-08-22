@@ -14,12 +14,12 @@
 #
 # Run: agent run examples/memory/research-with-memory.agent
 
-WORKFLOW research-with-memory
+NAME research-with-memory
 
-INPUT topic "AI safety" # Topic to research
+INPUT topic DEFAULT "AI safety" # Topic to research
 
 # Check what we already know
-GOAL check-prior-knowledge -> prior_context """
+GOAL check-prior-knowledge """
 Before starting research, check if we have any relevant memories.
 
 Use memory_recall to search for memories related to: {{topic}}
@@ -28,10 +28,10 @@ If relevant memories are found, summarize what we already know.
 If no relevant memories, note that this is a fresh research topic.
 
 Return a summary of prior knowledge (or lack thereof).
-"""
+""" -> prior_context
 
 # Do the research
-GOAL research-topic -> findings """
+GOAL research-topic """
 Research the topic: {{topic}}
 
 Prior context: {{prior_context}}
@@ -43,7 +43,7 @@ Prior context: {{prior_context}}
 Build on any prior knowledge we have, don't repeat known information.
 
 Return a structured summary of new findings.
-"""
+""" -> findings
 
 # Store key insights
 GOAL store-insights """
@@ -74,3 +74,5 @@ Create a comprehensive report that:
 
 The report should be useful for future sessions.
 """
+
+RUN main USING check-prior-knowledge, research-topic, store-insights, generate-report
