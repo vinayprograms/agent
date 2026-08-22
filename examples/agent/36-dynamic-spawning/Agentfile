@@ -1,7 +1,7 @@
 NAME dynamic-research
 
-INPUT topic
+INPUT topic DEFAULT "artificial intelligence"
 
-GOAL research
-  Research {{topic}} thoroughly.
-  Consider multiple perspectives and synthesize findings.
+GOAL research "Research $topic thoroughly. Consider multiple perspectives and synthesize findings. Spawn sub-agents for distinct angles when useful."
+
+RUN main USING research

@@ -1,5 +1,4 @@
 NAME code-reviewer
-VERSION 1.0.0
 
 INPUT code_path
 INPUT language DEFAULT "auto"
