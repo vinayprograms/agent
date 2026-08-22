@@ -172,6 +172,8 @@ var legacyPolicyKeys = map[string]string{
 	"denylist":                "deny",
 	"allow_domains":           "allow",
 	"rate_limit":              "(removed)",
+	"memory_read.enabled":     "list recall under [tools.recall]",
+	"memory_write.enabled":    "list remember under [tools.remember]",
 	"mcp.default_deny":        "mcp.enabled",
 	"mcp.allowed_tools":       "mcp.allow",
 	"security.extra_patterns": "content.security.patterns",
@@ -188,9 +190,23 @@ func validatePolicyKeys(path string, unknown []string) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s uses keys the current policy schema does not recognise:", path)
 	for _, key := range unknown {
+		if isTableOf(key, unknown) {
+			continue // the table is reported through its child keys
+		}
 		fmt.Fprintf(&b, "\n  %s -> %s", key, policyKeyReplacement(key))
 	}
 	return errors.New(b.String())
+}
+
+// isTableOf reports whether key is a bare table name that has child keys in
+// the same unknown-key list.
+func isTableOf(key string, keys []string) bool {
+	for _, k := range keys {
+		if strings.HasPrefix(k, key+".") {
+			return true
+		}
+	}
+	return false
 }
 
 // policyKeyReplacement names the replacement for a legacy key, or "unknown

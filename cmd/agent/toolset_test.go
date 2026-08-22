@@ -204,7 +204,7 @@ func TestDomainGuard_AllowsListedHost(t *testing.T) {
 
 func TestPathGuard_SkipsAbsentArgs(t *testing.T) {
 	ws := t.TempDir()
-	g := pathGuard{pol: permissivePolicy(ws), workspace: ws, tool: "read", keys: []string{"path"}}
+	g := pathGuard{pol: permissivePolicy(ws), base: ws, tool: "read", keys: []string{"path"}}
 	args, err := tools.Validate(map[string]tools.Param{"path": {Type: tools.StringParam}}, map[string]any{})
 	if err != nil {
 		t.Fatal(err)
@@ -290,5 +290,21 @@ func TestBuildToolset_MemoryTools(t *testing.T) {
 	out, err = reg.Execute(ctx, "recall", map[string]any{"query": "sky"})
 	if err != nil || !strings.Contains(out, "blue") {
 		t.Errorf("recall: out=%q err=%v", out, err)
+	}
+}
+
+func TestPathGuard_CwdResolutionForUnconfinedTools(t *testing.T) {
+	ws := t.TempDir()
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	pol := permissivePolicy(ws)
+	pol.Tools["patch"] = &policy.ToolPolicy{Deny: []string{filepath.Join(cwd, "secret*")}}
+	g := pathGuard{pol: pol, tool: "patch", keys: []string{"path"}}
+	args, err := tools.Validate(map[string]tools.Param{"path": {Type: tools.StringParam}}, map[string]any{"path": "secret.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Check(t.Context(), args); err == nil {
+		t.Fatal("relative path must be checked against the cwd for patch")
 	}
 }

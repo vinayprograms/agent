@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -62,7 +63,10 @@ func buildToolset(c toolsetConfig) (*tools.Registry, error) {
 		return reg.Register(e)
 	}
 	paths := func(tool string, keys ...string) tools.Guard {
-		return pathGuard{pol: c.Policy, workspace: ws, tool: tool, keys: keys}
+		return pathGuard{pol: c.Policy, base: ws, tool: tool, keys: keys}
+	}
+	cwdPaths := func(tool string, keys ...string) tools.Guard {
+		return pathGuard{pol: c.Policy, tool: tool, keys: keys}
 	}
 
 	var webOpts []tools.WebOption
@@ -86,8 +90,10 @@ func buildToolset(c toolsetConfig) (*tools.Registry, error) {
 		func() error { return add(tools.Mv(ws, roots...), paths("mv", "source", "destination")) },
 		func() error { return add(tools.Cp(ws, roots...), paths("cp", "source", "destination")) },
 		func() error { return add(tools.Rm(ws, roots...), paths("rm", "path")) },
-		func() error { return add(tools.Diff(), paths("diff", "file_a", "file_b")) },
-		func() error { return add(tools.Patch(), paths("patch", "path")) },
+		// diff/patch are not workspace-confined by the kit: they resolve
+		// relative paths against the process cwd, so the guard must too.
+		func() error { return add(tools.Diff(), cwdPaths("diff", "file_a", "file_b")) },
+		func() error { return add(tools.Patch(), cwdPaths("patch", "path")) },
 		func() error { return add(tools.Git(ws), paths("git", "cwd")) },
 
 		// Process/system tools: no path argument to guard.
@@ -157,14 +163,16 @@ func buildToolset(c toolsetConfig) (*tools.Registry, error) {
 }
 
 // pathGuard checks every named path argument against the policy. Relative
-// paths are resolved against the workspace, matching how the kit's file
-// tools resolve them. Absent or empty arguments are skipped (optional
-// paths such as grep's default directory).
+// paths are resolved against base — the workspace for the kit's confined
+// file tools, the process cwd for diff/patch which the kit does not confine.
+// An empty base means "resolve against the cwd at check time". Absent or
+// empty arguments are skipped (optional paths such as grep's default
+// directory).
 type pathGuard struct {
-	pol       policy.Lookup
-	workspace string
-	tool      string
-	keys      []string
+	pol  policy.Lookup
+	base string
+	tool string
+	keys []string
 }
 
 func (g pathGuard) Check(_ context.Context, args tools.Args) error {
@@ -174,7 +182,11 @@ func (g pathGuard) Check(_ context.Context, args tools.Args) error {
 			continue
 		}
 		if !filepath.IsAbs(p) {
-			p = filepath.Join(g.workspace, p)
+			base := g.base
+			if base == "" {
+				base, _ = os.Getwd()
+			}
+			p = filepath.Join(base, p)
 		}
 		if ok, why := g.pol.CheckPath(g.tool, p); !ok {
 			return fmt.Errorf("denied: %s", why)
