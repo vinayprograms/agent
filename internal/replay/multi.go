@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -13,16 +13,14 @@ import (
 
 // MultiReplayer handles multiple session files.
 type MultiReplayer struct {
-	output    io.Writer
-	verbosity int                // 0=normal, 1=verbose (-v), 2=very verbose (-vv)
-	opts      []ReplayerOption   // Options to pass to internal Replayer
+	verbosity int              // 0=normal, 1=verbose (-v), 2=very verbose (-vv)
+	opts      []ReplayerOption // Options to pass to internal Replayer
 }
 
 // NewMulti creates a new MultiReplayer.
 // verbosity: 0=normal, 1=verbose (-v), 2=very verbose (-vv)
-func NewMulti(output io.Writer, verbosity int, opts ...ReplayerOption) *MultiReplayer {
+func NewMulti(verbosity int, opts ...ReplayerOption) *MultiReplayer {
 	return &MultiReplayer{
-		output:    output,
 		verbosity: verbosity,
 		opts:      opts,
 	}
@@ -35,14 +33,14 @@ type sessionInfo struct {
 	AgentName string // Extracted or inferred agent name
 }
 
-// ReplayFiles outputs multiple sessions to the writer.
-func (m *MultiReplayer) ReplayFiles(paths []string) error {
+// ReplayFiles renders multiple sessions into w.
+func (m *MultiReplayer) ReplayFiles(w io.Writer, paths []string) error {
 	sessions, err := m.loadSessions(paths)
 	if err != nil {
 		return err
 	}
 
-	return m.replayAll(sessions)
+	return m.replayAll(w, sessions)
 }
 
 // ReplayFilesInteractive shows multiple sessions in the interactive pager.
@@ -52,16 +50,10 @@ func (m *MultiReplayer) ReplayFilesInteractive(paths []string) error {
 		return err
 	}
 
-	// Render to string
 	var buf strings.Builder
-	oldOutput := m.output
-	m.output = &buf
-
-	if err := m.replayAll(sessions); err != nil {
-		m.output = oldOutput
+	if err := m.replayAll(&buf, sessions); err != nil {
 		return err
 	}
-	m.output = oldOutput
 
 	// Build title
 	title := fmt.Sprintf("%d session(s)", len(sessions))
@@ -69,7 +61,7 @@ func (m *MultiReplayer) ReplayFilesInteractive(paths []string) error {
 		title = sessions[0].AgentName
 	}
 
-	p := NewPager(title, buf.String())
+	p := newPager(title)
 	return p.Run(buf.String())
 }
 
@@ -78,7 +70,7 @@ func (m *MultiReplayer) loadSessions(paths []string) ([]sessionInfo, error) {
 	var sessions []sessionInfo
 
 	// Create a temporary replayer for loading (uses format detection)
-	loader := New(m.output, m.verbosity, m.opts...)
+	loader := New(m.verbosity, m.opts...)
 
 	for _, path := range paths {
 		sess, err := loader.loadSession(path)
@@ -95,8 +87,8 @@ func (m *MultiReplayer) loadSessions(paths []string) ([]sessionInfo, error) {
 	}
 
 	// Sort by creation time
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].Session.CreatedAt.Before(sessions[j].Session.CreatedAt)
+	slices.SortFunc(sessions, func(a, b sessionInfo) int {
+		return a.Session.CreatedAt.Compare(b.Session.CreatedAt)
 	})
 
 	return sessions, nil
@@ -114,22 +106,22 @@ func inferAgentName(sess *session.Session, path string) string {
 	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
-// replayAll renders all sessions.
-func (m *MultiReplayer) replayAll(sessions []sessionInfo) error {
-	r := New(m.output, m.verbosity, m.opts...)
+// replayAll renders all sessions into w.
+func (m *MultiReplayer) replayAll(w io.Writer, sessions []sessionInfo) error {
+	r := New(m.verbosity, m.opts...)
 
 	for i, info := range sessions {
 		if len(sessions) > 1 {
-			m.printSessionHeader(info, i+1, len(sessions))
+			printSessionHeader(w, info, i+1, len(sessions))
 		}
 
-		if err := r.Replay(info.Session); err != nil {
+		if err := r.Replay(w, info.Session); err != nil {
 			return fmt.Errorf("failed to replay %s: %w", info.Source, err)
 		}
 
 		// Add spacing between sessions
 		if i < len(sessions)-1 {
-			fmt.Fprintln(m.output)
+			fmt.Fprintln(w)
 		}
 	}
 
@@ -148,7 +140,7 @@ var (
 )
 
 // printSessionHeader prints a distinctive header for each session.
-func (m *MultiReplayer) printSessionHeader(info sessionInfo, num, total int) {
+func printSessionHeader(w io.Writer, info sessionInfo, num, total int) {
 	// Short session ID (first 12 chars)
 	shortID := info.Session.ID
 	if len(shortID) > 12 {
@@ -166,8 +158,8 @@ func (m *MultiReplayer) printSessionHeader(info sessionInfo, num, total int) {
 	}
 
 	// Print with styling
-	fmt.Fprintln(m.output)
-	fmt.Fprintln(m.output, sessionDividerStyle.Render(strings.Repeat("━", 70)))
-	fmt.Fprintln(m.output, sessionHeaderStyle.Render(header))
-	fmt.Fprintln(m.output, sessionDividerStyle.Render(strings.Repeat("━", 70)))
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, sessionDividerStyle.Render(strings.Repeat("━", 70)))
+	fmt.Fprintln(w, sessionHeaderStyle.Render(header))
+	fmt.Fprintln(w, sessionDividerStyle.Render(strings.Repeat("━", 70)))
 }

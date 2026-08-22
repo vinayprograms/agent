@@ -1,0 +1,36 @@
+
+═══════════════════════════════════════════════════════════════════
+                         SESSION STATISTICS                         
+═══════════════════════════════════════════════════════════════════
+
+Total Duration: 26.00s
+
+Goal Durations:
+  build-feature: 25.00s
+
+LLM Response Times:
+  Calls: 1
+  Total: 1.20s
+  Average: 1.20s
+
+Execution Supervisor:
+  Invocations: 2
+  Total: 600ms
+  Average: 300ms
+
+Bash Security:
+  Deterministic: 1 checks
+  LLM: 1 checks (avg 250ms)
+
+Token Usage by Model:
+  claude-x
+    Calls: 5
+    Input: 120 tokens
+    Output: 60 tokens
+    Cost: $0.0013
+
+  Total:
+    Input: 120 tokens
+    Output: 60 tokens
+    Total Cost: $0.0013
+

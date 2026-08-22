@@ -2,6 +2,7 @@ package replay
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -9,15 +10,15 @@ import (
 )
 
 // printContent prints verbose content with timeline indentation.
-func (r *Replayer) printContent(content string) {
+func (r *Replayer) printContent(w io.Writer, content string) {
 	lines := strings.Split(content, "\n")
 	for _, line := range lines {
-		fmt.Fprintf(r.output, "      │          │   %s\n", line)
+		fmt.Fprintf(w, "      │          │   %s\n", line)
 	}
 }
 
 // printSubAgentOutput prints sub-agent output with special formatting.
-func (r *Replayer) printSubAgentOutput(content string) {
+func (r *Replayer) printSubAgentOutput(w io.Writer, content string) {
 	lines := strings.Split(content, "\n")
 	maxLines := 10
 	if r.verbosity >= 1 {
@@ -28,97 +29,97 @@ func (r *Replayer) printSubAgentOutput(content string) {
 		if i >= maxLines {
 			remaining := len(lines) - maxLines
 			if remaining > 0 {
-				fmt.Fprintf(r.output, "      │          │     %s\n",
+				fmt.Fprintf(w, "      │          │     %s\n",
 					subagentDimStyle.Render(fmt.Sprintf("... (%d more lines)", remaining)))
 			}
 			break
 		}
-		fmt.Fprintf(r.output, "      │          │     %s\n", subagentDimStyle.Render(line))
+		fmt.Fprintf(w, "      │          │     %s\n", subagentDimStyle.Render(line))
 	}
 }
 
 // printArgs prints tool arguments.
-func (r *Replayer) printArgs(args map[string]interface{}) {
+func (r *Replayer) printArgs(w io.Writer, args map[string]any) {
 	for k, v := range args {
-		fmt.Fprintf(r.output, "      │          │   %s: %v\n",
+		fmt.Fprintf(w, "      │          │   %s: %v\n",
 			labelStyle.Render(k), v)
 	}
 }
 
 // printError prints an error.
-func (r *Replayer) printError(err string) {
-	fmt.Fprintf(r.output, "      │          │   %s\n", errorStyle.Render(err))
+func (r *Replayer) printError(w io.Writer, err string) {
+	fmt.Fprintf(w, "      │          │   %s\n", errorStyle.Render(err))
 }
 
 // printLLMMeta prints LLM metadata (model, tokens, latency).
-func (r *Replayer) printLLMMeta(meta *session.EventMeta) {
+func (r *Replayer) printLLMMeta(w io.Writer, meta *session.EventMeta) {
 	if meta == nil {
 		return
 	}
 
-	fmt.Fprintf(r.output, "      │          │   %s %s",
+	fmt.Fprintf(w, "      │          │   %s %s",
 		labelStyle.Render("model:"), valueStyle.Render(meta.Model))
 	if meta.TokensIn > 0 || meta.TokensOut > 0 {
-		fmt.Fprintf(r.output, "  %s %d→%d",
+		fmt.Fprintf(w, "  %s %d→%d",
 			labelStyle.Render("tokens:"), meta.TokensIn, meta.TokensOut)
 	}
 	if meta.LatencyMs > 0 {
-		fmt.Fprintf(r.output, "  %s %dms",
+		fmt.Fprintf(w, "  %s %dms",
 			labelStyle.Render("latency:"), meta.LatencyMs)
 	}
-	fmt.Fprintf(r.output, "\n")
+	fmt.Fprintf(w, "\n")
 
 	if meta.Thinking != "" {
-		fmt.Fprintf(r.output, "      │          │\n")
-		fmt.Fprintf(r.output, "      │          │   %s\n", blockHeaderStyle.Render("── THINKING ──"))
-		r.printContent(meta.Thinking)
+		fmt.Fprintf(w, "      │          │\n")
+		fmt.Fprintf(w, "      │          │   %s\n", blockHeaderStyle.Render("── THINKING ──"))
+		r.printContent(w, meta.Thinking)
 	}
 
 	if meta.Prompt != "" {
-		fmt.Fprintf(r.output, "      │          │\n")
-		fmt.Fprintf(r.output, "      │          │   %s\n", blockHeaderStyle.Render("── FULL PROMPT ──"))
-		r.printContent(meta.Prompt)
+		fmt.Fprintf(w, "      │          │\n")
+		fmt.Fprintf(w, "      │          │   %s\n", blockHeaderStyle.Render("── FULL PROMPT ──"))
+		r.printContent(w, meta.Prompt)
 	}
 }
 
 // printLLMDetails prints full LLM interaction details.
-func (r *Replayer) printLLMDetails(meta *session.EventMeta) {
+func (r *Replayer) printLLMDetails(w io.Writer, meta *session.EventMeta) {
 	if meta == nil {
 		return
 	}
 
 	if meta.Thinking != "" {
-		fmt.Fprintf(r.output, "      │          │\n")
-		fmt.Fprintf(r.output, "      │          │   %s\n", blockHeaderStyle.Render("── THINKING ──"))
-		r.printContent(meta.Thinking)
+		fmt.Fprintf(w, "      │          │\n")
+		fmt.Fprintf(w, "      │          │   %s\n", blockHeaderStyle.Render("── THINKING ──"))
+		r.printContent(w, meta.Thinking)
 	}
 
 	if meta.Prompt != "" {
-		fmt.Fprintf(r.output, "      │          │\n")
-		fmt.Fprintf(r.output, "      │          │   %s\n", blockHeaderStyle.Render("── PROMPT ──"))
-		r.printContent(meta.Prompt)
+		fmt.Fprintf(w, "      │          │\n")
+		fmt.Fprintf(w, "      │          │   %s\n", blockHeaderStyle.Render("── PROMPT ──"))
+		r.printContent(w, meta.Prompt)
 	}
 
 	if meta.Response != "" {
-		fmt.Fprintf(r.output, "      │          │\n")
-		fmt.Fprintf(r.output, "      │          │   %s\n", blockHeaderStyle.Render("── RESPONSE ──"))
-		r.printContent(meta.Response)
+		fmt.Fprintf(w, "      │          │\n")
+		fmt.Fprintf(w, "      │          │   %s\n", blockHeaderStyle.Render("── RESPONSE ──"))
+		r.printContent(w, meta.Response)
 	}
 }
 
 // printTaintLineage prints the taint dependency tree.
-func (r *Replayer) printTaintLineage(lineage []session.TaintNode) {
+func (r *Replayer) printTaintLineage(w io.Writer, lineage []session.TaintNode) {
 	if len(lineage) == 0 {
 		return
 	}
-	fmt.Fprintf(r.output, "      │          │   %s\n", securityStyle.Render("taint lineage:"))
+	fmt.Fprintf(w, "      │          │   %s\n", securityStyle.Render("taint lineage:"))
 	for _, node := range lineage {
-		r.printTaintNode(node, 0)
+		r.printTaintNode(w, node, 0)
 	}
 }
 
 // printTaintNode recursively prints a taint tree node with indentation.
-func (r *Replayer) printTaintNode(node session.TaintNode, depth int) {
+func (r *Replayer) printTaintNode(w io.Writer, node session.TaintNode, depth int) {
 	indent := strings.Repeat("  ", depth)
 	prefix := "└─"
 	if depth == 0 {
@@ -135,7 +136,7 @@ func (r *Replayer) printTaintNode(node session.TaintNode, depth int) {
 		seqInfo = dimStyle.Render(fmt.Sprintf(" (seq:%d)", node.EventSeq))
 	}
 
-	fmt.Fprintf(r.output, "      │          │     %s%s %s %s %s%s\n",
+	fmt.Fprintf(w, "      │          │     %s%s %s %s %s%s\n",
 		indent,
 		securityStyle.Render(prefix),
 		securityStyle.Render(node.BlockID),
@@ -144,7 +145,7 @@ func (r *Replayer) printTaintNode(node session.TaintNode, depth int) {
 		seqInfo)
 
 	for _, parent := range node.TaintedBy {
-		r.printTaintNode(parent, depth+1)
+		r.printTaintNode(w, parent, depth+1)
 	}
 }
 
@@ -247,7 +248,7 @@ func (r *Replayer) getAgentPrefix(event *session.Event) string {
 }
 
 // getArgsHint returns a concise hint about key args for tool result display.
-func (r *Replayer) getArgsHint(toolName string, args map[string]interface{}) string {
+func (r *Replayer) getArgsHint(toolName string, args map[string]any) string {
 	if args == nil {
 		return ""
 	}

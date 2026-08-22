@@ -36,8 +36,8 @@ var (
 			Foreground(lipgloss.Color("8"))
 )
 
-// NewPager creates a new interactive pager with the given content.
-func NewPager(title, content string) *pager {
+// newPager creates a new interactive pager for the given title.
+func newPager(title string) *pager {
 	return &pager{
 		title: title,
 	}
@@ -57,6 +57,10 @@ func (p *pager) Run(content string) error {
 	_, err := prog.Run()
 	return err
 }
+
+// defaultDebounce is how long watchFile waits after a write event for
+// further writes to settle before reporting a change.
+const defaultDebounce = 100 * time.Millisecond
 
 // RunLive starts the interactive pager with live file watching.
 func (p *pager) RunLive(filePath string, renderFunc func() (string, error)) error {
@@ -84,6 +88,7 @@ func (p *pager) RunLive(filePath string, renderFunc func() (string, error)) erro
 			live:       true,
 			renderFunc: renderFunc,
 			watcher:    watcher,
+			debounce:   defaultDebounce,
 		},
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
@@ -107,6 +112,7 @@ type pagerModel struct {
 	live           bool
 	renderFunc     func() (string, error)
 	watcher        *fsnotify.Watcher
+	debounce       time.Duration // wait after a write event for it to settle
 	lastUpdate     time.Time
 	eventCount     int // Track event count to show in live mode
 
@@ -143,7 +149,7 @@ func (m *pagerModel) watchFile() tea.Cmd {
 				}
 				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
 					// Debounce: wait a bit for writes to settle
-					time.Sleep(100 * time.Millisecond)
+					time.Sleep(m.debounce)
 					return fileChangedMsg{}
 				}
 			case _, ok := <-m.watcher.Errors:
@@ -198,12 +204,12 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if newContent, err := m.renderFunc(); err == nil {
 				oldOffset := m.viewport.YOffset
 				oldLineCount := m.viewport.TotalLineCount()
-				
+
 				m.content = newContent
 				m.wrappedContent = wrapContent(m.content, m.viewport.Width)
 				m.viewport.SetContent(m.wrappedContent)
 				m.lastUpdate = time.Now()
-				
+
 				// Try to preserve position
 				newLineCount := m.viewport.TotalLineCount()
 				if oldOffset <= newLineCount-m.viewport.Height {
@@ -212,7 +218,7 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Content grew - stay at same position
 					m.viewport.YOffset = oldOffset
 				}
-				
+
 				// Re-run search if active
 				if m.searchQuery != "" {
 					m.executeSearch()
@@ -228,7 +234,7 @@ func (m *pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if keyStr == "" || keyStr == "ctrl" || keyStr == "alt" || keyStr == "shift" || keyStr == "super" {
 			return m, nil
 		}
-		
+
 		switch keyStr {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -327,11 +333,11 @@ func (m *pagerModel) executeSearch() {
 	}
 
 	query := strings.ToLower(m.searchQuery)
-	
+
 	// Search the wrapped content (what's actually displayed)
 	contentLines := strings.Split(m.wrappedContent, "\n")
 	highlightedLines := make([]string, len(contentLines))
-	
+
 	for i, line := range contentLines {
 		lowerLine := strings.ToLower(line)
 		if strings.Contains(lowerLine, query) {
@@ -358,36 +364,36 @@ func highlightMatches(line, query string) string {
 	if query == "" {
 		return line
 	}
-	
+
 	lowerLine := strings.ToLower(line)
 	lowerQuery := strings.ToLower(query)
-	
+
 	var result strings.Builder
 	lastEnd := 0
-	
+
 	for {
 		idx := strings.Index(lowerLine[lastEnd:], lowerQuery)
 		if idx == -1 {
 			break
 		}
-		
+
 		// Absolute position in original line
 		matchStart := lastEnd + idx
 		matchEnd := matchStart + len(query)
-		
+
 		// Append text before match
 		result.WriteString(line[lastEnd:matchStart])
-		
+
 		// Append highlighted match (preserving original case)
 		matchText := line[matchStart:matchEnd]
 		result.WriteString(searchHighlightStyle.Render(matchText))
-		
+
 		lastEnd = matchEnd
 	}
-	
+
 	// Append remaining text
 	result.WriteString(line[lastEnd:])
-	
+
 	return result.String()
 }
 
@@ -396,7 +402,7 @@ func (m *pagerModel) jumpToMatch(index int) {
 	if index < 0 || index >= len(m.searchLines) {
 		return
 	}
-	
+
 	lineNum := m.searchLines[index]
 	// Center the match on screen if possible
 	targetOffset := lineNum - m.viewport.Height/2
@@ -436,9 +442,9 @@ func (m *pagerModel) View() string {
 	}
 
 	info := fmt.Sprintf(" %d%% ", percent)
-	
+
 	var footer string
-	
+
 	if m.searching {
 		// Search input mode
 		searchPrompt := lipgloss.NewStyle().
@@ -448,7 +454,7 @@ func (m *pagerModel) View() string {
 	} else {
 		// Build help text based on mode and state
 		var help string
-		
+
 		if m.searchFailed {
 			notFound := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("9")).
@@ -468,18 +474,11 @@ func (m *pagerModel) View() string {
 		} else {
 			help = " q: quit │ /: search │ n/N: next/prev │ g/G: top/bottom "
 		}
-		
+
 		footer = pagerHelpStyle.Render(help) + pagerInfoStyle.Render(strings.Repeat("─", max(0, m.viewport.Width-lipgloss.Width(help)-lipgloss.Width(info)))) + pagerInfoStyle.Render(info)
 	}
 
 	return header + "\n" + m.viewport.View() + "\n" + footer
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // wrapContent wraps each line to fit within the given width.
@@ -507,13 +506,13 @@ func wrapContent(content string, width int) string {
 				// Calculate visual width of prefix (up to and including last │ plus space)
 				prefix := line[:lastPipe+1]
 				prefixWidth := lipgloss.Width(prefix) + 1 // +1 for space after │
-				
+
 				// Calculate available content width
 				contentWidth := width - prefixWidth
 				if contentWidth < 20 {
 					contentWidth = 20 // Minimum content width
 				}
-				
+
 				// Extract content after the last │
 				contentStart := lastPipe + 1
 				// Skip leading space
@@ -521,17 +520,17 @@ func wrapContent(content string, width int) string {
 					contentStart++
 				}
 				contentPart := line[contentStart:]
-				
+
 				// Wrap the content portion
 				wrapped := wordwrap.String(contentPart, contentWidth)
 				wrappedLines := strings.Split(wrapped, "\n")
-				
+
 				// Build continuation indent (spaces to align with content column)
 				contIndent := strings.Repeat(" ", prefixWidth)
-				
+
 				// First line keeps original prefix
 				result = append(result, line[:contentStart]+wrappedLines[0])
-				
+
 				// Continuation lines get the indent
 				for i := 1; i < len(wrappedLines); i++ {
 					result = append(result, contIndent+wrappedLines[i])
@@ -539,7 +538,7 @@ func wrapContent(content string, width int) string {
 				continue
 			}
 		}
-		
+
 		// Non-table line: simple wrap
 		wrapped := wordwrap.String(line, width)
 		result = append(result, strings.Split(wrapped, "\n")...)

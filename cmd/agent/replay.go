@@ -19,16 +19,16 @@ func runReplay(sessionPath string, verbosity int, noPager bool, costSpecs []stri
 		if err != nil {
 			return fmt.Errorf("invalid --cost spec %q: %w", spec, err)
 		}
-		opts = append(opts, replay.WithModelPricing(model, inPrice, outPrice))
+		opts = append(opts, replay.Pricing(model, inPrice, outPrice))
 	}
 
-	r := replay.New(os.Stdout, verbosity, opts...)
+	r := replay.New(verbosity, opts...)
 
 	// Use interactive pager when stdout is a TTY and not disabled
 	if !noPager && isTerminal(os.Stdout) {
 		return r.ReplayFileInteractive(sessionPath)
 	}
-	return r.ReplayFile(sessionPath)
+	return r.ReplayFile(os.Stdout, sessionPath)
 }
 
 // parseCostSpec parses "model:input,output" format.

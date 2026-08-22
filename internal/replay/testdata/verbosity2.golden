@@ -1,0 +1,126 @@
+
+SESSION sess-golden-0001
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Workflow: build-feature-workflow
+Status:   complete
+Created:  2026-01-01T12:00:00Z
+Inputs:   repo=agent
+
+TIMELINE (27 events)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    1 │ 12:00:00 │ WORKFLOW START
+
+GOAL: build-feature
+
+    2 │ 12:00:01 │ GOAL START
+    3 │ 12:00:02 │ SYSTEM
+      │          │   system prompt text
+    4 │ 12:00:03 │ USER
+      │          │   please build the feature
+    5 │ 12:00:04 │ ASSISTANT
+      │          │   working on it
+      │          │   model: claude-x  tokens: 100→50  latency: 1200ms
+      │          │
+      │          │   ── THINKING ──
+      │          │   let me think
+      │          │
+      │          │   ── FULL PROMPT ──
+      │          │   full prompt
+    6 │ 12:00:05 │ TOOL CALL: bash [corr-1]
+      │          │   command: ls -la
+    7 │ 12:00:06 │ TOOL RESULT: bash (42ms) [corr-1]
+      │          │   total 0
+    8 │ 12:00:07 │ TOOL RESULT: bash FAILED (7ms) [corr-2]
+      │          │   command not found
+    9 │ 12:00:08 │ ⚠ WARNING: disk space low
+   10 │ 12:00:09 │ SUBAGENT START: reviewer [claude-y]
+      │          │   task: review the diff
+   11 │ 12:00:10 │ SUBAGENT END: reviewer complete (500ms)
+      │          │   output:
+      │          │     looks good
+   12 │ 12:00:11 │ COMMIT (10ms)
+      │          │   confidence: high
+      │          │   intent: I will edit main.go
+   13 │ 12:00:12 │ EXECUTE [ok] (20ms)
+   14 │ 12:00:13 │ RECONCILE: ESCALATE (5ms)
+      │          │   triggers: [diff-too-large]
+   15 │ 12:00:14 │ SUPERVISOR CONTINUE (300ms)
+      │          │   model: claude-x
+      │          │   correction: none
+      │          │
+      │          │   ── THINKING ──
+      │          │   supervisor thinking
+      │          │
+      │          │   ── PROMPT ──
+      │          │   supervisor prompt
+      │          │
+      │          │   ── RESPONSE ──
+      │          │   supervisor response
+   16 │ 12:00:15 │ SECURITY: supervisor REORIENT (300ms)
+   17 │ 12:00:16 │ SECURITY: untrusted content b0001 (entropy=3.20) ← http://example.com
+      │          │   tainted by: b0000
+   18 │ 12:00:17 │ SECURITY: static check flagged
+      │          │   flags: [prompt-injection]
+      │          │   related: [b0000 b0001]
+      │          │   taint lineage:
+      │          │     ● b0001 [untrusted] http://example.com (seq:17)
+      │          │       └─ b0000 [trusted] user
+   19 │ 12:00:18 │ SECURITY: triage suspicious - escalating [claude-x]
+      │          │
+      │          │   ── PROMPT ──
+      │          │   triage prompt
+      │          │
+      │          │   ── RESPONSE ──
+      │          │   triage response
+   20 │ 12:00:19 │ SECURITY: supervisor deny [claude-x]
+      │          │   exfiltration attempt
+      │          │
+      │          │   ── RESPONSE ──
+      │          │   supervisor said deny
+   21 │ 12:00:20 │ SECURITY: decision DENY [static→triage→supervisor]
+      │          │   confirmed malicious
+   22 │ 12:00:21 │ CHECKPOINT: post
+   23 │ 12:00:22 │ BASH: [deterministic] ALLOW ls -la (3ms)
+   24 │ 12:00:23 │ BASH: [llm] DENY rm -rf / (250ms)
+      │          │   reason: destructive command
+   25 │ 12:00:24 │ unknown_event_type
+   26 │ 12:00:25 │ GOAL END (25000ms)
+      │          │   feature built
+   27 │ 12:00:26 │ WORKFLOW END (26000ms)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMPLETED
+
+═══════════════════════════════════════════════════════════════════
+                         SESSION STATISTICS                         
+═══════════════════════════════════════════════════════════════════
+
+Total Duration: 26.00s
+
+Goal Durations:
+  build-feature: 25.00s
+
+LLM Response Times:
+  Calls: 1
+  Total: 1.20s
+  Average: 1.20s
+
+Execution Supervisor:
+  Invocations: 2
+  Total: 600ms
+  Average: 300ms
+
+Bash Security:
+  Deterministic: 1 checks
+  LLM: 1 checks (avg 250ms)
+
+Token Usage by Model:
+  claude-x
+    Calls: 5
+    Input: 120 tokens
+    Output: 60 tokens
+
+  Total:
+    Input: 120 tokens
+    Output: 60 tokens
+
