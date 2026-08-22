@@ -56,7 +56,7 @@ Wave A (independent, parallel, each green in isolation):
 5. [x] U5 internal/setup — policy generator to new schema (A-C1), credentials FileStore
 Wave B:
 6. [x] U6 internal/supervision — llm.Model, slog (A-G5), tests on llmmock
-7. [ ] U7 cmd/swarm — tasks→internal/swarm envelopes, messaging re-point
+7. [x] U7 cmd/swarm — tasks→internal/swarm envelopes, messaging re-point
 Wave C:
 8. [ ] U8 internal/executor — tools/llm/contentguard/memory/mcp/slog/spawn (largest)
 Wave D:
@@ -104,3 +104,6 @@ parked-smells: goal always logged ""; PAUSE with HumanAvailable && nil chan has 
 ### U10 cmd/agentmem — DONE (14dd3fa, verifier PASS)
 memory API unchanged in v1.2.0 (bleve store layout identical, stores stay readable). main.go gofmt-only. New TestMain re-exec tests pin commands/flags/exit codes. coverage 98.1% (ListAll/RecallFIL error returns unreachable without seam).
 parked-smells: Walk nil-info deref; silent Sscanf on --limit; strings.Title; swallowed ListAll error in stats; AGENTMEM_CHILD env leak guard; exec without context; --limit/--category cases under-tested.
+### U7 cmd/swarm — DONE (8a785b0, verifier PASS)
+re-points only (tasks.X→swarm.X, 22 sites); wire/on-disk formats pinned by new tests (reply_to pinned by U3). coverage 64.3% (uncovered: process spawning, TUI loop, tailscale, replayWeb, 30s const).
+parked-smells / BUGS for refactor phase: replay --web panics (float64 vs int64); submit loses early results (second subscription) → 30s hang; capabilities counts heartbeats not agents; taskDB unlocked RMW; replay ignores dataDir; http.Server no timeouts; taskID path traversal in web handlers; duplicated heartbeat struct ×3; checkNATS no-op; ignored errors; tests use Sleep sequencing + unchecked fixture writes.
