@@ -14,10 +14,22 @@ const (
 	EnvConfigPath = "AGENT_CONFIG"
 )
 
+// DefaultConfigDir is the user-level config directory (~/.config/grid) that
+// holds agent.toml and credentials.toml.
+func DefaultConfigDir(home string) string {
+	return filepath.Join(home, ".config", "grid")
+}
+
+// DefaultStateDir is the default base directory for persistent state
+// (~/.local/grid), used when [state] location is unset.
+func DefaultStateDir(home string) string {
+	return filepath.Join(home, ".local", "grid")
+}
+
 // LoadOptions controls layered config loading.
 type LoadOptions struct {
 	// ProjectDir is where project-local agent.toml is searched.
-	// Empty means current working directory.
+	// Empty means the current working directory.
 	ProjectDir string
 
 	// EnvVar is the environment variable that may contain a config path.
@@ -26,23 +38,34 @@ type LoadOptions struct {
 
 	// CLIPath is the highest-priority config file path (for --config).
 	CLIPath string
+
+	// Home is the user's home directory, where the global config lives.
+	// Empty means os.UserHomeDir.
+	Home string
+
+	// Getenv looks up environment variables. Nil means os.Getenv.
+	Getenv func(string) string
 }
 
 // Config represents the agent configuration.
 type Config struct {
-	Agent     AgentConfig        `toml:"agent"`
-	LLM       LLMConfig          `toml:"llm"`       // Default LLM settings
-	SmallLLM  LLMConfig          `toml:"small_llm"` // Fast/cheap model for summarization
-	Profiles  map[string]Profile `toml:"profiles"`  // Capability profiles
-	Web       WebConfig          `toml:"web"`
-	Telemetry TelemetryConfig    `toml:"telemetry"`
-	State     StateConfig        `toml:"state"`     // Persistent state settings
-	MCP       MCPConfig          `toml:"mcp"`       // MCP tool servers
-	Skills    SkillsConfig       `toml:"skills"`    // Agent Skills
-	Security  SecurityConfig     `toml:"security"`  // Security framework
-	Timeouts  TimeoutsConfig     `toml:"timeouts"`  // Network operation timeouts
-	Embedding EmbeddingConfig    `toml:"embedding"` // Embedding provider for resume vectors
-	Service   ServiceConfig      `toml:"service"`   // Service agent settings (for `agent serve`)
+	Agent     AgentConfig          `toml:"agent"`
+	LLM       LLMConfig            `toml:"llm"`       // Default LLM settings
+	SmallLLM  LLMConfig            `toml:"small_llm"` // Fast/cheap model for summarization
+	Profiles  map[string]LLMConfig `toml:"profiles"`  // Capability profiles
+	Web       WebConfig            `toml:"web"`
+	Telemetry TelemetryConfig      `toml:"telemetry"`
+	State     StateConfig          `toml:"state"`     // Persistent state settings
+	MCP       MCPConfig            `toml:"mcp"`       // MCP tool servers
+	Skills    SkillsConfig         `toml:"skills"`    // Agent Skills
+	Security  SecurityConfig       `toml:"security"`  // Security framework
+	Timeouts  TimeoutsConfig       `toml:"timeouts"`  // Network operation timeouts
+	Embedding EmbeddingConfig      `toml:"embedding"` // Embedding provider for resume vectors
+	Service   ServiceConfig        `toml:"service"`   // Service agent settings (for `agent serve`)
+
+	// Deprecations lists legacy settings found while loading (e.g. [storage]).
+	// They were honoured; callers decide whether to warn the user.
+	Deprecations []string `toml:"-"`
 }
 
 // AgentConfig contains agent identification settings.
@@ -63,27 +86,26 @@ type LLMConfig struct {
 	RetryBackoff string `toml:"retry_backoff"` // Max backoff duration (default "60s")
 }
 
-// Profile represents a capability profile mapping to a specific LLM configuration.
-type Profile struct {
-	Provider  string `toml:"provider"`
-	Model     string `toml:"model"`
-	APIKeyEnv string `toml:"api_key_env"`
-	MaxTokens int    `toml:"max_tokens"`
-	BaseURL   string `toml:"base_url"` // Custom API endpoint
-	Thinking  string `toml:"thinking"` // Thinking level: auto|off|low|medium|high
-}
-
 // WebConfig contains Internet Gateway settings.
 type WebConfig struct {
 	GatewayURL      string `toml:"gateway_url"`
 	GatewayTokenEnv string `toml:"gateway_token_env"`
 }
 
+// Protocol selects the telemetry exporter.
+type Protocol string
+
+const (
+	ProtocolNoop Protocol = "noop" // no exporter
+	ProtocolGRPC Protocol = "grpc"
+	ProtocolHTTP Protocol = "http"
+)
+
 // TelemetryConfig contains telemetry settings.
 type TelemetryConfig struct {
 	Enabled  bool              `toml:"enabled"`
 	Endpoint string            `toml:"endpoint"` // OTLP endpoint (e.g., localhost:4317)
-	Protocol string            `toml:"protocol"` // grpc (default) or http
+	Protocol Protocol          `toml:"protocol"` // grpc, http, or noop
 	Insecure bool              `toml:"insecure"` // Disable TLS (default false)
 	Headers  map[string]string `toml:"headers"`  // Auth headers (e.g., DD-API-KEY, x-honeycomb-team)
 }
@@ -170,10 +192,10 @@ func New() *Config {
 			MaxTokens: 4096,
 		},
 		State: StateConfig{
-			Location: "~/.local/agent",
+			Location: DefaultStateDir("~"),
 		},
 		Telemetry: TelemetryConfig{
-			Protocol: "noop",
+			Protocol: ProtocolNoop,
 		},
 		Timeouts: TimeoutsConfig{
 			MCP:       60, // 60 seconds for MCP calls
@@ -181,11 +203,6 @@ func New() *Config {
 			WebFetch:  60, // 60 seconds for web fetch
 		},
 	}
-}
-
-// Default returns a default configuration.
-func Default() *Config {
-	return New()
 }
 
 // LoadFile loads configuration from a TOML file.
@@ -204,19 +221,18 @@ func LoadFile(path string) (*Config, error) {
 func LoadWithPrecedence(opts LoadOptions) (*Config, error) {
 	cfg := New()
 
-	if err := mergeIfExists(cfg, globalConfigPath()); err != nil {
+	home := opts.Home
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return nil, fmt.Errorf("resolving home directory: %w", err)
+		}
+	}
+	if err := mergeIfExists(cfg, filepath.Join(DefaultConfigDir(home), "agent.toml")); err != nil {
 		return nil, err
 	}
 
-	projectDir := opts.ProjectDir
-	if projectDir == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get current directory: %w", err)
-		}
-		projectDir = cwd
-	}
-	if err := mergeIfExists(cfg, filepath.Join(projectDir, "agent.toml")); err != nil {
+	if err := mergeIfExists(cfg, filepath.Join(opts.ProjectDir, "agent.toml")); err != nil {
 		return nil, err
 	}
 
@@ -224,7 +240,11 @@ func LoadWithPrecedence(opts LoadOptions) (*Config, error) {
 	if envVar == "" {
 		envVar = EnvConfigPath
 	}
-	if envPath := os.Getenv(envVar); envPath != "" {
+	getenv := opts.Getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if envPath := getenv(envVar); envPath != "" {
 		if err := mergeFile(cfg, envPath); err != nil {
 			return nil, fmt.Errorf("failed to load config from %s (%s): %w", envVar, envPath, err)
 		}
@@ -239,50 +259,6 @@ func LoadWithPrecedence(opts LoadOptions) (*Config, error) {
 	return cfg, nil
 }
 
-// migrateStorageToState handles backwards compat: [storage] → [state].
-// If both exist → hard error. If only [storage] → use it with deprecation warning.
-func migrateStorageToState(path string, cfg *Config) error {
-	var raw map[string]interface{}
-	if _, err := toml.DecodeFile(path, &raw); err != nil {
-		return nil // already validated above
-	}
-	_, hasState := raw["state"]
-	_, hasStorage := raw["storage"]
-
-	if hasState && hasStorage {
-		return fmt.Errorf("config has both [state] and [storage]; remove deprecated [storage] section")
-	}
-	if hasStorage && !hasState {
-		// Fall back: parse legacy [storage] section
-		var legacy struct {
-			Storage struct {
-				Path     string `toml:"path"`
-				Location string `toml:"location"`
-			} `toml:"storage"`
-		}
-		toml.DecodeFile(path, &legacy)
-		loc := legacy.Storage.Location
-		if loc == "" {
-			loc = legacy.Storage.Path
-		}
-		if loc != "" {
-			fmt.Fprintf(os.Stderr, "WARN: [storage] is deprecated, rename to [state] with location = %q\n", loc)
-			cfg.State.Location = loc
-		}
-	}
-	return nil
-}
-
-// LoadDefault loads configuration from agent.toml in the current directory.
-func LoadDefault() (*Config, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current directory: %w", err)
-	}
-
-	return LoadFile(filepath.Join(cwd, "agent.toml"))
-}
-
 func mergeIfExists(cfg *Config, path string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
@@ -292,96 +268,53 @@ func mergeIfExists(cfg *Config, path string) error {
 	return mergeFile(cfg, path)
 }
 
+// mergeFile decodes path over cfg. A legacy [storage] section is honoured as
+// [state] and recorded in cfg.Deprecations; both sections together is an error.
 func mergeFile(cfg *Config, path string) error {
-	if _, err := toml.DecodeFile(path, cfg); err != nil {
+	file := struct {
+		*Config
+		Storage *struct {
+			Path     string `toml:"path"`
+			Location string `toml:"location"`
+		} `toml:"storage"`
+	}{Config: cfg}
+	md, err := toml.DecodeFile(path, &file)
+	if err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
-	if err := migrateStorageToState(path, cfg); err != nil {
-		return err
+	if file.Storage == nil {
+		return nil
+	}
+	if md.IsDefined("state") {
+		return fmt.Errorf("config has both [state] and [storage]; remove deprecated [storage] section")
+	}
+	loc := file.Storage.Location
+	if loc == "" {
+		loc = file.Storage.Path
+	}
+	if loc != "" {
+		cfg.Deprecations = append(cfg.Deprecations, fmt.Sprintf("[storage] is deprecated, rename to [state] with location = %q", loc))
+		cfg.State.Location = loc
 	}
 	return nil
 }
 
-func globalConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".config", "grid", "agent.toml")
-	}
-	return filepath.Join(home, ".config", "grid", "agent.toml")
-}
-
-// GetAPIKey returns the API key from the configured environment variable.
-// If api_key_env is not set, uses the default env var for the provider.
-func (c *Config) GetAPIKey() string {
-	envVar := c.LLM.APIKeyEnv
-	if envVar == "" {
-		envVar = DefaultAPIKeyEnv(c.LLM.Provider)
-	}
-	if envVar == "" {
-		return ""
-	}
-	return os.Getenv(envVar)
-}
-
-// DefaultAPIKeyEnv returns the default environment variable name for a provider.
-func DefaultAPIKeyEnv(provider string) string {
-	switch provider {
-	case "anthropic":
-		return "ANTHROPIC_API_KEY"
-	case "openai":
-		return "OPENAI_API_KEY"
-	case "google":
-		return "GOOGLE_API_KEY"
-	case "mistral":
-		return "MISTRAL_API_KEY"
-	case "groq":
-		return "GROQ_API_KEY"
-	default:
-		return ""
-	}
-}
-
-// GetGatewayToken returns the gateway token from the configured environment variable.
-func (c *Config) GetGatewayToken() string {
-	if c.Web.GatewayTokenEnv == "" {
-		return ""
-	}
-	return os.Getenv(c.Web.GatewayTokenEnv)
-}
-
-// GetProfile returns the LLM config for a capability profile.
-// Falls back to default LLM config if profile not found.
-func (c *Config) GetProfile(name string) LLMConfig {
-	if name == "" {
+// Profile returns the LLM config for a capability profile, inheriting
+// provider, api_key_env and max_tokens from [llm] when the profile omits them.
+// Unknown or empty names return the default [llm] config.
+func (c *Config) Profile(name string) LLMConfig {
+	p, ok := c.Profiles[name]
+	if name == "" || !ok {
 		return c.LLM
 	}
-	if profile, ok := c.Profiles[name]; ok {
-		// Fill in defaults from main LLM config
-		result := LLMConfig{
-			Provider:  profile.Provider,
-			Model:     profile.Model,
-			APIKeyEnv: profile.APIKeyEnv,
-			MaxTokens: profile.MaxTokens,
-		}
-		if result.Provider == "" {
-			result.Provider = c.LLM.Provider
-		}
-		if result.APIKeyEnv == "" {
-			result.APIKeyEnv = c.LLM.APIKeyEnv
-		}
-		if result.MaxTokens == 0 {
-			result.MaxTokens = c.LLM.MaxTokens
-		}
-		return result
+	if p.Provider == "" {
+		p.Provider = c.LLM.Provider
 	}
-	return c.LLM
-}
-
-// GetProfileAPIKey returns the API key for a specific profile.
-func (c *Config) GetProfileAPIKey(profileName string) string {
-	llmCfg := c.GetProfile(profileName)
-	if llmCfg.APIKeyEnv == "" {
-		return ""
+	if p.APIKeyEnv == "" {
+		p.APIKeyEnv = c.LLM.APIKeyEnv
 	}
-	return os.Getenv(llmCfg.APIKeyEnv)
+	if p.MaxTokens == 0 {
+		p.MaxTokens = c.LLM.MaxTokens
+	}
+	return p
 }

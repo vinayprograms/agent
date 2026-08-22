@@ -80,7 +80,7 @@ func (rt *runtime) resolveStoragePath() {
 	rt.storagePath = rt.cfg.State.Location
 	if rt.storagePath == "" {
 		home, _ := os.UserHomeDir()
-		rt.storagePath = filepath.Join(home, ".local", "grid")
+		rt.storagePath = config.DefaultStateDir(home)
 	}
 	if len(rt.storagePath) > 0 && rt.storagePath[0] == '~' {
 		home, _ := os.UserHomeDir()
@@ -233,9 +233,9 @@ func (rt *runtime) setupTelemetry() error {
 	var err error
 
 	// Legacy exporter (for backwards compatibility)
-	if rt.cfg.Telemetry.Enabled && rt.cfg.Telemetry.Protocol != "grpc" && rt.cfg.Telemetry.Protocol != "http" {
+	if rt.cfg.Telemetry.Enabled && rt.cfg.Telemetry.Protocol != config.ProtocolGRPC && rt.cfg.Telemetry.Protocol != config.ProtocolHTTP {
 		// Old-style protocol (file, http endpoint, etc.)
-		rt.telem, err = telemetry.NewExporter(rt.cfg.Telemetry.Protocol, rt.cfg.Telemetry.Endpoint)
+		rt.telem, err = telemetry.NewExporter(string(rt.cfg.Telemetry.Protocol), rt.cfg.Telemetry.Endpoint)
 		if err != nil {
 			return fmt.Errorf("creating telemetry exporter: %w", err)
 		}
@@ -246,7 +246,7 @@ func (rt *runtime) setupTelemetry() error {
 
 	// OpenTelemetry tracing provider
 	if rt.cfg.Telemetry.Enabled && rt.cfg.Telemetry.Endpoint != "" {
-		protocol := rt.cfg.Telemetry.Protocol
+		protocol := string(rt.cfg.Telemetry.Protocol)
 		if protocol == "" {
 			protocol = "grpc"
 		}
@@ -452,7 +452,7 @@ func (f *profileProviderFactory) GetProvider(profile string) (llm.Provider, erro
 		}
 	}
 
-	profileCfg := f.cfg.GetProfile(profile)
+	profileCfg := f.cfg.Profile(profile)
 	if profileCfg.Model == "" {
 		return f.fallback, nil
 	}
@@ -508,7 +508,7 @@ func (rt *runtime) determineSecurityConfig() (security.Mode, string, security.Tr
 // createTriageProvider creates the LLM for security triage.
 func (rt *runtime) createTriageProvider() llm.Provider {
 	if rt.cfg.Security.TriageLLM != "" {
-		triageCfg := rt.cfg.GetProfile(rt.cfg.Security.TriageLLM)
+		triageCfg := rt.cfg.Profile(rt.cfg.Security.TriageLLM)
 		providerName := triageCfg.Provider
 		if providerName == "" {
 			providerName = llm.InferProviderFromModel(triageCfg.Model)

@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/vinayprograms/agent/internal/config"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/mcp"
 	"github.com/vinayprograms/agentkit/policy"
@@ -371,7 +372,7 @@ func (m *Model) loadExistingConfig() error {
 
 func getDefaultConfigDir() string {
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".config", "agent")
+		return config.DefaultConfigDir(home)
 	}
 	return "."
 }
@@ -2161,7 +2162,7 @@ func credentialsPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
-	return filepath.Join(home, ".config", "grid", "credentials.toml"), nil
+	return filepath.Join(config.DefaultConfigDir(home), "credentials.toml"), nil
 }
 
 // writeCredentials saves the API key to ~/.config/grid/credentials.toml,

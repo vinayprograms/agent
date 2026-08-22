@@ -367,7 +367,7 @@ func TestProviderHelpers(t *testing.T) {
 
 func TestGetDefaultConfigDir(t *testing.T) {
 	home := isolate(t)
-	if got := getDefaultConfigDir(); got != filepath.Join(home, ".config", "agent") {
+	if got := getDefaultConfigDir(); got != filepath.Join(home, ".config", "grid") {
 		t.Errorf("config dir = %q", got)
 	}
 	t.Setenv("HOME", "")
