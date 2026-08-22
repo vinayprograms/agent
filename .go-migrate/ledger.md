@@ -207,3 +207,5 @@ R1b follow-ups (low): doc/warn when a `-> var` name equals a goal name (var wins
 Main @ $(git rev-parse --short HEAD): migration + R1a/R1b/R2/R3/R4/R6/R7/R8/R9a-c/R10 merged & verified; module green; all examples/**/*.agent + Agentfile validate; coverage 87.8% total.
 In flight: R11 `agent run --step` on branch ref/r11 (worktree agent-wt/r11) — worker running; needs verifier + merge. Example re-run agent running → test-results/rerun-report.md.
 Then: final report to user (ledger has every decision/assumption); optional coverage push for internal/run + cmd/agent non-serve paths.
+### R11 `agent run --step` — IMPLEMENTED on ref/r11 @c34f78c (worktree agent-wt/r11); VERIFIER NOT YET RUN; NOT MERGED
+executor.RunOptions.StepGate + ErrAborted + StatusAborted; run.Deps.StepGate; internal/term.IsTerminal (replaycmd reuses); cmd/agent `--step` on run only, TTY-enforced via deps.isTerminal; docs cli-reference + README. Next: adversarial verifier (check: gate fires after each goal incl. failed ones, abort writes "aborted" footer + exit 1, serve/swarm can't set it, non-TTY rejected before anything loads, `-count=3 -race`), then merge from main checkout.
