@@ -347,6 +347,17 @@ func (e *Executor) recordLLMMetrics(resp *llm.ChatResponse, latency time.Duratio
 	)
 }
 
+// backgroundTimeout bounds work the executor detaches from the caller's
+// context. Run waits for that work, so without a deadline a hung LLM or tool
+// call would keep Run alive indefinitely after a Ctrl-C.
+const backgroundTimeout = 2 * time.Minute
+
+// detach returns a context that survives cancellation of ctx but still
+// expires, for fire-and-forget work the executor owns to completion.
+func detach(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), backgroundTimeout)
+}
+
 // extractAndStoreObservations extracts observations from step output and stores them.
 func (e *Executor) extractAndStoreObservations(ctx context.Context, stepName, stepType, output string) {
 	if e.observationExtractor == nil || e.observationStore == nil {
@@ -357,8 +368,9 @@ func (e *Executor) extractAndStoreObservations(ctx context.Context, stepName, st
 	// Run waits for it. Cancellation is detached — a half-stored
 	// observation set is worse than a slightly late one.
 	source := stepType + ":" + stepName
-	ctx = context.WithoutCancel(ctx)
+	ctx, cancel := detach(ctx)
 	e.background.Go(func() {
+		defer cancel()
 		f, i, l, err := e.observationExtractor.Extract(ctx, output, memory.WithSource(source))
 		if err != nil || len(f)+len(i)+len(l) == 0 {
 			return

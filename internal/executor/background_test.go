@@ -129,3 +129,39 @@ func TestRun_WaitsForAsyncTools(t *testing.T) {
 		}
 	})
 }
+
+// hangingExtractor blocks until its context ends — a stuck LLM call.
+type hangingExtractor struct{ waited chan time.Duration }
+
+func (h hangingExtractor) Extract(ctx context.Context, _ string, _ ...memory.ExtractOption) ([]string, []string, []string, error) {
+	start := time.Now()
+	<-ctx.Done()
+	h.waited <- time.Since(start)
+	return nil, nil, nil, ctx.Err()
+}
+
+// Detaching background work from cancellation must not make it unbounded:
+// Run waits for it, so it needs a deadline of its own.
+func TestRun_BackgroundWorkHasDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		waited := make(chan time.Duration, 1)
+		exec := mustNew(t, Config{
+			Workflow:             oneGoalWorkflow(),
+			Model:                llmmock.New(),
+			ObservationExtractor: hangingExtractor{waited: waited},
+			ObservationStore:     &countingStore{},
+		})
+
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() {
+			synctest.Wait()
+			cancel()
+		}()
+		if _, err := exec.Run(ctx, RunOptions{}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if got := <-waited; got != backgroundTimeout {
+			t.Errorf("background work ran for %v, want the %v deadline", got, backgroundTimeout)
+		}
+	})
+}
