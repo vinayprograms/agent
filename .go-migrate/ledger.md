@@ -175,3 +175,11 @@ R9b/R9c follow-ups for R1: setup options `WithDir`→`Dir`, `WithContext` → po
 Run(ctx, RunOptions{Inputs, Interrupts, Discuss}); all Set*/Clear* deleted; Result.Error dropped; ConvergenceFailures; AddUntrustedContent(ctx, content, source, taintedBy...); XMLContextBuilder → unexported brief; swarmctx.go deleted; background WaitGroup owns observation/async-tool goroutines (WithoutCancel; waits before session close — synctest-pinned); errgroup.SetLimit; atomic.Int32; slices.SortFunc. Bugs fixed: extractProjectMeta emitted "Package: : "; interpolate depended on map order. coverage 99.9% (2 defensive statements). Residual X5: supervision.EventHook has no ctx.
 ### R7 CLI unification (minus swarm) — DONE (8c84006, 77e97d2; verifier pending)
 internal/replaycmd.New(Config) shared by cmd/replay (root) and agent replay; replay.ParsePricing; agentmem cobra NewRootCmd (same flags/output); bugs: WalkDir nil-deref (8), dir mode globs *.jsonl (6); os.Exit only in main. coverage agentmem 94.8%, replaycmd 96.2%.
+### R10 baseline run — DONE (test-results/baseline-report.md): 11 PASS / 4 PARTIAL / 2 FAIL; zero STARTUP/WIRING/POLICY/CREDENTIAL failures
+Bugs → R10-fix unit (after R1a merges; touches executor + agentfile):
+1. converge.go:84-96 bare `CONVERGED` iteration leaves lastOutput stale/empty → `-> var` outputs never populate (44, 29, 13).
+2. agentfile parser: goal clauses only parse in fixed order `-> … USING … SUPERVISED`; 3 of 4 39-supervision/*.agent + README use other orders → `unexpected token ARROW`.
+3. no per-goal tool-call/turn/time budget (28 looped >600s, 66 tool calls, no output) — add a configurable budget with a clear abort message (design: executor RunOptions/Config + agent.toml key; default generous, documented).
+4. executor.go:718 logGoalEnd per CONVERGE iteration → "Completed goal" printed N×/0×.
+5. unmet requirements.mcp_servers and undefined REQUIRES profiles are silent → startup warning.
+6. supervisor_verdict log goal="" (supervision never receives goal name — pass it); Result.Iterations null on success (only failures) → rename/document.
