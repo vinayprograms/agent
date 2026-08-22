@@ -124,7 +124,7 @@ Flag: examples/agent/memory/simple-memory.agent references memory_forget (not a 
 Invariants carry over (CLI flags/commands, Agentfile, session JSONL, swarm wire/on-disk, security fail-close, policy enforcement). Each unit: worker → adversarial verifier (≤2 rounds) → merge. Boundary moves are sanctioned (user asked for better Go design).
 Wave 1 (parallel, independent packages):
 - [ ] R1 cross-cutting sweep: interface{}→any (X6); one DefaultStateDir/config-dir owner in config (X3/X4, bug 12); setup.Step→Screen (X7); dead-code delete list (diagnosis "Delete" table, re-verify zero callers); config.GetProfile BaseURL/Thinking bug (1); cmd/replay *.json→*.jsonl (6); agentmem Walk nil-deref (8).
-- [ ] R4 internal/config: Get-cluster → nouns/delete; deprecation warnings returned not printed; inject home/env; 100%.
+- [x] R4 internal/config: Get-cluster → nouns/delete; deprecation warnings returned not printed; inject home/env; 100%.
 - [ ] R8 small packages: skills.ReadReference/ScriptPath traversal (7); packaging dead code + Get* → File/Agentfile/Config/Policy; agentfile.ValidateWithoutPaths; websearch limiter state onto Tool (+WithHTTPTimeout); supervision.Supervisor + checkpoint.CheckpointStore ifaces → consumers; hooks tests; each to 100%.
 Wave 2:
 - [ ] R2 internal/session: single file-backed Recorder (NewX returns error, no half-built store, AddEvent-after-Close guard); replay/loader.go → session.ReadFile; delete Store/Manager/NewManager/Message/ToolCall; JSONL byte-identical (golden tests); 100%.
@@ -143,3 +143,5 @@ Merged: U1–U8, U10–U12. Module builds; `go test -race ./...` green on branch
 In flight: U9 `mig/u9` @14f8760 (+merge of main) — worker done (cmd/agent 55.8%); adversarial verifier running (security wiring, policy legacy error, credentials on fresh machine, serve lifecycle, smoke runs of examples 01/02 via agent.ollama.toml). On PASS → merge, record, then the full verify.md gate on main.
 Phase 2 started early: R4 `ref/r4` (internal/config) and R8 `ref/r8` (skills/packaging/checkpoint/hooks/supervision/swarm/websearch) workers running off main (no cmd/agent overlap). Each needs a verifier before merge; expect call-site conflicts with mig/u9 in cmd/agent — merge U9 first, then rebase/merge R4, R8.
 Remaining: R1, R2, R3, R5, R6, R7, R9, R10 per plan above.
+### R4 internal/config — DONE (09ff2e2 + fixes, verifier PASS)
+Profile(name) LLMConfig (bug fix: BaseURL/Thinking/retries now carried); Profiles map[string]LLMConfig; typed Protocol consts; LoadOptions{Home, Getenv}; Config.Deprecations (cmd/agent prints WARN); DefaultConfigDir=~/.config/grid, DefaultStateDir=~/.local/agent (user's explicit choice kept; semantic-memory.md updated); six dead funcs deleted; [storage] compat decoded once. coverage 100%.
