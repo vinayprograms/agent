@@ -115,13 +115,20 @@ See [Agentfile DSL](docs/design/02-agentfile.md) for full syntax reference.
 **Memory:** `remember`, `recall`, `scratchpad_read`, `scratchpad_write`, `scratchpad_list`, `scratchpad_search`
 **Agents:** `spawn_agents`
 
-## API Keys
+## Configuration
 
-Keys are loaded in priority order:
+Three config files, looked up the same symmetric way — a per-run `--flag` outranks a project
+file, which outranks the user-level default in `~/.config/agent/`:
 
-1. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.)
-2. `.env` file in current directory
-3. `~/.config/agent/credentials.toml`
+| File | Default location | Per-run override | Lookup order (highest wins) |
+|------|-------------------|-------------------|------------------------------|
+| `agent.toml` | `~/.config/agent/agent.toml` | `--config <path>` | `--config` → `$AGENT_CONFIG` → `./agent.toml` → `~/.config/agent/agent.toml` |
+| `policy.toml` | `~/.config/agent/policy.toml` | `--policy <path>` | `--policy` → `<Agentfile dir>/policy.toml` → `~/.config/agent/policy.toml` → permissive (all tools enabled, with a warning) |
+| `credentials.toml` | `~/.config/agent/credentials.toml` | `--credentials <path>` (`agent run` / `agent serve`) | `--credentials` → `./credentials.toml` → `~/.config/agent/credentials.toml` → `~/.agent/credentials.toml` |
+
+API keys specifically are loaded in priority order: environment variables (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, etc.) < `.env` file in the current directory < `credentials.toml` (found per the
+table above) < the Claude CLI's own OAuth token.
 
 **Never commit credentials to git.** Add `credentials.toml`, `.env`, and `*.pem` to your `.gitignore`.
 

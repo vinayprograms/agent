@@ -28,9 +28,11 @@ type runner interface {
 // deps are the process facilities the commands reach for: the environment,
 // credentials, and the runtime factory.
 type deps struct {
-	home        string
-	getenv      func(string) string
-	credentials func() (credentials.Lookup, error)
+	home   string
+	getenv func(string) string
+	// credentials resolves the credential lookup; the argument is the
+	// --credentials override path (empty uses the standard paths).
+	credentials func(override string) (credentials.Lookup, error)
 	newRuntime  func(context.Context, *run.Loaded, run.Deps) (runner, error)
 	// isTerminal reports whether a stream is an interactive terminal; --step
 	// needs one. Tests substitute it.
@@ -41,9 +43,11 @@ type deps struct {
 func newDeps() deps {
 	home, _ := os.UserHomeDir()
 	return deps{
-		home:        home,
-		getenv:      os.Getenv,
-		credentials: loadCredentials,
+		home:   home,
+		getenv: os.Getenv,
+		credentials: func(override string) (credentials.Lookup, error) {
+			return loadCredentials(home, override)
+		},
 		newRuntime: func(ctx context.Context, l *run.Loaded, d run.Deps) (runner, error) {
 			return run.New(ctx, l, d)
 		},
@@ -52,11 +56,16 @@ func newDeps() deps {
 }
 
 // loadCredentials composes the credential lookup from env, the first
-// credentials.toml in the standard locations, and the Claude CLI token.
-// It runs inside the commands that need it, so a broken credentials file
-// does not break --help, validate, pack and friends.
-func loadCredentials() (credentials.Lookup, error) {
-	creds, _, err := credentials.Load(credentials.StandardPaths("agent")...)
+// credentials.toml found via run.CredentialPaths (honoring an explicit
+// --credentials override), and the Claude CLI token. It runs inside the
+// commands that need it, so a broken credentials file does not break
+// --help, validate, pack and friends.
+func loadCredentials(home, override string) (credentials.Lookup, error) {
+	paths, err := run.CredentialPaths(home, override)
+	if err != nil {
+		return nil, err
+	}
+	creds, _, err := credentials.Load(paths...)
 	if err != nil {
 		return nil, fmt.Errorf("loading credentials: %w", err)
 	}
@@ -102,13 +111,14 @@ func argOr(args []string, def string) string {
 
 // runOptions are the run command's flags.
 type runOptions struct {
-	inputs    map[string]string
-	config    string
-	policy    string
-	workspace string
-	goal      string
-	debug     bool
-	step      bool
+	inputs      map[string]string
+	config      string
+	policy      string
+	credentials string
+	workspace   string
+	goal        string
+	debug       bool
+	step        bool
 }
 
 // newRunCmd runs a workflow once and exits.
@@ -126,7 +136,7 @@ func newRunCmd(d deps) *cobra.Command {
 				}
 				gate = stepGate(cmd.InOrStdin(), cmd.ErrOrStderr())
 			}
-			creds, err := d.credentials()
+			creds, err := d.credentials(opts.credentials)
 			if err != nil {
 				return err
 			}
@@ -162,6 +172,7 @@ func newRunCmd(d deps) *cobra.Command {
 	f.StringToStringVarP(&opts.inputs, "input", "i", nil, "Input key=value (repeatable)")
 	f.StringVar(&opts.config, "config", "", "Config file path")
 	f.StringVar(&opts.policy, "policy", "", "Policy file path")
+	f.StringVar(&opts.credentials, "credentials", "", "Credentials file path")
 	f.StringVar(&opts.workspace, "workspace", "", "Workspace directory")
 	f.StringVar(&opts.goal, "goal", "", "Inline goal description (skips Agentfile)")
 	f.BoolVar(&opts.debug, "debug", false, "Enable verbose logging (prompts, responses, tool outputs)")

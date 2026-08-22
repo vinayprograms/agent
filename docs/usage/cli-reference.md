@@ -24,6 +24,7 @@
 | `--input key=value` | Provide input (repeatable) |
 | `-f <path>` | Specify Agentfile path |
 | `--policy <path>` | Security policy file |
+| `--credentials <path>` | Credentials file (`agent run` and `agent serve`); highest precedence, must exist and parse |
 | `--workspace <path>` | Override workspace directory |
 | `--step` | `agent run` only: pause after each goal and ask whether to continue. Needs an interactive terminal (stdin and stderr); the run is refused otherwise. Answer Enter/`y` to continue or `n` to stop — stopping ends the run with "aborted" status and a non-zero exit. |
 

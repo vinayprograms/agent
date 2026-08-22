@@ -129,6 +129,74 @@ func TestLoadPolicy_MissingExplicitIsError(t *testing.T) {
 	}
 }
 
+func TestLoadPolicy_FallsBackToDefaultHomePolicy(t *testing.T) {
+	home := t.TempDir()
+	projectDir := t.TempDir() // no policy.toml here
+	defaultDir := filepath.Join(home, ".config", "agent")
+	if err := os.MkdirAll(defaultDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(defaultDir, "policy.toml"), []byte(`
+default_deny = true
+[tools.read]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := &Loaded{Config: &config.Config{Agent: config.AgentConfig{Workspace: projectDir}}}
+	w.home = home
+	if err := w.loadPolicy("", projectDir, io.Discard); err != nil {
+		t.Fatalf("loadPolicy: %v", err)
+	}
+	if !w.Policy.DefaultDeny || !w.Policy.IsToolEnabled("read") || w.Policy.IsToolEnabled("bash") {
+		t.Errorf("default home policy not applied: %+v", w.Policy)
+	}
+}
+
+func TestLoadPolicy_ProjectPolicyBeatsDefaultHomePolicy(t *testing.T) {
+	home := t.TempDir()
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "policy.toml"), []byte("default_deny = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defaultDir := filepath.Join(home, ".config", "agent")
+	if err := os.MkdirAll(defaultDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(defaultDir, "policy.toml"), []byte("default_deny = true\n[tools.read]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := &Loaded{Config: &config.Config{Agent: config.AgentConfig{Workspace: projectDir}}}
+	w.home = home
+	if err := w.loadPolicy("", projectDir, io.Discard); err != nil {
+		t.Fatalf("loadPolicy: %v", err)
+	}
+	if w.Policy.DefaultDeny {
+		t.Error("project policy.toml should win over the default home policy")
+	}
+}
+
+func TestLoadPolicy_MissingBothIsPermissiveWithWarningNamingBoth(t *testing.T) {
+	home := t.TempDir()
+	projectDir := t.TempDir()
+	w := &Loaded{Config: &config.Config{Agent: config.AgentConfig{Workspace: projectDir}}}
+	w.home = home
+	var buf strings.Builder
+	if err := w.loadPolicy("", projectDir, &buf); err != nil {
+		t.Fatalf("loadPolicy: %v", err)
+	}
+	if w.Policy.DefaultDeny || !w.Policy.IsToolEnabled("bash") {
+		t.Error("missing policy everywhere should be permissive")
+	}
+	msg := buf.String()
+	wantProject := filepath.Join(projectDir, "policy.toml")
+	wantDefault := filepath.Join(home, ".config", "agent", "policy.toml")
+	if !strings.Contains(msg, wantProject) || !strings.Contains(msg, wantDefault) {
+		t.Errorf("warning should name both locations checked, got %q", msg)
+	}
+}
+
 func TestPolicyKeyReplacement(t *testing.T) {
 	cases := map[string]string{
 		"tools.read.enabled":      "list the tool under [tools.<name>]",
