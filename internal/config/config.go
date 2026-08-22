@@ -15,10 +15,10 @@ const (
 	EnvConfigPath = "AGENT_CONFIG"
 )
 
-// DefaultConfigDir is the user-level config directory (~/.config/grid) that
+// DefaultConfigDir is the user-level config directory (~/.config/agent) that
 // holds agent.toml and credentials.toml.
 func DefaultConfigDir(home string) string {
-	return filepath.Join(home, ".config", "grid")
+	return filepath.Join(home, ".config", "agent")
 }
 
 // DefaultStateDir is the default base directory for persistent state

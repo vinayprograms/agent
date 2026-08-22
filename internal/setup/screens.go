@@ -319,7 +319,7 @@ func (m Model) getCredentialMethods() []struct{ name, desc string } {
 	}
 
 	methods = append(methods,
-		struct{ name, desc string }{"file", "API key in ~/.config/grid/credentials.toml"},
+		struct{ name, desc string }{"file", "API key in ~/.config/agent/credentials.toml"},
 		struct{ name, desc string }{"env", "Environment variables only"},
 	)
 

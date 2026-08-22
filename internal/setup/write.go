@@ -37,7 +37,7 @@ func (m Model) writeFiles() tea.Cmd {
 		}
 		files = append(files, "policy.toml")
 
-		// Write credentials to ~/.config/grid/credentials.toml
+		// Write credentials to ~/.config/agent/credentials.toml
 		if m.config.CredentialMethod == "file" && m.config.APIKey != "" {
 			path, err := m.writeCredentials()
 			if err != nil {
@@ -52,8 +52,8 @@ func (m Model) writeFiles() tea.Cmd {
 	}
 }
 
-// credentialsPath is ~/.config/grid/credentials.toml, the user-level entry
-// of credentials.StandardPaths("grid").
+// credentialsPath is ~/.config/agent/credentials.toml, the user-level entry
+// of credentials.StandardPaths("agent").
 func credentialsPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -62,7 +62,7 @@ func credentialsPath() (string, error) {
 	return filepath.Join(config.DefaultConfigDir(home), "credentials.toml"), nil
 }
 
-// writeCredentials saves the API key to ~/.config/grid/credentials.toml,
+// writeCredentials saves the API key to ~/.config/agent/credentials.toml,
 // preserving any other providers already stored there, and returns the path.
 // A load error (e.g. an existing file with insecure permissions, or a
 // malformed file) is surfaced rather than silently overwritten.

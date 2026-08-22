@@ -121,7 +121,7 @@ Keys are loaded in priority order:
 
 1. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.)
 2. `.env` file in current directory
-3. `~/.config/grid/credentials.toml`
+3. `~/.config/agent/credentials.toml`
 
 **Never commit credentials to git.** Add `credentials.toml`, `.env`, and `*.pem` to your `.gitignore`.
 

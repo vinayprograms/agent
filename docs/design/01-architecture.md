@@ -143,7 +143,7 @@ The agent CLI (`cmd/agent`) wires these packages together:
 | credentials.toml | API keys | 0400 (required) |
 | policy.toml | Tool permissions, security policy | 0644 |
 
-Location: Current directory, or `~/.config/grid/` for credentials.
+Location: Current directory, or `~/.config/agent/` for credentials.
 
 ## API Key Loading
 
@@ -151,7 +151,7 @@ Priority order (highest to lowest):
 
 1. Environment variables
 2. `.env` file in current directory
-3. `~/.config/grid/credentials.toml`
+3. `~/.config/agent/credentials.toml`
 
 For credentials.toml, provider-specific sections override `[llm]`:
 

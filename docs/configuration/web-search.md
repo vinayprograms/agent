@@ -13,7 +13,7 @@ SearXNG -> Brave -> Tavily -> DuckDuckGo (fallback)
 | 3 | Tavily | `TAVILY_API_KEY` | Good for research |
 | 4 | DuckDuckGo | None | Zero-config fallback |
 
-Configure in `~/.config/grid/credentials.toml`.
+Configure in `~/.config/agent/credentials.toml`.
 
 ## SearXNG (Recommended — Free, Self-Hosted)
 
@@ -31,7 +31,7 @@ docker run -d --name searxng -p 8080:8080 \
 **Configure the agent:**
 
 ```toml
-# ~/.config/grid/credentials.toml
+# ~/.config/agent/credentials.toml
 [searxng]
 api_key = "http://localhost:8080"  # This is the URL, not an actual key
 ```
