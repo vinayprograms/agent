@@ -14,7 +14,10 @@ import (
 )
 
 // recordingMetrics captures RecordSupervision outcomes.
-type recordingMetrics struct{ approved, denied int }
+type recordingMetrics struct {
+	approved, denied int
+	maxSubagents     int
+}
 
 func (m *recordingMetrics) RecordLLMCall(int, int, int, int, int64) {}
 func (m *recordingMetrics) RecordSupervision(approved bool) {
@@ -24,7 +27,7 @@ func (m *recordingMetrics) RecordSupervision(approved bool) {
 		m.denied++
 	}
 }
-func (m *recordingMetrics) SetSubagents(int) {}
+func (m *recordingMetrics) SetSubagents(n int) { m.maxSubagents = max(m.maxSubagents, n) }
 
 // newSecuredExecutor builds an executor with a session and a content guard.
 func newSecuredExecutor(t *testing.T, sec *SecurityConfig) (*Executor, *session.Session) {

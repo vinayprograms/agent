@@ -805,11 +805,7 @@ func TestParseStructuredOutput(t *testing.T) {
 	content := `{"findings": "test result", "sources": ["a", "b"], "count": 42}`
 	fields := []string{"findings", "sources", "count"}
 
-	result, err := parseStructuredOutput(content, fields)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
+	result := parseStructuredOutput(content, fields)
 	if result["findings"] != "test result" {
 		t.Errorf("expected findings='test result', got %q", result["findings"])
 	}

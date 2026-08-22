@@ -629,7 +629,7 @@ func (rt *runtime) run(ctx context.Context) int {
 	rt.sessionMgr.Update(rt.sess)
 
 	// Report convergence failures if any
-	if failures := rt.exec.GetConvergenceFailures(); len(failures) > 0 {
+	if failures := rt.exec.ConvergenceFailures(); len(failures) > 0 {
 		fmt.Fprintf(os.Stderr, "\n⚠ Convergence warnings:\n")
 		for goal, iterations := range failures {
 			fmt.Fprintf(os.Stderr, "  • Goal %q did not converge (used all %d iterations)\n", goal, iterations)

@@ -472,7 +472,7 @@ func (e *Executor) Run(ctx context.Context, opts RunOptions) (*Result, error) {
 	result := &Result{
 		Status:     StatusComplete,
 		Outputs:    state.Outputs,
-		Iterations: e.GetConvergenceFailures(),
+		Iterations: e.ConvergenceFailures(),
 	}
 	e.logExecutionComplete(workflowName, startTime, string(StatusComplete))
 	e.endWorkflowSpan(workflowSpan, string(StatusComplete), nil)
@@ -573,13 +573,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		}
 		// Parse structured output if declared
 		if len(goal.Outputs) > 0 {
-			parsedOutputs, err := parseStructuredOutput(result.Output, goal.Outputs)
-			if err != nil {
-				e.logEvent(session.EventSystem, fmt.Sprintf("Warning: failed to parse structured output: %v", err))
-			} else {
-				for field, value := range parsedOutputs {
-					e.outputs[field] = value
-				}
+			for field, value := range parseStructuredOutput(result.Output, goal.Outputs) {
+				e.outputs[field] = value
 			}
 		}
 		e.logGoalEnd(goal.Name, result.Output)
@@ -595,13 +590,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		}
 		// Parse structured output if declared (same as regular goals)
 		if len(goal.Outputs) > 0 {
-			parsedOutputs, err := parseStructuredOutput(output, goal.Outputs)
-			if err != nil {
-				e.logEvent(session.EventSystem, fmt.Sprintf("Warning: failed to parse structured output: %v", err))
-			} else {
-				for field, value := range parsedOutputs {
-					e.outputs[field] = value
-				}
+			for field, value := range parseStructuredOutput(output, goal.Outputs) {
+				e.outputs[field] = value
 			}
 		}
 		e.logGoalEnd(goal.Name, output)
@@ -689,13 +679,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 
 	// Parse structured output if declared
 	if len(goal.Outputs) > 0 {
-		parsedOutputs, err := parseStructuredOutput(output, goal.Outputs)
-		if err != nil {
-			e.logEvent(session.EventSystem, fmt.Sprintf("Warning: failed to parse structured output: %v", err))
-		} else {
-			for field, value := range parsedOutputs {
-				e.outputs[field] = value
-			}
+		for field, value := range parseStructuredOutput(output, goal.Outputs) {
+			e.outputs[field] = value
 		}
 	}
 

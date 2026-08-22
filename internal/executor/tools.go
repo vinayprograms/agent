@@ -12,22 +12,15 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// concurrencyLimit returns the maximum number of concurrent tool executions.
-// Calculated based on CPU count with I/O-bound multiplier.
-// For I/O-bound operations (web_fetch, etc.), we can oversubscribe CPUs.
-var concurrencyLimit = func() int {
-	cpuCount := runtime.NumCPU()
-	// 4x CPU count for I/O-bound workloads (network, disk waits)
-	// Minimum 4, maximum 32 to avoid overwhelming resources
-	limit := cpuCount * 4
-	if limit < 4 {
-		limit = 4
-	}
-	if limit > 32 {
-		limit = 32
-	}
-	return limit
-}()
+// concurrencyLimit caps concurrent tool executions.
+var concurrencyLimit = toolConcurrency(runtime.NumCPU())
+
+// toolConcurrency oversubscribes CPUs 4x — tool work is I/O-bound (network,
+// disk) — within bounds that keep a small machine responsive and a large one
+// from overwhelming the services it calls.
+func toolConcurrency(cpus int) int {
+	return min(max(cpus*4, 4), 32)
+}
 
 // applyToolTimeout wraps the context with a timeout for network-dependent tools.
 // Returns the original context if no timeout is configured for the tool.

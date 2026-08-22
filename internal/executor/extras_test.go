@@ -98,11 +98,11 @@ func TestStructuredOutputHelpers(t *testing.T) {
 	if buildStructuredOutputInstruction(nil) != "" {
 		t.Error("no outputs => no instruction")
 	}
-	got, err := parseStructuredOutput("plain text answer", []string{"a", "b"})
-	if err != nil || got["a"] != "plain text answer" || got["b"] != "plain text answer" {
-		t.Errorf("plain-text fallback: %v %v", got, err)
+	got := parseStructuredOutput("plain text answer", []string{"a", "b"})
+	if got["a"] != "plain text answer" || got["b"] != "plain text answer" {
+		t.Errorf("plain-text fallback: %v", got)
 	}
-	got, _ = parseStructuredOutput(`{"a": 1}`, []string{"a", "missing"})
+	got = parseStructuredOutput(`{"a": 1}`, []string{"a", "missing"})
 	if got["a"] != "1" {
 		t.Errorf("non-string field: %v", got)
 	}

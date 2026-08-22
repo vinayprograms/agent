@@ -46,7 +46,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 	e.currentGoalSupervised = supervised
 
 	// Build initial prompt for COMMIT phase
-	initialPrompt := e.buildConvergePrompt(goal, nil, 1)
+	initialPrompt := e.buildConvergePrompt(goal, nil, "")
 
 	// State captured by the execute closure and used by the post-checkpoint closure
 	var iterations []ConvergenceIteration
@@ -75,7 +75,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 
 					e.logEvent(session.EventSystem, fmt.Sprintf("Convergence iteration %d for goal %q", i, goal.Name))
 
-					prompt := e.buildConvergePrompt(goal, iterations, i)
+					prompt := e.buildConvergePrompt(goal, iterations, "")
 
 					output, iterErr := e.executeConvergeIteration(ctx, goal, prompt)
 					if iterErr != nil {
@@ -126,7 +126,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 	switch pipelineResult.Verdict {
 	case supervision.VerdictReorient:
 		e.logger.Info("supervisor requested reorientation", "goal", goal.Name, "correction", pipelineResult.Correction)
-		correctionPrompt := e.buildConvergePromptWithCorrection(goal, iterations, iterationCount+1, pipelineResult.Correction)
+		correctionPrompt := e.buildConvergePrompt(goal, iterations, pipelineResult.Correction)
 		correctedOutput, corrErr := e.executeConvergeIteration(ctx, goal, correctionPrompt)
 		if corrErr != nil {
 			return nil, fmt.Errorf("correction iteration failed: %w", corrErr)
@@ -167,42 +167,15 @@ func (e *Executor) getConvergeLimit(goal *agentfile.Goal) int {
 }
 
 // buildConvergePrompt builds the XML prompt for a convergence iteration.
-func (e *Executor) buildConvergePrompt(goal *agentfile.Goal, iterations []ConvergenceIteration, currentIteration int) string {
+// A non-empty correction is a supervisor reorientation for the next one.
+func (e *Executor) buildConvergePrompt(goal *agentfile.Goal, iterations []ConvergenceIteration, correction string) string {
 	b := newBrief(e.workflow.Name)
 	b.SetConvergenceMode()
 
-	// Add prior goal outputs to context
+	// Prior goal outputs, then the iterations so far.
 	for goalName, output := range e.outputs {
 		b.AddPriorGoal(goalName, output)
 	}
-
-	// Add previous convergence iterations
-	for _, iter := range iterations {
-		b.AddConvergenceIteration(iter.N, iter.Output)
-	}
-
-	// Set current goal with interpolated description
-	goalDescription := e.interpolate(goal.Outcome)
-
-	// Add structured output instruction if outputs are declared
-	if len(goal.Outputs) > 0 {
-		goalDescription += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
-	}
-
-	b.SetCurrentGoal(goal.Name, goalDescription)
-
-	return b.String()
-}
-
-// buildConvergePromptWithCorrection builds prompt with supervisor correction.
-func (e *Executor) buildConvergePromptWithCorrection(goal *agentfile.Goal, iterations []ConvergenceIteration, currentIteration int, correction string) string {
-	b := newBrief(e.workflow.Name)
-	b.SetConvergenceMode()
-
-	for goalName, output := range e.outputs {
-		b.AddPriorGoal(goalName, output)
-	}
-
 	for _, iter := range iterations {
 		b.AddConvergenceIteration(iter.N, iter.Output)
 	}
@@ -211,10 +184,11 @@ func (e *Executor) buildConvergePromptWithCorrection(goal *agentfile.Goal, itera
 	if len(goal.Outputs) > 0 {
 		goalDescription += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
 	}
-
 	b.SetCurrentGoal(goal.Name, goalDescription)
-	b.SetCorrection(correction)
 
+	if correction != "" {
+		b.SetCorrection(correction)
+	}
 	return b.String()
 }
 
@@ -259,8 +233,9 @@ func (e *Executor) trackConvergenceFailure(goalName string, iterations int) {
 	e.convergenceFailures[goalName] = iterations
 }
 
-// GetConvergenceFailures returns goals that failed to converge.
-func (e *Executor) GetConvergenceFailures() map[string]int {
+// ConvergenceFailures returns goals that failed to converge, with the
+// iteration limit each one exhausted.
+func (e *Executor) ConvergenceFailures() map[string]int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.convergenceFailures == nil {
