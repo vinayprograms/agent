@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/vinayprograms/agent/internal/configfile"
 )
 
 // Styles
@@ -191,14 +192,14 @@ func (m Model) viewCustomModel() string {
 	s.WriteString(titleStyle.Render("Model Name") + "\n")
 
 	switch m.config.Provider {
-	case ProviderOllamaCloud, ProviderOllamaLocal:
+	case configfile.ProviderOllamaCloud, configfile.ProviderOllamaLocal:
 		s.WriteString(subtitleStyle.Render("Enter the Ollama model to use") + "\n\n")
 		s.WriteString(dimStyle.Render("Examples: llama3.2, codellama, mistral, phi3, qwen2.5") + "\n")
 		s.WriteString(dimStyle.Render("Run 'ollama list' to see your downloaded models") + "\n\n")
-	case ProviderLMStudio:
+	case configfile.ProviderLMStudio:
 		s.WriteString(subtitleStyle.Render("Enter the model name from LM Studio") + "\n\n")
 		s.WriteString(dimStyle.Render("Check LM Studio UI for available model names") + "\n\n")
-	case ProviderLiteLLM:
+	case configfile.ProviderLiteLLM:
 		s.WriteString(subtitleStyle.Render("Enter the model name (as configured in LiteLLM)") + "\n\n")
 		s.WriteString(dimStyle.Render("Examples: claude-sonnet-4, gpt-4o, gemini-2.0-flash") + "\n\n")
 	default:
@@ -582,7 +583,7 @@ func (m Model) viewCredentialMethod() string {
 	}
 
 	// Show hint about Claude CLI if Anthropic is selected but no CLI credentials found
-	if m.config.Provider == ProviderAnthropic && !hasClaudeCLICredentials() {
+	if m.config.Provider == configfile.ProviderAnthropic && !hasClaudeCLICredentials() {
 		s.WriteString("\n" + dimStyle.Render("💡 Tip: Install Claude CLI and run 'claude login' for easier auth"))
 	}
 
@@ -654,7 +655,7 @@ func (m Model) viewComplete() string {
 	s.WriteString("\n" + normalStyle.Render("Next steps:") + "\n")
 	s.WriteString(dimStyle.Render("  1. Review agent.toml and policy.toml") + "\n")
 	if m.config.CredentialMethod == "env" {
-		envVar := getDefaultEnvVar(m.config.Provider)
+		envVar := configfile.DefaultEnvVar(m.config.Provider)
 		s.WriteString(dimStyle.Render("  2. Set "+envVar+" environment variable") + "\n")
 		s.WriteString(dimStyle.Render("  3. Run: agent run your-workflow.agent") + "\n")
 	} else {

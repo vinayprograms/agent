@@ -211,7 +211,7 @@ func TestPolicyKeyReplacement(t *testing.T) {
 			t.Errorf("%s: got %q want %q", key, got, want)
 		}
 	}
-	if err := validatePolicyKeys("p.toml", nil); err != nil {
+	if err := ValidatePolicyKeys("p.toml", nil); err != nil {
 		t.Errorf("no unknown keys should be nil, got %v", err)
 	}
 }

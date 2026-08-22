@@ -109,7 +109,8 @@ func TestRoot_CommandSurface(t *testing.T) {
 		"verify":   {"key"},
 		"install":  {"target", "key", "no-deps", "dry-run"},
 		"keygen":   {"output"},
-		"setup":    nil,
+		"config":   nil,
+		"setup":    {"dir", "default"},
 		"replay":   {"verbose", "no-pager", "cost"},
 		"version":  nil,
 	}
@@ -137,6 +138,30 @@ func TestRoot_CommandSurface(t *testing.T) {
 	if got := keygen.Flags().Lookup("output"); got == nil || got.DefValue != "agent-key" || keygen.Flags().ShorthandLookup("o") == nil {
 		t.Errorf("keygen --output: %v", got)
 	}
+	// config's own subcommands and their flags.
+	configWant := map[string][]string{
+		"init":     {"dir", "default", "provider", "model", "small-model", "scenario", "api-key", "api-key-env", "force"},
+		"show":     {"dir", "default", "resolved"},
+		"validate": {"dir", "default"},
+		"path":     {"dir", "default"},
+	}
+	cfg, _, _ := root.Find([]string{"config"})
+	if len(cfg.Commands()) != len(configWant) {
+		t.Errorf("config subcommand count = %d, want %d", len(cfg.Commands()), len(configWant))
+	}
+	for name, flags := range configWant {
+		sub, _, err := cfg.Find([]string{name})
+		if err != nil || sub.Name() != name {
+			t.Errorf("missing command %q: %v", name, err)
+			continue
+		}
+		for _, f := range flags {
+			if sub.Flags().Lookup(f) == nil {
+				t.Errorf("config %s: missing flag --%s", name, f)
+			}
+		}
+	}
+
 	pack, _, _ := root.Find([]string{"pack"})
 	if pack.Flags().ShorthandLookup("o") == nil {
 		t.Error("pack: missing -o shorthand")

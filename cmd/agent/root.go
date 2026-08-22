@@ -94,7 +94,8 @@ func newRootCmd(d deps) *cobra.Command {
 		newVerifyCmd(),
 		newInstallCmd(),
 		newKeygenCmd(),
-		newSetupCmd(),
+		newConfigCmd(d),
+		newSetupCmd(d),
 		replaycmd.New(replaycmd.Config{Version: version, Commit: commit, BuildTime: buildTime}),
 		newVersionCmd(),
 	)

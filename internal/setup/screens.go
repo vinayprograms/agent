@@ -3,6 +3,7 @@ package setup
 import (
 	"slices"
 
+	"github.com/vinayprograms/agent/internal/configfile"
 	"github.com/vinayprograms/agentkit/credentials"
 )
 
@@ -52,7 +53,7 @@ func (m Model) previousScreen() Screen {
 	}
 
 	// Skip base URL for direct providers
-	if prev == ScreenBaseURL && !m.needsBaseURL() {
+	if prev == ScreenBaseURL && !configfile.NeedsBaseURL(m.config.Provider) {
 		prev = ScreenAPIKey
 	}
 
@@ -113,33 +114,10 @@ func (m Model) isTextInputScreen() bool {
 
 func (m Model) needsCustomModelInput() bool {
 	switch m.config.Provider {
-	case ProviderOllamaCloud, ProviderOllamaLocal, ProviderLiteLLM, ProviderLMStudio, ProviderCustom:
+	case configfile.ProviderOllamaCloud, configfile.ProviderOllamaLocal, configfile.ProviderLiteLLM, configfile.ProviderLMStudio, configfile.ProviderCustom:
 		return true
 	}
 	return false
-}
-
-func (m Model) needsBaseURL() bool {
-	switch m.config.Provider {
-	case ProviderOllamaLocal, ProviderLiteLLM, ProviderLMStudio, ProviderOpenRouter, ProviderCustom:
-		return true
-	}
-	return false
-}
-
-func (m Model) getDefaultBaseURL() string {
-	switch m.config.Provider {
-	case ProviderOllamaLocal:
-		return "http://localhost:11434/v1"
-	case ProviderLMStudio:
-		return "http://localhost:1234/v1"
-	case ProviderOpenRouter:
-		return "https://openrouter.ai/api/v1"
-	case ProviderLiteLLM:
-		return "http://localhost:4000/v1"
-	default:
-		return ""
-	}
 }
 
 type scenarioOption struct {
@@ -150,11 +128,11 @@ type scenarioOption struct {
 
 func (m Model) getScenarios() []scenarioOption {
 	return []scenarioOption{
-		{ScenarioLocal, "Local Development", "Personal machine with Ollama, no API keys needed"},
-		{ScenarioDev, "Cloud Development", "Development with cloud LLMs (Anthropic, OpenAI, etc.)"},
-		{ScenarioTeam, "Team/Proxy", "Shared LLM proxy (LiteLLM, OpenRouter) with profiles"},
-		{ScenarioProduction, "Production", "Full security, telemetry, and monitoring"},
-		{ScenarioDocker, "Docker/Container", "Container deployment with env-based credentials"},
+		{configfile.ScenarioLocal, "Local Development", "Personal machine with Ollama, no API keys needed"},
+		{configfile.ScenarioDev, "Cloud Development", "Development with cloud LLMs (Anthropic, OpenAI, etc.)"},
+		{configfile.ScenarioTeam, "Team/Proxy", "Shared LLM proxy (LiteLLM, OpenRouter) with profiles"},
+		{configfile.ScenarioProduction, "Production", "Full security, telemetry, and monitoring"},
+		{configfile.ScenarioDocker, "Docker/Container", "Container deployment with env-based credentials"},
 	}
 }
 
@@ -217,18 +195,18 @@ type providerOption struct {
 
 func (m Model) getProviders() []providerOption {
 	return []providerOption{
-		{ProviderAnthropic, "Anthropic", "Claude models (recommended)"},
-		{ProviderOpenAI, "OpenAI", "GPT-4o, o3 models"},
-		{ProviderGoogle, "Google", "Gemini models"},
-		{ProviderGroq, "Groq", "Fast inference (Llama, Mixtral)"},
-		{ProviderMistral, "Mistral", "Mistral models"},
-		{ProviderXAI, "xAI", "Grok models"},
-		{ProviderOpenRouter, "OpenRouter", "Multi-provider router"},
-		{ProviderOllamaCloud, "Ollama Cloud", "Hosted Ollama (api.ollama.com)"},
-		{ProviderOllamaLocal, "Ollama Local", "Local Ollama (free, requires install)"},
-		{ProviderLiteLLM, "LiteLLM", "Self-hosted proxy (OpenAI-compatible)"},
-		{ProviderLMStudio, "LM Studio", "Local models with UI"},
-		{ProviderCustom, "Custom", "Custom OpenAI-compatible endpoint"},
+		{configfile.ProviderAnthropic, "Anthropic", "Claude models (recommended)"},
+		{configfile.ProviderOpenAI, "OpenAI", "GPT-4o, o3 models"},
+		{configfile.ProviderGoogle, "Google", "Gemini models"},
+		{configfile.ProviderGroq, "Groq", "Fast inference (Llama, Mixtral)"},
+		{configfile.ProviderMistral, "Mistral", "Mistral models"},
+		{configfile.ProviderXAI, "xAI", "Grok models"},
+		{configfile.ProviderOpenRouter, "OpenRouter", "Multi-provider router"},
+		{configfile.ProviderOllamaCloud, "Ollama Cloud", "Hosted Ollama (api.ollama.com)"},
+		{configfile.ProviderOllamaLocal, "Ollama Local", "Local Ollama (free, requires install)"},
+		{configfile.ProviderLiteLLM, "LiteLLM", "Self-hosted proxy (OpenAI-compatible)"},
+		{configfile.ProviderLMStudio, "LM Studio", "Local models with UI"},
+		{configfile.ProviderCustom, "Custom", "Custom OpenAI-compatible endpoint"},
 	}
 }
 
@@ -239,43 +217,43 @@ type modelOption struct {
 
 func (m Model) getModels() []modelOption {
 	switch m.config.Provider {
-	case ProviderAnthropic:
+	case configfile.ProviderAnthropic:
 		return []modelOption{
 			{"claude-sonnet-4-20250514", "Claude Sonnet 4 (recommended)"},
 			{"claude-opus-4-20250514", "Claude Opus 4 (most capable)"},
 			{"claude-3-5-haiku-20241022", "Claude 3.5 Haiku (fast)"},
 		}
-	case ProviderOpenAI:
+	case configfile.ProviderOpenAI:
 		return []modelOption{
 			{"gpt-4o", "GPT-4o (recommended)"},
 			{"gpt-4o-mini", "GPT-4o Mini (fast)"},
 			{"o3", "o3 (reasoning)"},
 			{"o3-mini", "o3 Mini (fast reasoning)"},
 		}
-	case ProviderGoogle:
+	case configfile.ProviderGoogle:
 		return []modelOption{
 			{"gemini-2.0-flash", "Gemini 2.0 Flash (recommended)"},
 			{"gemini-2.0-pro", "Gemini 2.0 Pro"},
 			{"gemini-1.5-pro", "Gemini 1.5 Pro"},
 		}
-	case ProviderGroq:
+	case configfile.ProviderGroq:
 		return []modelOption{
 			{"llama-3.3-70b-versatile", "Llama 3.3 70B (recommended)"},
 			{"llama-3.1-8b-instant", "Llama 3.1 8B (fast)"},
 			{"mixtral-8x7b-32768", "Mixtral 8x7B"},
 		}
-	case ProviderMistral:
+	case configfile.ProviderMistral:
 		return []modelOption{
 			{"mistral-large-latest", "Mistral Large (recommended)"},
 			{"mistral-medium-latest", "Mistral Medium"},
 			{"mistral-small-latest", "Mistral Small (fast)"},
 		}
-	case ProviderXAI:
+	case configfile.ProviderXAI:
 		return []modelOption{
 			{"grok-2", "Grok 2 (recommended)"},
 			{"grok-2-mini", "Grok 2 Mini (fast)"},
 		}
-	case ProviderOllamaCloud, ProviderOllamaLocal:
+	case configfile.ProviderOllamaCloud, configfile.ProviderOllamaLocal:
 		return []modelOption{
 			{"llama3.2", "Llama 3.2 (recommended)"},
 			{"llama3.2:1b", "Llama 3.2 1B (fast)"},
@@ -290,29 +268,12 @@ func (m Model) getModels() []modelOption {
 	}
 }
 
-func getDefaultEnvVar(provider string) string {
-	switch provider {
-	case ProviderAnthropic:
-		return "ANTHROPIC_API_KEY"
-	case ProviderOpenAI:
-		return "OPENAI_API_KEY"
-	case ProviderGoogle:
-		return "GOOGLE_API_KEY"
-	case ProviderMistral:
-		return "MISTRAL_API_KEY"
-	case ProviderGroq:
-		return "GROQ_API_KEY"
-	default:
-		return "API_KEY"
-	}
-}
-
 // getCredentialMethods returns available credential methods for the current provider.
 func (m Model) getCredentialMethods() []struct{ name, desc string } {
 	methods := []struct{ name, desc string }{}
 
 	// For Anthropic, check if Claude CLI credentials exist
-	if m.config.Provider == ProviderAnthropic && hasClaudeCLICredentials() {
+	if m.config.Provider == configfile.ProviderAnthropic && hasClaudeCLICredentials() {
 		methods = append(methods, struct{ name, desc string }{
 			"claude-cli", "Use Claude CLI credentials (already authenticated)",
 		})
