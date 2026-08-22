@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -186,6 +187,50 @@ func TestSession_ZeroValue(t *testing.T) {
 	if a, b := s.StartCorrelation(), s.StartCorrelation(); len(a) != 8 || a == b {
 		t.Errorf("StartCorrelation = %q, %q: want 8 hex chars, unique", a, b)
 	}
+}
+
+// TestSession_ConcurrentAddEventFlushClose drives AddEvent from many
+// goroutines while Flush and Close race in from others, on both a
+// zero-value Session (in-memory only) and a Recorder-backed one (real
+// writer). Run with -race; the point is no data race and no panic.
+func TestSession_ConcurrentAddEventFlushClose(t *testing.T) {
+	run := func(t *testing.T, s *Session) {
+		var wg sync.WaitGroup
+		for range 20 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s.AddEvent(Event{Type: EventUser})
+			}()
+		}
+		for range 5 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s.Flush()
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Close()
+		}()
+		wg.Wait()
+		s.Close() // Close must stay idempotent after the race.
+	}
+
+	t.Run("zero value", func(t *testing.T) {
+		run(t, &Session{})
+	})
+
+	t.Run("recorder-backed", func(t *testing.T) {
+		rec := mustOpen(t, t.TempDir(), nil)
+		s, err := rec.Create("wf")
+		if err != nil {
+			t.Fatalf("Create error: %v", err)
+		}
+		run(t, s)
+	})
 }
 
 func TestWriter(t *testing.T) {

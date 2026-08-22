@@ -4,7 +4,6 @@
 package skills
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -31,7 +30,8 @@ type Skill struct {
 	Path string `yaml:"-"`
 }
 
-// SkillRef is a minimal reference for discovery.
+// SkillRef is a minimal reference to a skill on disk, used by callers
+// (e.g. internal/executor) that need to name a skill without loading it.
 type SkillRef struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -145,80 +145,6 @@ func validateName(name string) error {
 		}
 	}
 	return nil
-}
-
-// Discover finds all skills in a directory. Every sub-directory holding a
-// SKILL.md is a candidate; those whose frontmatter cannot be read are
-// reported in invalid (one error per skill, naming its path) rather than
-// silently dropped. A missing skillsDir yields no skills and no error.
-func Discover(skillsDir string) (refs []SkillRef, invalid []error, err error) {
-	entries, err := os.ReadDir(skillsDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil, nil
-		}
-		return nil, nil, err
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		skillDir := filepath.Join(skillsDir, entry.Name())
-		skillPath := filepath.Join(skillDir, "SKILL.md")
-		if _, err := os.Stat(skillPath); errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		ref, err := parseRef(skillPath)
-		if err != nil {
-			invalid = append(invalid, fmt.Errorf("skill %q: %w", skillDir, err))
-			continue
-		}
-		ref.Path = skillDir
-		refs = append(refs, ref)
-	}
-
-	return refs, invalid, nil
-}
-
-// parseRef quickly parses just the frontmatter for discovery.
-func parseRef(path string) (SkillRef, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return SkillRef{}, err
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	var inFrontmatter bool
-	var fmLines []string
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		trimmed := strings.TrimSpace(line)
-
-		if !inFrontmatter {
-			if trimmed == "---" {
-				inFrontmatter = true
-			}
-			continue
-		}
-
-		if trimmed == "---" {
-			break
-		}
-		fmLines = append(fmLines, line)
-	}
-	if err := scanner.Err(); err != nil {
-		return SkillRef{}, err
-	}
-
-	var ref SkillRef
-	if err := yaml.Unmarshal([]byte(strings.Join(fmLines, "\n")), &ref); err != nil {
-		return SkillRef{}, err
-	}
-
-	return ref, nil
 }
 
 // ReadReference reads a reference file from the skill's references directory.

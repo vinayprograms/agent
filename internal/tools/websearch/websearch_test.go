@@ -135,7 +135,7 @@ func TestExecute_Providers(t *testing.T) {
 		{name: "auto > brave", provider: "", creds: fakeCreds{"brave": "k", "tavily": "k"}, status: 200, body: braveJSON, want: "1. A"},
 		{name: "auto > tavily", provider: "auto", creds: fakeCreds{"tavily": "k"}, status: 200, body: tavilyJSON, want: "1. A"},
 		{name: "auto > duckduckgo", provider: "auto", status: 200, body: liteSample, want: "pkg.go.dev"},
-		{name: "auto duckduckgo error is actionable", provider: "auto", status: 500, wantErr: "searxng_url, or provide a Brave/Tavily API key (credentials [brave]/[tavily] or BRAVE_API_KEY/TAVILY_API_KEY)", noProv: true},
+		{name: "auto duckduckgo error wraps ErrNoProvider", provider: "auto", status: 500, wantErr: "DuckDuckGo fallback: duckduckgo search error: status 500", noProv: true},
 		{name: "auto duckduckgo no results", provider: "auto", status: 200, body: "<html></html>", wantErr: "no results from DuckDuckGo fallback", noProv: true},
 		{name: "unknown provider", provider: "bing", wantErr: `unknown search_provider "bing"`},
 	}

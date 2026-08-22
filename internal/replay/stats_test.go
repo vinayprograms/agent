@@ -163,6 +163,45 @@ func TestPrintTokenUsage_NoModelUsage(t *testing.T) {
 	}
 }
 
+// TestPrintStats_SecurityAndBashSections exercises the "Security Checks"
+// and "Bash Security" sections of PrintStats, which the golden fixture
+// leaves unhit because its triage/supervisor events carry neither
+// DurationMs nor Meta.LatencyMs.
+func TestPrintStats_SecurityAndBashSections(t *testing.T) {
+	stats := &Stats{
+		SecurityTriageCount:     2,
+		SecurityTriageAvgMs:     10,
+		SecuritySupervisorCount: 1,
+		SecuritySupervisorAvgMs: 20,
+		BashDeterministicCount:  3,
+		BashLLMCount:            1,
+		BashLLMAvgMs:            15,
+	}
+	var buf bytes.Buffer
+	PrintStats(&buf, stats)
+	out := buf.String()
+	for _, want := range []string{"Security Checks:", "Triage (Tier 2):", "Supervisor (Tier 3):", "Bash Security:", "Deterministic:", "LLM:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("PrintStats() output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestPrintTokenUsage_MissingPricing exercises the "(no pricing)" branch
+// for a model that has usage but no entry in the pricing map.
+func TestPrintTokenUsage_MissingPricing(t *testing.T) {
+	stats := &Stats{
+		ModelUsage: map[string]*ModelUsage{
+			"unpriced-model": {Calls: 1, TokensIn: 10, TokensOut: 5},
+		},
+	}
+	var buf bytes.Buffer
+	PrintTokenUsage(&buf, stats, PricingMap{"other-model": {InputPer1M: 1, OutputPer1M: 1}})
+	if !strings.Contains(buf.String(), "(no pricing)") {
+		t.Errorf("PrintTokenUsage() missing (no pricing) marker:\n%s", buf.String())
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		ms   int64

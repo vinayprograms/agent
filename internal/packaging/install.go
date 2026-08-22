@@ -60,7 +60,7 @@ func Install(opts InstallOptions) (*InstallResult, error) {
 
 	// Extract content
 	if err := extractContent(pkg.Content, pkgDir); err != nil {
-		return nil, fmt.Errorf("failed to extract content: %w", err)
+		return nil, fmt.Errorf("extracting %q: %w", pkgDir, err)
 	}
 
 	result.InstallPath = pkgDir

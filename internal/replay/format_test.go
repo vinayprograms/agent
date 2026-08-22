@@ -41,6 +41,46 @@ func TestFmtSubAgentStart_NoModel(t *testing.T) {
 	}
 }
 
+func TestFmtSubAgentEnd_Error(t *testing.T) {
+	r := New(0)
+	e := session.Event{Type: session.EventSubAgentEnd, Error: "boom",
+		Meta: &session.EventMeta{SubAgentName: "worker"}}
+	var buf bytes.Buffer
+	var lastGoal string
+	r.formatEvent(&buf, 1, &e, &lastGoal)
+	out := buf.String()
+	if !strings.Contains(out, "failed") || !strings.Contains(out, "boom") {
+		t.Errorf("output missing failed status/error, got: %s", out)
+	}
+}
+
+func TestFmtSecurityBlock_ToolFallbackAndNoSource(t *testing.T) {
+	r := New(0)
+
+	// Source empty, Tool set -> falls back to Tool.
+	e := session.Event{Type: session.EventSecurityBlock, Tool: "web_fetch",
+		Meta: &session.EventMeta{BlockID: "b0001"}}
+	var buf bytes.Buffer
+	var lastGoal string
+	r.formatEvent(&buf, 1, &e, &lastGoal)
+	if !strings.Contains(buf.String(), "web_fetch") {
+		t.Errorf("output missing tool fallback source, got: %s", buf.String())
+	}
+
+	// Neither Source nor Tool set, no RelatedBlocks -> no arrow, no "tainted by" line.
+	e2 := session.Event{Type: session.EventSecurityBlock,
+		Meta: &session.EventMeta{BlockID: "b0002"}}
+	var buf2 bytes.Buffer
+	r.formatEvent(&buf2, 2, &e2, &lastGoal)
+	out2 := buf2.String()
+	if strings.Contains(out2, "←") {
+		t.Errorf("output should have no source arrow, got: %s", out2)
+	}
+	if strings.Contains(out2, "tainted by") {
+		t.Errorf("output should have no tainted-by line, got: %s", out2)
+	}
+}
+
 func TestPrintSubAgentOutput_Truncation(t *testing.T) {
 	lines := make([]string, 60)
 	for i := range lines {

@@ -42,7 +42,7 @@ var (
 func (m Model) View() string {
 	var s strings.Builder
 
-	switch m.step {
+	switch m.screen {
 	case ScreenWelcome:
 		s.WriteString(m.viewWelcome())
 	case ScreenScenario:

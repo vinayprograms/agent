@@ -43,15 +43,16 @@ func newPager(title string) *pager {
 	}
 }
 
-// Run starts the interactive pager.
-func (p *pager) Run(content string) error {
+// Run starts the interactive pager. opts are passed through to
+// tea.NewProgram after the pager's own defaults, e.g. tea.WithInput,
+// tea.WithOutput, or tea.WithoutRenderer for tests.
+func (p *pager) Run(content string, opts ...tea.ProgramOption) error {
 	prog := tea.NewProgram(
 		&pagerModel{
 			title:   p.title,
 			content: content,
 		},
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
+		append([]tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion()}, opts...)...,
 	)
 
 	_, err := prog.Run()
@@ -62,8 +63,10 @@ func (p *pager) Run(content string) error {
 // further writes to settle before reporting a change.
 const defaultDebounce = 100 * time.Millisecond
 
-// RunLive starts the interactive pager with live file watching.
-func (p *pager) RunLive(filePath string, renderFunc func() (string, error)) error {
+// RunLive starts the interactive pager with live file watching. opts are
+// passed through to tea.NewProgram after the pager's own defaults, e.g.
+// tea.WithInput, tea.WithOutput, or tea.WithoutRenderer for tests.
+func (p *pager) RunLive(filePath string, renderFunc func() (string, error), opts ...tea.ProgramOption) error {
 	// Initial render
 	content, err := renderFunc()
 	if err != nil {
@@ -90,8 +93,7 @@ func (p *pager) RunLive(filePath string, renderFunc func() (string, error)) erro
 			watcher:    watcher,
 			debounce:   defaultDebounce,
 		},
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
+		append([]tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion()}, opts...)...,
 	)
 
 	_, err = prog.Run()
