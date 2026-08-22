@@ -1,4 +1,4 @@
-// Package main is the headless agent CLI: load credentials, parse CLI, dispatch.
+// Package main is the headless agent CLI: parse CLI, load what the command needs, dispatch.
 package main
 
 import (
@@ -18,26 +18,11 @@ var (
 	buildTime = "unknown"
 )
 
-// globalCreds holds loaded credentials (file > env fallback happens in GetAPIKey)
-var globalCreds *credentials.Credentials
-
-func init() {
-	// Load credentials from standard locations
-	// Priority: credentials.toml > env vars (handled by GetAPIKey)
-	creds, path, err := credentials.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: failed to load credentials from %s: %v\n", path, err)
-		os.Exit(1)
-	}
-	if creds != nil {
-		globalCreds = creds
-	}
-
-	// Load .env for any additional env vars
-	_ = godotenv.Load()
-}
-
 func main() {
+	// Load .env for any additional env vars (credentials are read from env
+	// when no credentials file is present).
+	_ = godotenv.Load()
+
 	root, _ := newRootCmd()
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -45,13 +30,25 @@ func main() {
 	}
 }
 
-// runContext provides shared dependencies to commands.
-type runContext struct {
-	creds *credentials.Credentials
+// loadCredentials composes the credential lookup from env, the first
+// credentials.toml in the standard locations, and the Claude CLI token.
+// It runs inside the commands that need it, so a broken credentials file
+// does not break --help, validate, pack and friends.
+func loadCredentials() (credentials.Lookup, error) {
+	creds, _, err := credentials.Load(credentials.StandardPaths("grid")...)
+	if err != nil {
+		return nil, fmt.Errorf("loading credentials: %w", err)
+	}
+	return creds, nil
 }
 
 // Run executes the run command.
-func (c *RunCmd) Run(ctx *runContext) error {
+func (c *RunCmd) Run() error {
+	creds, err := loadCredentials()
+	if err != nil {
+		return err
+	}
+
 	w := &workflow{
 		agentfilePath: c.File,
 		inputs:        c.Input,
@@ -89,7 +86,7 @@ func (c *RunCmd) Run(ctx *runContext) error {
 		}
 	}
 
-	rt := newRuntime(w, ctx.creds)
+	rt := newRuntime(w, creds)
 	defer rt.cleanup()
 
 	if err := rt.setup(); err != nil {
@@ -105,7 +102,7 @@ func (c *RunCmd) Run(ctx *runContext) error {
 }
 
 // Run executes the validate command.
-func (c *ValidateCmd) Run(ctx *runContext) error {
+func (c *ValidateCmd) Run() error {
 	if _, err := os.Stat(c.File); os.IsNotExist(err) {
 		return fmt.Errorf("%s not found", c.File)
 	}
@@ -120,7 +117,7 @@ func (c *ValidateCmd) Run(ctx *runContext) error {
 }
 
 // Run executes the inspect command.
-func (c *InspectCmd) Run(ctx *runContext) error {
+func (c *InspectCmd) Run() error {
 	if isPackageFile(c.Path) {
 		return runInspectPackage(c.Path)
 	}
@@ -128,38 +125,38 @@ func (c *InspectCmd) Run(ctx *runContext) error {
 }
 
 // Run executes the pack command.
-func (c *PackCmd) Run(ctx *runContext) error {
+func (c *PackCmd) Run() error {
 	return runPack(c)
 }
 
 // Run executes the verify command.
-func (c *VerifyCmd) Run(ctx *runContext) error {
+func (c *VerifyCmd) Run() error {
 	return runVerify(c.Package, c.Key)
 }
 
 // Run executes the install command.
-func (c *InstallCmd) Run(ctx *runContext) error {
+func (c *InstallCmd) Run() error {
 	return runInstall(c)
 }
 
 // Run executes the keygen command.
-func (c *KeygenCmd) Run(ctx *runContext) error {
+func (c *KeygenCmd) Run() error {
 	return runKeygen(c.Output)
 }
 
 // Run executes the setup command.
-func (c *SetupCmd) Run(ctx *runContext) error {
+func (c *SetupCmd) Run() error {
 	runSetup()
 	return nil
 }
 
 // Run executes the replay command.
-func (c *ReplayCmd) Run(ctx *runContext) error {
+func (c *ReplayCmd) Run() error {
 	return runReplay(c.Session, c.Verbose, c.NoPager, c.Cost)
 }
 
 // Run executes the version command.
-func (c *VersionCmd) Run(ctx *runContext) error {
+func (c *VersionCmd) Run() error {
 	fmt.Printf("agent version %s (commit: %s, built: %s)\n", version, commit, buildTime)
 	return nil
 }

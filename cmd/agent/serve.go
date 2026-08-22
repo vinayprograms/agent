@@ -18,18 +18,18 @@ import (
 	"github.com/vinayprograms/agent/internal/executor"
 	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agent/internal/swarm"
-	"github.com/vinayprograms/agentkit/bus"
 	"github.com/vinayprograms/agentkit/credentials"
-	"github.com/vinayprograms/agentkit/heartbeat"
-	"github.com/vinayprograms/agentkit/registry"
-	"github.com/vinayprograms/agentkit/tasks"
+	"github.com/vinayprograms/agentkit/policy"
+	"github.com/vinayprograms/agentkit/tools"
+	"github.com/vinayprograms/swarmkit/messaging"
+	"github.com/vinayprograms/swarmkit/registry"
 )
 
 // serviceAgent holds the state for a running service agent.
 type serviceAgent struct {
 	// Reuse workflow loading infrastructure
 	wf    *workflow
-	creds *credentials.Credentials
+	creds credentials.Lookup
 
 	// Agent identity (uses session ID)
 	agentID         string
@@ -37,32 +37,64 @@ type serviceAgent struct {
 	displayName     string // swarm agent name (or Agentfile NAME if standalone)
 	agentType       string // "worker" (default) or "manager"
 	capabilitiesStr string // "cap1:n,cap2:n" for manager dispatch
-	capability      registry.CapabilitySchema
+	capability      capabilitySchema
 
 	// Service-level session (shared across all tasks)
 	serviceRuntime *runtime
 
 	// Runtime state
 	status       string // "idle", "busy", "draining"
-	currentTask  *tasks.TaskMessage
+	currentTask  *swarm.TaskMessage
 	taskDone     chan struct{}
 	drainTimeout time.Duration
 
 	// HTTP server (for local mode)
 	httpServer *http.Server
 
-	// Bus mode components
-	bus         bus.MessageBus
+	// Bus mode components. The bus (pub/sub, heartbeat) and the raw NATS
+	// connection (JetStream) are separate dials: swarmkit's bus does not
+	// expose its connection (A-S3).
+	bus         messaging.Bus
 	js          nats.JetStreamContext // JetStream context (nil if unavailable)
-	heartbeat   *heartbeat.BusSender
+	heartbeat   *swarm.BusSender
 	reg         registry.Registry
-	taskSubs    []bus.Subscription  // work.<cap>.* subscriptions (fallback)
-	workPullSub *nats.Subscription  // JetStream pull consumer for work (preferred)
-	instanceSub bus.Subscription    // work.<instance-id>.* for corrections
-	agentInfo   *registry.AgentInfo // cached for re-registration on TTL expiry
-	discussSub  bus.Subscription    // discuss.* subscription (manager only — read)
-	controlSub  bus.Subscription    // control.<id>.shutdown subscription
+	taskSubs    []messaging.Subscription // work.<cap>.* subscriptions (fallback)
+	workPullSub *nats.Subscription       // JetStream pull consumer for work (preferred)
+	instanceSub messaging.Subscription   // work.<instance-id>.* for corrections
+	discussSub  messaging.Subscription   // discuss.* subscription (manager only — read)
+	controlSub  messaging.Subscription   // control.<id>.shutdown subscription
 	queueGroup  string
+}
+
+// capabilitySchema is the document served on GET /capability. It keeps the
+// pre-migration JSON shape (the swarmkit registry.Skill has a different one).
+type capabilitySchema struct {
+	Name        string        `json:"name"`
+	Version     string        `json:"version,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Inputs      []fieldSchema `json:"inputs,omitempty"`
+	Outputs     []fieldSchema `json:"outputs,omitempty"`
+}
+
+// fieldSchema describes one input or output of a capability.
+type fieldSchema struct {
+	Name        string `json:"name"`
+	Required    bool   `json:"required"`
+	Default     string `json:"default,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// skill converts the capability into the swarmkit registry's skill shape.
+func (c capabilitySchema) skill() registry.Skill {
+	s := registry.Skill{ID: c.Name, Name: c.Name, Description: c.Description}
+	for _, f := range c.Inputs {
+		s.Inputs = append(s.Inputs, registry.Param(f))
+	}
+	for _, f := range c.Outputs {
+		s.Outputs = append(s.Outputs, registry.Param(f))
+	}
+	return s
 }
 
 // Run executes the serve command.
@@ -121,10 +153,9 @@ func (cmd *ServeCmd) Run() error {
 	}
 
 	// Load credentials (same as run mode)
-	creds, _, err := credentials.Load()
+	creds, err := loadCredentials()
 	if err != nil {
-		// Credentials are optional, continue with nil
-		creds = nil
+		return err
 	}
 
 	// Create service-level runtime (one session for entire service lifetime)
@@ -228,7 +259,7 @@ func (a *serviceAgent) runHTTPMode() error {
 		}
 
 		// Parse task message
-		var task tasks.TaskMessage
+		var task swarm.TaskMessage
 		if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
 			http.Error(w, fmt.Sprintf("invalid task: %v", err), http.StatusBadRequest)
 			return
@@ -245,7 +276,7 @@ func (a *serviceAgent) runHTTPMode() error {
 
 		// Return result
 		w.Header().Set("Content-Type", "application/json")
-		if result.Status == tasks.ResultFailed {
+		if result.Status == swarm.ResultFailed {
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 		json.NewEncoder(w).Encode(result)
@@ -289,11 +320,10 @@ func (a *serviceAgent) runBusMode() error {
 	defer cancel()
 
 	// Connect to NATS
-	cfg := bus.NATSConfig{
-		URL:  a.wf.cfg.Service.BusURL,
-		Name: fmt.Sprintf("agent-%s", a.agentID),
-	}
-	natsBus, err := bus.NewNATSBus(cfg)
+	cfg := messaging.NATSDefaults()
+	cfg.URL = a.wf.cfg.Service.BusURL
+	cfg.Name = fmt.Sprintf("agent-%s", a.agentID)
+	natsBus, err := messaging.NATS(cfg)
 	if err != nil {
 		return fmt.Errorf("connecting to bus: %w", err)
 	}
@@ -304,7 +334,10 @@ func (a *serviceAgent) runBusMode() error {
 	if a.agentType == "manager" {
 		caps := parseSwarmCapabilities(a.capabilitiesStr)
 		dispatchTool := swarm.NewDispatchTool(natsBus, a.displayName, caps)
-		a.serviceRuntime.registry.Register(dispatchTool)
+		if err := a.serviceRuntime.registry.Register(tools.New(dispatchTool)); err != nil {
+			return fmt.Errorf("registering dispatch tool: %w", err)
+		}
+		enableTool(a.serviceRuntime.pol, dispatchTool.Name())
 		fmt.Fprintf(os.Stderr, "✓ Dispatch tool registered (manager-only)\n")
 		for _, c := range caps {
 			fmt.Fprintf(os.Stderr, "  capability: %s (%d workers)\n", c.Name, c.Replicas)
@@ -312,8 +345,10 @@ func (a *serviceAgent) runBusMode() error {
 	}
 
 	// Register with NATS KV registry (for discovery)
-	if err := a.registerWithRegistry(natsBus); err != nil {
+	if err := a.registerWithRegistry(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  Registry registration failed: %v (continuing without registry)\n", err)
+	} else {
+		defer a.reg.Close()
 	}
 
 	// Parse heartbeat interval
@@ -325,7 +360,7 @@ func (a *serviceAgent) runBusMode() error {
 	}
 
 	// Start heartbeat sender
-	hbSender, err := heartbeat.NewBusSender(heartbeat.SenderConfig{
+	hbSender, err := swarm.NewBusSender(swarm.SenderConfig{
 		Bus:           natsBus,
 		AgentID:       a.agentID,
 		Interval:      heartbeatInterval,
@@ -343,7 +378,7 @@ func (a *serviceAgent) runBusMode() error {
 	hbSender.SetMetadata("version", version)
 
 	// Wire metrics collector for dashboard reporting
-	mc := heartbeat.NewMetricsCollector(hbSender)
+	mc := swarm.NewMetricsCollector(hbSender)
 	a.serviceRuntime.exec.SetMetricsCollector(mc)
 
 	// Wire event publisher — streams structured session events to NATS
@@ -358,28 +393,20 @@ func (a *serviceAgent) runBusMode() error {
 	})
 	defer a.serviceRuntime.exec.ClearEventPublisher()
 
-	// Add registry TTL touch to heartbeat callback.
-	// If the entry expired (e.g., missed heartbeats under load), re-register.
-	if a.reg != nil {
-		hbSender.SetCallback(func() {
-			if err := a.reg.Touch(a.agentID); err != nil {
-				if err == registry.ErrNotFound {
-					a.reRegister()
-				} else {
-					fmt.Fprintf(os.Stderr, "⚠️  Registry touch failed: %v\n", err)
-				}
-			}
-		})
-	}
-
 	if err := hbSender.Start(ctx); err != nil {
 		return fmt.Errorf("starting heartbeat: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "📡 Heartbeat started on subject: heartbeat.%s\n", a.agentID)
 	defer hbSender.Stop()
 
-	// Ensure JetStream stream exists for durable messaging
-	js, jsErr := swarm.EnsureStream(natsBus.Conn())
+	// Ensure JetStream stream exists for durable messaging. JetStream needs
+	// a raw connection, which the bus does not expose: dial a second one.
+	var js nats.JetStreamContext
+	nc, jsErr := nats.Connect(cfg.URL, nats.Name(cfg.Name+"-js"))
+	if jsErr == nil {
+		defer nc.Close()
+		js, jsErr = swarm.EnsureStream(nc)
+	}
 	if jsErr != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  JetStream unavailable: %v (falling back to queue groups)\n", jsErr)
 	}
@@ -407,7 +434,7 @@ func (a *serviceAgent) runBusMode() error {
 	if a.workPullSub == nil {
 		// Fallback: NATS queue groups (push-based)
 		workSubject := fmt.Sprintf("work.%s.*", cap)
-		workSub, err := natsBus.QueueSubscribe(workSubject, a.queueGroup)
+		workSub, err := natsBus.Join(a.queueGroup).Subscribe(workSubject)
 		if err != nil {
 			return fmt.Errorf("subscribing to %s: %w", workSubject, err)
 		}
@@ -479,7 +506,7 @@ func (a *serviceAgent) runBusMode() error {
 
 func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
 	// Work channel — fed by either JetStream pull or queue group push
-	workCh := make(chan *bus.Message, 16)
+	workCh := make(chan *messaging.Message, 16)
 
 	if a.workPullSub != nil {
 		// JetStream pull consumer: fetch one task at a time, ack after processing
@@ -487,7 +514,7 @@ func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
 	} else {
 		// Fallback: push-based queue group subscriptions
 		for _, sub := range a.taskSubs {
-			go func(s bus.Subscription) {
+			go func(s messaging.Subscription) {
 				for msg := range s.Messages() {
 					workCh <- msg
 				}
@@ -496,19 +523,19 @@ func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
 	}
 
 	// Instance channel (corrections → interrupt buffer during execution)
-	var instanceCh <-chan *bus.Message
+	var instanceCh <-chan *messaging.Message
 	if a.instanceSub != nil {
 		instanceCh = a.instanceSub.Messages()
 	}
 
 	// Discuss channel (manager only — monitoring worker progress)
-	var discussCh <-chan *bus.Message
+	var discussCh <-chan *messaging.Message
 	if a.discussSub != nil {
 		discussCh = a.discussSub.Messages()
 	}
 
 	// Control channel (remote shutdown via `swarm down`)
-	var controlCh <-chan *bus.Message
+	var controlCh <-chan *messaging.Message
 	if a.controlSub != nil {
 		controlCh = a.controlSub.Messages()
 	}
@@ -556,7 +583,7 @@ func (a *serviceAgent) runMainLoop(ctx context.Context, sigCh chan os.Signal) {
 
 // handleInstanceMessage processes a corrective guidance message from
 // work.<instance-id>.* and pushes it into the interrupt buffer.
-func (a *serviceAgent) handleInstanceMessage(msg *bus.Message) {
+func (a *serviceAgent) handleInstanceMessage(msg *messaging.Message) {
 	buf := a.serviceRuntime.exec.InterruptBuffer()
 	if buf == nil {
 		// Not currently executing — log and discard
@@ -568,7 +595,7 @@ func (a *serviceAgent) handleInstanceMessage(msg *bus.Message) {
 	var content string
 	var from string
 
-	task, err := tasks.UnmarshalTaskMessage(msg.Data)
+	task, err := swarm.UnmarshalTaskMessage(msg.Data)
 	if err == nil {
 		content = buildTaskText(task)
 		from = task.SubmittedBy
@@ -592,7 +619,7 @@ func (a *serviceAgent) handleInstanceMessage(msg *bus.Message) {
 
 // handleManagerDiscussMessage processes worker updates on discuss.* (manager only).
 // For now, this logs the update. Future: feed into manager's reasoning context.
-func (a *serviceAgent) handleManagerDiscussMessage(ctx context.Context, msg *bus.Message) {
+func (a *serviceAgent) handleManagerDiscussMessage(ctx context.Context, msg *messaging.Message) {
 	// Parse discuss message
 	var update struct {
 		InstanceID string `json:"instance_id"`
@@ -603,7 +630,7 @@ func (a *serviceAgent) handleManagerDiscussMessage(ctx context.Context, msg *bus
 	}
 	if err := json.Unmarshal(msg.Data, &update); err != nil {
 		// Try as TaskResult format
-		var result tasks.TaskResult
+		var result swarm.TaskResult
 		if err := json.Unmarshal(msg.Data, &result); err != nil {
 			return
 		}
@@ -655,51 +682,55 @@ func truncateStr(s string, max int) string {
 	return s[:max] + "..."
 }
 
-// registerWithRegistry registers the agent's resume with NATS KV.
-func (a *serviceAgent) registerWithRegistry(natsBus *bus.NATSBus) error {
-	conn := natsBus.Conn()
-	if conn == nil {
-		return fmt.Errorf("no NATS connection")
-	}
-
-	regCfg := registry.DefaultNATSRegistryConfig()
-	natsReg, err := registry.NewNATSRegistry(conn, regCfg)
+// registerWithRegistry registers the agent with the NATS KV registry. The
+// registry dials its own connection from cfg. Entries persist until
+// Deregister (no TTL, so no touch/re-register loop — A-S4).
+func (a *serviceAgent) registerWithRegistry(cfg messaging.NATSConfig) error {
+	reg, err := registry.New(registry.Config{NATS: cfg})
 	if err != nil {
 		return fmt.Errorf("creating registry: %w", err)
 	}
-	a.reg = natsReg
 
-	// Build agent info for registry
-	info := registry.AgentInfo{
-		ID:           a.agentID,
-		Name:         a.capability.Name,
-		Capabilities: a.getCapabilities(),
-		Status:       registry.StatusIdle,
-		Load:         0,
+	if err := reg.Register(a.registryEntry()); err != nil {
+		reg.Close()
+		return fmt.Errorf("registering agent: %w", err)
+	}
+	a.reg = reg
+
+	fmt.Fprintf(os.Stderr, "📝 Registered with NATS KV registry\n")
+	return nil
+}
+
+// registryEntry builds the agent's registry record: identity, the single
+// announced capability as a skill, and the metadata the swarm UI reads.
+func (a *serviceAgent) registryEntry() registry.Agent {
+	capName := a.getCapabilities()[0]
+	skill := a.capability.skill()
+	skill.ID, skill.Name = capName, capName
+	return registry.Agent{
+		ID:      a.agentID,
+		Name:    a.capability.Name,
+		Version: version,
+		Skills:  []registry.Skill{skill},
 		Metadata: map[string]string{
 			"version":     version,
 			"instance_id": a.instanceID,
 			"type":        a.agentType,
 		},
 	}
-
-	if err := natsReg.Register(info); err != nil {
-		return fmt.Errorf("registering agent: %w", err)
-	}
-	a.agentInfo = &info
-
-	fmt.Fprintf(os.Stderr, "📝 Registered with NATS KV registry\n")
-	return nil
 }
 
-// reRegister re-registers the agent after its KV entry expired.
-func (a *serviceAgent) reRegister() {
-	if a.reg == nil || a.agentInfo == nil {
+// enableTool lists a tool in the policy so the executor advertises and runs
+// it. Used for tools the serve mode registers itself (dispatch).
+func enableTool(pol *policy.Policy, name string) {
+	if pol == nil {
 		return
 	}
-	a.agentInfo.LastSeen = time.Now()
-	if err := a.reg.Register(*a.agentInfo); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Registry re-registration failed: %v\n", err)
+	if pol.Tools == nil {
+		pol.Tools = make(map[string]*policy.ToolPolicy)
+	}
+	if _, ok := pol.Tools[name]; !ok {
+		pol.Tools[name] = &policy.ToolPolicy{}
 	}
 }
 
@@ -713,7 +744,7 @@ func (a *serviceAgent) getCapabilities() []string {
 }
 
 // buildTaskText extracts a readable text representation from a task message.
-func buildTaskText(task *tasks.TaskMessage) string {
+func buildTaskText(task *swarm.TaskMessage) string {
 	parts := []string{}
 	if task.Capability != "" {
 		parts = append(parts, "Capability: "+task.Capability)
@@ -730,7 +761,7 @@ func buildTaskText(task *tasks.TaskMessage) string {
 // pullWorkLoop fetches tasks from the JetStream pull consumer one at a time.
 // Each message is acked only after the worker finishes processing it,
 // guaranteeing exactly-once delivery across the worker pool.
-func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *bus.Message) {
+func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *messaging.Message) {
 	consecutiveErrors := 0
 	for {
 		// Fetch one message at a time (blocks until available or timeout)
@@ -768,8 +799,8 @@ func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *bus.Mess
 		consecutiveErrors = 0
 
 		for _, natsMsg := range msgs {
-			// Convert to bus.Message for handleBusTask compatibility
-			busMsg := &bus.Message{
+			// Convert to messaging.Message for handleBusTask compatibility
+			busMsg := &messaging.Message{
 				Subject: natsMsg.Subject,
 				Data:    natsMsg.Data,
 			}
@@ -800,9 +831,9 @@ func (a *serviceAgent) pullWorkLoop(ctx context.Context, workCh chan<- *bus.Mess
 }
 
 // handleBusTask processes a task received from the bus.
-func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
+func (a *serviceAgent) handleBusTask(ctx context.Context, msg *messaging.Message) {
 	// Parse task message
-	task, err := tasks.UnmarshalTaskMessage(msg.Data)
+	task, err := swarm.UnmarshalTaskMessage(msg.Data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  ✗ Invalid task message: %v\n", err)
 		return
@@ -860,13 +891,13 @@ func (a *serviceAgent) handleBusTask(ctx context.Context, msg *bus.Message) {
 
 	// Publish final completion update to discuss.*
 	finalContent := fmt.Sprintf("%v", result.Outputs)
-	if result.Status == tasks.ResultFailed {
+	if result.Status == swarm.ResultFailed {
 		finalContent = fmt.Sprintf("FAILED: %s", result.Error)
 	}
 	a.publishToDiscuss(task.TaskID, "complete", finalContent)
 
 	statusIcon := "✓"
-	if result.Status == tasks.ResultFailed {
+	if result.Status == swarm.ResultFailed {
 		statusIcon = "✗"
 	}
 	fmt.Fprintf(os.Stderr, "  %s Task complete: %s (%s, %dms)\n",
@@ -945,7 +976,7 @@ func (a *serviceAgent) initiateBusShutdown(ctx context.Context) {
 }
 
 // executeTask runs a single task through the workflow.
-func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage) *tasks.TaskResult {
+func (a *serviceAgent) executeTask(ctx context.Context, task *swarm.TaskMessage) *swarm.TaskResult {
 	start := time.Now()
 	a.status = "busy"
 	a.currentTask = task
@@ -958,7 +989,7 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage)
 		}
 	}()
 
-	result := tasks.NewTaskResult(task.TaskID, a.agentID, tasks.ResultSuccess)
+	result := swarm.NewTaskResult(task.TaskID, a.agentID, swarm.ResultSuccess)
 	result.CorrelationID = task.CorrelationID
 	result.Attempt = task.Attempt
 
@@ -975,11 +1006,11 @@ func (a *serviceAgent) executeTask(ctx context.Context, task *tasks.TaskMessage)
 	}
 	execResult, err := a.serviceRuntime.exec.Run(ctx, inputs)
 	if err != nil {
-		result.Status = tasks.ResultFailed
+		result.Status = swarm.ResultFailed
 		result.Error = err.Error()
 		fmt.Fprintf(os.Stderr, "  ✗ Execution error: %v\n", err)
 	} else if execResult.Status != "complete" {
-		result.Status = tasks.ResultFailed
+		result.Status = swarm.ResultFailed
 		result.Error = fmt.Sprintf("workflow status: %s", execResult.Status)
 		result.Outputs = execResult.Outputs
 		fmt.Fprintf(os.Stderr, "  ✗ Workflow failed with status: %s\n", execResult.Status)
@@ -1023,15 +1054,15 @@ func (a *serviceAgent) initiateShutdown(ctx context.Context) {
 }
 
 // extractCapabilitySchema extracts capability info from an Agentfile.
-func extractCapabilitySchema(wf *agentfile.Workflow, name string) registry.CapabilitySchema {
-	schema := registry.CapabilitySchema{
+func extractCapabilitySchema(wf *agentfile.Workflow, name string) capabilitySchema {
+	schema := capabilitySchema{
 		Name:        name,
 		Description: fmt.Sprintf("Workflow: %s", wf.Name),
 	}
 
 	// Extract inputs from Agentfile
 	for _, input := range wf.Inputs {
-		field := registry.FieldSchema{
+		field := fieldSchema{
 			Name:     input.Name,
 			Required: input.Default == nil,
 			Type:     "string",
@@ -1045,7 +1076,7 @@ func extractCapabilitySchema(wf *agentfile.Workflow, name string) registry.Capab
 	// Extract outputs from goals (if declared with ->)
 	for _, goal := range wf.Goals {
 		for _, output := range goal.Outputs {
-			field := registry.FieldSchema{
+			field := fieldSchema{
 				Name: output,
 				Type: "string",
 			}
