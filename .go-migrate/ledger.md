@@ -30,13 +30,20 @@ Maps: `maps/map-core.md` (llm/tools/policy/mcp/memory/credentials), `maps/map-gu
 ### guards (map-guards §5)
 - A-G1 modes: default = Escalatory(Screener, Reviewer); paranoid = Paranoid(Screener, Reviewer) (docs-07 semantics); research = default + Context["scope"].
 - A-G2 one Guard per run (no per-agent filtering); `event_seq` dropped from TaintNode (omitempty).
+  > What does this mean. Are you saying one instance of guard per run or a brand new Guard instance created every time a related tool is called.
 - A-G3 audit trail DROPPED (never exported); docs/security/06 + 07-invariant-3 amended to point at session JSONL.
+  > What do you mean "never exported"? Were we exporting
 - A-G4 legacy `telemetry.Exporter.LogEvent` hooks DROPPED; `InitProvider` copied verbatim to `internal/telemetry`.
 - A-G5 logging → `log/slog` to stderr; small in-repo helpers for the domain events (PhaseStart, SupervisorVerdict…).
 - A-G6 block correlation (`argsContainBlockData`, ~25 lines) re-implemented in-repo so `block_id`/`related_blocks` stay narrow.
+  > `argsContainBlockData` feels like Java naming concention. Didn't we stress a lot about single word names and use namespacing to achieve things instead of multiword names?
 - A-G7 token-counting decorator around the security `llm.Model` so session events keep token counts.
+  > How are you counting the tokens since each model has a different mapping between characters and tokens? Are we using some average multiplier like `1.3x` or so?
 - A-G8 contentguard Skip list = all registered tools except {bash, write, edit, web_fetch, spawn_agents, rm, mv, patch} (old high-risk set + destructive fs tools).
+  > Why are we skipping content guard for registerd tools? That would mean all MCPs are out of scope for content guarding.
 ### swarm (map-swarm §12)
+> Not reviewing this since swarm will be an entirely different project!
+
 - A-S1 keep the repo's JetStream layer (stream `SWARM`, in-repo pull consumer); do NOT adopt swarmkit `task.Dispatcher/Worker`.
 - A-S2 task/result/heartbeat envelopes + `MetricsCollector` IN-SOURCED VERBATIM into `internal/swarm` (wire byte-identical). swarmkit used for `messaging` (bus) and `registry` only.
 - A-S3 raw `*nats.Conn` for JetStream: open a second `nats.Connect` in serve (swarmkit packages each dial their own).
@@ -79,7 +86,7 @@ API: Config{ServiceName,ServiceVersion,Endpoint,Protocol,Insecure,Headers,BatchT
 DEVIATION (verified by verifier): old kit InitProvider ALWAYS failed (semconv v1.26.0 schema conflict with sdk resource.Default) — tracing never worked; now uses resource.Default().SchemaURL(). coverage 97.8% — sole uncovered stmt is resource.Merge error return, unreachable by construction (accepted).
 parked-smells: ServiceName doc says required but defaults; fmt.Errorf without verbs; batch/export timeouts not surfaced in internal/config.
 ### U4 internal/tools/websearch — DONE (224f059, verifier PASS)
-API: websearch.New(creds credentials.Lookup, searxngURL, provider string) *Tool; register via tools.New(...) INSTEAD of tools.Search. Params query/count identical to v1.2.0 built-in. creds resolved at construction (config > lookup > env). coverage 100%.
+API: websearch.New(creds credentials.Lookup, searxngURL, provider string) `*Tool`; register via tools.New(...) INSTEAD of tools.Search. Params query/count identical to v1.2.0 built-in. creds resolved at construction (config > lookup > env). coverage 100%.
 parked-smells: rate-limiter state is package-global (t.Parallel hazard) → move onto Tool in refactor phase; no WithHTTPTimeout option; Referer uses const not t.ddgURL; package-doc wording on env fallback.
 
 ## Checkpoint 2026-08-21 (usage-limit pause)
@@ -152,14 +159,14 @@ parked-smells: grep/glob guarded under "read" (document); http.Server timeouts; 
 Profile(name) LLMConfig (bug fix: BaseURL/Thinking/retries now carried); Profiles map[string]LLMConfig; typed Protocol consts; LoadOptions{Home, Getenv}; Config.Deprecations (cmd/agent prints WARN); DefaultConfigDir=~/.config/grid, DefaultStateDir=~/.local/agent (user's explicit choice kept; semantic-memory.md updated); six dead funcs deleted; [storage] compat decoded once. coverage 100%.
 Process note: ALWAYS merge from the main checkout (`git -C /Users/vinay/Documents/projects/agent merge …`), never from inside a worktree.
 ### R8 skills/hooks/checkpoint/supervision/packaging/swarm/websearch — DONE (7 commits, merged 9ea98e8; verifier PASS — old-binary package signatures still verify)
-skills: traversal guard (ReadReference/ScriptPath reject abs/..), Discover returns invalid list; 100%. hooks 100%. checkpoint: Store (no stutter), consumer iface supervision.Store, Checkpoint(id)/Trail() copies, single upsert, PathEscape'd file names, Load deleted; 97.4%. supervision: Work{Commit,Execute,Post}, Event, <-chan string, decision struct, Supervisor iface kept (Pipeline is an in-package consumer); 100%. packaging: split by concern, os.Root zip-slip fix, TargetDir required, PEM checks, File/Agentfile/Config/Policy; 96.2%. swarm: dead Replay stack deleted, Logger on sender, MetricsCollector(MetadataSetter), Validate pure; 98.1%. websearch: state on Tool, WithHTTPTimeout, ErrNoProvider; 100%.
+skills: traversal guard (ReadReference/ScriptPath reject abs/..), Discover returns invalid list; 100%. hooks 100%. checkpoint: Store (no stutter), consumer iface supervision.Store, Checkpoint(id)/Trail() copies, single upsert, PathEscape'd file names, Load deleted; 97.4%. supervision: Work{Commit,Execute,Post}, Event, `<-chan string`, decision struct, Supervisor iface kept (Pipeline is an in-package consumer); 100%. packaging: split by concern, os.Root zip-slip fix, TargetDir required, PEM checks, File/Agentfile/Config/Policy; 96.2%. swarm: dead Replay stack deleted, Logger on sender, MetricsCollector(MetadataSetter), Validate pure; 98.1%. websearch: state on Tool, WithHTTPTimeout, ErrNoProvider; 100%.
 ### R2 internal/session — DONE (8e50543, merged 2b27f68; verifier PASS — golden verified against old code byte-for-byte)
 session.Open(dir, Sink) (*Recorder, error) with Create/Update/Get; Sink func(Event) set at construction (serve swaps publisher via atomic.Pointer outside session); ReadFile(path, ReadOptions) replaces replay/loader duplicate; ErrUnknownFormat; Store/FileStore/Manager/SessionManager/Message/ToolCall/EventSecurityTier* deleted; executor.Config.SessionManager deleted (executor no longer calls the recorder). AddEvent after Close appends in memory (never blocks), persisted by the final Update. Golden wire-format test TestRecorder_WireFormatGolden. coverage 100%.
 pre-existing wire quirk documented: Event.Error never written for event records (footer field shadows it).
 ### R9a internal/agentfile + internal/step — DONE (861e6e6, 8cf8c34; verifier PASS w/ follow-ups)
 agentfile: Validate returns errors.Join of *ValidationError{Line,Msg} (text preserved); ValidateWithoutPaths deleted; parser internals unexported (Lexer/Token* stay exported: tests/performance uses them); HumanRequiredStepNames. coverage 99.7%. step: 100%.
 R8 follow-ups for R1: archive extract error wording ("extracting %q"); skills.Discover dead outside tests; Windows-safe step-ID escaping; ErrNoProvider trailing prose.
-R9a follow-ups for R1: add errors.As/.Line assertions on Validate; delete two dead lexer branches (lexer.go:79-81, 159-161); decide on dropped "validation errors:" header (restore at LoadFile or CLI); TestLoadFile_SkillPathTildeExpansion writes to real $HOME → t.Setenv; drop TestNode_Marker coverage noise.
+R9a follow-ups for R1: add errors.As/.Line assertions on Validate; delete two dead lexer branches (lexer.go:79-81, 159-161); decide on dropped "validation errors:" header (restore at LoadFile or CLI); TestLoadFile_SkillPathTildeExpansion writes to real `$HOME` → t.Setenv; drop TestNode_Marker coverage noise.
 R2 follow-ups for R1: concurrent AddEvent+Flush/Close test; Session doc "fields are the caller's until Update"; runtime.go:373 wrap consistency.
 
 User ruling 2026-08-22: no further work on swarm (cmd/swarm, internal/swarm beyond what is merged). R1 sweep must skip cmd/swarm; R6 keeps serve.go in place (no internal/serve extraction of swarm-facing code beyond cmd/agent cleanups); R7 excludes swarm CLI.
@@ -215,3 +222,9 @@ Rerun 28-memory-research after R10b: EXIT=0 in 462s, Status complete, research-r
 
 ## FINAL STATE 2026-08-22 (test-results/rerun-report.md): 27 examples → 22 PASS (2 expected TTY blocks), 1 PARTIAL, 2 FAIL (both LLM/NETWORK stalls; 28 passes with the R10b binary — see above).
 Open items for a future session (not regressions): (1) no per-call timeout on LLM requests mid-goal (network stalls hang a goal until the wall-clock budget); (2) CONVERGE "tests pass" criterion can be gamed by a broken test oracle (43); (3) budget stop mid-final-iteration leaves a placeholder output (13); plus the low follow-ups listed under R11/R1b/R10b; X1 truncate dedupe and all swarm items deferred by user ruling.
+
+## Phase 4 — configuration UX (user request 2026-08-22)
+- [ ] C1 config dir `~/.config/grid` → `~/.config/agent` (config.DefaultConfigDir, credentials.StandardPaths("agent"), setup, docs/README, examples); legacy `~/.config/grid/*` still read with a one-time deprecation warning naming the new path.
+- [ ] C2 symmetry: default-policy fallback `~/.config/agent/policy.toml` (then permissive+warning); `--credentials PATH` on run/serve → run.LoadOptions.CredentialsPath (highest precedence, must exist).
+- [ ] C3 `agent config {init,show,validate,path}` with `--dir PATH | --default` (exclusive; neither ⇒ cwd). init: flags --provider --model --scenario --force, writes agent.toml+policy.toml (0644) + credentials.toml (0600, only with --api-key or env); generators shared with setup (extract to internal/configfile). show: effective values + source file per section, secrets redacted, --resolved. validate: schema + legacy keys + provider-without-credential. path: resolved paths. `setup` gains --dir/--default; edit mode must pre-fill from that location. No `set` (user decision).
+- [ ] C4 docs/configuration/README.md Configuration Guide (three files, lookup table, minimal→annotated reference, providers, profiles/REQUIRES, limits, security modes, legacy-key migration, credential hygiene); linked from README + cli-reference.
