@@ -53,7 +53,7 @@ Wave A (independent, parallel, each green in isolation):
 2. [x] U2 internal/telemetry — copy InitProvider verbatim (A-G4); otel deps
 3. [x] U3 internal/swarm — in-source envelopes/metrics (A-S2); dispatch tool → new tools.Tool; replay test
 4. [x] U4 internal/tools/websearch — new tools.Tool shape, credentials.Lookup
-5. [ ] U5 internal/setup — policy generator to new schema (A-C1), credentials FileStore
+5. [x] U5 internal/setup — policy generator to new schema (A-C1), credentials FileStore
 Wave B:
 6. [ ] U6 internal/supervision — llm.Model, slog (A-G5), tests on llmmock
 7. [ ] U7 cmd/swarm — tasks→internal/swarm envelopes, messaging re-point
@@ -92,3 +92,8 @@ Process note: append ledger records on main only (worktree-side edits conflict o
 ### U3 internal/swarm — DONE (774f1e2, verifier PASS)
 in-sourced verbatim: task.go (TaskMessage/TaskResult…), heartbeat.go (Heartbeat/BusSender on messaging.Bus), metrics.go (MetricsCollector). Re-point map: tasks.X→swarm.X, heartbeat.X→swarm.X, heartbeat.Unmarshal→swarm.UnmarshalHeartbeat. JSON tags pinned by TestTaskWireTags. DispatchTool on v1.2.0 tools.Tool. coverage 98.3% (4 unreachable marshal/JetStream error returns, verified). nats-server/v2 test dep (already in graph).
 parked-smells: BusSender.run swallows initial-beat error; Replay swallows NextMsg errors + hard-coded 5s drain (make injectable post-green); Validate mutates receiver; Sprintf("%d")→strconv; Sender iface could narrow; tests use Sleep polling + context.Background.
+### U5 internal/setup — DONE (cec0391 + 8caa743, verifier FAIL→PASS after 3 fixes)
+generator emits v1.2.0 policy schema (bare [tools.X] tables = enabled; deny/allow; [mcp] enabled/allow; [content.security]); round-trip test vs FromTOMLWithUnknownKeys for all scenarios. credentials via NewFileStore/SetAPIKey/Save at ~/.config/grid/credentials.toml; MCP probe via mcp.Stdio+Tools(). coverage 99.7% (Run() needs a TTY).
+fixes after round 1: loud legacy-key warning in loadExistingConfig (policyWarning on welcome); nil FileStore guard for empty credentials file (panic); expired Claude CLI token no longer offered.
+Confirmed: v1.2.0 policy cannot disable a single tool when default_deny=false (generator notes it). Pre-existing: restrictive policy leaves edit/ls/grep unlisted (same as old generator) → follow-up in refactor phase.
+parked-smells: 2180-line file; m.err never cleared; hand-rolled bubble sort; value-receiver cursor mutation; "mode 0400" hint vs 0600 file; ~/.config/agent vs ~/.config/grid; fresh-mode legacy policy.toml overwritten without warning.
