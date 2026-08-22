@@ -156,3 +156,5 @@ skills: traversal guard (ReadReference/ScriptPath reject abs/..), Discover retur
 ### R2 internal/session — DONE (8e50543, merged 2b27f68; verifier pending)
 session.Open(dir, Sink) (*Recorder, error) with Create/Update/Get; Sink func(Event) set at construction (serve swaps publisher via atomic.Pointer outside session); ReadFile(path, ReadOptions) replaces replay/loader duplicate; ErrUnknownFormat; Store/FileStore/Manager/SessionManager/Message/ToolCall/EventSecurityTier* deleted; executor.Config.SessionManager deleted (executor no longer calls the recorder). AddEvent after Close appends in memory (never blocks), persisted by the final Update. Golden wire-format test TestRecorder_WireFormatGolden. coverage 100%.
 pre-existing wire quirk documented: Event.Error never written for event records (footer field shadows it).
+### R9a internal/agentfile + internal/step — DONE (861e6e6, 8cf8c34; verifier pending)
+agentfile: Validate returns errors.Join of *ValidationError{Line,Msg} (text preserved); ValidateWithoutPaths deleted; parser/lexer internals unexported; HumanRequiredStepNames. coverage 99.7% (2 defensive guards unreachable). step: 100%.
