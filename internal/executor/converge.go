@@ -80,9 +80,12 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 
 					output, iterErr := e.executeConvergeIteration(ctx, goal, prompt)
 					if e.noteBudget(iterErr) {
-						// The goal is out of budget: stop iterating and keep
-						// what it has produced so far.
+						// Out of budget: keep this iteration's partial output
+						// and stop refining.
 						iterationCount = i
+						if trimmed := strings.TrimSpace(output); trimmed != "" {
+							lastOutput = trimmed
+						}
 						break
 					}
 					if iterErr != nil {
@@ -229,13 +232,10 @@ func (e *Executor) executeConvergeIteration(ctx context.Context, goal *agentfile
 	// Single-agent execution
 	e.currentGoal = goal.Name
 
-	// Use executePhase which handles tools, thinking, etc.
+	// Use executePhase which handles tools, thinking, etc. The output is
+	// returned even on error: a budget stop keeps its partial result.
 	output, _, _, err := e.executePhase(ctx, goal, prompt)
-	if err != nil {
-		return "", err
-	}
-
-	return output, nil
+	return output, err
 }
 
 // executeConvergeMultiAgent handles multi-agent execution within a convergence loop.

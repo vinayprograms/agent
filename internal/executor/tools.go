@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/hooks"
@@ -228,16 +227,12 @@ func (e *Executor) executeToolsParallel(ctx context.Context, toolCalls []llm.Too
 
 	// Fire async tools in the background. The executor owns them (Run waits),
 	// and cancellation is detached so a write in flight completes.
-	if len(asyncCalls) > 0 {
-		asyncCtx, cancelAsync := detach(ctx)
-		var async sync.WaitGroup
-		for _, idx := range asyncCalls {
-			tc := toolCalls[idx]
-			async.Go(func() { e.executeAsyncTool(asyncCtx, tc) })
-		}
+	for _, idx := range asyncCalls {
+		tc := toolCalls[idx]
+		asyncCtx, cancel := detach(ctx)
 		e.background.Go(func() {
-			defer cancelAsync()
-			async.Wait()
+			defer cancel()
+			e.executeAsyncTool(asyncCtx, tc)
 		})
 	}
 
