@@ -22,7 +22,7 @@ INPUT topic DEFAULT "AI safety" # Topic to research
 GOAL check-prior-knowledge """
 Before starting research, check if we have any relevant memories.
 
-Use memory_recall to search for memories related to: {{topic}}
+Use recall to search for memories related to: {{topic}}
 
 If relevant memories are found, summarize what we already know.
 If no relevant memories, note that this is a fresh research topic.
@@ -51,7 +51,7 @@ Store the most important insights from this research session.
 
 Findings: {{findings}}
 
-Use memory_remember to store 3-5 key insights, each with:
+Use remember to store 3-5 key insights, each with:
 - Clear, standalone content (should make sense without context)
 - Importance score (0.7-1.0 for key findings)
 - Tags: ["research", "{{topic}}"]
