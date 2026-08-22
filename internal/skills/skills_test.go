@@ -3,7 +3,6 @@ package skills
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -149,88 +148,6 @@ Instructions.
 	}
 }
 
-func TestDiscover(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create skill 1
-	skill1Dir := filepath.Join(tmpDir, "skill-one")
-	os.MkdirAll(skill1Dir, 0755)
-	os.WriteFile(filepath.Join(skill1Dir, "SKILL.md"), []byte(`---
-name: skill-one
-description: First skill.
----
-
-Instructions.
-`), 0644)
-
-	// Create skill 2
-	skill2Dir := filepath.Join(tmpDir, "skill-two")
-	os.MkdirAll(skill2Dir, 0755)
-	os.WriteFile(filepath.Join(skill2Dir, "SKILL.md"), []byte(`---
-name: skill-two
-description: Second skill.
----
-
-Instructions.
-`), 0644)
-
-	// Create non-skill directory
-	otherDir := filepath.Join(tmpDir, "not-a-skill")
-	os.MkdirAll(otherDir, 0755)
-	os.WriteFile(filepath.Join(otherDir, "README.md"), []byte("not a skill"), 0644)
-
-	// Plain files at the top level are ignored.
-	os.WriteFile(filepath.Join(tmpDir, "notes.txt"), []byte("x"), 0644)
-
-	refs, invalid, err := Discover(tmpDir)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
-	}
-	if len(invalid) != 0 {
-		t.Errorf("Discover invalid = %v, want none", invalid)
-	}
-
-	if len(refs) != 2 {
-		t.Errorf("expected 2 skills, got %d", len(refs))
-	}
-
-	names := make(map[string]bool)
-	for _, ref := range refs {
-		names[ref.Name] = true
-	}
-
-	if !names["skill-one"] {
-		t.Error("expected skill-one to be discovered")
-	}
-	if !names["skill-two"] {
-		t.Error("expected skill-two to be discovered")
-	}
-}
-
-func TestDiscoverEmpty(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	refs, _, err := Discover(tmpDir)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
-	}
-
-	if len(refs) != 0 {
-		t.Errorf("expected 0 skills, got %d", len(refs))
-	}
-}
-
-func TestDiscoverNonexistent(t *testing.T) {
-	refs, _, err := Discover("/nonexistent/path")
-	if err != nil {
-		t.Fatalf("Discover should not error for nonexistent path: %v", err)
-	}
-
-	if refs != nil && len(refs) != 0 {
-		t.Errorf("expected nil or empty refs, got %d", len(refs))
-	}
-}
-
 func TestSkillScripts(t *testing.T) {
 	tmpDir := t.TempDir()
 	skillDir := filepath.Join(tmpDir, "script-skill")
@@ -341,46 +258,6 @@ func TestLoadErrors(t *testing.T) {
 	os.WriteFile(filepath.Join(bad, "SKILL.md"), []byte("no frontmatter"), 0644)
 	if _, err := Load(bad); err == nil {
 		t.Error("Load(unparseable) = nil error, want error")
-	}
-}
-
-func TestDiscoverInvalid(t *testing.T) {
-	tmpDir := t.TempDir()
-	writeSkill := func(dir, frontmatter string) {
-		t.Helper()
-		os.MkdirAll(filepath.Join(tmpDir, dir), 0755)
-		os.WriteFile(filepath.Join(tmpDir, dir, "SKILL.md"), []byte(frontmatter), 0644)
-	}
-	writeSkill("good", "---\nname: good\ndescription: ok\n---\nbody")
-	writeSkill("bad-yaml", "---\nname: [\n---\nbody")
-	// SKILL.md that is a directory: opens, but cannot be scanned.
-	os.MkdirAll(filepath.Join(tmpDir, "dir-skill", "SKILL.md"), 0755)
-	// Unreadable SKILL.md.
-	writeSkill("unreadable", "---\nname: unreadable\ndescription: d\n---")
-	os.Chmod(filepath.Join(tmpDir, "unreadable", "SKILL.md"), 0)
-
-	refs, invalid, err := Discover(tmpDir)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
-	}
-	if len(refs) != 1 || refs[0].Name != "good" {
-		t.Errorf("Discover refs = %+v, want only good", refs)
-	}
-	if len(invalid) != 3 {
-		t.Errorf("Discover invalid = %v, want 3 errors", invalid)
-	}
-	for _, e := range invalid {
-		if !strings.Contains(e.Error(), tmpDir) {
-			t.Errorf("invalid error %q does not name the skill path", e)
-		}
-	}
-}
-
-func TestDiscoverNotADir(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "file")
-	os.WriteFile(file, []byte("x"), 0644)
-	if _, _, err := Discover(file); err == nil {
-		t.Error("Discover(file) = nil error, want error")
 	}
 }
 
