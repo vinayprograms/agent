@@ -131,7 +131,7 @@ Wave 2:
 Wave 3:
 - [ ] R3 internal/executor: goroutine ownership (bug 9: observation/async tools under WaitGroup/errgroup, WithoutCancel); Set*/Clear* → Config + RunOptions; errgroup.SetLimit; atomic.Int32; ctx threading (X5); SwarmContext/XMLContextBuilder dead parts; XMLContextBuilder naming gauntlet; U8 parked smells; coverage → 100% (workspace.go, converge multi-agent paths).
 Wave 4 (parallel):
-- [ ] R5 cmd/swarm → internal/swarm/{taskdb (mutex + ID validation, traversal fix), manifest, web (httptest-able, server timeouts), launch}; bugs 3,4,5,10; capabilities counts agents; submit early-result race; replay uses dataDir; cobra root (X8); main thin; tests to 100% of non-TUI code.
+- [~] R5 DROPPED by user on 2026-08-22 ("let's not work on swarm") — cmd/swarm stays as migrated (U7); its parked bugs remain listed under U7. Was: cmd/swarm → internal/swarm/{taskdb (mutex + ID validation, traversal fix), manifest, web (httptest-able, server timeouts), launch}; bugs 3,4,5,10; capabilities counts agents; submit early-result race; replay uses dataDir; cobra root (X8); main thin; tests to 100% of non-TUI code.
 - [ ] R6 cmd/agent → internal/runtime (Load+New+Run) + internal/serve (lifecycle type; status/currentTask sync; one executor per task or serialized; taskDone buffered); bug 2 (cleanup on exit), 11; output via cmd.OutOrStdout/ErrOrStderr (X9); os.Exit only in main (X10, typed exitError); main thin; toolset tests; simple-memory.agent memory_forget fix; 100% of non-TTY code.
 Wave 5:
 - [ ] R7 cmd/replay → delete (Makefile alias) or 5-line main over shared cobra factory; cmd/agentmem cobra; parseCostSpec → replay.ParsePricing; X1 truncate dedupe.
@@ -161,3 +161,5 @@ agentfile: Validate returns errors.Join of *ValidationError{Line,Msg} (text pres
 R8 follow-ups for R1: archive extract error wording ("extracting %q"); skills.Discover dead outside tests; Windows-safe step-ID escaping; ErrNoProvider trailing prose.
 R9a follow-ups for R1: add errors.As/.Line assertions on Validate; delete two dead lexer branches (lexer.go:79-81, 159-161); decide on dropped "validation errors:" header (restore at LoadFile or CLI); TestLoadFile_SkillPathTildeExpansion writes to real $HOME → t.Setenv; drop TestNode_Marker coverage noise.
 R2 follow-ups for R1: concurrent AddEvent+Flush/Close test; Session doc "fields are the caller's until Update"; runtime.go:373 wrap consistency.
+
+User ruling 2026-08-22: no further work on swarm (cmd/swarm, internal/swarm beyond what is merged). R1 sweep must skip cmd/swarm; R6 keeps serve.go in place (no internal/serve extraction of swarm-facing code beyond cmd/agent cleanups); R7 excludes swarm CLI.
