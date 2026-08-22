@@ -117,6 +117,10 @@ See [Agentfile DSL](docs/design/02-agentfile.md) for full syntax reference.
 
 ## Configuration
 
+See the [Configuration Guide](docs/configuration/README.md) for the full reference (every
+`agent.toml`/`policy.toml`/`credentials.toml` field, precedence, quick start, and
+troubleshooting). Summary:
+
 Three config files, looked up the same symmetric way — a per-run `--flag` outranks a project
 file, which outranks the user-level default in `~/.config/agent/`:
 
@@ -155,7 +159,7 @@ See [Security docs](docs/security/README.md) for the full framework (trust bound
 ## Documentation
 
 - **Design:** [Architecture](docs/design/01-architecture.md) | [Agentfile DSL](docs/design/02-agentfile.md) | [LLM](docs/design/03-llm.md) | [Tools](docs/design/04-tools.md) | [Sub-Agents](docs/design/05-subagents.md) | [Packaging](docs/design/06-packaging.md)
-- **Configuration:** [LLM Providers](docs/configuration/llm-providers.md) | [Profiles](docs/configuration/profiles.md) | [Thinking](docs/configuration/thinking.md) | [Web Search](docs/configuration/web-search.md) | [Protocols](docs/configuration/protocols.md)
+- **Configuration:** [Configuration Guide](docs/configuration/README.md) | [LLM Providers](docs/configuration/llm-providers.md) | [Profiles](docs/configuration/profiles.md) | [Thinking](docs/configuration/thinking.md) | [Web Search](docs/configuration/web-search.md) | [Protocols](docs/configuration/protocols.md)
 - **Usage:** [CLI Reference](docs/usage/cli-reference.md) | [Packaging](docs/usage/packaging.md) | [Docker](docs/usage/docker.md)
 - **Execution:** [Four-Phase Execution](docs/execution/01-four-phase-execution.md) | [Supervision](docs/execution/03-supervision-modes.md)
 - **Security:** [Threat Model](docs/security/01-threat-model.md) | [Trust Boundaries](docs/security/02-trust-boundaries.md) | [Security Modes](docs/security/07-security-modes.md)

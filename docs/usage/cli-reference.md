@@ -31,6 +31,10 @@
 
 ## Configuration Commands
 
+See the [Configuration Guide](../configuration/README.md) for the full reference on
+`agent.toml`, `policy.toml` and `credentials.toml` — every field, precedence, quick
+start and troubleshooting.
+
 `agent config` is the non-interactive counterpart of `agent setup`. Both work on the
 same three files — `agent.toml` (models and features), `policy.toml` (what tools may
 do) and `credentials.toml` (API keys) — and take the same **target**:
