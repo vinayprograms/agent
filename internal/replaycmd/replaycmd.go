@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"sort"
 
 	"github.com/spf13/cobra"
 
@@ -34,6 +32,12 @@ func New(cfg Config) *cobra.Command {
 	if use == "" {
 		use = "replay"
 	}
+	// How the command is typed: the standalone binary is its own name, the
+	// subcommand is spoken with its parent.
+	name := use
+	if name == "replay" {
+		name = "agent replay"
+	}
 
 	var (
 		verbose     int
@@ -55,7 +59,7 @@ func New(cfg Config) *cobra.Command {
 
 With no arguments, lists the recorded sessions of the state directory.
 Arguments select what to replay: a session id, a unique id prefix, a
-session .jsonl file, or a directory to glob for session files. The
+session .jsonl file, or a directory to search for session files. The
 selectors below filter recorded sessions the same way; --list prints the
 matching sessions as a table instead of replaying them.
 
@@ -66,11 +70,11 @@ Navigation keys in the interactive pager:
   q        quit
 
 Examples:
-  ` + use + `                          list every recorded session
-  ` + use + ` --last                   replay the most recent one
-  ` + use + ` a1b2c3d4                 replay the session with that id prefix
-  ` + use + ` --name hello --list      list the sessions of one workflow
-  ` + use + ` --cost gpt-4o:5,15 session.jsonl`,
+  ` + name + `                          list every recorded session
+  ` + name + ` --last                   replay the most recent one
+  ` + name + ` a1b2c3d4                 replay the session with that id prefix
+  ` + name + ` --name hello --list      list the sessions of one workflow
+  ` + name + ` --cost gpt-4o:5,15 session.jsonl`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -79,7 +83,7 @@ Examples:
 					use, valueOr(cfg.Version, "dev"), valueOr(cfg.Commit, "unknown"), valueOr(cfg.BuildTime, "unknown"))
 				return nil
 			}
-			files, err := selectFiles(cmd, args, sel, list, configPath, stateDir)
+			files, err := selectFiles(cmd, args, sel, listOptions{table: list, verbose: verbose}, configPath, stateDir)
 			if err != nil || files == nil {
 				return err
 			}
@@ -116,13 +120,11 @@ func valueOr(s, def string) string {
 // selectFiles turns the positional arguments and selectors into the
 // session files to replay. It returns nil files when it has already done
 // the work — printing the session table.
-func selectFiles(cmd *cobra.Command, args []string, sel filter, list bool, configPath, stateOverride string) ([]string, error) {
+func selectFiles(cmd *cobra.Command, args []string, sel filter, list listOptions, configPath, stateOverride string) ([]string, error) {
+	warn := cmd.ErrOrStderr()
 	// Plain file and directory arguments replay without a state directory.
-	if len(args) > 0 && !sel.active() && !list && allExist(args) {
-		files, err := expandPaths(args)
-		if err != nil {
-			return nil, err
-		}
+	if len(args) > 0 && !sel.active() && !list.table && allExist(args) {
+		files := filesUnder(args, warn)
 		if len(files) == 0 {
 			return nil, errors.New("no session files found")
 		}
@@ -133,12 +135,12 @@ func selectFiles(cmd *cobra.Command, args []string, sel filter, list bool, confi
 	if err != nil {
 		return nil, err
 	}
-	st := openStore(dir, cmd.ErrOrStderr())
+	st := openStore(dir, warn)
 
 	var matched []session.Summary
 	if len(args) > 0 {
 		for _, arg := range args {
-			resolved, err := st.resolve(arg)
+			resolved, err := st.resolve(arg, warn)
 			if err != nil {
 				return nil, err
 			}
@@ -156,8 +158,8 @@ func selectFiles(cmd *cobra.Command, args []string, sel filter, list bool, confi
 	}
 	// --list forces the table; so does a bare invocation with nothing to
 	// single out a session.
-	if list || (len(args) == 0 && !sel.active()) {
-		writeTable(cmd.OutOrStdout(), matched)
+	if list.table || (len(args) == 0 && !sel.active()) {
+		writeTable(cmd.OutOrStdout(), matched, list.verbose)
 		return nil, nil
 	}
 	return paths(matched), nil
@@ -173,7 +175,8 @@ func allExist(args []string) bool {
 	return true
 }
 
-// run performs the replay after flags have been parsed.
+// run replays the selected session files, which selectFiles has already
+// resolved.
 func run(cmd *cobra.Command, paths []string, verbosity int, noPager, liveMode bool, costSpecs []string) error {
 	opts, err := parsePricingOpts(costSpecs)
 	if err != nil {
@@ -195,21 +198,13 @@ func run(cmd *cobra.Command, paths []string, verbosity int, noPager, liveMode bo
 		return r.ReplayFileLive(paths[0])
 	}
 
-	sessionFiles, err := expandPaths(paths)
-	if err != nil {
-		return err
-	}
-	if len(sessionFiles) == 0 {
-		return errors.New("no session files found")
-	}
-
 	r := replay.NewMulti(verbosity, opts...)
 
 	out := cmd.OutOrStdout()
 	if !noPager && isTerminal(out) {
-		return r.ReplayFilesInteractive(sessionFiles)
+		return r.ReplayFilesInteractive(paths)
 	}
-	return r.ReplayFiles(out, sessionFiles)
+	return r.ReplayFiles(out, paths)
 }
 
 func parsePricingOpts(specs []string) ([]replay.ReplayerOption, error) {
@@ -224,42 +219,21 @@ func parsePricingOpts(specs []string) ([]replay.ReplayerOption, error) {
 	return opts, nil
 }
 
-// expandPaths takes file paths and directories and returns all session log
-// files. Directories are globbed for *.jsonl (the current session format)
-// as well as legacy *.json files.
-func expandPaths(paths []string) ([]string, error) {
+// filesUnder returns the session files named by paths: a file as given,
+// a directory walked recursively for session files. Unreadable files are
+// reported to warn and skipped.
+func filesUnder(paths []string, warn io.Writer) []string {
 	var files []string
-
 	for _, p := range paths {
-		info, err := os.Stat(p)
-		if err != nil {
-			return nil, fmt.Errorf("cannot access %s: %w", p, err)
-		}
-
-		if !info.IsDir() {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
 			files = append(files, p)
 			continue
 		}
-
-		var dirFiles []string
-		seen := make(map[string]bool)
-		for _, pattern := range []string{"*.jsonl", "*.json"} {
-			matches, err := filepath.Glob(filepath.Join(p, pattern))
-			if err != nil {
-				return nil, fmt.Errorf("cannot glob directory %s: %w", p, err)
-			}
-			for _, m := range matches {
-				if !seen[m] {
-					seen[m] = true
-					dirFiles = append(dirFiles, m)
-				}
-			}
+		for _, s := range findSessions(p, warn) {
+			files = append(files, s.Path)
 		}
-		sort.Strings(dirFiles)
-		files = append(files, dirFiles...)
 	}
-
-	return files, nil
+	return files
 }
 
 // isTerminal reports whether w is an interactive terminal.

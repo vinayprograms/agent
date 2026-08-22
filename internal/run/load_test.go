@@ -312,18 +312,6 @@ func TestLoad_WarningsReachStderr(t *testing.T) {
 	}
 }
 
-func TestExpandHome(t *testing.T) {
-	cases := map[string]string{"~/x": "/home/u/x", "~": "/home/u", "rel": "rel", "/abs": "/abs", "": ""}
-	for in, want := range cases {
-		if got := expandHome(in, "/home/u"); got != want {
-			t.Errorf("expandHome(%q) = %q want %q", in, got, want)
-		}
-	}
-	if got := expandHome("~/x", ""); got != "~/x" {
-		t.Errorf("no home: %q", got)
-	}
-}
-
 func TestAbsPath(t *testing.T) {
 	l := &Loaded{home: "/home/u"}
 	if got := l.absPath("~/x"); got != "/home/u/x" {

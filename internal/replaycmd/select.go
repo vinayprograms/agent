@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -72,36 +72,41 @@ type store struct {
 // is not an error — the caller reports it.
 func openStore(stateDir string, warn io.Writer) *store {
 	dir := filepath.Join(stateDir, "sessions")
+	return &store{dir: dir, sessions: findSessions(dir, warn)}
+}
+
+// findSessions summarises every session under dir, reporting the files it
+// could not read to warn rather than failing over them.
+func findSessions(dir string, warn io.Writer) []session.Summary {
 	sessions, err := session.Find(dir)
 	if err != nil {
 		fmt.Fprintf(warn, "warning: skipped unreadable session files:\n  %s\n", strings.ReplaceAll(err.Error(), "\n", "\n  "))
 	}
-	return &store{dir: dir, sessions: sessions}
+	return sessions
 }
 
 // empty reports whether the store holds nothing to replay or list.
 func (s *store) empty() bool { return len(s.sessions) == 0 }
 
 // resolve turns one positional argument into sessions: an existing path
-// (a file, or a directory to glob), else a session id or id prefix.
-func (s *store) resolve(arg string) ([]session.Summary, error) {
-	if _, err := os.Stat(arg); err == nil {
-		files, err := expandPaths([]string{arg})
+// (a session file, or a directory to walk), else a session id or id
+// prefix. Unreadable files inside a directory are reported to warn and
+// skipped, exactly as they are when scanning the state directory.
+func (s *store) resolve(arg string, warn io.Writer) ([]session.Summary, error) {
+	info, err := os.Stat(arg)
+	switch {
+	case err == nil && info.IsDir():
+		found := findSessions(arg, warn)
+		if len(found) == 0 {
+			return nil, fmt.Errorf("no session files in %s", arg)
+		}
+		return found, nil
+	case err == nil:
+		sum, err := session.Summarize(arg)
 		if err != nil {
 			return nil, err
 		}
-		var out []session.Summary
-		for _, f := range files {
-			sum, err := session.Summarize(f)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, sum)
-		}
-		if len(out) == 0 {
-			return nil, fmt.Errorf("no session files in %s", arg)
-		}
-		return out, nil
+		return []session.Summary{sum}, nil
 	}
 	var matches []session.Summary
 	for _, sum := range s.sessions {
@@ -123,9 +128,15 @@ func (s *store) resolve(arg string) ([]session.Summary, error) {
 	return nil, fmt.Errorf("%s\nuse a longer prefix", b.String())
 }
 
-// paths returns the files for sums, in created order.
+// paths returns the files for sums, oldest first — the order sessions
+// replay in, matching how the table lists them.
 func paths(sums []session.Summary) []string {
-	sort.SliceStable(sums, func(i, j int) bool { return sums[i].CreatedAt.Before(sums[j].CreatedAt) })
+	slices.SortFunc(sums, func(a, b session.Summary) int {
+		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
 	out := make([]string, len(sums))
 	for i, s := range sums {
 		out[i] = s.Path

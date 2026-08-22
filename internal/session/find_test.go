@@ -64,6 +64,25 @@ func TestFind(t *testing.T) {
 	}
 }
 
+func TestFind_EqualCreationTimesOrderByID(t *testing.T) {
+	root := t.TempDir()
+	for _, id := range []string{"ccc", "aaa", "bbb"} {
+		writeJSONL(t, root, id+".jsonl",
+			`{"_type":"header","id":"`+id+`","created_at":"2026-01-01T00:00:00Z"}`+"\n")
+	}
+	got, err := Find(root)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	var ids []string
+	for _, s := range got {
+		ids = append(ids, s.ID)
+	}
+	if strings.Join(ids, ",") != "aaa,bbb,ccc" {
+		t.Errorf("order = %v, want aaa,bbb,ccc", ids)
+	}
+}
+
 func TestFind_LegacyJSONAndMalformed(t *testing.T) {
 	root := t.TempDir()
 	writeJSONL(t, root, "legacy.json",

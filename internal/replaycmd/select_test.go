@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,18 @@ func fixture(t *testing.T) string {
 	)
 }
 
+// idOrder returns the fixture ids in the order they appear in out.
+func idOrder(out string) []string {
+	var got []string
+	for _, id := range []string{"aaaa0000", "bbbb0000", "cccc0000", "aaaa1111", "aaaa2222", "bbbb3333", "nest0000"} {
+		if strings.Contains(out, id) {
+			got = append(got, id)
+		}
+	}
+	slices.SortFunc(got, func(a, b string) int { return strings.Index(out, a) - strings.Index(out, b) })
+	return got
+}
+
 func TestReplay_ListTable(t *testing.T) {
 	state := fixture(t)
 	out, err := runCmd(t, "--state", state)
@@ -94,25 +107,7 @@ func TestReplay_Selectors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			var got []string
-			for _, id := range []string{"aaaa1111", "aaaa2222", "bbbb3333"} {
-				if i := strings.Index(out, id); i >= 0 {
-					got = append(got, id)
-				}
-			}
-			// Order matters: compare the order the ids appear in.
-			sortedByAppearance := func(ids []string) []string {
-				out2 := append([]string(nil), ids...)
-				for i := range out2 {
-					for j := i + 1; j < len(out2); j++ {
-						if strings.Index(out, out2[j]) < strings.Index(out, out2[i]) {
-							out2[i], out2[j] = out2[j], out2[i]
-						}
-					}
-				}
-				return out2
-			}
-			got = sortedByAppearance(got)
+			got := idOrder(out)
 			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
 				t.Errorf("replayed %v, want %v\noutput:\n%s", got, tt.want, out)
 			}
@@ -236,17 +231,12 @@ func TestReplay_ListRunningSessionHasNoDuration(t *testing.T) {
 func TestReplay_ArgumentErrors(t *testing.T) {
 	state := fixture(t)
 	empty := t.TempDir()
-	badGlob := filepath.Join(t.TempDir(), "bad[dir")
-	if err := os.Mkdir(badGlob, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	unparseable := filepath.Join(t.TempDir(), "broken.jsonl")
 	if err := os.WriteFile(unparseable, []byte(`{"_type":"header",`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	tests := []struct{ name, arg, want string }{
 		{"empty directory", empty, "no session files in"},
-		{"unglobbable directory", badGlob, "cannot glob"},
 		{"malformed file", unparseable, "broken.jsonl"},
 	}
 	for _, tt := range tests {
@@ -262,5 +252,119 @@ func TestReplay_ArgumentErrors(t *testing.T) {
 func TestReplay_UnreadableConfig(t *testing.T) {
 	if _, err := runCmd(t, "--config", filepath.Join(t.TempDir(), "missing.toml"), "--list"); err == nil {
 		t.Error("expected an error for a config file that does not exist")
+	}
+}
+
+func TestReplay_DirectoryArgumentRecurses(t *testing.T) {
+	state := fixture(t)
+	nested := filepath.Join(state, "sessions", "old-layout")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"_type":"header","id":"nest0000","workflow_name":"legacy","created_at":"2026-03-01T08:00:00Z"}` + "\n" +
+		`{"_type":"footer","status":"complete","updated_at":"2026-03-01T08:00:05Z"}` + "\n"
+	if err := os.WriteFile(filepath.Join(nested, "nest0000.jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "broken.jsonl"), []byte(`{"_type":"header",`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCmd(t, "--no-pager", "--state", state, filepath.Join(state, "sessions"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "nest0000") || !strings.Contains(out, "aaaa1111") {
+		t.Errorf("directory argument did not recurse:\n%s", out)
+	}
+	if !strings.Contains(out, "broken.jsonl") {
+		t.Errorf("expected a warning naming the unreadable file:\n%s", out)
+	}
+}
+
+// TestReplay_DirectoryNameWithGlobMeta pins that directory arguments are
+// walked, not globbed: a name a glob pattern would choke on still works.
+func TestReplay_DirectoryNameWithGlobMeta(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "bad[dir")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"_type":"header","id":"glob0000","workflow_name":"w","created_at":"2026-03-01T09:00:00Z"}` + "\n" +
+		`{"_type":"footer","status":"complete","updated_at":"2026-03-01T09:00:01Z"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "glob0000.jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCmd(t, "--no-pager", dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "glob0000") {
+		t.Errorf("session in %s not replayed:\n%s", dir, out)
+	}
+}
+
+func TestReplay_SortIsStableOnEqualTimes(t *testing.T) {
+	same := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+	state := stateWith(t,
+		sess{id: "cccc0000", name: "w", status: "complete", created: same, duration: time.Second},
+		sess{id: "aaaa0000", name: "w", status: "complete", created: same, duration: time.Second},
+		sess{id: "bbbb0000", name: "w", status: "complete", created: same, duration: time.Second},
+	)
+	out, err := runCmd(t, "--state", state, "--list")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := idOrder(out); strings.Join(got, ",") != "aaaa0000,bbbb0000,cccc0000" {
+		t.Errorf("equal creation times must order by id, got %v:\n%s", got, out)
+	}
+	// The same order governs the replay itself, not just the table.
+	replayed, err := runCmd(t, "--no-pager", "--state", state, "--name", "w")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := idOrder(replayed); strings.Join(got, ",") != "aaaa0000,bbbb0000,cccc0000" {
+		t.Errorf("replay order = %v, want aaaa0000,bbbb0000,cccc0000", got)
+	}
+}
+
+func TestReplay_ListVerboseAddsColumns(t *testing.T) {
+	state := stateWith(t,
+		sess{id: "aaaa1111", name: "hello", agentfile: "/w/hello/Agentfile", status: "complete",
+			created: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC), duration: time.Second},
+	)
+	plain, err := runCmd(t, "--state", state, "--list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "AGENTFILE") {
+		t.Errorf("the plain table must stay narrow:\n%s", plain)
+	}
+	out, err := runCmd(t, "--state", state, "--list", "-v")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{"AGENTFILE", "ERROR", "/w/hello/Agentfile"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--list -v output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestReplay_HelpNamesTheCommand(t *testing.T) {
+	standalone, err := runCmd(t, "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(standalone, "agent-replay --last") {
+		t.Errorf("standalone help does not use its own name:\n%s", standalone)
+	}
+	cmd := New(Config{})
+	var buf strings.Builder
+	cmd.SetOut(&buf)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "agent replay --last") {
+		t.Errorf("subcommand help does not name the parent:\n%s", buf.String())
 	}
 }

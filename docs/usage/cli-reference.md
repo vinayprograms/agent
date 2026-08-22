@@ -52,7 +52,7 @@ the candidates and exits non-zero.
 
 | Flag | Description |
 |------|-------------|
-| `--list` | Print the matching sessions as a table instead of replaying them |
+| `--list` | Print the matching sessions as a table instead of replaying them; with `-v`, the table adds AGENTFILE and ERROR columns |
 | `--last` | Select the most recently created session |
 | `--name <name>` | Select sessions by workflow NAME |
 | `--agentfile <path>` | Select sessions by Agentfile path or file name |

@@ -191,17 +191,6 @@ func TestIsTerminal(t *testing.T) {
 	}
 }
 
-func TestReplay_DirectoryGlobError(t *testing.T) {
-	parent := t.TempDir()
-	bad := filepath.Join(parent, "bad[dir")
-	if err := os.Mkdir(bad, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runCmd(t, "--no-pager", bad); err == nil {
-		t.Error("expected glob error for a directory with an unmatched '[' in its path")
-	}
-}
-
 func TestReplay_LiveAlias(t *testing.T) {
 	// --live is an alias for --follow; a missing file should hit the same
 	// stat error path as -f/--follow.

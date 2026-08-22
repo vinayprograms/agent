@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // StateDir resolves the directory a command reads and writes persistent
@@ -38,10 +39,12 @@ func (c *Config) StateDir(home string) string {
 	return ExpandHome(loc, home)
 }
 
-// ExpandHome replaces a leading ~ in p with home.
+// ExpandHome replaces a leading ~ in p with home, so a path written
+// "~/x" resolves even when no shell expanded it. Only "~" and "~/..."
+// expand: "~user" is not a home this knows how to resolve.
 func ExpandHome(p, home string) string {
-	if home == "" || p == "" || p[0] != '~' {
+	if home == "" || p != "~" && !strings.HasPrefix(p, "~"+string(filepath.Separator)) {
 		return p
 	}
-	return filepath.Join(home, p[1:])
+	return filepath.Join(home, strings.TrimPrefix(p, "~"))
 }

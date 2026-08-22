@@ -10,7 +10,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -31,8 +32,9 @@ type Summary struct {
 
 // Find walks root recursively and summarises every session file it holds
 // (*.jsonl, plus legacy *.json), so both the flat <root>/<id>.jsonl layout
-// and older nested ones are readable. Results are sorted by CreatedAt,
-// oldest first.
+// and older nested ones are readable. Results are sorted oldest first, by
+// CreatedAt and then by ID, so sessions recorded in the same instant
+// still come back in a stable order.
 //
 // Files that cannot be read or parsed are skipped; Find still returns the
 // summaries it did build, alongside a joined error naming each failure. A
@@ -67,7 +69,7 @@ func Find(root string) ([]Summary, error) {
 		out = append(out, s)
 		return nil
 	})
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	slices.SortFunc(out, byCreation)
 	return out, errors.Join(errs...)
 }
 
@@ -138,4 +140,12 @@ func summarizeJSONL(path string) (Summary, error) {
 		return Summary{}, fmt.Errorf("session: summarize %s: no header record", path)
 	}
 	return sum, nil
+}
+
+// byCreation orders summaries oldest first, breaking ties on ID.
+func byCreation(a, b Summary) int {
+	if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+		return c
+	}
+	return strings.Compare(a.ID, b.ID)
 }

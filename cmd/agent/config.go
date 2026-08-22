@@ -82,20 +82,11 @@ func (t targetFlags) resolve(d deps) (target, error) {
 		}
 		tg.dir, tg.explicit = config.DefaultConfigDir(d.home), true
 	case t.dir != "":
-		tg.dir, tg.explicit = expandHome(t.dir, d.home), true
+		tg.dir, tg.explicit = config.ExpandHome(t.dir, d.home), true
 	default:
 		tg.dir = "."
 	}
 	return tg, nil
-}
-
-// expandHome replaces a leading ~ in p with home, so --dir ~/x works even
-// when the shell did not expand it (quoted, or from a config file).
-func expandHome(p, home string) string {
-	if home == "" || p != "~" && !strings.HasPrefix(p, "~"+string(filepath.Separator)) {
-		return p
-	}
-	return filepath.Join(home, strings.TrimPrefix(p, "~"))
 }
 
 // fileset is one configuration file at a target: the candidate paths in

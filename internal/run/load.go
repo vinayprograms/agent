@@ -139,17 +139,9 @@ func (l *Loaded) loadConfig(opts LoadOptions, warn io.Writer) error {
 	return nil
 }
 
-// expandHome replaces a leading ~ in p with home.
-func expandHome(p, home string) string {
-	if home == "" || p == "" || p[0] != '~' {
-		return p
-	}
-	return filepath.Join(home, p[1:])
-}
-
 // absPath expands ~ and resolves p against the working directory.
 func (l *Loaded) absPath(p string) string {
-	p = expandHome(p, l.home)
+	p = config.ExpandHome(p, l.home)
 	if !filepath.IsAbs(p) {
 		p, _ = filepath.Abs(p)
 	}
