@@ -60,7 +60,7 @@ Wave B:
 Wave C:
 8. [x] U8 internal/executor — tools/llm/contentguard/memory/mcp/slog/spawn (largest)
 Wave D:
-9. [ ] U9 cmd/agent — runtime wiring (toolset builder, guards, shellguard, contentguard, telemetry), serve (messaging/registry/second conn), workflow, tests
+9. [x] U9 cmd/agent — runtime wiring (toolset builder, guards, shellguard, contentguard, telemetry), serve (messaging/registry/second conn), workflow, tests
 10. [x] U10 cmd/agentmem — memory API
 Wave E:
 11. [x] U11 tests/{integration,failure,performance,security,system} — llmmock, registry builder, policy files
@@ -143,3 +143,8 @@ Merged: U1–U8, U10–U12. Module builds; `go test -race ./...` green on branch
 In flight: U9 `mig/u9` @14f8760 (+merge of main) — worker done (cmd/agent 55.8%); adversarial verifier running (security wiring, policy legacy error, credentials on fresh machine, serve lifecycle, smoke runs of examples 01/02 via agent.ollama.toml). On PASS → merge, record, then the full verify.md gate on main.
 Phase 2 started early: R4 `ref/r4` (internal/config) and R8 `ref/r8` (skills/packaging/checkpoint/hooks/supervision/swarm/websearch) workers running off main (no cmd/agent overlap). Each needs a verifier before merge; expect call-site conflicts with mig/u9 in cmd/agent — merge U9 first, then rebase/merge R4, R8.
 Remaining: R1, R2, R3, R5, R6, R7, R9, R10 per plan above.
+### U9 cmd/agent — DONE (14f8760, f22b804; verifier PASS; smoke: 01-hello-world ran end-to-end on ollama-cloud, legacy policy rejected loudly)
+toolset.go builds registry from policy (path/domain guards, bash only with shellguard gate, websearch instead of kit Search, SpawnBinder, scratchpad/memory); runtime wires executor.Config incl. SecurityConfig{Reviewer: provider}; credentials loaded inside run/serve (no init()); policy via FromTOMLWithUnknownKeys with replacement-naming error; no policy file ⇒ permissive + warning (old behaviour); serve on swarmkit messaging + registry, second nats conn for JetStream, wire identical. coverage 55.8%.
+fix after review: diff/patch guard resolves relative paths against cwd (kit doesn't confine them); legacy-key report skips bare tables, maps memory_read/write.
+parked-smells: grep/glob guarded under "read" (document); http.Server timeouts; status/currentTask races; RunCmd os.Exit; --state not forwarded from run; secTrust only printed; stdout/stderr mix for status lines.
+## MIGRATION COMPLETE — module green (build/vet/test -race) at this merge. 14 pre-existing gofmt-dirty files in internal/* → R1.
