@@ -1,7 +1,7 @@
 // Tool set wiring: registers every builtin the policy enables and attaches
 // the policy guards to it. The kit provides the blocks; this file decides
 // which tool gets which guard (A-C2).
-package main
+package run
 
 import (
 	"context"

@@ -1,11 +1,6 @@
 package main
 
-import (
-	"os"
-	"time"
-
-	"github.com/vinayprograms/agentkit/llm"
-)
+import "os"
 
 // isPackageFile checks if a file is a zip package (not a text Agentfile).
 func isPackageFile(path string) bool {
@@ -21,17 +16,4 @@ func isPackageFile(path string) bool {
 		return false
 	}
 	return magic[0] == 'P' && magic[1] == 'K' && magic[2] == 0x03 && magic[3] == 0x04
-}
-
-// parseRetryConfig converts config values to RetryConfig.
-func parseRetryConfig(maxRetries int, backoffStr string) llm.RetryConfig {
-	cfg := llm.RetryConfig{
-		MaxRetries: maxRetries,
-	}
-	if backoffStr != "" {
-		if d, err := time.ParseDuration(backoffStr); err == nil {
-			cfg.MaxBackoff = d
-		}
-	}
-	return cfg
 }

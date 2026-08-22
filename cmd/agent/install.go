@@ -6,11 +6,42 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/vinayprograms/agent/internal/packaging"
 )
 
+// installOptions are the install command's flags.
+type installOptions struct {
+	Package string
+	Target  string
+	Key     string
+	NoDeps  bool
+	DryRun  bool
+}
+
+// newInstallCmd installs a package into the target directory.
+func newInstallCmd() *cobra.Command {
+	var opts installOptions
+	cmd := &cobra.Command{
+		Use:   "install <package>",
+		Short: "Install a package",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.Package = args[0]
+			return runInstall(&opts)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&opts.Target, "target", "", "Installation target directory")
+	f.StringVar(&opts.Key, "key", "", "Public key path for verification")
+	f.BoolVar(&opts.NoDeps, "no-deps", false, "Skip dependency installation")
+	f.BoolVar(&opts.DryRun, "dry-run", false, "Show what would be installed")
+	return cmd
+}
+
 // runInstall installs a package.
-func runInstall(c *InstallCmd) error {
+func runInstall(c *installOptions) error {
 	target := c.Target
 	if target == "" {
 		home, err := os.UserHomeDir()

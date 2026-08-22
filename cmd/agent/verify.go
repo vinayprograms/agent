@@ -3,8 +3,25 @@ package main
 import (
 	"fmt"
 
+	"github.com/spf13/cobra"
+
 	"github.com/vinayprograms/agent/internal/packaging"
 )
+
+// newVerifyCmd verifies a package's signature and content hash.
+func newVerifyCmd() *cobra.Command {
+	var key string
+	cmd := &cobra.Command{
+		Use:   "verify <package>",
+		Short: "Verify package signature",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runVerify(args[0], key)
+		},
+	}
+	cmd.Flags().StringVar(&key, "key", "", "Public key path for verification")
+	return cmd
+}
 
 // runVerify verifies a package signature.
 func runVerify(pkgPath, keyPath string) error {

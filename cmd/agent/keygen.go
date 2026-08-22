@@ -4,8 +4,25 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"github.com/vinayprograms/agent/internal/packaging"
 )
+
+// newKeygenCmd generates a signing key pair.
+func newKeygenCmd() *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   "keygen",
+		Short: "Generate signing key pair",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runKeygen(output)
+		},
+	}
+	cmd.Flags().StringVarP(&output, "output", "o", "agent-key", "Output path prefix (creates .pem and .pub)")
+	return cmd
+}
 
 // runKeygen generates a new signing key pair.
 func runKeygen(outputPrefix string) error {
