@@ -29,7 +29,7 @@ func TestInstallErrors(t *testing.T) {
 		{"missing package", InstallOptions{PackagePath: filepath.Join(dir, "nope.agent"), TargetDir: dir}, "open package"},
 		{"unsigned with key", InstallOptions{PackagePath: goodPkg, TargetDir: dir, PublicKey: pub}, "verification failed"},
 		{"target is a file", InstallOptions{PackagePath: goodPkg, TargetDir: fileAsTarget}, "package directory"},
-		{"traversal in content", InstallOptions{PackagePath: evil, TargetDir: filepath.Join(dir, "evil-target")}, "extract content"},
+		{"traversal in content", InstallOptions{PackagePath: evil, TargetDir: filepath.Join(dir, "evil-target")}, "extracting"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
