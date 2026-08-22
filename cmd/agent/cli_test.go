@@ -43,7 +43,7 @@ func newHarness(t *testing.T) *harness {
 	h.deps = deps{
 		home:        t.TempDir(),
 		getenv:      func(string) string { return "" },
-		credentials: func() (credentials.Lookup, error) { return credentials.NewEnvStore(), nil },
+		credentials: func(string) (credentials.Lookup, error) { return credentials.NewEnvStore(), nil },
 		isTerminal:  func(any) bool { return false },
 		newRuntime: func(_ context.Context, l *run.Loaded, d run.Deps) (runner, error) {
 			h.last, h.lastRun = l, d
@@ -101,8 +101,8 @@ func TestRoot_HelpAndVersion(t *testing.T) {
 func TestRoot_CommandSurface(t *testing.T) {
 	root := newRootCmd(newHarness(t).deps)
 	want := map[string][]string{
-		"run":      {"input", "config", "policy", "workspace", "goal", "debug", "step"},
-		"serve":    {"config", "policy", "workspace", "state", "http", "bus", "queue-group", "capability", "session-label", "type", "capabilities"},
+		"run":      {"input", "config", "policy", "credentials", "workspace", "goal", "debug", "step"},
+		"serve":    {"config", "policy", "credentials", "workspace", "state", "http", "bus", "queue-group", "capability", "session-label", "type", "capabilities"},
 		"validate": nil,
 		"inspect":  nil,
 		"pack":     {"output", "sign", "author", "email", "license"},
@@ -242,7 +242,7 @@ func TestRun_MissingAgentfileAndCredentials(t *testing.T) {
 	}
 
 	h = newHarness(t)
-	h.deps.credentials = func() (credentials.Lookup, error) { return nil, errors.New("bad credentials") }
+	h.deps.credentials = func(string) (credentials.Lookup, error) { return nil, errors.New("bad credentials") }
 	if err := h.exec("run"); err == nil {
 		t.Error("expected credentials error")
 	}
@@ -256,9 +256,26 @@ func TestRun_MissingAgentfileAndCredentials(t *testing.T) {
 	}
 }
 
+// TestRun_CredentialsFlagPassesOverride pins that --credentials reaches
+// d.credentials as the override path, for both run and serve.
+func TestRun_CredentialsFlagPassesOverride(t *testing.T) {
+	h := newHarness(t)
+	var gotOverride string
+	h.deps.credentials = func(override string) (credentials.Lookup, error) {
+		gotOverride = override
+		return credentials.NewEnvStore(), nil
+	}
+	if err := h.exec("run", writeAgentfile(t, validAgentfile), "--workspace", t.TempDir(), "--credentials", "/some/creds.toml"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if gotOverride != "/some/creds.toml" {
+		t.Errorf("credentials override = %q, want /some/creds.toml", gotOverride)
+	}
+}
+
 func TestServe_NoTransportConfigured(t *testing.T) {
 	h := newHarness(t)
-	h.deps.credentials = func() (credentials.Lookup, error) { return nil, errors.New("bad credentials") }
+	h.deps.credentials = func(string) (credentials.Lookup, error) { return nil, errors.New("bad credentials") }
 	if err := h.exec("serve", writeAgentfile(t, validAgentfile), "--workspace", t.TempDir()); err == nil {
 		t.Error("expected credentials error")
 	}
@@ -266,6 +283,49 @@ func TestServe_NoTransportConfigured(t *testing.T) {
 	h = newHarness(t)
 	if err := h.exec("serve", filepath.Join(t.TempDir(), "nope")); err == nil {
 		t.Error("expected missing Agentfile error")
+	}
+}
+
+// TestServe_CredentialsFlagPassesOverride mirrors
+// TestRun_CredentialsFlagPassesOverride for `agent serve`.
+func TestServe_CredentialsFlagPassesOverride(t *testing.T) {
+	h := newHarness(t)
+	var gotOverride string
+	h.deps.credentials = func(override string) (credentials.Lookup, error) {
+		gotOverride = override
+		return credentials.NewEnvStore(), nil
+	}
+	// No transport configured, so this still errors out after loading
+	// credentials — enough to observe the override that reached deps.
+	_ = h.exec("serve", writeAgentfile(t, validAgentfile), "--workspace", t.TempDir(), "--credentials", "/some/creds.toml")
+	if gotOverride != "/some/creds.toml" {
+		t.Errorf("credentials override = %q, want /some/creds.toml", gotOverride)
+	}
+}
+
+// TestLoadCredentials_MissingOverrideNamesPath pins that loadCredentials
+// surfaces a missing --credentials file as an error naming the path,
+// rather than silently falling back to the standard locations.
+func TestLoadCredentials_MissingOverrideNamesPath(t *testing.T) {
+	home := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "nope.toml")
+	_, err := loadCredentials(home, missing)
+	if err == nil {
+		t.Fatal("expected an error for a missing --credentials file")
+	}
+	if !strings.Contains(err.Error(), missing) {
+		t.Errorf("error should name %q, got %v", missing, err)
+	}
+}
+
+func TestLoadCredentials_ExistingOverrideLoads(t *testing.T) {
+	home := t.TempDir()
+	override := filepath.Join(t.TempDir(), "creds.toml")
+	if err := os.WriteFile(override, []byte("[anthropic]\napi_key = \"x\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCredentials(home, override); err != nil {
+		t.Fatalf("loadCredentials: %v", err)
 	}
 }
 

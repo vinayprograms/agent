@@ -114,13 +114,14 @@ func (c capabilitySchema) skill() registry.Skill {
 // serveOptions are the serve command's flags, plus the positional
 // Agentfile and the streams the command runs on.
 type serveOptions struct {
-	file      string
-	stdout    io.Writer
-	stderr    io.Writer
-	config    string
-	policy    string
-	workspace string
-	state     string
+	file        string
+	stdout      io.Writer
+	stderr      io.Writer
+	config      string
+	policy      string
+	credentials string
+	workspace   string
+	state       string
 
 	// Transport
 	http string
@@ -152,6 +153,7 @@ func newServeCmd(d deps) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.config, "config", "", "Config file path")
 	f.StringVar(&opts.policy, "policy", "", "Policy file path")
+	f.StringVar(&opts.credentials, "credentials", "", "Credentials file path")
 	f.StringVar(&opts.workspace, "workspace", "", "Workspace directory")
 	f.StringVar(&opts.state, "state", "", "Override state location (isolate per-agent when needed)")
 	f.StringVar(&opts.http, "http", "", "Run HTTP server on this address (e.g., :8080)")
@@ -214,7 +216,7 @@ func runServe(ctx context.Context, d deps, opts serveOptions) error {
 		}
 	}
 
-	creds, err := d.credentials()
+	creds, err := d.credentials(opts.credentials)
 	if err != nil {
 		return err
 	}

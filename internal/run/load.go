@@ -157,22 +157,16 @@ func (l *Loaded) absPath(p string) string {
 // loadPolicy loads the policy file. Legacy (pre-v1.2.0 schema) keys are
 // rejected loudly with the replacement named for each one (A-C1).
 func (l *Loaded) loadPolicy(explicitPath, baseDir string, warn io.Writer) error {
-	policyPath := explicitPath
-	if policyPath == "" {
-		policyPath = filepath.Join(baseDir, "policy.toml")
+	policyPath, content, err := l.resolvePolicyFile(explicitPath, baseDir, warn)
+	if err != nil {
+		return err
 	}
-
-	content, err := os.ReadFile(policyPath)
-	switch {
-	case os.IsNotExist(err) && explicitPath == "":
-		// No policy file: keep the pre-migration behaviour (every tool
-		// enabled) so `agent run` works out of the box, but say so.
-		fmt.Fprintf(warn, "warning: no policy file at %s; all tools enabled\n", policyPath)
+	if content == nil {
+		// No policy file anywhere: keep the pre-migration behaviour (every
+		// tool enabled) so `agent run` works out of the box.
 		l.Policy = policy.New()
 		l.Policy.DefaultDeny = false
-	case err != nil:
-		return fmt.Errorf("failed to read policy file: %w", err)
-	default:
+	} else {
 		pol, unknown, err := policy.FromTOMLWithUnknownKeys(string(content), l.Config.Agent.Workspace, l.home)
 		if err != nil {
 			return err
@@ -188,6 +182,42 @@ func (l *Loaded) loadPolicy(explicitPath, baseDir string, warn io.Writer) error 
 	// If allowed_dirs exist but don't include workspace, add it.
 	l.ensureWorkspaceInAllowedDirs()
 	return nil
+}
+
+// resolvePolicyFile finds the policy file per precedence: explicitPath (must
+// exist and parse), else <baseDir>/policy.toml, else the user-level default
+// at ~/.config/agent/policy.toml, else no file at all (permissive, with a
+// warning naming both locations checked). A nil content with a nil error
+// means "use the permissive default".
+func (l *Loaded) resolvePolicyFile(explicitPath, baseDir string, warn io.Writer) (path string, content []byte, err error) {
+	if explicitPath != "" {
+		content, err = os.ReadFile(explicitPath)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to read policy file: %w", err)
+		}
+		return explicitPath, content, nil
+	}
+
+	projectPath := filepath.Join(baseDir, "policy.toml")
+	content, err = os.ReadFile(projectPath)
+	switch {
+	case err == nil:
+		return projectPath, content, nil
+	case !os.IsNotExist(err):
+		return "", nil, fmt.Errorf("failed to read policy file: %w", err)
+	}
+
+	defaultPath := filepath.Join(config.DefaultConfigDir(l.home), "policy.toml")
+	content, err = os.ReadFile(defaultPath)
+	switch {
+	case err == nil:
+		return defaultPath, content, nil
+	case !os.IsNotExist(err):
+		return "", nil, fmt.Errorf("failed to read policy file: %w", err)
+	}
+
+	fmt.Fprintf(warn, "warning: no policy file at %s or %s; all tools enabled\n", projectPath, defaultPath)
+	return "", nil, nil
 }
 
 // legacyPolicyKeys maps pre-v1.2.0 policy keys (by their last one or two
