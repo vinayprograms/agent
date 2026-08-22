@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/vinayprograms/agent/internal/tools/webfetch"
 	"github.com/vinayprograms/agent/internal/tools/websearch"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/policy"
@@ -69,9 +70,9 @@ func buildToolset(c toolsetConfig) (*tools.Registry, error) {
 		return pathGuard{pol: c.Policy, tool: tool, keys: keys}
 	}
 
-	var webOpts []tools.WebOption
+	var fetchOpts []webfetch.Option
 	if c.HTTPTimeout > 0 {
-		webOpts = append(webOpts, tools.WithHTTPTimeout(c.HTTPTimeout))
+		fetchOpts = append(fetchOpts, webfetch.WithHTTPTimeout(c.HTTPTimeout))
 	}
 
 	steps := []func() error{
@@ -113,9 +114,10 @@ func buildToolset(c toolsetConfig) (*tools.Registry, error) {
 			return add(tools.Bash(ws), c.BashGate)
 		},
 
-		// Web: domain guard on fetch; in-repo search tool.
+		// Web: domain guard on fetch. web_fetch is the in-repo replacement
+		// for the kit's builtin (see its package doc for why).
 		func() error {
-			return add(tools.Fetch(c.Summarizer, webOpts...), domainGuard{pol: c.Policy, tool: "web_fetch"})
+			return add(webfetch.New(c.Summarizer, fetchOpts...), domainGuard{pol: c.Policy, tool: "web_fetch"})
 		},
 		func() error { return add(websearch.New(c.Creds, c.SearXNGURL, c.SearchProvider)) },
 
