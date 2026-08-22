@@ -2,13 +2,14 @@ package supervision
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/vinayprograms/agent/internal/checkpoint"
 	"github.com/vinayprograms/agentkit/llm"
-	"github.com/vinayprograms/agentkit/logging"
 )
 
 // Verdict represents the supervisor's decision.
@@ -33,10 +34,10 @@ const (
 )
 
 // LLMSupervisor evaluates agent execution for drift and provides corrections
-// using an LLM provider.
+// using an LLM model.
 type LLMSupervisor struct {
-	provider          llm.Provider
-	logger            *logging.Logger
+	model             llm.Model
+	logger            *slog.Logger
 	humanAvailable    bool
 	humanInputChan    chan string
 	humanInputTimeout time.Duration
@@ -47,7 +48,14 @@ var _ Supervisor = (*LLMSupervisor)(nil)
 
 // Config holds supervisor configuration.
 type Config struct {
-	Provider          llm.Provider
+	// Model answers the supervision prompts. Required for Supervise; Reconcile
+	// never calls it.
+	Model llm.Model
+	// Logger receives phase and verdict events. nil means slog.Default(), so a
+	// zero Config logs like the old kit logger did (to wherever the process's
+	// default handler points). The "component=supervisor" attribute is added
+	// here.
+	Logger            *slog.Logger
 	HumanAvailable    bool
 	HumanInputChan    chan string
 	HumanInputTimeout time.Duration
@@ -59,9 +67,13 @@ func NewLLMSupervisor(cfg Config) *LLMSupervisor {
 	if timeout == 0 {
 		timeout = 5 * time.Minute
 	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &LLMSupervisor{
-		provider:          cfg.Provider,
-		logger:            logging.New().WithComponent("supervisor"),
+		model:             cfg.Model,
+		logger:            logger.With("component", "supervisor"),
 		humanAvailable:    cfg.HumanAvailable,
 		humanInputChan:    cfg.HumanInputChan,
 		humanInputTimeout: timeout,
@@ -118,8 +130,12 @@ func (s *LLMSupervisor) Reconcile(pre *checkpoint.PreCheckpoint, post *checkpoin
 	result.Supervise = len(triggers) > 0
 
 	// Forensic logging
-	s.logger.ReconcilePhase("", pre.StepID, triggers, result.Supervise)
-	s.logger.PhaseComplete("RECONCILE", "", pre.StepID, time.Since(start), fmt.Sprintf("supervise=%v", result.Supervise))
+	s.logger.Debug("reconcile_phase",
+		"goal", "",
+		"step", pre.StepID,
+		"triggers", strings.Join(triggers, ","),
+		"escalate", result.Supervise)
+	s.logPhaseComplete("RECONCILE", pre.StepID, start, fmt.Sprintf("supervise=%v", result.Supervise))
 
 	return result
 }
@@ -133,7 +149,7 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 	requiresHuman := req.HumanRequired
 
 	start := time.Now()
-	s.logger.PhaseStart("SUPERVISE", "", pre.StepID)
+	s.logger.Debug("phase_start", "phase", "SUPERVISE", "goal", "", "step", pre.StepID)
 
 	result := &checkpoint.SuperviseResult{
 		StepID:    pre.StepID,
@@ -148,11 +164,11 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 		{Role: "user", Content: prompt},
 	}
 
-	resp, err := s.provider.Chat(ctx, llm.ChatRequest{
+	resp, err := s.model.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
 	if err != nil {
-		s.logger.Error("supervisor_llm_error", map[string]interface{}{"error": err.Error()})
+		s.logger.Error("supervisor_llm_error", "error", err.Error())
 		return nil, fmt.Errorf("supervisor LLM error: %w", err)
 	}
 
@@ -163,45 +179,48 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 	result.Question = question
 
 	// Log initial verdict
-	s.logger.SupervisePhase("", pre.StepID, string(verdict), correction)
+	s.logger.Debug("supervise_phase",
+		"goal", "",
+		"step", pre.StepID,
+		"verdict", string(verdict),
+		"reason", correction)
 
 	// Handle PAUSE verdict
 	if verdict == VerdictPause {
 		if requiresHuman && !s.humanAvailable {
 			// Hard fail - workflow requires human but none available
-			s.logger.SupervisorVerdict("", pre.StepID, "PAUSE_FAILED", "human required but unavailable", true)
-			return nil, fmt.Errorf("supervision requires human input but no human is available")
+			s.logVerdict(pre.StepID, "PAUSE_FAILED", "human required but unavailable", true)
+			return nil, errors.New("supervision requires human input but no human is available")
 		}
 
 		if s.humanAvailable && s.humanInputChan != nil {
 			// Wait for human input
-			s.logger.Info("waiting for human input", map[string]interface{}{
-				"question": question,
-				"timeout":  s.humanInputTimeout.String(),
-			})
+			s.logger.Info("waiting for human input",
+				"question", question,
+				"timeout", s.humanInputTimeout.String())
 
 			select {
 			case input := <-s.humanInputChan:
 				// Human provided input, reorient with it
 				result.Verdict = string(VerdictReorient)
 				result.Correction = input
-				s.logger.SupervisorVerdict("", pre.StepID, "REORIENT", "human provided input", true)
+				s.logVerdict(pre.StepID, "REORIENT", "human provided input", true)
 			case <-time.After(s.humanInputTimeout):
 				if requiresHuman {
-					s.logger.SupervisorVerdict("", pre.StepID, "PAUSE_TIMEOUT", "human input timeout", true)
-					return nil, fmt.Errorf("human input timeout - workflow requires human approval")
+					s.logVerdict(pre.StepID, "PAUSE_TIMEOUT", "human input timeout", true)
+					return nil, errors.New("human input timeout - workflow requires human approval")
 				}
 				// Timeout without required human - supervisor decides
-				s.logger.Warn("human input timeout, supervisor will decide", nil)
+				s.logger.Warn("human input timeout, supervisor will decide")
 				result.Verdict = string(VerdictContinue)
 				result.Correction = "Proceeding without human input (timeout). Review output carefully."
-				s.logger.SupervisorVerdict("", pre.StepID, "CONTINUE", "timeout fallback", false)
+				s.logVerdict(pre.StepID, "CONTINUE", "timeout fallback", false)
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
 		} else if !requiresHuman {
 			// No human available but not required - supervisor decides autonomously
-			s.logger.Warn("no human available, supervisor deciding autonomously", nil)
+			s.logger.Warn("no human available, supervisor deciding autonomously")
 			// Re-query with autonomous decision prompt
 			autonomousResp, err := s.makeAutonomousDecision(ctx, pre, post, triggers, question)
 			if err != nil {
@@ -209,15 +228,35 @@ func (s *LLMSupervisor) Supervise(ctx context.Context, req SuperviseRequest) (*c
 			}
 			result.Verdict = string(autonomousResp.verdict)
 			result.Correction = autonomousResp.correction
-			s.logger.SupervisorVerdict("", pre.StepID, string(autonomousResp.verdict), "autonomous decision", false)
+			s.logVerdict(pre.StepID, string(autonomousResp.verdict), "autonomous decision", false)
 		}
 	} else {
 		// Log non-PAUSE verdicts
-		s.logger.SupervisorVerdict("", pre.StepID, string(verdict), correction, false)
+		s.logVerdict(pre.StepID, string(verdict), correction, false)
 	}
 
-	s.logger.PhaseComplete("SUPERVISE", "", pre.StepID, time.Since(start), result.Verdict)
+	s.logPhaseComplete("SUPERVISE", pre.StepID, start, result.Verdict)
 	return result, nil
+}
+
+// logVerdict mirrors the old kit's SupervisorVerdict event (same keys).
+func (s *LLMSupervisor) logVerdict(step, verdict, guidance string, humanRequired bool) {
+	s.logger.Info("supervisor_verdict",
+		"goal", "",
+		"step", step,
+		"verdict", verdict,
+		"guidance", guidance,
+		"human_required", humanRequired)
+}
+
+// logPhaseComplete mirrors the old kit's PhaseComplete event (same keys).
+func (s *LLMSupervisor) logPhaseComplete(phase, step string, start time.Time, result string) {
+	s.logger.Debug("phase_complete",
+		"phase", phase,
+		"goal", "",
+		"step", step,
+		"duration", time.Since(start).String(),
+		"result", result)
 }
 
 type autonomousDecision struct {
@@ -242,7 +281,7 @@ CORRECTION: <your guidance>`, question)
 		{Role: "user", Content: prompt},
 	}
 
-	resp, err := s.provider.Chat(ctx, llm.ChatRequest{Messages: messages})
+	resp, err := s.model.Chat(ctx, llm.ChatRequest{Messages: messages})
 	if err != nil {
 		return nil, err
 	}
