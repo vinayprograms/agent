@@ -2,18 +2,19 @@ package replay
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/vinayprograms/agent/internal/session"
 )
 
 // formatEvent formats a single event for display.
-func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) {
+func (r *Replayer) formatEvent(w io.Writer, seq int, event *session.Event, lastGoal *string) {
 	// Show goal transitions
 	if event.Goal != "" && event.Goal != *lastGoal {
-		fmt.Fprintln(r.output)
-		fmt.Fprintf(r.output, "%s %s\n", flowStyle.Render("GOAL:"), valueStyle.Render(event.Goal))
-		fmt.Fprintln(r.output)
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "%s %s\n", flowStyle.Render("GOAL:"), valueStyle.Render(event.Goal))
+		fmt.Fprintln(w)
 		*lastGoal = event.Goal
 	}
 
@@ -22,80 +23,80 @@ func (r *Replayer) formatEvent(seq int, event *session.Event, lastGoal *string) 
 
 	switch event.Type {
 	case session.EventWorkflowStart:
-		r.fmtWorkflowStart(seqNum, ts)
+		r.fmtWorkflowStart(w, seqNum, ts)
 	case session.EventWorkflowEnd:
-		r.fmtWorkflowEnd(seqNum, ts, event)
+		r.fmtWorkflowEnd(w, seqNum, ts, event)
 	case session.EventGoalStart:
-		r.fmtGoalStart(seqNum, ts)
+		r.fmtGoalStart(w, seqNum, ts)
 	case session.EventGoalEnd:
-		r.fmtGoalEnd(seqNum, ts, event)
+		r.fmtGoalEnd(w, seqNum, ts, event)
 	case session.EventSubAgentStart:
-		r.fmtSubAgentStart(seqNum, ts, event)
+		r.fmtSubAgentStart(w, seqNum, ts, event)
 	case session.EventSubAgentEnd:
-		r.fmtSubAgentEnd(seqNum, ts, event)
+		r.fmtSubAgentEnd(w, seqNum, ts, event)
 	case session.EventSystem:
-		r.fmtSystem(seqNum, ts, event)
+		r.fmtSystem(w, seqNum, ts, event)
 	case session.EventUser:
-		r.fmtUser(seqNum, ts, event)
+		r.fmtUser(w, seqNum, ts, event)
 	case session.EventAssistant:
-		r.fmtAssistant(seqNum, ts, event)
+		r.fmtAssistant(w, seqNum, ts, event)
 	case session.EventToolCall:
-		r.fmtToolCall(seqNum, ts, event)
+		r.fmtToolCall(w, seqNum, ts, event)
 	case session.EventToolResult:
-		r.fmtToolResult(seqNum, ts, event)
+		r.fmtToolResult(w, seqNum, ts, event)
 	case session.EventPhaseCommit:
-		r.fmtPhaseCommit(seqNum, ts, event)
+		r.fmtPhaseCommit(w, seqNum, ts, event)
 	case session.EventPhaseExecute:
-		r.fmtPhaseExecute(seqNum, ts, event)
+		r.fmtPhaseExecute(w, seqNum, ts, event)
 	case session.EventPhaseReconcile:
-		r.fmtPhaseReconcile(seqNum, ts, event)
+		r.fmtPhaseReconcile(w, seqNum, ts, event)
 	case session.EventPhaseSupervise:
-		r.fmtPhaseSupervise(seqNum, ts, event)
+		r.fmtPhaseSupervise(w, seqNum, ts, event)
 	case session.EventSecurityBlock:
-		r.fmtSecurityBlock(seqNum, ts, event)
+		r.fmtSecurityBlock(w, seqNum, ts, event)
 	case session.EventSecurityStatic:
-		r.fmtSecurityStatic(seqNum, ts, event)
+		r.fmtSecurityStatic(w, seqNum, ts, event)
 	case session.EventSecurityTriage:
-		r.fmtSecurityTriage(seqNum, ts, event)
+		r.fmtSecurityTriage(w, seqNum, ts, event)
 	case session.EventSecuritySupervisor:
-		r.fmtSecuritySupervisor(seqNum, ts, event)
+		r.fmtSecuritySupervisor(w, seqNum, ts, event)
 	case session.EventSecurityDecision:
-		r.fmtSecurityDecision(seqNum, ts, event)
+		r.fmtSecurityDecision(w, seqNum, ts, event)
 	case session.EventCheckpoint:
-		r.fmtCheckpoint(seqNum, ts, event)
+		r.fmtCheckpoint(w, seqNum, ts, event)
 	case session.EventBashSecurity:
-		r.fmtBashSecurity(seqNum, ts, event)
+		r.fmtBashSecurity(w, seqNum, ts, event)
 	case session.EventWarning:
-		r.fmtWarning(seqNum, ts, event)
+		r.fmtWarning(w, seqNum, ts, event)
 	default:
-		fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, dimStyle.Render(string(event.Type)))
+		fmt.Fprintf(w, "%s │ %s │ %s\n", seqNum, ts, dimStyle.Render(string(event.Type)))
 	}
 }
 
-func (r *Replayer) fmtWorkflowStart(seqNum, ts string) {
-	fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("WORKFLOW START"))
+func (r *Replayer) fmtWorkflowStart(w io.Writer, seqNum, ts string) {
+	fmt.Fprintf(w, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("WORKFLOW START"))
 }
 
-func (r *Replayer) fmtWorkflowEnd(seqNum, ts string, event *session.Event) {
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
+func (r *Replayer) fmtWorkflowEnd(w io.Writer, seqNum, ts string, event *session.Event) {
+	fmt.Fprintf(w, "%s │ %s │ %s %s\n", seqNum, ts,
 		flowStyle.Render("WORKFLOW END"),
 		dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 }
 
-func (r *Replayer) fmtGoalStart(seqNum, ts string) {
-	fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("GOAL START"))
+func (r *Replayer) fmtGoalStart(w io.Writer, seqNum, ts string) {
+	fmt.Fprintf(w, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("GOAL START"))
 }
 
-func (r *Replayer) fmtGoalEnd(seqNum, ts string, event *session.Event) {
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
+func (r *Replayer) fmtGoalEnd(w io.Writer, seqNum, ts string, event *session.Event) {
+	fmt.Fprintf(w, "%s │ %s │ %s %s\n", seqNum, ts,
 		flowStyle.Render("GOAL END"),
 		dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 	if r.verbosity >= 1 && event.Content != "" {
-		r.printContent(event.Content)
+		r.printContent(w, event.Content)
 	}
 }
 
-func (r *Replayer) fmtSubAgentStart(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtSubAgentStart(w io.Writer, seqNum, ts string, event *session.Event) {
 	if event.Meta == nil {
 		return
 	}
@@ -103,18 +104,18 @@ func (r *Replayer) fmtSubAgentStart(seqNum, ts string, event *session.Event) {
 	if event.Meta.SubAgentModel != "" {
 		model = dimStyle.Render(fmt.Sprintf(" [%s]", event.Meta.SubAgentModel))
 	}
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s %s%s\n", seqNum, ts,
 		subagentStyle.Render("SUBAGENT START:"),
 		valueStyle.Render(event.Meta.SubAgentName),
 		model)
 	if r.verbosity >= 1 && event.Meta.SubAgentTask != "" {
-		fmt.Fprintf(r.output, "      │          │   %s %s\n",
+		fmt.Fprintf(w, "      │          │   %s %s\n",
 			dimStyle.Render("task:"),
 			dimStyle.Render(truncateContent(event.Meta.SubAgentTask, 100)))
 	}
 }
 
-func (r *Replayer) fmtSubAgentEnd(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtSubAgentEnd(w io.Writer, seqNum, ts string, event *session.Event) {
 	if event.Meta == nil {
 		return
 	}
@@ -122,66 +123,66 @@ func (r *Replayer) fmtSubAgentEnd(seqNum, ts string, event *session.Event) {
 	if event.Error != "" {
 		status = errorStyle.Render("failed")
 	}
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s %s %s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s %s %s %s\n", seqNum, ts,
 		subagentStyle.Render("SUBAGENT END:"),
 		valueStyle.Render(event.Meta.SubAgentName),
 		status,
 		dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 	if event.Error != "" {
-		fmt.Fprintf(r.output, "      │          │   %s\n", errorStyle.Render(event.Error))
+		fmt.Fprintf(w, "      │          │   %s\n", errorStyle.Render(event.Error))
 	} else if event.Meta.SubAgentOutput != "" {
-		fmt.Fprintf(r.output, "      │          │   %s\n", subagentDimStyle.Render("output:"))
-		r.printSubAgentOutput(event.Meta.SubAgentOutput)
+		fmt.Fprintf(w, "      │          │   %s\n", subagentDimStyle.Render("output:"))
+		r.printSubAgentOutput(w, event.Meta.SubAgentOutput)
 	}
 }
 
-func (r *Replayer) fmtSystem(seqNum, ts string, event *session.Event) {
-	fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, dimStyle.Render("SYSTEM"))
+func (r *Replayer) fmtSystem(w io.Writer, seqNum, ts string, event *session.Event) {
+	fmt.Fprintf(w, "%s │ %s │ %s\n", seqNum, ts, dimStyle.Render("SYSTEM"))
 	if r.verbosity >= 1 && event.Content != "" {
-		r.printContent(event.Content)
+		r.printContent(w, event.Content)
 	}
 }
 
-func (r *Replayer) fmtWarning(seqNum, ts string, event *session.Event) {
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
+func (r *Replayer) fmtWarning(w io.Writer, seqNum, ts string, event *session.Event) {
+	fmt.Fprintf(w, "%s │ %s │ %s %s\n", seqNum, ts,
 		warnStyle.Render("⚠ WARNING:"),
 		warnStyle.Render(event.Content))
 }
 
-func (r *Replayer) fmtUser(seqNum, ts string, event *session.Event) {
-	fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("USER"))
+func (r *Replayer) fmtUser(w io.Writer, seqNum, ts string, event *session.Event) {
+	fmt.Fprintf(w, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("USER"))
 	if r.verbosity >= 1 && event.Content != "" {
-		r.printContent(event.Content)
+		r.printContent(w, event.Content)
 	}
 }
 
-func (r *Replayer) fmtAssistant(seqNum, ts string, event *session.Event) {
-	fmt.Fprintf(r.output, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("ASSISTANT"))
+func (r *Replayer) fmtAssistant(w io.Writer, seqNum, ts string, event *session.Event) {
+	fmt.Fprintf(w, "%s │ %s │ %s\n", seqNum, ts, flowStyle.Render("ASSISTANT"))
 	if r.verbosity >= 1 && event.Content != "" {
-		r.printContent(event.Content)
+		r.printContent(w, event.Content)
 	}
 	if r.verbosity >= 2 && event.Meta != nil {
-		r.printLLMMeta(event.Meta)
+		r.printLLMMeta(w, event.Meta)
 	}
 }
 
-func (r *Replayer) fmtToolCall(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtToolCall(w io.Writer, seqNum, ts string, event *session.Event) {
 	agentPrefix := r.getAgentPrefix(event)
 	corr := ""
 	if event.CorrelationID != "" {
 		corr = dimStyle.Render(fmt.Sprintf(" [%s]", event.CorrelationID))
 	}
-	fmt.Fprintf(r.output, "%s │ %s │ %s%s %s%s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s%s %s%s\n", seqNum, ts,
 		agentPrefix,
 		toolStyle.Render("TOOL CALL:"),
 		valueStyle.Render(event.Tool),
 		corr)
 	if r.verbosity >= 1 && len(event.Args) > 0 {
-		r.printArgs(event.Args)
+		r.printArgs(w, event.Args)
 	}
 }
 
-func (r *Replayer) fmtToolResult(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtToolResult(w io.Writer, seqNum, ts string, event *session.Event) {
 	agentPrefix := r.getAgentPrefix(event)
 	corr := ""
 	if event.CorrelationID != "" {
@@ -190,16 +191,16 @@ func (r *Replayer) fmtToolResult(seqNum, ts string, event *session.Event) {
 	argsHint := r.getArgsHint(event.Tool, event.Args)
 
 	if event.Error != "" {
-		fmt.Fprintf(r.output, "%s │ %s │ %s%s %s%s %s%s\n", seqNum, ts,
+		fmt.Fprintf(w, "%s │ %s │ %s%s %s%s %s%s\n", seqNum, ts,
 			agentPrefix,
 			toolStyle.Render("TOOL RESULT:"),
 			errorStyle.Render(event.Tool+" FAILED"),
 			argsHint,
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)),
 			corr)
-		r.printError(event.Error)
+		r.printError(w, event.Error)
 	} else {
-		fmt.Fprintf(r.output, "%s │ %s │ %s%s %s%s %s%s\n", seqNum, ts,
+		fmt.Fprintf(w, "%s │ %s │ %s%s %s%s %s%s\n", seqNum, ts,
 			agentPrefix,
 			toolStyle.Render("TOOL RESULT:"),
 			valueStyle.Render(event.Tool),
@@ -207,64 +208,64 @@ func (r *Replayer) fmtToolResult(seqNum, ts string, event *session.Event) {
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)),
 			corr)
 		if r.verbosity >= 1 && event.Content != "" {
-			r.printContent(event.Content)
+			r.printContent(w, event.Content)
 		}
 	}
 }
 
-func (r *Replayer) fmtPhaseCommit(seqNum, ts string, event *session.Event) {
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
+func (r *Replayer) fmtPhaseCommit(w io.Writer, seqNum, ts string, event *session.Event) {
+	fmt.Fprintf(w, "%s │ %s │ %s %s\n", seqNum, ts,
 		flowStyle.Render("COMMIT"),
 		dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 
 	if r.verbosity >= 1 && event.Meta != nil {
 		if event.Meta.Confidence != "" {
-			fmt.Fprintf(r.output, "      │          │   %s\n",
+			fmt.Fprintf(w, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("confidence: %s", event.Meta.Confidence)))
 		}
 		if event.Meta.Commitment != "" {
 			summary := truncateContent(event.Meta.Commitment, 80)
-			fmt.Fprintf(r.output, "      │          │   %s %s\n",
+			fmt.Fprintf(w, "      │          │   %s %s\n",
 				dimStyle.Render("intent:"),
 				dimStyle.Render(summary))
 		}
 	}
 	if r.verbosity >= 2 && event.Meta != nil && event.Meta.Commitment != "" {
 		if len(event.Meta.Commitment) > 80 {
-			fmt.Fprintf(r.output, "      │          │\n")
-			fmt.Fprintf(r.output, "      │          │   %s\n", blockHeaderStyle.Render("── COMMITMENT ──"))
-			r.printContent(event.Meta.Commitment)
+			fmt.Fprintf(w, "      │          │\n")
+			fmt.Fprintf(w, "      │          │   %s\n", blockHeaderStyle.Render("── COMMITMENT ──"))
+			r.printContent(w, event.Meta.Commitment)
 		}
 	}
 }
 
-func (r *Replayer) fmtPhaseExecute(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtPhaseExecute(w io.Writer, seqNum, ts string, event *session.Event) {
 	result := ""
 	if event.Meta != nil && event.Meta.Result != "" {
 		result = dimStyle.Render(fmt.Sprintf(" [%s]", event.Meta.Result))
 	}
-	fmt.Fprintf(r.output, "%s │ %s │ %s%s %s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s%s %s\n", seqNum, ts,
 		flowStyle.Render("EXECUTE"),
 		result,
 		dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 }
 
-func (r *Replayer) fmtPhaseReconcile(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtPhaseReconcile(w io.Writer, seqNum, ts string, event *session.Event) {
 	status := successStyle.Render("pass")
 	if event.Meta != nil && event.Meta.Escalate {
 		status = warnStyle.Render("ESCALATE")
 	}
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s %s %s\n", seqNum, ts,
 		flowStyle.Render("RECONCILE:"),
 		status,
 		dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 	if r.verbosity >= 1 && event.Meta != nil && len(event.Meta.Triggers) > 0 {
-		fmt.Fprintf(r.output, "      │          │   %s\n",
+		fmt.Fprintf(w, "      │          │   %s\n",
 			dimStyle.Render(fmt.Sprintf("triggers: %v", event.Meta.Triggers)))
 	}
 }
 
-func (r *Replayer) fmtPhaseSupervise(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtPhaseSupervise(w io.Writer, seqNum, ts string, event *session.Event) {
 	verdict := "CONTINUE"
 	supervisorType := "execution"
 	if event.Meta != nil {
@@ -286,27 +287,27 @@ func (r *Replayer) fmtPhaseSupervise(seqNum, ts string, event *session.Event) {
 		label = "SUPERVISOR"
 	}
 
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s %s %s\n", seqNum, ts,
 		style.Render(label),
 		verdictStyled,
 		dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)))
 
 	if event.Meta != nil {
 		if event.Meta.Model != "" {
-			fmt.Fprintf(r.output, "      │          │   %s\n",
+			fmt.Fprintf(w, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("model: %s", event.Meta.Model)))
 		}
 		if event.Meta.Correction != "" {
-			fmt.Fprintf(r.output, "      │          │   %s\n",
+			fmt.Fprintf(w, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("correction: %s", event.Meta.Correction)))
 		}
 		if r.verbosity >= 1 {
-			r.printLLMDetails(event.Meta)
+			r.printLLMDetails(w, event.Meta)
 		}
 	}
 }
 
-func (r *Replayer) fmtSecurityBlock(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtSecurityBlock(w io.Writer, seqNum, ts string, event *session.Event) {
 	if event.Meta == nil {
 		return
 	}
@@ -316,48 +317,48 @@ func (r *Replayer) fmtSecurityBlock(seqNum, ts string, event *session.Event) {
 	} else if event.Tool != "" {
 		sourceInfo = dimStyle.Render(fmt.Sprintf(" ← %s", event.Tool))
 	}
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s %s%s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s %s %s%s\n", seqNum, ts,
 		securityStyle.Render("SECURITY: untrusted content"),
 		valueStyle.Render(event.Meta.BlockID),
 		dimStyle.Render(fmt.Sprintf("(entropy=%.2f)", event.Meta.Entropy)),
 		sourceInfo)
 	if len(event.Meta.RelatedBlocks) > 0 {
-		fmt.Fprintf(r.output, "      │          │   %s %s\n",
+		fmt.Fprintf(w, "      │          │   %s %s\n",
 			securityStyle.Render("tainted by:"),
 			warnStyle.Render(strings.Join(event.Meta.RelatedBlocks, ", ")))
 	}
 }
 
-func (r *Replayer) fmtSecurityStatic(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtSecurityStatic(w io.Writer, seqNum, ts string, event *session.Event) {
 	status := successStyle.Render("pass")
 	if event.Meta != nil && !event.Meta.Pass {
 		status = warnStyle.Render("flagged")
 	}
 	context := r.getSecurityContext(event)
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s%s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s %s%s\n", seqNum, ts,
 		securityStyle.Render("SECURITY: static check"),
 		status, context)
 
 	if event.Meta != nil {
 		if len(event.Meta.Flags) > 0 {
-			fmt.Fprintf(r.output, "      │          │   %s\n",
+			fmt.Fprintf(w, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("flags: %v", event.Meta.Flags)))
 		}
 		if len(event.Meta.RelatedBlocks) > 1 {
-			fmt.Fprintf(r.output, "      │          │   %s\n",
+			fmt.Fprintf(w, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("related: %v", event.Meta.RelatedBlocks)))
 		}
 		if len(event.Meta.TaintLineage) > 0 {
-			r.printTaintLineage(event.Meta.TaintLineage)
+			r.printTaintLineage(w, event.Meta.TaintLineage)
 		}
 		if event.Meta.SkipReason != "" {
-			fmt.Fprintf(r.output, "      │          │   %s\n",
+			fmt.Fprintf(w, "      │          │   %s\n",
 				dimStyle.Render(fmt.Sprintf("no escalation: %s", event.Meta.SkipReason)))
 		}
 	}
 }
 
-func (r *Replayer) fmtSecurityTriage(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtSecurityTriage(w io.Writer, seqNum, ts string, event *session.Event) {
 	status := successStyle.Render("benign")
 	if event.Meta != nil && event.Meta.Suspicious {
 		status = warnStyle.Render("suspicious - escalating")
@@ -367,20 +368,20 @@ func (r *Replayer) fmtSecurityTriage(seqNum, ts string, event *session.Event) {
 		model = dimStyle.Render(fmt.Sprintf(" [%s]", event.Meta.Model))
 	}
 	context := r.getSecurityContext(event)
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s%s%s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s %s%s%s\n", seqNum, ts,
 		securityStyle.Render("SECURITY: triage"),
 		status, model, context)
 
 	if event.Meta != nil && event.Meta.SkipReason != "" {
-		fmt.Fprintf(r.output, "      │          │   %s\n",
+		fmt.Fprintf(w, "      │          │   %s\n",
 			dimStyle.Render(fmt.Sprintf("no escalation: %s", event.Meta.SkipReason)))
 	}
 	if r.verbosity >= 1 && event.Meta != nil {
-		r.printLLMDetails(event.Meta)
+		r.printLLMDetails(w, event.Meta)
 	}
 }
 
-func (r *Replayer) fmtSecuritySupervisor(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtSecuritySupervisor(w io.Writer, seqNum, ts string, event *session.Event) {
 	action := "allow"
 	if event.Meta != nil {
 		if event.Meta.Action != "" {
@@ -396,19 +397,19 @@ func (r *Replayer) fmtSecuritySupervisor(seqNum, ts string, event *session.Event
 		model = dimStyle.Render(fmt.Sprintf(" [%s]", event.Meta.Model))
 	}
 	context := r.getSecurityContext(event)
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s%s%s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s %s%s%s\n", seqNum, ts,
 		securitySupervisorStyle.Render("SECURITY: supervisor"),
 		actionStyled, model, context)
 	if event.Meta != nil && event.Meta.Reason != "" {
-		fmt.Fprintf(r.output, "      │          │   %s\n",
+		fmt.Fprintf(w, "      │          │   %s\n",
 			dimStyle.Render(event.Meta.Reason))
 	}
 	if r.verbosity >= 1 && event.Meta != nil {
-		r.printLLMDetails(event.Meta)
+		r.printLLMDetails(w, event.Meta)
 	}
 }
 
-func (r *Replayer) fmtSecurityDecision(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtSecurityDecision(w io.Writer, seqNum, ts string, event *session.Event) {
 	if event.Meta == nil {
 		return
 	}
@@ -423,24 +424,24 @@ func (r *Replayer) fmtSecurityDecision(seqNum, ts string, event *session.Event) 
 		pathStr = dimStyle.Render(fmt.Sprintf(" [%s]", path))
 	}
 	context := r.getSecurityContext(event)
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s%s%s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s %s%s%s\n", seqNum, ts,
 		securityStyle.Render("SECURITY: decision"),
 		actionDisplay, pathStr, context)
 	if event.Meta.Reason != "" {
-		fmt.Fprintf(r.output, "      │          │   %s\n",
+		fmt.Fprintf(w, "      │          │   %s\n",
 			dimStyle.Render(event.Meta.Reason))
 	}
 }
 
-func (r *Replayer) fmtCheckpoint(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtCheckpoint(w io.Writer, seqNum, ts string, event *session.Event) {
 	if event.Meta != nil {
-		fmt.Fprintf(r.output, "%s │ %s │ %s %s\n", seqNum, ts,
+		fmt.Fprintf(w, "%s │ %s │ %s %s\n", seqNum, ts,
 			dimStyle.Render("CHECKPOINT:"),
 			valueStyle.Render(event.Meta.CheckpointType))
 	}
 }
 
-func (r *Replayer) fmtBashSecurity(seqNum, ts string, event *session.Event) {
+func (r *Replayer) fmtBashSecurity(w io.Writer, seqNum, ts string, event *session.Event) {
 	step := "check"
 	action := "allow"
 	command := ""
@@ -466,7 +467,7 @@ func (r *Replayer) fmtBashSecurity(seqNum, ts string, event *session.Event) {
 	// Non-verbose: Only show denials
 	if r.verbosity == 0 {
 		if action == "deny" {
-			fmt.Fprintf(r.output, "%s │ %s │ %s %s %s\n", seqNum, ts,
+			fmt.Fprintf(w, "%s │ %s │ %s %s %s\n", seqNum, ts,
 				bashStyle.Render("BASH:"),
 				stepLabel,
 				actionStyled)
@@ -484,7 +485,7 @@ func (r *Replayer) fmtBashSecurity(seqNum, ts string, event *session.Event) {
 		timing = dimStyle.Render(fmt.Sprintf(" (%dms)", durationMs))
 	}
 
-	fmt.Fprintf(r.output, "%s │ %s │ %s %s %s%s%s\n", seqNum, ts,
+	fmt.Fprintf(w, "%s │ %s │ %s %s %s%s%s\n", seqNum, ts,
 		bashStyle.Render("BASH:"),
 		stepLabel,
 		actionStyled,
@@ -494,12 +495,12 @@ func (r *Replayer) fmtBashSecurity(seqNum, ts string, event *session.Event) {
 	// Verbosity >= 2
 	if r.verbosity >= 2 {
 		if command != "" && len(command) > 50 {
-			fmt.Fprintf(r.output, "      │          │   %s %s\n",
+			fmt.Fprintf(w, "      │          │   %s %s\n",
 				dimStyle.Render("command:"),
 				valueStyle.Render(command))
 		}
 		if reason != "" {
-			fmt.Fprintf(r.output, "      │          │   %s %s\n",
+			fmt.Fprintf(w, "      │          │   %s %s\n",
 				dimStyle.Render("reason:"),
 				dimStyle.Render(reason))
 		}

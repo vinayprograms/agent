@@ -93,7 +93,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		r := replay.New(os.Stdout, verbosity, opts...)
+		r := replay.New(verbosity, opts...)
 		if err := r.ReplayFileLive(paths[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -114,7 +114,7 @@ func main() {
 	}
 
 	// Create multi-session replayer
-	r := replay.NewMulti(os.Stdout, verbosity, opts...)
+	r := replay.NewMulti(verbosity, opts...)
 
 	// Use interactive pager when stdout is a TTY and not disabled
 	if !noInteractive && isTerminal(os.Stdout) {
@@ -123,7 +123,7 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		if err := r.ReplayFiles(sessionFiles); err != nil {
+		if err := r.ReplayFiles(os.Stdout, sessionFiles); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -138,7 +138,7 @@ func parseCostSpecs(specs []string) ([]replay.ReplayerOption, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid --cost %q: %w", spec, err)
 		}
-		opts = append(opts, replay.WithModelPricing(model, inPrice, outPrice))
+		opts = append(opts, replay.Pricing(model, inPrice, outPrice))
 	}
 	return opts, nil
 }

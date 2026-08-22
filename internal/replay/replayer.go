@@ -11,8 +11,10 @@ import (
 )
 
 // Replayer reads and formats session events for forensic analysis.
+// A Replayer holds no writer state: Replay and its variants render into the
+// io.Writer passed to each call, so a single Replayer is safe to reuse and
+// to share across goroutines.
 type Replayer struct {
-	output         io.Writer
 	verbosity      int        // 0=normal, 1=verbose (-v), 2=very verbose (-vv)
 	maxContentSize int        // Maximum size for Content fields (0 = unlimited)
 	pricing        PricingMap // Optional per-model pricing for cost calculation
@@ -21,15 +23,15 @@ type Replayer struct {
 // ReplayerOption configures a Replayer.
 type ReplayerOption func(*Replayer)
 
-// WithMaxContentSize limits Content field size to avoid OOM on large sessions.
-func WithMaxContentSize(size int) ReplayerOption {
+// MaxContentSize limits Content field size to avoid OOM on large sessions.
+func MaxContentSize(size int) ReplayerOption {
 	return func(r *Replayer) {
 		r.maxContentSize = size
 	}
 }
 
-// WithModelPricing adds pricing for a specific model (per 1M tokens).
-func WithModelPricing(model string, inputPer1M, outputPer1M float64) ReplayerOption {
+// Pricing adds pricing for a specific model (per 1M tokens).
+func Pricing(model string, inputPer1M, outputPer1M float64) ReplayerOption {
 	return func(r *Replayer) {
 		if r.pricing == nil {
 			r.pricing = make(PricingMap)
@@ -42,9 +44,8 @@ func WithModelPricing(model string, inputPer1M, outputPer1M float64) ReplayerOpt
 }
 
 // New creates a new Replayer.
-func New(output io.Writer, verbosity int, opts ...ReplayerOption) *Replayer {
+func New(verbosity int, opts ...ReplayerOption) *Replayer {
 	r := &Replayer{
-		output:         output,
 		verbosity:      verbosity,
 		maxContentSize: 50 * 1024, // Default: 50KB per content field
 	}
@@ -54,13 +55,13 @@ func New(output io.Writer, verbosity int, opts ...ReplayerOption) *Replayer {
 	return r
 }
 
-// ReplayFile loads and replays a session from a file.
-func (r *Replayer) ReplayFile(path string) error {
+// ReplayFile loads and replays a session from a file into w.
+func (r *Replayer) ReplayFile(w io.Writer, path string) error {
 	sess, err := r.loadSession(path)
 	if err != nil {
 		return err
 	}
-	return r.Replay(sess)
+	return r.Replay(w, sess)
 }
 
 // ReplayFileInteractive loads and replays with interactive pager.
@@ -75,17 +76,12 @@ func (r *Replayer) ReplayFileInteractive(path string) error {
 // ReplayInteractive outputs a formatted timeline using an interactive pager.
 func (r *Replayer) ReplayInteractive(sess *session.Session) error {
 	var buf strings.Builder
-	oldOutput := r.output
-	r.output = &buf
-
-	if err := r.Replay(sess); err != nil {
-		r.output = oldOutput
+	if err := r.Replay(&buf, sess); err != nil {
 		return err
 	}
-	r.output = oldOutput
 
 	title := fmt.Sprintf("Session: %s", sess.ID)
-	p := NewPager(title, buf.String())
+	p := newPager(title)
 	return p.Run(buf.String())
 }
 
@@ -98,12 +94,7 @@ func (r *Replayer) ReplayFileLive(path string) error {
 		}
 
 		var buf strings.Builder
-		oldOutput := r.output
-		r.output = &buf
-		err = r.Replay(sess)
-		r.output = oldOutput
-
-		if err != nil {
+		if err := r.Replay(&buf, sess); err != nil {
 			return "", err
 		}
 		return buf.String(), nil
@@ -115,55 +106,55 @@ func (r *Replayer) ReplayFileLive(path string) error {
 	}
 
 	title := fmt.Sprintf("Session: %s (LIVE)", sess.ID)
-	p := NewPager(title, "")
+	p := newPager(title)
 	return p.RunLive(path, renderFunc)
 }
 
-// Replay outputs a formatted timeline of session events.
-func (r *Replayer) Replay(sess *session.Session) error {
-	r.printHeader(sess)
-	r.printTimeline(sess)
-	r.printSummary(sess)
+// Replay renders a formatted timeline of session events into w.
+func (r *Replayer) Replay(w io.Writer, sess *session.Session) error {
+	r.printHeader(w, sess)
+	r.printTimeline(w, sess)
+	r.printSummary(w, sess)
 	return nil
 }
 
-func (r *Replayer) printHeader(sess *session.Session) {
-	fmt.Fprintln(r.output)
-	fmt.Fprintf(r.output, "%s %s\n", titleStyle.Render("SESSION"), valueStyle.Render(sess.ID))
-	fmt.Fprintln(r.output, divider)
-	fmt.Fprintf(r.output, "%s %s\n", labelStyle.Render("Workflow:"), valueStyle.Render(sess.WorkflowName))
-	fmt.Fprintf(r.output, "%s %s\n", labelStyle.Render("Status:  "), r.statusStyle(sess.Status).Render(sess.Status))
-	fmt.Fprintf(r.output, "%s %s\n", labelStyle.Render("Created: "), valueStyle.Render(sess.CreatedAt.Format(time.RFC3339)))
+func (r *Replayer) printHeader(w io.Writer, sess *session.Session) {
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "%s %s\n", titleStyle.Render("SESSION"), valueStyle.Render(sess.ID))
+	fmt.Fprintln(w, divider)
+	fmt.Fprintf(w, "%s %s\n", labelStyle.Render("Workflow:"), valueStyle.Render(sess.WorkflowName))
+	fmt.Fprintf(w, "%s %s\n", labelStyle.Render("Status:  "), r.statusStyle(sess.Status).Render(sess.Status))
+	fmt.Fprintf(w, "%s %s\n", labelStyle.Render("Created: "), valueStyle.Render(sess.CreatedAt.Format(time.RFC3339)))
 	if len(sess.Inputs) > 0 {
-		fmt.Fprintf(r.output, "%s %s\n", labelStyle.Render("Inputs:  "), valueStyle.Render(formatMap(sess.Inputs)))
+		fmt.Fprintf(w, "%s %s\n", labelStyle.Render("Inputs:  "), valueStyle.Render(formatMap(sess.Inputs)))
 	}
-	fmt.Fprintln(r.output)
+	fmt.Fprintln(w)
 }
 
-func (r *Replayer) printTimeline(sess *session.Session) {
-	fmt.Fprintf(r.output, "%s %s\n", titleStyle.Render("TIMELINE"), dimStyle.Render(fmt.Sprintf("(%d events)", len(sess.Events))))
-	fmt.Fprintln(r.output, divider)
+func (r *Replayer) printTimeline(w io.Writer, sess *session.Session) {
+	fmt.Fprintf(w, "%s %s\n", titleStyle.Render("TIMELINE"), dimStyle.Render(fmt.Sprintf("(%d events)", len(sess.Events))))
+	fmt.Fprintln(w, divider)
 
 	var lastGoal string
 	for i, event := range sess.Events {
-		r.formatEvent(i+1, &event, &lastGoal)
+		r.formatEvent(w, i+1, &event, &lastGoal)
 	}
 }
 
-func (r *Replayer) printSummary(sess *session.Session) {
-	fmt.Fprintln(r.output)
-	fmt.Fprintln(r.output, divider)
+func (r *Replayer) printSummary(w io.Writer, sess *session.Session) {
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, divider)
 
 	switch sess.Status {
 	case session.StatusComplete:
-		fmt.Fprintln(r.output, successStyle.Render("COMPLETED"))
+		fmt.Fprintln(w, successStyle.Render("COMPLETED"))
 	case session.StatusFailed:
-		fmt.Fprintf(r.output, "%s %s\n", errorStyle.Render("FAILED:"), valueStyle.Render(sess.Error))
+		fmt.Fprintf(w, "%s %s\n", errorStyle.Render("FAILED:"), valueStyle.Render(sess.Error))
 	default:
-		fmt.Fprintln(r.output, warnStyle.Render("RUNNING"))
+		fmt.Fprintln(w, warnStyle.Render("RUNNING"))
 	}
 
 	stats := ComputeStats(sess)
-	PrintStats(r.output, stats)
-	PrintTokenUsage(r.output, stats, r.pricing)
+	PrintStats(w, stats)
+	PrintTokenUsage(w, stats, r.pricing)
 }
