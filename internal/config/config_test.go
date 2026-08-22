@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -334,5 +335,38 @@ func TestConfig_Profile(t *testing.T) {
 				t.Errorf("Profile(%q) mismatch (-want +got):\n%s", tt.name, diff)
 			}
 		})
+	}
+}
+
+func TestLimitsConfig_Duration(t *testing.T) {
+	tests := []struct {
+		name, value string
+		want        time.Duration
+	}{
+		{"unset", "", 0},
+		{"minutes", "10m", 10 * time.Minute},
+		{"compound", "1h30m", 90 * time.Minute},
+		{"unparseable is unlimited", "ten minutes", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (LimitsConfig{MaxDuration: tt.value}).Duration(); got != tt.want {
+				t.Errorf("LimitsConfig{MaxDuration: %q}.Duration() = %v, want %v", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadFile_Limits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	if err := os.WriteFile(path, []byte("[limits]\nmax_tool_calls = 40\nmax_turns = 25\nmax_duration = \"10m\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if cfg.Limits.MaxToolCalls != 40 || cfg.Limits.MaxTurns != 25 || cfg.Limits.Duration() != 10*time.Minute {
+		t.Errorf("Limits = %+v, want 40 tool calls, 25 turns, 10m", cfg.Limits)
 	}
 }

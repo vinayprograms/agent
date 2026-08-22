@@ -79,6 +79,12 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 					prompt := e.buildConvergePrompt(goal, iterations, "")
 
 					output, iterErr := e.executeConvergeIteration(ctx, goal, prompt)
+					if e.noteBudget(iterErr) {
+						// The goal is out of budget: stop iterating and keep
+						// what it has produced so far.
+						iterationCount = i
+						break
+					}
 					if iterErr != nil {
 						return nil, fmt.Errorf("convergence iteration %d failed: %w", i, iterErr)
 					}

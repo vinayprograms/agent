@@ -148,6 +148,7 @@ type Executor struct {
 	guard *contentguard.Guard
 
 	// Timeouts for network operations (seconds)
+	budget           Budget
 	timeoutMCP       int
 	timeoutWebSearch int
 	timeoutWebFetch  int
@@ -275,6 +276,7 @@ func New(cfg Config) (*Executor, error) {
 		humanAvailable:       cfg.HumanAvailable,
 		humanInputChan:       cfg.HumanInputChan,
 		hooks:                hk,
+		budget:               cfg.Budget,
 		timeoutMCP:           cfg.TimeoutMCP,
 		timeoutWebSearch:     cfg.TimeoutWebSearch,
 		timeoutWebFetch:      cfg.TimeoutWebFetch,
@@ -576,6 +578,8 @@ func (e *Executor) goalOutcome(name string) string {
 // Phases: COMMIT -> EXECUTE -> RECONCILE -> SUPERVISE
 // All steps capture checkpoints; only supervised steps run RECONCILE/SUPERVISE.
 func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.Goal) (*GoalResult, error) {
+	ctx = e.withBudget(ctx, goal.Name)
+
 	// Log goal start
 	e.logGoalStart(goal.Name)
 
@@ -666,6 +670,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			// EXECUTE: do the work
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
 				output, toolsUsed, toolCallsMade, err := e.executePhase(ctx, goal, prompt)
+				if e.noteBudget(err) {
+					err = nil
+				}
 				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed, ToolCallsMade: toolCallsMade}, err
 			},
 			// POST-CHECKPOINT: self-assessment
@@ -913,6 +920,14 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 		}
 
 		toolCallsMade = true
+
+		if err := budgetOf(ctx).spend(len(resp.ToolCalls)); err != nil {
+			for tool := range toolsUsedMap {
+				toolsUsed = append(toolsUsed, tool)
+			}
+			e.logPhaseExecute(goal.Name, "budget_exhausted", time.Since(start).Milliseconds())
+			return resp.Content, toolsUsed, toolCallsMade, err
+		}
 
 		// Track tools used
 		for _, tc := range resp.ToolCalls {
