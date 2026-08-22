@@ -369,7 +369,7 @@ func TestProviderHelpers(t *testing.T) {
 
 func TestGetDefaultConfigDir(t *testing.T) {
 	home := isolate(t)
-	if got := getDefaultConfigDir(); got != filepath.Join(home, ".config", "grid") {
+	if got := getDefaultConfigDir(); got != filepath.Join(home, ".config", "agent") {
 		t.Errorf("config dir = %q", got)
 	}
 	t.Setenv("HOME", "")
@@ -641,7 +641,7 @@ func TestUpdate_FullFlow_RestrictiveWithMCP(t *testing.T) {
 	if m.screen != ScreenComplete || m.err != nil {
 		t.Fatalf("write failed: %v", m.err)
 	}
-	credPath := filepath.Join(home, ".config", "grid", "credentials.toml")
+	credPath := filepath.Join(home, ".config", "agent", "credentials.toml")
 	if strings.Join(m.filesWritten, ",") != "agent.toml,policy.toml,"+credPath {
 		t.Errorf("files = %v", m.filesWritten)
 	}
@@ -890,7 +890,7 @@ func TestCredentialMethods_ClaudeCLI(t *testing.T) {
 
 func TestWriteCredentials(t *testing.T) {
 	home := isolate(t)
-	path := filepath.Join(home, ".config", "grid", "credentials.toml")
+	path := filepath.Join(home, ".config", "agent", "credentials.toml")
 	m := New(context.Background())
 	m.config.Provider = ProviderOpenAI
 	m.config.APIKey = "first"
@@ -1042,7 +1042,7 @@ func TestWriteCredentials_SaveFailure(t *testing.T) {
 		t.Skip("root ignores directory permissions")
 	}
 	home := isolate(t)
-	dir := filepath.Join(home, ".config", "grid")
+	dir := filepath.Join(home, ".config", "agent")
 	os.MkdirAll(dir, 0700)
 	os.Chmod(dir, 0500) // exists but unwritable: NewFileStore succeeds, Save fails
 	t.Cleanup(func() { os.Chmod(dir, 0700) })
@@ -1069,7 +1069,7 @@ func TestLoadExistingConfig_LegacyPolicyKeysWarn(t *testing.T) {
 
 func TestWriteCredentials_EmptyExistingFile(t *testing.T) {
 	home := isolate(t)
-	path := filepath.Join(home, ".config", "grid", "credentials.toml")
+	path := filepath.Join(home, ".config", "agent", "credentials.toml")
 	os.MkdirAll(filepath.Dir(path), 0700)
 	os.WriteFile(path, nil, 0600)
 	m := New(context.Background())

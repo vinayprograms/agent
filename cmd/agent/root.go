@@ -56,7 +56,7 @@ func newDeps() deps {
 // It runs inside the commands that need it, so a broken credentials file
 // does not break --help, validate, pack and friends.
 func loadCredentials() (credentials.Lookup, error) {
-	creds, _, err := credentials.Load(credentials.StandardPaths("grid")...)
+	creds, _, err := credentials.Load(credentials.StandardPaths("agent")...)
 	if err != nil {
 		return nil, fmt.Errorf("loading credentials: %w", err)
 	}

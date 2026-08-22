@@ -203,7 +203,7 @@ Expected response format:
 ## Credentials
 
 ```toml
-# ~/.config/grid/credentials.toml
+# ~/.config/agent/credentials.toml
 
 # Simple: single key for all providers
 [llm]

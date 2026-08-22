@@ -195,7 +195,7 @@ setup: build ## Interactive setup wizard
 .PHONY: setup-dev
 setup-dev: ## Create development config files
 	@echo "Creating development configuration..."
-	@mkdir -p ~/.config/grid
+	@mkdir -p ~/.config/agent
 	@if [ ! -f agent.toml ]; then \
 		echo '[agent]' > agent.toml; \
 		echo 'id = "dev-agent"' >> agent.toml; \

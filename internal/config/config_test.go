@@ -22,7 +22,7 @@ func writeFile(t *testing.T, path, body string) string {
 }
 
 func TestDefaultDirs(t *testing.T) {
-	if got, want := DefaultConfigDir("/h"), filepath.Join("/h", ".config", "grid"); got != want {
+	if got, want := DefaultConfigDir("/h"), filepath.Join("/h", ".config", "agent"); got != want {
 		t.Errorf("DefaultConfigDir(/h) = %q, want %q", got, want)
 	}
 	if got, want := DefaultStateDir("/h"), filepath.Join("/h", ".local", "agent"); got != want {
