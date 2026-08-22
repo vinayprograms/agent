@@ -171,7 +171,7 @@ split into model/screens/views/generate/write/probe; Step→Screen; New(opts: Wi
 ### R9b internal/replay — DONE (335245a; verifier PASS; dead untracked replay/session.go deleted)
 New(verbosity, opts...) + Replay(w, sess)/ReplayFile(w, path)/ReplayFiles(w, paths) (writer per call); MaxContentSize/Pricing option nouns; newPager unexported; max shadow deleted; injected pager debounce; goldens for verbosity 0/1/2, pricing, failed/running sessions, stats. coverage 85.6% (remaining = tea.Program.Run against a real terminal). .gitignore `replay` → `/replay`.
 R9b/R9c follow-ups for R1: setup options `WithDir`→`Dir`, `WithContext` → positional `New(ctx, …)`/`Run(ctx, …)` and WIRE it from cmd/agent/setup.go; rename *Step helpers/field to Screen; replay pager/interactive funcs take `...tea.ProgramOption` passthrough so Run paths are testable (raise replay toward 100%: fmtSubAgentEnd, fmtSecurityBlock, PrintStats, pager.Update/View).
-### R3 internal/executor — DONE (20d3551…6897143, merged; verifier pending)
+### R3 internal/executor — DONE (20d3551…6897143, merged; verifier PASS)
 Run(ctx, RunOptions{Inputs, Interrupts, Discuss}); all Set*/Clear* deleted; Result.Error dropped; ConvergenceFailures; AddUntrustedContent(ctx, content, source, taintedBy...); XMLContextBuilder → unexported brief; swarmctx.go deleted; background WaitGroup owns observation/async-tool goroutines (WithoutCancel; waits before session close — synctest-pinned); errgroup.SetLimit; atomic.Int32; slices.SortFunc. Bugs fixed: extractProjectMeta emitted "Package: : "; interpolate depended on map order. coverage 99.9% (2 defensive statements). Residual X5: supervision.EventHook has no ctx.
 ### R7 CLI unification (minus swarm) — DONE (8c84006, 77e97d2; verifier pending)
 internal/replaycmd.New(Config) shared by cmd/replay (root) and agent replay; replay.ParsePricing; agentmem cobra NewRootCmd (same flags/output); bugs: WalkDir nil-deref (8), dir mode globs *.jsonl (6); os.Exit only in main. coverage agentmem 94.8%, replaycmd 96.2%.
@@ -183,3 +183,4 @@ Bugs → R10-fix unit (after R1a merges; touches executor + agentfile):
 4. executor.go:718 logGoalEnd per CONVERGE iteration → "Completed goal" printed N×/0×.
 5. unmet requirements.mcp_servers and undefined REQUIRES profiles are silent → startup warning.
 6. supervisor_verdict log goal="" (supervision never receives goal name — pass it); Result.Iterations null on success (only failures) → rename/document.
+7. (R3 verifier) background ctx has no deadline: use context.WithTimeout(context.WithoutCancel(ctx), llm/tool timeout) for observation extraction + async tools so Run can't hang on Ctrl-C against ctx-bound providers.
