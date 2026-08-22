@@ -346,7 +346,7 @@ func TestLimitsConfig_Duration(t *testing.T) {
 		{"unset", "", 0},
 		{"minutes", "10m", 10 * time.Minute},
 		{"compound", "1h30m", 90 * time.Minute},
-		{"unparseable is unlimited", "ten minutes", 0},
+		{"unparseable is zero (rejected at load)", "ten minutes", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -354,6 +354,16 @@ func TestLimitsConfig_Duration(t *testing.T) {
 				t.Errorf("LimitsConfig{MaxDuration: %q}.Duration() = %v, want %v", tt.value, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoadFile_LimitsBadDurationIsAnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	if err := os.WriteFile(path, []byte("[limits]\nmax_duration = \"ten minutes\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(path); err == nil || !strings.Contains(err.Error(), "max_duration") {
+		t.Fatalf("a typo in max_duration must not silently mean unlimited, got %v", err)
 	}
 }
 

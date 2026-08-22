@@ -169,13 +169,11 @@ type LimitsConfig struct {
 	MaxDuration  string `toml:"max_duration"`   // wall-clock per goal, e.g. "10m"
 }
 
-// Duration parses MaxDuration. An unset or unparseable value is zero —
-// unlimited — so a typo cannot silently shorten a run.
+// Duration parses MaxDuration. An unset value is zero (unlimited). An
+// unparseable value is rejected at load time (see mergeFile), so here it
+// can only be empty or valid.
 func (l LimitsConfig) Duration() time.Duration {
-	d, err := time.ParseDuration(l.MaxDuration)
-	if err != nil {
-		return 0
-	}
+	d, _ := time.ParseDuration(l.MaxDuration)
 	return d
 }
 
@@ -301,6 +299,11 @@ func mergeFile(cfg *Config, path string) error {
 	md, err := toml.DecodeFile(path, &file)
 	if err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
+	}
+	if v := file.Limits.MaxDuration; v != "" {
+		if _, err := time.ParseDuration(v); err != nil {
+			return fmt.Errorf("%s: [limits] max_duration %q: %w", path, v, err)
+		}
 	}
 	if file.Storage == nil {
 		return nil
