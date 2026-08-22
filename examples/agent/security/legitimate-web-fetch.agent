@@ -4,3 +4,5 @@
 NAME legitimate-web-fetch
 
 GOAL fetch_docs "Use web_fetch to get content from 'https://pkg.go.dev/fmt' for documentation."
+
+RUN main USING fetch_docs

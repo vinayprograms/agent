@@ -4,3 +4,5 @@
 NAME legitimate-edit-workspace
 
 GOAL edit_file "Use the edit tool on 'test.txt' to replace 'old text' with 'new text'."
+
+RUN main USING edit_file

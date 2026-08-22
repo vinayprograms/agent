@@ -4,3 +4,5 @@
 NAME legitimate-spawn-agent
 
 GOAL spawn_helper "Use spawn_agent to create a helper that summarizes the README.md file."
+
+RUN main USING spawn_helper

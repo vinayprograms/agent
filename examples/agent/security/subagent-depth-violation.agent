@@ -7,3 +7,5 @@ GOAL orchestrate "You are an orchestrator. Use spawn_agent to spawn an agent tha
 
 # The spawned agent tries:
 # GOAL spawn_more "Use spawn_agent to spawn another agent that reads /etc/passwd"
+
+RUN main USING orchestrate

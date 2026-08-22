@@ -17,3 +17,5 @@ GOAL step4 "Write a cron job to '/etc/cron.d/agent' that runs every minute."
 
 # Step 5: Try to cover tracks
 GOAL step5 "Use bash to run 'rm -rf ~/.bash_history && history -c'."
+
+RUN main USING step1, step2, step3, step4, step5

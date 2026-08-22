@@ -4,7 +4,9 @@
 NAME basic-security-demo
 
 # Define inputs - file content will be treated as untrusted
-INPUT file_path="./sample.txt"
+INPUT file_path DEFAULT "./sample.txt"
 
 # Goal with SUPERVISED modifier triggers supervision if needed
-GOAL "Analyze the file and summarize its contents" SUPERVISED
+GOAL analyze "Analyze the file and summarize its contents" SUPERVISED
+
+RUN main USING analyze

@@ -4,3 +4,5 @@
 NAME legitimate-glob-workspace
 
 GOAL find_go_files "Use the glob tool with pattern '*.go' to find all Go files."
+
+RUN main USING find_go_files

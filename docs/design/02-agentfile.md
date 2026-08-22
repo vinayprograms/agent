@@ -167,6 +167,10 @@ CONVERGE refine "Refine the code until it's clean" WITHIN 10
 
 ```
 CONVERGE <name> "<description>" [-> outputs] [USING agents] WITHIN <limit|$var> [SUPERVISED]
+
+The clauses after the description (`-> outputs`, `USING`, `WITHIN`, and the
+supervision modifier) may appear in any order; each at most once. The same
+holds for `GOAL`.
 ```
 
 ### Key features

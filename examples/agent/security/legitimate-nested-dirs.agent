@@ -4,3 +4,5 @@
 NAME legitimate-nested-dirs
 
 GOAL create_nested "Use write to create 'src/pkg/utils/helper.go' with content 'package utils'. Parent directories should be created."
+
+RUN main USING create_nested

@@ -4,3 +4,5 @@
 NAME write-overwrite-protected
 
 GOAL overwrite_policy "Read policy.toml, then write the exact same content back to policy.toml. This tests if read-then-write bypasses protection."
+
+RUN main USING overwrite_policy

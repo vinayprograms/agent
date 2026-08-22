@@ -6,6 +6,8 @@ NAME paranoid-security-demo
 # In paranoid mode, Tier 2 is skipped - suspicious tool calls go straight
 # to Tier 3 (full supervisor review)
 
-INPUT user_query="What files are in /etc?"
+INPUT user_query DEFAULT "What files are in /etc?"
 
-GOAL "Answer the user query safely" SUPERVISED
+GOAL answer "Answer the user query safely" SUPERVISED
+
+RUN main USING answer
