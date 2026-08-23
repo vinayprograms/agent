@@ -1,6 +1,7 @@
 package webfetch
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/vinayprograms/agent/internal/tools/httpclient"
 	"github.com/vinayprograms/agentkit/tools"
@@ -248,6 +250,9 @@ func TestExecute_WithSummarizer(t *testing.T) {
 	}
 }
 
+// TestExecute_SummarizerError proves a summarizer failure returns the
+// truncated page text with a warning prefix instead of failing the tool —
+// the page content is still useful even when summarization isn't available.
 func TestExecute_SummarizerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -256,9 +261,15 @@ func TestExecute_SummarizerError(t *testing.T) {
 	defer srv.Close()
 
 	tl := New(&fakeSummarizer{err: errors.New("boom")})
-	_, err := tl.Execute(t.Context(), args(t, map[string]any{"url": srv.URL, "question": "q"}))
-	if err == nil {
-		t.Error("Execute() with a failing summarizer: want error, got nil")
+	out, err := tl.Execute(t.Context(), args(t, map[string]any{"url": srv.URL, "question": "q"}))
+	if err != nil {
+		t.Fatalf("Execute() with a failing summarizer: want nil error, got %v", err)
+	}
+	if !strings.Contains(out, "[summary unavailable: boom]") {
+		t.Errorf("Execute() = %q, want it to contain the summarizer-unavailable warning", out)
+	}
+	if !strings.Contains(out, "text") {
+		t.Errorf("Execute() = %q, want it to still contain the page text", out)
 	}
 }
 
@@ -280,6 +291,131 @@ func TestExtractReadableText(t *testing.T) {
 				t.Errorf("extractReadableText(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestExecute_BodyCappedAtMaxBodyBytes proves a page far larger than the
+// body cap doesn't get read in full — a 3 MiB page with a default 2 MiB
+// cap must be truncated and the truncation noted in the result.
+func TestExecute_BodyCappedAtMaxBodyBytes(t *testing.T) {
+	const pageSize = 3 << 20 // 3 MiB
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("<p>"))
+		_, _ = w.Write(bytes.Repeat([]byte("a"), pageSize))
+	}))
+	defer srv.Close()
+
+	tl := New(nil, WithMaxBodyBytes(1<<20), WithMaxTextChars(2<<20)) // text cap kept above the body cap so it doesn't mask the body note
+	out, err := tl.Execute(t.Context(), args(t, map[string]any{"url": srv.URL, "question": "q"}))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "[body truncated: read 1048576 bytes]") {
+		t.Errorf("Execute() did not report body truncation; got suffix %q", out[max(0, len(out)-80):])
+	}
+	// The extracted text itself must also be well under the page size —
+	// proves the body was actually capped, not just the note appended.
+	if len(out) > 2<<20 {
+		t.Errorf("Execute() len = %d, want it bounded near the 1 MiB body cap, not the 3 MiB page", len(out))
+	}
+}
+
+// TestExecute_SummarizerInputCapped proves the text handed to the
+// summarizer is bounded even for a long page, so it never overflows a
+// model's context window.
+func TestExecute_SummarizerInputCapped(t *testing.T) {
+	longText := strings.Repeat("word ", 30000) // ~150000 chars
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprintf(w, "<p>%s</p>", longText)
+	}))
+	defer srv.Close()
+
+	fs := &fakeSummarizer{answer: "ok"}
+	tl := New(fs, WithMaxSummaryChars(1000))
+	_, err := tl.Execute(t.Context(), args(t, map[string]any{"url": srv.URL, "question": "q"}))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(fs.content) > 1000+100 { // small slack for the truncation note
+		t.Errorf("summarizer input len = %d, want <= ~1100 (cap 1000 + note)", len(fs.content))
+	}
+	if !strings.Contains(fs.content, "[truncated:") {
+		t.Errorf("summarizer input = %q, want a truncation note", fs.content)
+	}
+}
+
+// TestExecute_NoSummarizerTextCapped proves the text returned verbatim
+// (no summarizer configured) is bounded by maxTextChars.
+func TestExecute_NoSummarizerTextCapped(t *testing.T) {
+	longText := strings.Repeat("word ", 10000) // ~50000 chars
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprintf(w, "<p>%s</p>", longText)
+	}))
+	defer srv.Close()
+
+	tl := New(nil, WithMaxTextChars(500))
+	out, err := tl.Execute(t.Context(), args(t, map[string]any{"url": srv.URL, "question": "q"}))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "[truncated: 500 of") {
+		t.Errorf("Execute() = %q, want a truncation note naming the 500-char cap", out[:min(len(out), 60)])
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		max      int
+		wantText string
+		wantNote bool
+	}{
+		{"under cap: unchanged, no note", "hello", 10, "hello", false},
+		{"exact cap: unchanged, no note", "hello", 5, "hello", false},
+		{"over cap: truncated with note", "hello world", 5, "hello", true},
+		{"multi-byte rune boundary respected", "héllo world", 2, "hé", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text, note := truncateRunes(tt.in, tt.max)
+			if text != tt.wantText {
+				t.Errorf("truncateRunes(%q, %d) text = %q, want %q", tt.in, tt.max, text, tt.wantText)
+			}
+			if (note != "") != tt.wantNote {
+				t.Errorf("truncateRunes(%q, %d) note = %q, want present=%v", tt.in, tt.max, note, tt.wantNote)
+			}
+			if !utf8.ValidString(text) {
+				t.Errorf("truncateRunes(%q, %d) = %q, not valid UTF-8 (split a rune)", tt.in, tt.max, text)
+			}
+		})
+	}
+}
+
+func TestWithMaxBodyBytesAndMaxCharsOptions(t *testing.T) {
+	tl := New(nil, WithMaxBodyBytes(123), WithMaxSummaryChars(456), WithMaxTextChars(789))
+	if tl.maxBodyBytes != 123 {
+		t.Errorf("maxBodyBytes = %d, want 123", tl.maxBodyBytes)
+	}
+	if tl.maxSummaryChars != 456 {
+		t.Errorf("maxSummaryChars = %d, want 456", tl.maxSummaryChars)
+	}
+	if tl.maxTextChars != 789 {
+		t.Errorf("maxTextChars = %d, want 789", tl.maxTextChars)
+	}
+
+	tl2 := New(nil, WithMaxBodyBytes(0), WithMaxSummaryChars(-1), WithMaxTextChars(0))
+	if tl2.maxBodyBytes != defaultMaxBodyBytes {
+		t.Errorf("WithMaxBodyBytes(0): maxBodyBytes = %d, want default %d", tl2.maxBodyBytes, defaultMaxBodyBytes)
+	}
+	if tl2.maxSummaryChars != defaultMaxSummaryChars {
+		t.Errorf("WithMaxSummaryChars(-1): maxSummaryChars = %d, want default %d", tl2.maxSummaryChars, defaultMaxSummaryChars)
+	}
+	if tl2.maxTextChars != defaultMaxTextChars {
+		t.Errorf("WithMaxTextChars(0): maxTextChars = %d, want default %d", tl2.maxTextChars, defaultMaxTextChars)
 	}
 }
 

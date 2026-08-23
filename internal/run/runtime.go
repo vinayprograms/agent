@@ -332,6 +332,7 @@ func (rt *Runtime) toolsetConfig(workspace string, summarizer tools.Summarizer) 
 		SearchCooldownMS: rt.cfg.Timeouts.SearchCooldownMS,
 		SearXNGURL:       rt.cfg.Web.SearXNGURL,
 		SearchProvider:   rt.cfg.Web.SearchProvider,
+		FetchMaxChars:    rt.cfg.Web.FetchMaxChars,
 	}
 }
 
