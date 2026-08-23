@@ -493,3 +493,16 @@ func TestExecute_CacheKeyedByQueryAndCount(t *testing.T) {
 		t.Errorf("HTTP calls across distinct (query,count) keys = %d, want 3", got)
 	}
 }
+
+func TestNew_UsesHTTP1Transport(t *testing.T) {
+	tr, ok := New(nil, "", "").client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("client.Transport = %T, want *http.Transport", New(nil, "", "").client.Transport)
+	}
+	if tr.ForceAttemptHTTP2 {
+		t.Error("ForceAttemptHTTP2 = true, want false (search must not negotiate HTTP/2)")
+	}
+	if tr.TLSNextProto == nil || len(tr.TLSNextProto) != 0 {
+		t.Errorf("TLSNextProto = %v, want a non-nil empty map", tr.TLSNextProto)
+	}
+}

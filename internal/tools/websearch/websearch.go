@@ -29,6 +29,10 @@
 // lite.duckduckgo.com output, which is IP-reputation-gated and may return
 // HTTP 202 challenges from datacenter IPs. For production use, prefer SearXNG
 // or a Brave/Tavily API key over the keyless DuckDuckGo fallback.
+//
+// Every provider request goes through httpclient.NewHTTP1Transport (shared
+// with webfetch): some providers/proxies sit behind the same HTTP/2
+// fingerprint-sensitive CDNs, so the client stays HTTP/1.1-only here too.
 package websearch
 
 import (
@@ -46,6 +50,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vinayprograms/agent/internal/tools/httpclient"
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/tools"
 )
@@ -148,7 +153,7 @@ func New(creds credentials.Lookup, searxngURL, provider string, opts ...Option) 
 		braveKey:      resolve(creds, "brave", "BRAVE_API_KEY"),
 		tavilyKey:     resolve(creds, "tavily", "TAVILY_API_KEY"),
 		provider:      provider,
-		client:        &http.Client{Timeout: defaultHTTPTimeout},
+		client:        &http.Client{Timeout: defaultHTTPTimeout, Transport: httpclient.NewHTTP1Transport()},
 		braveURL:      braveSearchURL,
 		tavilyURL:     tavilySearchURL,
 		ddgURL:        ddgLiteURL,

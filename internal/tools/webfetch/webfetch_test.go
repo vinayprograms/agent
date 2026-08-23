@@ -2,13 +2,17 @@ package webfetch
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/vinayprograms/agent/internal/tools/httpclient"
 	"github.com/vinayprograms/agentkit/tools"
 )
 
@@ -41,21 +45,7 @@ func TestNameDescriptionParameters(t *testing.T) {
 	}
 }
 
-// recordingHandler captures the incoming request so tests can assert on the
-// transport (HTTP/1.1) and headers actually sent.
-func recordingHandler(t *testing.T, status int, body string) (*httptest.Server, *http.Request) {
-	t.Helper()
-	var got *http.Request
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.Clone(r.Context())
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
-	}))
-	t.Cleanup(srv.Close)
-	return srv, got
-}
-
-func TestExecute_UsesHTTP1AndBrowserHeaders(t *testing.T) {
+func TestExecute_SendsBrowserHeaders(t *testing.T) {
 	var captured *http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured = r
@@ -76,9 +66,6 @@ func TestExecute_UsesHTTP1AndBrowserHeaders(t *testing.T) {
 	if captured == nil {
 		t.Fatal("handler was not invoked")
 	}
-	if captured.ProtoMajor != 1 {
-		t.Errorf("ProtoMajor = %d, want 1 (HTTP/1.1)", captured.ProtoMajor)
-	}
 	wantHeaders := map[string]string{
 		"User-Agent":                browserUserAgent,
 		"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -90,6 +77,47 @@ func TestExecute_UsesHTTP1AndBrowserHeaders(t *testing.T) {
 		if got := captured.Header.Get(k); got != want {
 			t.Errorf("header %q = %q, want %q", k, got, want)
 		}
+	}
+}
+
+// TestExecute_ForcesHTTP1EvenAgainstHTTP2Server proves the transport really
+// disables HTTP/2 negotiation, not just that a plain-HTTP test server
+// happens to speak HTTP/1.1. It spins up a TLS server that offers h2 via
+// ALPN, first confirms a default (HTTP/2-capable) client actually gets h2
+// from it — so the test can't pass vacuously against a server that never
+// offered h2 — then confirms New's client gets h1.
+func TestExecute_ForcesHTTP1EvenAgainstHTTP2Server(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprintf(w, "protomajor=%d", r.ProtoMajor)
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+
+	// srv.Client() is httptest's own helper: it trusts the server's
+	// self-signed cert and, since EnableHTTP2 is set, is wired for h2.
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("sanity GET: %v", err)
+	}
+	resp.Body.Close()
+	if resp.ProtoMajor != 2 {
+		t.Fatalf("sanity check: srv.Client() got ProtoMajor=%d, want 2 (test server isn't actually offering h2, so this test can't prove anything)", resp.ProtoMajor)
+	}
+
+	certPool := x509.NewCertPool()
+	certPool.AddCert(srv.Certificate())
+	forced := httpclient.NewHTTP1Transport()
+	forced.TLSClientConfig = &tls.Config{RootCAs: certPool}
+
+	tl := New(nil, withTransport(forced))
+	out, err := tl.Execute(t.Context(), args(t, map[string]any{"url": srv.URL, "question": "q"}))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if out != "protomajor=1" {
+		t.Errorf("Execute() = %q, want %q (the server should have seen HTTP/1.1)", out, "protomajor=1")
 	}
 }
 

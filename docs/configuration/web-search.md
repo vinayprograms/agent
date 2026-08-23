@@ -71,7 +71,9 @@ search_cooldown_ms = 2000   # minimum ms between DuckDuckGo queries
 
 Raise this if you run several sub-agents concurrently and see `202`
 responses; DDG retries a rate-limited request with exponential backoff plus
-jitter on top of the cooldown.
+jitter on top of the cooldown. `search_cooldown_ms = 0` (or omitting the key)
+keeps the 2-second default — there is no way to disable the cooldown from
+config.
 
 Every `web_search` result (from any provider) is cached in-process, keyed by
 provider, query, and result count, for 5 minutes. The cache is shared by all

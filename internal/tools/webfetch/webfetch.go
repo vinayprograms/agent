@@ -20,7 +20,6 @@ package webfetch
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vinayprograms/agent/internal/tools/httpclient"
 	"github.com/vinayprograms/agentkit/tools"
 )
 
@@ -44,6 +44,13 @@ const defaultHTTPTimeout = 2 * time.Minute
 type Tool struct {
 	summarizer tools.Summarizer
 	client     *http.Client
+}
+
+// transport lets tests point Execute's client at a custom RoundTripper
+// (e.g. one trusting an httptest TLS server's certificate) while keeping
+// New's production default (httpclient.NewHTTP1Transport()) unexported.
+func withTransport(rt http.RoundTripper) Option {
+	return func(t *Tool) { t.client.Transport = rt }
 }
 
 var _ tools.Tool = (*Tool)(nil)
@@ -64,15 +71,9 @@ func WithHTTPTimeout(d time.Duration) Option {
 // New constructs the replacement web_fetch tool. summarizer may be nil, in
 // which case Execute returns the full extracted page text.
 func New(summarizer tools.Summarizer, opts ...Option) *Tool {
-	// Disable HTTP/2 ALPN negotiation — Go's h2 SETTINGS fingerprint is
-	// trivially identifiable and causes INTERNAL_ERROR from CDN WAFs.
-	transport := &http.Transport{
-		ForceAttemptHTTP2: false,
-		TLSNextProto:      make(map[string]func(string, *tls.Conn) http.RoundTripper),
-	}
 	t := &Tool{
 		summarizer: summarizer,
-		client:     &http.Client{Timeout: defaultHTTPTimeout, Transport: transport},
+		client:     &http.Client{Timeout: defaultHTTPTimeout, Transport: httpclient.NewHTTP1Transport()},
 	}
 	for _, opt := range opts {
 		opt(t)
