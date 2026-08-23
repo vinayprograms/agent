@@ -277,3 +277,37 @@ func TestLogToolResult_ResultWithheldWithoutDebug(t *testing.T) {
 		t.Fatalf("meta.error = %q, want %q even without debug", ev.Meta.Error, "bad")
 	}
 }
+
+// TestLogLLMCall_StopReasonAlwaysLogged checks that stop_reason and
+// thinking_chars land in meta.* on every assistant event, not just in
+// --debug mode: a headless caller needs these to diagnose a
+// stop_reason=="length"-with-empty-content turn (P0 #1) without having to
+// re-run with --debug (which would also leak prompt/response content).
+func TestLogLLMCall_StopReasonAlwaysLogged(t *testing.T) {
+	exec, sess, _ := newLoggingExecutor(t, false)
+	ctx := context.Background()
+
+	exec.logLLMCall(ctx, session.EventAssistant, []llm.Message{{Role: "user", Content: "hi"}},
+		&llm.ChatResponse{Content: "", Model: "m", StopReason: "length", Thinking: "long reasoning trace"},
+		time.Millisecond)
+
+	var ev session.Event
+	for _, e := range sess.Events {
+		if e.Type == session.EventAssistant {
+			ev = e
+		}
+	}
+	if ev.Meta == nil {
+		t.Fatal("no meta on assistant event")
+	}
+	if ev.Meta.StopReason != "length" {
+		t.Errorf("meta.stop_reason = %q, want %q", ev.Meta.StopReason, "length")
+	}
+	if ev.Meta.ThinkingChars != len("long reasoning trace") {
+		t.Errorf("meta.thinking_chars = %d, want %d", ev.Meta.ThinkingChars, len("long reasoning trace"))
+	}
+	// Debug-only fields stay withheld.
+	if ev.Meta.Response != "" || ev.Meta.Prompt != "" || ev.Meta.Thinking != "" {
+		t.Errorf("debug-only fields leaked without debug: %+v", ev.Meta)
+	}
+}

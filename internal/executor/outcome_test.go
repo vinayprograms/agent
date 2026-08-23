@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
+	"github.com/vinayprograms/agent/internal/session"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/tools"
 )
@@ -241,5 +242,104 @@ func TestClassifyOutcome_DeclaredOutputsEmpty(t *testing.T) {
 	oc = classifyOutcome("some raw text", true, declared, vars, nil, false, 0)
 	if oc.Outcome != OutcomeOK {
 		t.Errorf("Outcome = %v, want %v (one declared output non-empty)", oc.Outcome, OutcomeOK)
+	}
+}
+
+// A turn that comes back truncated (stop_reason=="length", empty content,
+// no tool calls) gets exactly one continuation retry with thinking turned
+// off; if that retry produces real content, the goal succeeds normally —
+// this is the turn-level retry (P0 #1), distinct from the goal-level
+// maybeRetry exercised by TestOutcome_BudgetExhaustedRetrySucceeds.
+func TestOutcome_TruncatedTurnRetrySucceeds(t *testing.T) {
+	var calls atomic.Int32
+	var sawThinkingOff bool
+	model := modelFunc(func(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		n := calls.Add(1)
+		if n == 1 {
+			// Reasoning model spent its whole budget thinking: empty
+			// content, stop_reason=="length", no tool calls.
+			return &llm.ChatResponse{Content: "", StopReason: "length", Thinking: "..."}, nil
+		}
+		if req.Thinking == llm.ThinkingOff {
+			sawThinkingOff = true
+		}
+		return &llm.ChatResponse{Content: "the answer"}, nil
+	})
+
+	wf := &agentfile.Workflow{
+		Name:  "truncated-turn",
+		Steps: []agentfile.Step{{Type: agentfile.StepRUN, Name: "main", UsingGoals: []string{"g"}}},
+		Goals: []agentfile.Goal{{Name: "g", Outcome: "answer briefly"}},
+	}
+	exec := mustNewExecutor(t, wf, model, nil, nil)
+
+	result, err := exec.Run(t.Context(), RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	oc := result.Goals["g"]
+	if oc.Outcome != OutcomeOK {
+		t.Errorf("Outcome = %v, want %v", oc.Outcome, OutcomeOK)
+	}
+	if got := result.Outputs["g"]; got != "the answer" {
+		t.Errorf("Outputs[g] = %q, want %q", got, "the answer")
+	}
+	if n := calls.Load(); n != 2 {
+		t.Errorf("model called %d times, want 2 (original + one continuation retry)", n)
+	}
+	if !sawThinkingOff {
+		t.Error("continuation retry did not set Thinking=ThinkingOff")
+	}
+}
+
+// A sub-agent (AGENT ... USING) whose turn stays truncated/empty through
+// its one retry is reported as failed on subagent_end (success=false),
+// and the goal itself is empty_output rather than a silently-successful
+// empty deliverable — this is the exact 09-story-generator repro (P0 #1):
+// a writer sub-agent hits max_tokens thinking, returns nothing, and used
+// to be reported subagent_end.success=true / goal complete / exit 0.
+func TestOutcome_SubAgentTruncatedTwiceIsEmptyOutputAndFails(t *testing.T) {
+	model := modelFunc(func(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+		// Every call (original + retry) comes back truncated and empty.
+		return &llm.ChatResponse{Content: "", StopReason: "length"}, nil
+	})
+
+	wf := &agentfile.Workflow{
+		Name:   "story",
+		Agents: []agentfile.Agent{{Name: "writer", Prompt: "You write."}},
+		Steps:  []agentfile.Step{{Type: agentfile.StepRUN, Name: "main", UsingGoals: []string{"draft"}}},
+		Goals:  []agentfile.Goal{{Name: "draft", Outcome: "write the story", UsingAgent: []string{"writer"}}},
+	}
+	sess := &session.Session{}
+	exec := mustNew(t, Config{
+		Workflow: wf,
+		Model:    model,
+		Session:  sess,
+		Debug:    true,
+	})
+
+	result, err := exec.Run(t.Context(), RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	oc := result.Goals["draft"]
+	if oc.Outcome != OutcomeEmptyOutput {
+		t.Errorf("Outcome = %v, want %v", oc.Outcome, OutcomeEmptyOutput)
+	}
+	if result.Status != StatusFailed {
+		t.Errorf("Status = %v, want %v", result.Status, StatusFailed)
+	}
+
+	var end *session.Event
+	for i := range sess.Events {
+		if sess.Events[i].Type == session.EventSubAgentEnd {
+			end = &sess.Events[i]
+		}
+	}
+	if end == nil {
+		t.Fatal("no subagent_end event")
+	}
+	if end.Success == nil || *end.Success {
+		t.Errorf("subagent_end.success = %v, want false", end.Success)
 	}
 }
