@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vinayprograms/agent/internal/tools/webfetch"
 	"github.com/vinayprograms/agent/internal/tools/websearch"
 	"github.com/vinayprograms/agentkit/memory"
 	"github.com/vinayprograms/agentkit/policy"
@@ -62,6 +63,13 @@ func TestBuildToolset_Permissive_RegistersEverything(t *testing.T) {
 	}
 	if _, ok := reg.Get("web_search").(*websearch.Tool); !ok {
 		t.Errorf("web_search is %T, want the in-repo websearch tool", reg.Get("web_search"))
+	}
+	// web_fetch is wrapped by the domain guard, so it can't be type-asserted
+	// directly; the in-repo tool's identity is the fixed description it
+	// reports through the guard wrapper.
+	wantFetch := webfetch.New(nil)
+	if got := reg.Get("web_fetch").Description(); got != wantFetch.Description() {
+		t.Errorf("web_fetch description = %q, want the in-repo webfetch tool's %q", got, wantFetch.Description())
 	}
 }
 

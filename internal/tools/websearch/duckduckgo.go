@@ -22,8 +22,21 @@ const browserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
 // is far more scraper-tolerant than the /html/ endpoint.
 const ddgLiteURL = "https://lite.duckduckgo.com/lite/"
 
+// ddgJitterFraction bounds the random jitter added to each backoff sleep,
+// as a fraction of the base backoff: up to +50%. Jitter spreads out
+// concurrent sub-agents that hit DuckDuckGo's rate limit at the same
+// moment, so they don't all retry in lockstep.
+const ddgJitterFraction = 0.5
+
+// jitteredBackoff returns backoff plus a random amount in
+// [0, backoff*ddgJitterFraction), using t.randFloat as the source.
+func (t *Tool) jitteredBackoff(backoff time.Duration) time.Duration {
+	return backoff + time.Duration(t.randFloat()*float64(backoff)*ddgJitterFraction)
+}
+
 // searchDuckDuckGo searches via DuckDuckGo's lite endpoint (no API key
-// needed), retrying rate-limit responses with capped exponential backoff.
+// needed), retrying rate-limit responses with capped exponential backoff
+// plus jitter.
 func (t *Tool) searchDuckDuckGo(ctx context.Context, query string, count int) ([]SearchResult, error) {
 	if err := t.ddgLimit.wait(ctx, t.now); err != nil {
 		return nil, err
@@ -37,7 +50,7 @@ func (t *Tool) searchDuckDuckGo(ctx context.Context, query string, count int) ([
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(backoff):
+			case <-time.After(t.jitteredBackoff(backoff)):
 			}
 			backoff = min(backoff*2, t.ddgMaxBackoff)
 		}

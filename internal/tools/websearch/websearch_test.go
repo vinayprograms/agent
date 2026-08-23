@@ -394,3 +394,115 @@ func TestDuckDuckGo_RetriesThenSucceeds(t *testing.T) {
 		t.Errorf("got %q after %d attempts", got, n.Load())
 	}
 }
+
+func TestWithCooldown(t *testing.T) {
+	if got := New(nil, "", "", WithCooldown(9*time.Second)).ddgLimit.cooldown; got != 9*time.Second {
+		t.Errorf("ddgLimit.cooldown = %v, want 9s", got)
+	}
+	if got := New(nil, "", "").ddgLimit.cooldown; got != defaultDDGCooldown {
+		t.Errorf("default ddgLimit.cooldown = %v, want %v", got, defaultDDGCooldown)
+	}
+	// WithCooldown must not affect the general searchLimit used by every
+	// provider — only DuckDuckGo.
+	tl := New(nil, "", "", WithCooldown(9*time.Second))
+	if tl.searchLimit.cooldown != defaultCooldown {
+		t.Errorf("searchLimit.cooldown = %v, want unaffected default %v", tl.searchLimit.cooldown, defaultCooldown)
+	}
+}
+
+func TestExecute_CacheHitAvoidsSecondHTTPCall(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(searxJSON))
+	}))
+	t.Cleanup(srv.Close)
+	tl := newTool(srv, nil, srv.URL, "searxng")
+
+	a := args(t, map[string]any{"query": "cached query"})
+	first, err := tl.Execute(t.Context(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := tl.Execute(t.Context(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Errorf("cached result = %q, want it to match the first call's %q", second, first)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("HTTP calls = %d, want 1 (second Execute should hit the cache)", got)
+	}
+}
+
+func TestExecute_CacheExpiresAfterTTL(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(searxJSON))
+	}))
+	t.Cleanup(srv.Close)
+	tl := newTool(srv, nil, srv.URL, "searxng")
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := base
+	tl.now = func() time.Time { return clock }
+
+	a := args(t, map[string]any{"query": "expiring query"})
+	if _, err := tl.Execute(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	// Still within TTL: no second call.
+	clock = base.Add(cacheTTL - time.Second)
+	if _, err := tl.Execute(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("HTTP calls before TTL expiry = %d, want 1", got)
+	}
+	// Past TTL: cache entry must be treated as stale.
+	clock = base.Add(cacheTTL + time.Second)
+	if _, err := tl.Execute(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("HTTP calls after TTL expiry = %d, want 2", got)
+	}
+}
+
+func TestExecute_CacheKeyedByQueryAndCount(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(searxJSON))
+	}))
+	t.Cleanup(srv.Close)
+	tl := newTool(srv, nil, srv.URL, "searxng")
+
+	if _, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "a"})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "b"})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "a", "count": 3})); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Errorf("HTTP calls across distinct (query,count) keys = %d, want 3", got)
+	}
+}
+
+func TestNew_UsesHTTP1Transport(t *testing.T) {
+	tr, ok := New(nil, "", "").client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("client.Transport = %T, want *http.Transport", New(nil, "", "").client.Transport)
+	}
+	if tr.ForceAttemptHTTP2 {
+		t.Error("ForceAttemptHTTP2 = true, want false (search must not negotiate HTTP/2)")
+	}
+	if tr.TLSNextProto == nil || len(tr.TLSNextProto) != 0 {
+		t.Errorf("TLSNextProto = %v, want a non-nil empty map", tr.TLSNextProto)
+	}
+}
