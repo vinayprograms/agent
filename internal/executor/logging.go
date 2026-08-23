@@ -223,8 +223,10 @@ func (e *Executor) logGoalStart(goalName string) {
 	})
 }
 
-// logGoalEnd logs the end of a goal execution.
-func (e *Executor) logGoalEnd(goalName, output string) {
+// logGoalEnd logs the end of a goal execution, including its explicit
+// outcome and reason so a headless caller can tell a budget-exhausted or
+// empty-output goal from a genuinely completed one without grepping stderr.
+func (e *Executor) logGoalEnd(goalName, output string, outcome GoalOutcome) {
 	if e.session == nil {
 		return
 	}
@@ -240,11 +242,19 @@ func (e *Executor) logGoalEnd(goalName, output string) {
 		}
 	}
 
+	ok := outcome.Outcome == OutcomeOK
 	e.session.AddEvent(session.Event{
 		Type:      session.EventGoalEnd,
 		Goal:      goalName,
 		Content:   content,
+		Success:   &ok,
 		Timestamp: time.Now(),
+		Meta: &session.EventMeta{
+			Result:  string(outcome.Outcome),
+			Reason:  outcome.Reason,
+			Error:   outcome.Reason,
+			Retried: outcome.Retried,
+		},
 	})
 }
 

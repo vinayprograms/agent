@@ -109,7 +109,7 @@ func TestLogHelpers_DebugContent(t *testing.T) {
 	exec.logToolResult(ctx, "read", map[string]any{"path": "x"}, "c1", "out", errors.New("bad"), time.Millisecond)
 	exec.logLLMCall(ctx, session.EventAssistant, []llm.Message{{Role: "user", Content: "hi"}}, &llm.ChatResponse{Content: "yo", Model: "m", InputTokens: 1, OutputTokens: 2, Thinking: "t"}, time.Millisecond)
 	exec.logGoalStart("g")
-	exec.logGoalEnd("g", strings.Repeat("x", 2500))
+	exec.logGoalEnd("g", strings.Repeat("x", 2500), GoalOutcome{Outcome: OutcomeOK})
 	exec.logPhaseCommit("g", "plan", "high", 5)
 	exec.logPhaseExecute("g", "complete", 6)
 	exec.logPhaseReconcile("g", "s", []string{"t1"}, true, 7)
@@ -160,7 +160,7 @@ func TestLogHelpers_DebugContent(t *testing.T) {
 	quiet, qsess, qbuf := newLoggingExecutor(t, false)
 	quiet.logToolResult(ctx, "read", nil, "c1", "secret", nil, time.Millisecond)
 	quiet.logLLMCall(ctx, session.EventAssistant, nil, &llm.ChatResponse{Content: "secret"}, 0)
-	quiet.logGoalEnd("g", "secret")
+	quiet.logGoalEnd("g", "secret", GoalOutcome{Outcome: OutcomeOK})
 	quiet.logSubAgentEnd("r", "r", "", "secret", 0, nil)
 	for _, ev := range qsess.Events {
 		if strings.Contains(ev.Content, "secret") || (ev.Meta != nil && (ev.Meta.Response == "secret" || ev.Meta.SubAgentOutput == "secret")) {
@@ -180,7 +180,7 @@ func TestLogHelpers_NoSessionNoop(t *testing.T) {
 	exec.logToolResult(ctx, "t", nil, "", "", nil, 0)
 	exec.logLLMCall(ctx, "t", nil, &llm.ChatResponse{}, 0)
 	exec.logGoalStart("g")
-	exec.logGoalEnd("g", "")
+	exec.logGoalEnd("g", "", GoalOutcome{Outcome: OutcomeOK})
 	exec.logPhaseCommit("g", "", "", 0)
 	exec.logPhaseExecute("g", "", 0)
 	exec.logPhaseReconcile("g", "", nil, false, 0)

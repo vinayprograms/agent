@@ -17,6 +17,10 @@ type ConvergenceResult struct {
 	Converged  bool   // true if the goal converged before hitting the limit
 	Iterations int    // number of iterations executed
 	Output     string // final output (last substantive iteration)
+	// BudgetErr is set when the goal stopped because its budget (tool
+	// calls, turns, or duration) ran out mid-iteration, rather than by
+	// exhausting its WITHIN limit without converging.
+	BudgetErr error
 }
 
 // executeConvergeGoal executes a CONVERGE goal with iterative refinement.
@@ -53,6 +57,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 	var converged bool
 	var iterationCount int
 	var budgetStopped bool
+	var budgetErr error
 
 	// Run through the supervision pipeline
 	pipelineResult, err := e.pipeline.Run(
@@ -77,8 +82,9 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 					// iteration (e.g. MaxDuration ticking over between
 					// iterations, or a multi-agent iteration that hit its
 					// limit). Don't start another round against it.
-					if e.noteBudget(ctx, budgetOf(ctx).exhausted()) {
+					if exhErr := budgetOf(ctx).exhausted(); e.noteBudget(ctx, exhErr) {
 						budgetStopped = true
+						budgetErr = exhErr
 						break
 					}
 
@@ -94,6 +100,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 						// and stop refining.
 						iterationCount = i
 						budgetStopped = true
+						budgetErr = iterErr
 						if trimmed := strings.TrimSpace(content); trimmed != "" {
 							lastOutput = trimmed
 						}
@@ -174,6 +181,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 		Converged:  converged,
 		Iterations: iterationCount,
 		Output:     finalOutput,
+		BudgetErr:  budgetErr,
 	}, nil
 }
 
@@ -290,6 +298,28 @@ func (e *Executor) trackConvergenceFailure(goalName string, iterations int) {
 		e.convergenceFailures = make(map[string]int)
 	}
 	e.convergenceFailures[goalName] = iterations
+}
+
+// recordGoalOutcome records how goalName ended, for the workflow Result's
+// Goals map and Status computation.
+func (e *Executor) recordGoalOutcome(goalName string, outcome GoalOutcome) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.goalOutcomes == nil {
+		e.goalOutcomes = make(map[string]GoalOutcome)
+	}
+	e.goalOutcomes[goalName] = outcome
+}
+
+// GoalOutcomes returns a copy of every goal outcome recorded so far.
+func (e *Executor) GoalOutcomes() map[string]GoalOutcome {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	result := make(map[string]GoalOutcome, len(e.goalOutcomes))
+	for k, v := range e.goalOutcomes {
+		result[k] = v
+	}
+	return result
 }
 
 // ConvergenceFailures returns goals that failed to converge, with the

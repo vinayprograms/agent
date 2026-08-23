@@ -89,9 +89,16 @@ func getAgentIdentity(ctx context.Context) AgentIdentity {
 type Status string
 
 const (
-	StatusRunning  Status = "running"
+	StatusRunning Status = "running"
+	// StatusComplete means every goal's outcome was ok.
 	StatusComplete Status = "complete"
-	StatusFailed   Status = "failed"
+	// StatusPartial means at least one goal was ok but at least one was
+	// not (budget_exhausted, not_converged, empty_output, or error that
+	// still let the run continue).
+	StatusPartial Status = "partial"
+	// StatusFailed means no goal was ok (or the run itself errored before
+	// any goal could report an outcome).
+	StatusFailed Status = "failed"
 	// StatusAborted is a run stopped by RunOptions.StepGate.
 	StatusAborted Status = "aborted"
 )
@@ -105,11 +112,36 @@ var ErrAborted = errors.New("run aborted")
 type Result struct {
 	Status  Status
 	Outputs map[string]string
-	// Iterations reports only the CONVERGE goals that exhausted their WITHIN
-	// limit without converging, mapped to that limit. Goals that converged
-	// are absent, so a successful run leaves it nil. The name is part of the
-	// printed JSON result.
+	// Iterations reports the iteration count for every CONVERGE goal that
+	// ran, whether it converged or not. The name is part of the printed
+	// JSON result.
 	Iterations map[string]int
+	// Goals reports every goal's explicit outcome, keyed by goal name.
+	Goals map[string]GoalOutcome
+}
+
+// goalsStatus derives the workflow Status from every recorded goal outcome:
+// complete only if every goal is ok; partial if some are; failed if none
+// are (including the case where no goal outcome was recorded at all).
+func goalsStatus(goals map[string]GoalOutcome) Status {
+	if len(goals) == 0 {
+		// No goal ran (e.g. an empty workflow): trivially complete.
+		return StatusComplete
+	}
+	okCount := 0
+	for _, g := range goals {
+		if g.Outcome == OutcomeOK {
+			okCount++
+		}
+	}
+	switch {
+	case okCount == len(goals):
+		return StatusComplete
+	case okCount > 0:
+		return StatusPartial
+	default:
+		return StatusFailed
+	}
 }
 
 // Executor is the central orchestrator: it runs the LLM loop, dispatches
@@ -180,7 +212,13 @@ type Executor struct {
 	// CONVERGE goal's multi-agent iteration); executeConvergeMultiAgent reads
 	// it immediately after the call.
 	parallelConverged bool
-	mu                sync.Mutex // protects convergenceFailures
+
+	// goalOutcomes records how each goal that reached executeGoalWithTracking's
+	// end ended, keyed by goal name. Used to compute the workflow Status and
+	// the Result.Goals map.
+	goalOutcomes map[string]GoalOutcome
+
+	mu sync.Mutex // protects convergenceFailures, goalOutcomes
 
 	// Metrics collector for heartbeat reporting (optional, set by serve mode)
 	metricsCollector MetricsCollector
@@ -512,17 +550,26 @@ func (e *Executor) Run(ctx context.Context, opts RunOptions) (*Result, error) {
 		}
 		e.logExecutionComplete(workflowName, startTime, string(status))
 		e.endWorkflowSpan(workflowSpan, string(status), err)
-		return &Result{Status: status}, err
+		return &Result{Status: status, Goals: e.GoalOutcomes()}, err
 	}
 
 	// Collect outputs
-	result := &Result{
-		Status:     StatusComplete,
-		Outputs:    state.Outputs,
-		Iterations: e.ConvergenceFailures(),
+	goals := e.GoalOutcomes()
+	iterations := make(map[string]int)
+	for name, oc := range goals {
+		if oc.Iterations > 0 {
+			iterations[name] = oc.Iterations
+		}
 	}
-	e.logExecutionComplete(workflowName, startTime, string(StatusComplete))
-	e.endWorkflowSpan(workflowSpan, string(StatusComplete), nil)
+	status := goalsStatus(goals)
+	result := &Result{
+		Status:     status,
+		Outputs:    state.Outputs,
+		Iterations: iterations,
+		Goals:      goals,
+	}
+	e.logExecutionComplete(workflowName, startTime, string(status))
+	e.endWorkflowSpan(workflowSpan, string(status), nil)
 	return result, nil
 }
 
@@ -619,6 +666,8 @@ type GoalResult struct {
 	// Vars holds the goal's declared `-> var` structured outputs (empty when
 	// the goal declares none), keyed by var name rather than goal name.
 	Vars map[string]string
+	// Outcome explicitly classifies how the goal ended; see GoalOutcome.
+	Outcome GoalOutcome
 }
 
 // isSupervised determines if a goal should be supervised based on goal settings and workflow defaults.
@@ -662,23 +711,50 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		if err != nil {
 			return nil, err
 		}
-		// Parse structured output if declared
+		convergeLimit := e.getConvergeLimit(goal)
 		var vars map[string]string
 		if len(goal.Outputs) > 0 {
 			vars = parseStructuredOutput(result.Output, goal.Outputs)
-			for field, value := range vars {
-				e.outputs[field] = value
-			}
 		}
-		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": result.Output})
-		e.logGoalEnd(goal.Name, result.Output)
+		outcome := classifyOutcome(result.Output, true, goal.Outputs, vars, asBudgetError(result.BudgetErr), !result.Converged && result.BudgetErr == nil, convergeLimit)
+		if result.Converged {
+			outcome.Iterations = result.Iterations
+		}
+
+		outcome = e.maybeRetry(ctx, goal, outcome, func(retryCtx context.Context, g *agentfile.Goal) GoalOutcome {
+			retryResult, rerr := e.executeConvergeGoal(retryCtx, g)
+			if rerr != nil {
+				return GoalOutcome{Outcome: OutcomeError, Reason: rerr.Error()}
+			}
+			result = retryResult
+			limit := e.getConvergeLimit(g)
+			if len(goal.Outputs) > 0 {
+				vars = parseStructuredOutput(result.Output, goal.Outputs)
+			}
+			oc := classifyOutcome(result.Output, true, goal.Outputs, vars, asBudgetError(result.BudgetErr), !result.Converged && result.BudgetErr == nil, limit)
+			if result.Converged {
+				oc.Iterations = result.Iterations
+			}
+			return oc
+		})
+
+		for field, value := range vars {
+			e.outputs[field] = value
+		}
+		if !result.Converged && outcome.Outcome == OutcomeNotConverged {
+			e.trackConvergenceFailure(goal.Name, convergeLimit)
+		}
+		e.recordGoalOutcome(goal.Name, outcome)
+		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": result.Output, "outcome": string(outcome.Outcome)})
+		e.logGoalEnd(goal.Name, result.Output, outcome)
 		e.flushSession()
-		return &GoalResult{Output: result.Output, ToolCallsMade: false, Vars: vars}, nil
+		return &GoalResult{Output: result.Output, ToolCallsMade: false, Vars: vars, Outcome: outcome}, nil
 	}
 
 	// Check for multi-agent execution
 	if len(goal.UsingAgent) > 0 {
 		output, err := e.executeMultiAgentGoal(ctx, goal)
+		spent := asBudgetError(err)
 		// A spent budget ends this goal with its partial output; the run
 		// continues to the next goal, same as a single-agent goal.
 		if e.noteBudget(ctx, err) {
@@ -691,14 +767,30 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		var vars map[string]string
 		if len(goal.Outputs) > 0 {
 			vars = parseStructuredOutput(output, goal.Outputs)
-			for field, value := range vars {
-				e.outputs[field] = value
-			}
 		}
-		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
-		e.logGoalEnd(goal.Name, output)
+		outcome := classifyOutcome(output, true, goal.Outputs, vars, spent, false, 0)
+
+		outcome = e.maybeRetry(ctx, goal, outcome, func(retryCtx context.Context, g *agentfile.Goal) GoalOutcome {
+			retryOutput, rerr := e.executeMultiAgentGoal(retryCtx, g)
+			retrySpent := asBudgetError(rerr)
+			if rerr != nil && retrySpent == nil {
+				return GoalOutcome{Outcome: OutcomeError, Reason: rerr.Error()}
+			}
+			output = retryOutput
+			if len(goal.Outputs) > 0 {
+				vars = parseStructuredOutput(output, goal.Outputs)
+			}
+			return classifyOutcome(output, true, goal.Outputs, vars, retrySpent, false, 0)
+		})
+
+		for field, value := range vars {
+			e.outputs[field] = value
+		}
+		e.recordGoalOutcome(goal.Name, outcome)
+		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output, "outcome": string(outcome.Outcome)})
+		e.logGoalEnd(goal.Name, output, outcome)
 		e.flushSession()
-		return &GoalResult{Output: output, ToolCallsMade: false, Vars: vars}, nil
+		return &GoalResult{Output: output, ToolCallsMade: false, Vars: vars, Outcome: outcome}, nil
 	}
 
 	// Build XML-structured prompt with context from previous goals
@@ -733,6 +825,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	e.currentGoalSupervised = supervised
 
 	// Run through the supervision pipeline (or just execute if unsupervised)
+	var spentBudget error
 	pipelineResult, err := e.pipeline.Run(
 		ctx,
 		supervision.PipelineRequest{
@@ -751,6 +844,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
 				output, toolsUsed, toolCallsMade, err := e.executePhase(ctx, goal, prompt)
 				if e.noteBudget(ctx, err) {
+					spentBudget = err
 					err = nil
 				}
 				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed, ToolCallsMade: toolCallsMade}, err
@@ -787,16 +881,42 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	var vars map[string]string
 	if len(goal.Outputs) > 0 {
 		vars = parseStructuredOutput(output, goal.Outputs)
-		for field, value := range vars {
-			e.outputs[field] = value
+	}
+	outcome := classifyOutcome(output, toolCallsMade, goal.Outputs, vars, asBudgetError(spentBudget), false, 0)
+
+	outcome = e.maybeRetry(ctx, goal, outcome, func(retryCtx context.Context, g *agentfile.Goal) GoalOutcome {
+		rb := newBrief(e.workflow.Name)
+		for goalName, priorOutput := range e.outputs {
+			rb.AddPriorGoal(goalName, priorOutput)
 		}
+		retryDescription := e.interpolate(g.Outcome)
+		if len(g.Outputs) > 0 {
+			retryDescription += "\n\n" + buildStructuredOutputInstruction(g.Outputs)
+		}
+		rb.SetCurrentGoal(g.Name, retryDescription)
+		retryOutput, _, retryToolCallsMade, rerr := e.executePhase(retryCtx, g, rb.String())
+		retrySpent := asBudgetError(rerr)
+		if rerr != nil && retrySpent == nil {
+			return GoalOutcome{Outcome: OutcomeError, Reason: rerr.Error()}
+		}
+		output = retryOutput
+		toolCallsMade = retryToolCallsMade
+		if len(goal.Outputs) > 0 {
+			vars = parseStructuredOutput(output, goal.Outputs)
+		}
+		return classifyOutcome(output, toolCallsMade, goal.Outputs, vars, retrySpent, false, 0)
+	})
+
+	for field, value := range vars {
+		e.outputs[field] = value
 	}
 
-	e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
+	e.recordGoalOutcome(goal.Name, outcome)
+	e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output, "outcome": string(outcome.Outcome)})
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
-	e.logGoalEnd(goal.Name, output)
+	e.logGoalEnd(goal.Name, output, outcome)
 	e.flushSession()
-	return &GoalResult{Output: output, ToolCallsMade: toolCallsMade, Vars: vars}, nil
+	return &GoalResult{Output: output, ToolCallsMade: toolCallsMade, Vars: vars, Outcome: outcome}, nil
 }
 
 // commitPhase asks the agent to declare its intent before execution.

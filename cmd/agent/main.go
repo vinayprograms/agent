@@ -23,6 +23,10 @@ func main() {
 
 	if err := newRootCmd(newDeps()).ExecuteContext(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		code := 1
+		if ec, ok := err.(interface{ ExitCode() int }); ok {
+			code = ec.ExitCode()
+		}
+		os.Exit(code)
 	}
 }

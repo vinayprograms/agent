@@ -217,6 +217,9 @@ type EventMeta struct {
 	// the JSONL file. Populate this instead for anything that must survive
 	// persistence.
 	Error string `json:"error,omitempty"` // Failure text (e.g. a failed tool's error)
+
+	// Goal outcome (goal_end events)
+	Retried bool `json:"retried,omitempty"` // Whether the goal was retried after a soft failure
 }
 
 // AddEvent sequences and timestamps event (if its Timestamp is zero),
