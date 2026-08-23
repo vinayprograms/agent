@@ -183,6 +183,19 @@ func (e *Executor) maybeRetry(ctx context.Context, goal *agentfile.Goal, outcome
 	e.logEvent(session.EventSystem, fmt.Sprintf("Goal %q %s; retrying once with a continuation nudge", goal.Name, outcome.Outcome))
 	retryCtx := e.retryContext(ctx, goal.Name)
 	next := fn(retryCtx, nudgedGoal(goal))
-	next.Retried = true
-	return next
+	if next.Outcome == OutcomeOK {
+		next.Retried = true
+		return next
+	}
+	// The retry did not rescue the goal: keep the ORIGINAL classification
+	// (e.g. not_converged) instead of letting the retry's own failure
+	// (typically budget_exhausted, since it runs on a small fresh budget)
+	// mask what actually happened. Fold in the retry's reason so both are
+	// visible.
+	original := outcome
+	original.Retried = true
+	if next.Reason != "" {
+		original.Reason = fmt.Sprintf("%s; retry also failed: %s", original.Reason, next.Reason)
+	}
+	return original
 }

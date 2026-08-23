@@ -717,9 +717,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			vars = parseStructuredOutput(result.Output, goal.Outputs)
 		}
 		outcome := classifyOutcome(result.Output, true, goal.Outputs, vars, asBudgetError(result.BudgetErr), !result.Converged && result.BudgetErr == nil, convergeLimit)
-		if result.Converged {
-			outcome.Iterations = result.Iterations
-		}
+		outcome.Iterations = result.Iterations
 
 		outcome = e.maybeRetry(ctx, goal, outcome, func(retryCtx context.Context, g *agentfile.Goal) GoalOutcome {
 			retryResult, rerr := e.executeConvergeGoal(retryCtx, g)
@@ -732,9 +730,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 				vars = parseStructuredOutput(result.Output, goal.Outputs)
 			}
 			oc := classifyOutcome(result.Output, true, goal.Outputs, vars, asBudgetError(result.BudgetErr), !result.Converged && result.BudgetErr == nil, limit)
-			if result.Converged {
-				oc.Iterations = result.Iterations
-			}
+			oc.Iterations = result.Iterations
 			return oc
 		})
 
