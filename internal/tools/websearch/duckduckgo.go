@@ -70,29 +70,29 @@ func (t *Tool) searchDuckDuckGo(ctx context.Context, query string, count int) ([
 
 		resp, err := t.client.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("duckduckgo search failed: %w", err)
+			lastErr = fmt.Errorf("search request failed: %w", err)
 			continue
 		}
 
 		if resp.StatusCode == 202 || resp.StatusCode == 403 || resp.StatusCode == 429 {
 			resp.Body.Close()
-			lastErr = fmt.Errorf("duckduckgo rate limited (status %d), retrying", resp.StatusCode)
+			lastErr = fmt.Errorf("rate limited (status %d), retrying", resp.StatusCode)
 			continue
 		}
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
-			return nil, fmt.Errorf("duckduckgo search error: status %d", resp.StatusCode)
+			return nil, fmt.Errorf("search error: status %d", resp.StatusCode)
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return nil, fmt.Errorf("failed to read duckduckgo response: %w", err)
+			return nil, fmt.Errorf("failed to read response: %w", err)
 		}
 		return parseDuckDuckGoLite(string(body), count), nil
 	}
 
-	return nil, fmt.Errorf("duckduckgo search failed after %d retries: %w", t.ddgMaxRetries, lastErr)
+	return nil, fmt.Errorf("search failed after %d retries: %w", t.ddgMaxRetries, lastErr)
 }
 
 // Lite result anchors look like:

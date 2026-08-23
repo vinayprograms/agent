@@ -412,6 +412,19 @@ Delete the `[storage]` table and keep only `[state]`
 **`WARN: [storage] is deprecated, rename to [state] with location = "..."`**
 Non-fatal; the value still loads. Rename the section when convenient.
 
+**`WARN: <file>: unknown key <dotted.key> (ignored)`**
+`agent.toml` has a key this build does not recognise — almost always a
+typo (e.g. `search_providerx` instead of `search_provider`). The key is
+ignored at run time; `agent run`/`agent serve` only warn, but
+`agent config validate` treats it as a failure (exit 1) since an unknown
+key is never intentional. Fix the key name.
+
+**`Source: searxng` / `Source: brave` / `Source: tavily` / `Source: duckduckgo`**
+The first line of a successful `web_search` result names the provider
+that answered the query, so you can tell which one is actually in effect
+without digging through config. A failed search is likewise prefixed
+with the provider name, e.g. `searxng: search error (500): ...`.
+
 **`<file> uses keys the current policy schema does not recognise: ...`**
 One or more legacy policy keys are present. See the migration table in
 section 6 and rename each key listed.

@@ -116,26 +116,26 @@ func TestExecute_Providers(t *testing.T) {
 		wantErr  string // substring of error
 		noProv   bool   // error must wrap ErrNoProvider
 	}{
-		{name: "searxng pinned", provider: "searxng", searxng: true, status: 200, body: searxJSON, want: "1. A\n   https://a.example\n   sa\n\n2. B"},
-		{name: "searxng missing url", provider: "searxng", wantErr: "no searxng_url"},
-		{name: "searxng bad status", provider: "searxng", searxng: true, status: 500, body: "boom", wantErr: "searxng search error (500): boom"},
-		{name: "searxng bad json", provider: "searxng", searxng: true, status: 200, body: "{", wantErr: "parse searxng"},
-		{name: "brave pinned", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 200, body: braveJSON, want: "1. A\n   https://a.example\n   sa"},
-		{name: "brave missing key", provider: "brave", wantErr: "no Brave API key"},
-		{name: "brave bad status", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 401, body: "nope", wantErr: "brave search error (401): nope"},
-		{name: "brave bad json", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 200, body: "{", wantErr: "parse brave"},
-		{name: "tavily pinned, empty snippet omitted", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 200, body: tavilyJSON, want: "1. A\n   https://a.example"},
-		{name: "tavily missing key", provider: "tavily", wantErr: "no Tavily API key"},
-		{name: "tavily bad status", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 403, body: "no", wantErr: "tavily search error (403): no"},
-		{name: "tavily bad json", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 200, body: "{", wantErr: "parse tavily"},
-		{name: "duckduckgo pinned", provider: "duckduckgo", status: 200, body: liteSample, want: "1. The Go Programming Language & Docs\n   https://go.dev/doc/"},
-		{name: "duckduckgo hard error", provider: "duckduckgo", status: 500, wantErr: "duckduckgo search error: status 500"},
-		{name: "duckduckgo rate limited exhausts retries", provider: "duckduckgo", status: 429, wantErr: "failed after 3 retries"},
-		{name: "auto > searxng", provider: "auto", searxng: true, creds: fakeCreds{"brave": "k"}, status: 200, body: searxJSON, want: "2. B"},
-		{name: "auto > brave", provider: "", creds: fakeCreds{"brave": "k", "tavily": "k"}, status: 200, body: braveJSON, want: "1. A"},
-		{name: "auto > tavily", provider: "auto", creds: fakeCreds{"tavily": "k"}, status: 200, body: tavilyJSON, want: "1. A"},
+		{name: "searxng pinned", provider: "searxng", searxng: true, status: 200, body: searxJSON, want: "Source: searxng\n\n1. A\n   https://a.example\n   sa\n\n2. B"},
+		{name: "searxng missing url", provider: "searxng", wantErr: "searxng: no searxng_url"},
+		{name: "searxng bad status", provider: "searxng", searxng: true, status: 500, body: "boom", wantErr: "searxng: search error (500): boom"},
+		{name: "searxng bad json", provider: "searxng", searxng: true, status: 200, body: "{", wantErr: "searxng: failed to parse"},
+		{name: "brave pinned", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 200, body: braveJSON, want: "Source: brave\n\n1. A\n   https://a.example\n   sa"},
+		{name: "brave missing key", provider: "brave", wantErr: "brave: no Brave API key"},
+		{name: "brave bad status", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 401, body: "nope", wantErr: "brave: search error (401): nope"},
+		{name: "brave bad json", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 200, body: "{", wantErr: "brave: failed to parse"},
+		{name: "tavily pinned, empty snippet omitted", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 200, body: tavilyJSON, want: "Source: tavily\n\n1. A\n   https://a.example"},
+		{name: "tavily missing key", provider: "tavily", wantErr: "tavily: no Tavily API key"},
+		{name: "tavily bad status", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 403, body: "no", wantErr: "tavily: search error (403): no"},
+		{name: "tavily bad json", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 200, body: "{", wantErr: "tavily: failed to parse"},
+		{name: "duckduckgo pinned", provider: "duckduckgo", status: 200, body: liteSample, want: "Source: duckduckgo\n\n1. The Go Programming Language & Docs\n   https://go.dev/doc/"},
+		{name: "duckduckgo hard error", provider: "duckduckgo", status: 500, wantErr: "duckduckgo: search error: status 500"},
+		{name: "duckduckgo rate limited exhausts retries", provider: "duckduckgo", status: 429, wantErr: "duckduckgo: search failed after 3 retries"},
+		{name: "auto > searxng", provider: "auto", searxng: true, creds: fakeCreds{"brave": "k"}, status: 200, body: searxJSON, want: "\n\n2. B"},
+		{name: "auto > brave", provider: "", creds: fakeCreds{"brave": "k", "tavily": "k"}, status: 200, body: braveJSON, want: "Source: brave\n\n1. A"},
+		{name: "auto > tavily", provider: "auto", creds: fakeCreds{"tavily": "k"}, status: 200, body: tavilyJSON, want: "Source: tavily\n\n1. A"},
 		{name: "auto > duckduckgo", provider: "auto", status: 200, body: liteSample, want: "pkg.go.dev"},
-		{name: "auto duckduckgo error wraps ErrNoProvider", provider: "auto", status: 500, wantErr: "DuckDuckGo fallback: duckduckgo search error: status 500", noProv: true},
+		{name: "auto duckduckgo error wraps ErrNoProvider", provider: "auto", status: 500, wantErr: "DuckDuckGo fallback: duckduckgo: search error: status 500", noProv: true},
 		{name: "auto duckduckgo no results", provider: "auto", status: 200, body: "<html></html>", wantErr: "no results from DuckDuckGo fallback", noProv: true},
 		{name: "unknown provider", provider: "bing", wantErr: `unknown search_provider "bing"`},
 	}
@@ -231,7 +231,7 @@ func TestExecute_NoResultsMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "No results found." {
+	if got != "Source: searxng\nNo results found." {
 		t.Errorf("got %q", got)
 	}
 }
@@ -245,10 +245,10 @@ func TestExecute_TransportErrors(t *testing.T) {
 		creds    fakeCreds
 		wantErr  string
 	}{
-		{"searxng", nil, "searxng search failed"},
-		{"brave", fakeCreds{"brave": "k"}, "brave search failed"},
-		{"tavily", fakeCreds{"tavily": "k"}, "tavily search failed"},
-		{"duckduckgo", nil, "duckduckgo search failed"},
+		{"searxng", nil, "searxng: search request failed"},
+		{"brave", fakeCreds{"brave": "k"}, "brave: search request failed"},
+		{"tavily", fakeCreds{"tavily": "k"}, "tavily: search request failed"},
+		{"duckduckgo", nil, "duckduckgo: search failed after 3 retries"},
 	} {
 		t.Run(tc.provider, func(t *testing.T) {
 			tl := newTool(srv, tc.creds, srv.URL, tc.provider)
@@ -282,7 +282,7 @@ func TestExecute_ReadBodyError(t *testing.T) {
 	t.Cleanup(srv.Close)
 	tl := newTool(srv, nil, "", "duckduckgo")
 	_, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"}))
-	if err == nil || !strings.Contains(err.Error(), "read duckduckgo response") {
+	if err == nil || !strings.Contains(err.Error(), "duckduckgo: failed to read response") {
 		t.Errorf("err = %v", err)
 	}
 }
