@@ -768,7 +768,12 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		if len(goal.Outputs) > 0 {
 			vars = parseStructuredOutput(output, goal.Outputs)
 		}
-		outcome := classifyOutcome(output, true, goal.Outputs, vars, spent, false, 0)
+		// toolCallsMade is passed false here (not literally true): a
+		// multi-agent goal's "no tool calls" concept doesn't map to a
+		// single turn, so this lets classifyOutcome's empty-output check
+		// fire on the one signal that matters for a multi-agent goal: no
+		// text came back at all (see 09-story-generator / P0 #1).
+		outcome := classifyOutcome(output, false, goal.Outputs, vars, spent, false, 0)
 
 		outcome = e.maybeRetry(ctx, goal, outcome, func(retryCtx context.Context, g *agentfile.Goal) GoalOutcome {
 			retryOutput, rerr := e.executeMultiAgentGoal(retryCtx, g)
@@ -780,7 +785,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			if len(goal.Outputs) > 0 {
 				vars = parseStructuredOutput(output, goal.Outputs)
 			}
-			return classifyOutcome(output, true, goal.Outputs, vars, retrySpent, false, 0)
+			return classifyOutcome(output, false, goal.Outputs, vars, retrySpent, false, 0)
 		})
 
 		for field, value := range vars {
@@ -1060,12 +1065,23 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 	// Track tools used
 	toolsUsedMap := make(map[string]bool)
 
+	// truncationRetried guards the single continuation retry (P0 #1) for a
+	// turn that comes back truncated (stop_reason=="length") or outright
+	// empty with no tool calls — the case where a reasoning model spends
+	// its whole token budget on thinking and never produces content or a
+	// tool call. Without this, such a turn falls straight into the "no
+	// tool calls => execution complete" branch below and gets reported as
+	// a successful, empty goal.
+	truncationRetried := false
+	var thinkingOverride llm.ThinkingLevel
+
 	// Execute goal loop
 	for {
 		llmStart := time.Now()
 		resp, err := e.model.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    toolDefs,
+			Thinking: thinkingOverride,
 		})
 		llmDuration := time.Since(llmStart)
 		if err != nil {
@@ -1077,6 +1093,17 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 		// Log full LLM interaction (for -vv replay)
 		e.logLLMCall(ctx, session.EventAssistant, messages, resp, llmDuration)
 		e.recordLLMMetrics(resp, llmDuration)
+
+		if truncatedEmptyTurn(resp) && !truncationRetried {
+			truncationRetried = true
+			e.logger.Warn("LLM turn truncated or empty; retrying once with thinking off",
+				"goal", goal.Name, "stop_reason", resp.StopReason)
+			e.logEvent(session.EventSystem, fmt.Sprintf("Goal %q: LLM turn came back truncated/empty (stop_reason=%q); retrying once with thinking off", goal.Name, resp.StopReason))
+			messages = append(messages, llm.Message{Role: "user", Content: truncationNudge})
+			e.logEvent(session.EventUser, truncationNudge)
+			thinkingOverride = llm.ThinkingOff
+			continue
+		}
 
 		// Check for skill activation in response
 		if skill := e.checkSkillActivation(ctx, resp.Content); skill != nil {
@@ -1508,6 +1535,19 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 				}
 				continue
 			}
+			if empty := asEmptyTurnError(result.err); empty != nil {
+				// This agent's LLM turn stayed truncated/empty even after
+				// its one retry (P0 #1 / 8c's root cause). subagent_end
+				// was already logged above with success==false. Don't
+				// abort the whole multi-agent goal over one agent's empty
+				// turn: drop it from the synthesis input, same treatment
+				// as a budget-exhausted agent with no partial output.
+				e.logger.Warn("dropping sub-agent with empty output from synthesis", "agent", result.name, "reason", empty.Error())
+				if converging {
+					allConverged = false
+				}
+				continue
+			}
 			return "", result.err
 		}
 		out := result.output
@@ -1530,6 +1570,14 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	if budgetErr != nil {
 		// Don't spend more budget synthesizing a partial result.
 		return strings.Join(agentOutputs, "\n\n"), budgetErr
+	}
+
+	// No agent produced usable output (e.g. the only agent's turn stayed
+	// truncated/empty through its retry): return empty rather than run a
+	// synthesis call over nothing. classifyOutcome (at the call site)
+	// turns this into empty_output.
+	if len(agentOutputs) == 0 {
+		return "", nil
 	}
 
 	// Single agent: return directly

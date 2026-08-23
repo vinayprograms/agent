@@ -264,6 +264,15 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 	const maxSubAgentTurns = 30
 	turn := 0
 
+	// truncationRetried guards the single continuation retry (P0 #1) for a
+	// sub-agent turn that comes back truncated (stop_reason=="length") or
+	// outright empty with no tool calls. Without this, a reasoning model
+	// that burns its whole budget on thinking falls straight into the "no
+	// tool calls => sub-agent complete" branch below with success==true and
+	// an empty deliverable (see 09-story-generator).
+	truncationRetried := false
+	var thinkingOverride llm.ThinkingLevel
+
 	// Execute sub-agent loop
 	for {
 		turn++
@@ -279,6 +288,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 		resp, err := model.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    toolDefs,
+			Thinking: thinkingOverride,
 		})
 		llmDuration := time.Since(llmStart)
 		if err != nil {
@@ -288,6 +298,28 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 
 		// Log full LLM interaction (for -vv replay)
 		e.logLLMCall(ctx, session.EventAssistant, messages, resp, llmDuration)
+
+		if truncatedEmptyTurn(resp) {
+			if !truncationRetried {
+				truncationRetried = true
+				e.logger.Warn("sub-agent LLM turn truncated or empty; retrying once with thinking off",
+					"role", role, "stop_reason", resp.StopReason)
+				messages = append(messages, llm.Message{Role: "user", Content: truncationNudge})
+				thinkingOverride = llm.ThinkingOff
+				continue
+			}
+			// Still truncated/empty after the retry: this sub-agent
+			// produced nothing usable. Report it as a failure (not a
+			// silent success) so subagent_end.success is false and the
+			// caller (e.g. executeSimpleParallel) can decide how to treat
+			// a failed agent among others, instead of an empty
+			// deliverable being reported as complete.
+			for tool := range toolsUsedMap {
+				toolsUsed = append(toolsUsed, tool)
+			}
+			e.logPhaseComplete("EXECUTE", role, stepID, start, "empty_output")
+			return "", toolsUsed, &emptyLLMTurnError{role: role, reason: fmt.Sprintf("LLM turn stayed truncated/empty (stop_reason=%q) after one retry", resp.StopReason)}
+		}
 
 		// No tool calls = sub-agent complete
 		if len(resp.ToolCalls) == 0 {

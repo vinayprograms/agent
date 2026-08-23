@@ -97,8 +97,14 @@ func TestOutcome_EmptyOutputIsHardNoRetry(t *testing.T) {
 	if result.Status != StatusFailed {
 		t.Errorf("Status = %v, want %v", result.Status, StatusFailed)
 	}
-	if n := calls.Load(); n != 1 {
-		t.Errorf("model called %d times, want exactly 1 (no retry)", n)
+	// 2, not 1: the turn-level continuation retry (P0 #1) fires once on the
+	// first empty turn (stop_reason=="" here counts as empty content, no
+	// tool calls) before classifyOutcome ever sees it; that retry also
+	// comes back empty, so the goal is empty_output. That is a different
+	// layer from the goal-level maybeRetry this test is really about — the
+	// goal itself is never re-run (oc.Retried stays false, checked above).
+	if n := calls.Load(); n != 2 {
+		t.Errorf("model called %d times, want exactly 2 (one turn-level continuation retry, no goal-level retry)", n)
 	}
 }
 

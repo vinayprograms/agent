@@ -9,6 +9,7 @@ import (
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/session"
+	"github.com/vinayprograms/agentkit/llm"
 )
 
 // Outcome classifies how a goal ended. Every goal result carries one, so a
@@ -106,6 +107,50 @@ func classifyOutcome(output string, toolCallsMade bool, declared []string, vars 
 	default:
 		return GoalOutcome{Outcome: OutcomeOK}
 	}
+}
+
+// truncationNudge asks a model whose previous turn was cut off (or came
+// back empty) to answer directly, without spending its whole budget on
+// reasoning. It is a per-turn retry, distinct from continuationNudge (which
+// is a per-goal retry after budget/convergence exhaustion): this one fires
+// after a single truncated-or-empty LLM turn, before the goal loop even
+// decides the turn is "done".
+const truncationNudge = "Your previous response was cut off or empty. Answer directly and concisely; do not spend your whole response budget on reasoning."
+
+// truncatedEmptyTurn reports whether an LLM turn looks like a truncated or
+// empty turn that must not be treated as a normal "no tool calls, I'm
+// done" turn: it made no tool calls, and either the provider reported
+// stop_reason=="length" (ran out of tokens, often because a reasoning
+// model spent them all thinking) or it came back with empty content
+// outright.
+func truncatedEmptyTurn(resp *llm.ChatResponse) bool {
+	if resp == nil || len(resp.ToolCalls) > 0 {
+		return false
+	}
+	return resp.StopReason == "length" || strings.TrimSpace(resp.Content) == ""
+}
+
+// emptyLLMTurnError marks a sub-agent turn that stayed truncated/empty even
+// after its one continuation retry. It is a distinct type (like
+// budgetError) so callers can tell "the model produced nothing usable"
+// apart from a genuine tool/LLM error, and react accordingly (e.g. treat
+// the sub-agent as failed without aborting a multi-agent goal outright).
+type emptyLLMTurnError struct {
+	role   string
+	reason string
+}
+
+func (e *emptyLLMTurnError) Error() string {
+	return fmt.Sprintf("sub-agent %s: %s", e.role, e.reason)
+}
+
+// asEmptyTurnError extracts an *emptyLLMTurnError from err, if it is one.
+func asEmptyTurnError(err error) *emptyLLMTurnError {
+	var empty *emptyLLMTurnError
+	if errors.As(err, &empty) {
+		return empty
+	}
+	return nil
 }
 
 // nudgedGoal returns a shallow copy of goal whose Outcome text carries the

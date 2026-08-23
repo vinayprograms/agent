@@ -177,11 +177,17 @@ func (e *Executor) logLLMCall(ctx context.Context, eventType string, messages []
 
 	agentID := getAgentIdentity(ctx)
 
-	// Build meta with model/token info (always logged)
+	// Build meta with model/token info (always logged). StopReason and
+	// thinking length are logged unconditionally too (not just -vv/debug)
+	// since they're what a headless caller needs to diagnose a
+	// stop_reason=="length"-with-empty-content turn (P0 #1) without
+	// re-running with --debug.
 	meta := &session.EventMeta{
-		Model:     resp.Model,
-		TokensIn:  resp.InputTokens,
-		TokensOut: resp.OutputTokens,
+		Model:         resp.Model,
+		TokensIn:      resp.InputTokens,
+		TokensOut:     resp.OutputTokens,
+		StopReason:    resp.StopReason,
+		ThinkingChars: len(resp.Thinking),
 	}
 
 	// Content only logged in debug mode (PII/data protection)
