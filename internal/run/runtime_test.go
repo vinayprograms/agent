@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/vinayprograms/agentkit/credentials"
 	"github.com/vinayprograms/agentkit/llm"
 	"github.com/vinayprograms/agentkit/policy"
+	"github.com/vinayprograms/agentkit/tools"
 )
 
 func TestResolveStoragePath_Default(t *testing.T) {
@@ -615,5 +617,107 @@ func TestUnmetRequirements(t *testing.T) {
 				t.Errorf("unmetRequirements() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestToolsetConfig_WiredFromConfig is the wiring guard: it walks every
+// field of toolsetConfig, built through the real Runtime.New/setupRegistry
+// path, and asserts it is populated from its config/credentials source (or
+// documents the default when there is none). A field added to toolsetConfig
+// without a corresponding case here fails the test — that's the point: it
+// catches a new config key that never gets wired into the tool set.
+func TestToolsetConfig_WiredFromConfig(t *testing.T) {
+	l := testWorkflow(t, func(c *config.Config) {
+		c.Web.SearXNGURL = "http://searx.example"
+		c.Web.SearchProvider = "searxng"
+		c.Timeouts.SearchCooldownMS = 4242
+		c.Timeouts.WebSearch = 77
+		c.SmallLLM = config.LLMConfig{Provider: "ollama-local", Model: "small"}
+	})
+	rt, err := New(t.Context(), l, testDeps())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer rt.Close()
+
+	summarizer := tools.NewSummarizer(rt.smallLLM)
+	tc := rt.toolsetConfig(rt.cfg.Agent.Workspace, summarizer)
+
+	checks := map[string]func(t *testing.T, v reflect.Value){
+		"Policy": func(t *testing.T, v reflect.Value) {
+			if v.Interface().(*policy.Policy) != rt.pol {
+				t.Error("Policy should be the runtime's loaded policy")
+			}
+		},
+		"Workspace": func(t *testing.T, v reflect.Value) {
+			if v.String() != rt.cfg.Agent.Workspace {
+				t.Errorf("Workspace = %q, want [agent].workspace %q", v.String(), rt.cfg.Agent.Workspace)
+			}
+		},
+		"Creds": func(t *testing.T, v reflect.Value) {
+			if v.IsNil() {
+				t.Error("Creds is nil, want the injected credentials.Lookup")
+			}
+		},
+		"Summarizer": func(t *testing.T, v reflect.Value) {
+			if v.IsNil() {
+				t.Error("Summarizer is nil though [small_llm] is configured")
+			}
+		},
+		"HTTPTimeout": func(t *testing.T, v reflect.Value) {
+			want := time.Duration(77) * time.Second // max(mcp, web_search, web_fetch)
+			if v.Interface().(time.Duration) != want {
+				t.Errorf("HTTPTimeout = %v, want %v (max of [timeouts])", v.Interface(), want)
+			}
+		},
+		"Scratchpad": func(t *testing.T, v reflect.Value) {
+			if v.IsNil() {
+				t.Error("Scratchpad is nil, want the runtime's ephemeral store")
+			}
+		},
+		"Memory": func(t *testing.T, v reflect.Value) {
+			if v.IsNil() {
+				t.Error("Memory is nil, want the runtime's persistent BM25 store")
+			}
+		},
+		"BashGate": func(t *testing.T, v reflect.Value) {
+			// Documented default: nil unless the policy enables bash (fail
+			// closed — bash never runs unguarded).
+			if rt.pol.IsToolEnabled("bash") && v.IsNil() {
+				t.Error("BashGate is nil though the policy enables bash")
+			}
+		},
+		"Spawn": func(t *testing.T, v reflect.Value) {
+			if v.IsNil() {
+				t.Error("Spawn is nil, want the runtime's SpawnBinder")
+			}
+		},
+		"SearXNGURL": func(t *testing.T, v reflect.Value) {
+			if v.String() != "http://searx.example" {
+				t.Errorf("SearXNGURL = %q, want [web].searxng_url", v.String())
+			}
+		},
+		"SearchProvider": func(t *testing.T, v reflect.Value) {
+			if v.String() != "searxng" {
+				t.Errorf("SearchProvider = %q, want [web].search_provider", v.String())
+			}
+		},
+		"SearchCooldownMS": func(t *testing.T, v reflect.Value) {
+			if v.Int() != 4242 {
+				t.Errorf("SearchCooldownMS = %d, want [timeouts].search_cooldown_ms", v.Int())
+			}
+		},
+	}
+
+	rv := reflect.ValueOf(tc)
+	rt2 := rv.Type()
+	for i := 0; i < rt2.NumField(); i++ {
+		field := rt2.Field(i)
+		check, ok := checks[field.Name]
+		if !ok {
+			t.Errorf("toolsetConfig.%s has no wiring check in this test — add one asserting its config source (or documented default)", field.Name)
+			continue
+		}
+		t.Run(field.Name, func(t *testing.T) { check(t, rv.Field(i)) })
 	}
 }

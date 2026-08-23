@@ -306,7 +306,20 @@ func (rt *Runtime) setupRegistry() error {
 	}
 
 	rt.spawn = tools.NewSpawnBinder()
-	reg, err := buildToolset(toolsetConfig{
+	reg, err := buildToolset(rt.toolsetConfig(workspace, summarizer))
+	if err != nil {
+		return err
+	}
+	rt.registry = reg
+	return nil
+}
+
+// toolsetConfig assembles buildToolset's input from the runtime's config
+// and already-built components. Split out of setupRegistry so a test can
+// construct one through the real Runtime wiring path and inspect it field
+// by field (see TestToolsetConfig_WiredFromConfig).
+func (rt *Runtime) toolsetConfig(workspace string, summarizer tools.Summarizer) toolsetConfig {
+	return toolsetConfig{
 		Policy:           rt.pol,
 		Workspace:        workspace,
 		Creds:            rt.creds,
@@ -317,12 +330,9 @@ func (rt *Runtime) setupRegistry() error {
 		BashGate:         rt.bashGate,
 		Spawn:            rt.spawn,
 		SearchCooldownMS: rt.cfg.Timeouts.SearchCooldownMS,
-	})
-	if err != nil {
-		return err
+		SearXNGURL:       rt.cfg.Web.SearXNGURL,
+		SearchProvider:   rt.cfg.Web.SearchProvider,
 	}
-	rt.registry = reg
-	return nil
 }
 
 // httpTimeout is the HTTP client timeout for web tools: the largest of the

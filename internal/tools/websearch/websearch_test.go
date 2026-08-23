@@ -45,9 +45,24 @@ func instant(t *Tool) {
 }
 
 // newTool builds an instant tool whose provider endpoints all point at srv.
-func newTool(srv *httptest.Server, creds credentials.Lookup, searxngURL, provider string) *Tool {
-	tl := New(creds, searxngURL, provider, instant)
+func newTool(t *testing.T, srv *httptest.Server, creds credentials.Lookup, searxngURL, provider string) *Tool {
+	t.Helper()
+	tl, err := New(creds, searxngURL, provider, instant)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	tl.braveURL, tl.tavilyURL, tl.ddgURL = srv.URL, srv.URL, srv.URL
+	return tl
+}
+
+// mustNew wraps New for tests that never expect it to error (provider is
+// not pinned to "searxng" with no URL).
+func mustNew(t *testing.T, creds credentials.Lookup, searxngURL, provider string, opts ...Option) *Tool {
+	t.Helper()
+	tl, err := New(creds, searxngURL, provider, opts...)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	return tl
 }
 
@@ -75,7 +90,10 @@ func TestNew_Resolution(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tl := New(tc.creds, tc.searxng, tc.provider)
+			tl, err := New(tc.creds, tc.searxng, tc.provider)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
 			got := []string{tl.searxngURL, tl.braveKey, tl.tavilyKey, tl.provider}
 			want := []string{tc.wantSearx, tc.wantBrav, tc.wantTav, tc.wantProv}
 			for i := range got {
@@ -88,7 +106,7 @@ func TestNew_Resolution(t *testing.T) {
 }
 
 func TestToolMetadata(t *testing.T) {
-	tl := New(nil, "", "")
+	tl := mustNew(t, nil, "", "")
 	if tl.Name() != "web_search" {
 		t.Errorf("Name = %q", tl.Name())
 	}
@@ -116,26 +134,25 @@ func TestExecute_Providers(t *testing.T) {
 		wantErr  string // substring of error
 		noProv   bool   // error must wrap ErrNoProvider
 	}{
-		{name: "searxng pinned", provider: "searxng", searxng: true, status: 200, body: searxJSON, want: "1. A\n   https://a.example\n   sa\n\n2. B"},
-		{name: "searxng missing url", provider: "searxng", wantErr: "no searxng_url"},
-		{name: "searxng bad status", provider: "searxng", searxng: true, status: 500, body: "boom", wantErr: "searxng search error (500): boom"},
-		{name: "searxng bad json", provider: "searxng", searxng: true, status: 200, body: "{", wantErr: "parse searxng"},
-		{name: "brave pinned", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 200, body: braveJSON, want: "1. A\n   https://a.example\n   sa"},
-		{name: "brave missing key", provider: "brave", wantErr: "no Brave API key"},
-		{name: "brave bad status", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 401, body: "nope", wantErr: "brave search error (401): nope"},
-		{name: "brave bad json", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 200, body: "{", wantErr: "parse brave"},
-		{name: "tavily pinned, empty snippet omitted", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 200, body: tavilyJSON, want: "1. A\n   https://a.example"},
-		{name: "tavily missing key", provider: "tavily", wantErr: "no Tavily API key"},
-		{name: "tavily bad status", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 403, body: "no", wantErr: "tavily search error (403): no"},
-		{name: "tavily bad json", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 200, body: "{", wantErr: "parse tavily"},
-		{name: "duckduckgo pinned", provider: "duckduckgo", status: 200, body: liteSample, want: "1. The Go Programming Language & Docs\n   https://go.dev/doc/"},
-		{name: "duckduckgo hard error", provider: "duckduckgo", status: 500, wantErr: "duckduckgo search error: status 500"},
-		{name: "duckduckgo rate limited exhausts retries", provider: "duckduckgo", status: 429, wantErr: "failed after 3 retries"},
-		{name: "auto > searxng", provider: "auto", searxng: true, creds: fakeCreds{"brave": "k"}, status: 200, body: searxJSON, want: "2. B"},
-		{name: "auto > brave", provider: "", creds: fakeCreds{"brave": "k", "tavily": "k"}, status: 200, body: braveJSON, want: "1. A"},
-		{name: "auto > tavily", provider: "auto", creds: fakeCreds{"tavily": "k"}, status: 200, body: tavilyJSON, want: "1. A"},
+		{name: "searxng pinned", provider: "searxng", searxng: true, status: 200, body: searxJSON, want: "Source: searxng\n\n1. A\n   https://a.example\n   sa\n\n2. B"},
+		{name: "searxng bad status", provider: "searxng", searxng: true, status: 500, body: "boom", wantErr: "searxng: search error (500): boom"},
+		{name: "searxng bad json", provider: "searxng", searxng: true, status: 200, body: "{", wantErr: "searxng: failed to parse"},
+		{name: "brave pinned", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 200, body: braveJSON, want: "Source: brave\n\n1. A\n   https://a.example\n   sa"},
+		{name: "brave missing key", provider: "brave", wantErr: "brave: no Brave API key"},
+		{name: "brave bad status", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 401, body: "nope", wantErr: "brave: search error (401): nope"},
+		{name: "brave bad json", provider: "brave", creds: fakeCreds{"brave": "k"}, status: 200, body: "{", wantErr: "brave: failed to parse"},
+		{name: "tavily pinned, empty snippet omitted", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 200, body: tavilyJSON, want: "Source: tavily\n\n1. A\n   https://a.example"},
+		{name: "tavily missing key", provider: "tavily", wantErr: "tavily: no Tavily API key"},
+		{name: "tavily bad status", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 403, body: "no", wantErr: "tavily: search error (403): no"},
+		{name: "tavily bad json", provider: "tavily", creds: fakeCreds{"tavily": "k"}, status: 200, body: "{", wantErr: "tavily: failed to parse"},
+		{name: "duckduckgo pinned", provider: "duckduckgo", status: 200, body: liteSample, want: "Source: duckduckgo\n\n1. The Go Programming Language & Docs\n   https://go.dev/doc/"},
+		{name: "duckduckgo hard error", provider: "duckduckgo", status: 500, wantErr: "duckduckgo: search error: status 500"},
+		{name: "duckduckgo rate limited exhausts retries", provider: "duckduckgo", status: 429, wantErr: "duckduckgo: search failed after 3 retries"},
+		{name: "auto > searxng", provider: "auto", searxng: true, creds: fakeCreds{"brave": "k"}, status: 200, body: searxJSON, want: "Source: searxng\n\n1. A\n   https://a.example\n   sa\n\n2. B\n   https://b.example\n   sb"},
+		{name: "auto > brave", provider: "", creds: fakeCreds{"brave": "k", "tavily": "k"}, status: 200, body: braveJSON, want: "Source: brave\n\n1. A"},
+		{name: "auto > tavily", provider: "auto", creds: fakeCreds{"tavily": "k"}, status: 200, body: tavilyJSON, want: "Source: tavily\n\n1. A"},
 		{name: "auto > duckduckgo", provider: "auto", status: 200, body: liteSample, want: "pkg.go.dev"},
-		{name: "auto duckduckgo error wraps ErrNoProvider", provider: "auto", status: 500, wantErr: "DuckDuckGo fallback: duckduckgo search error: status 500", noProv: true},
+		{name: "auto duckduckgo error wraps ErrNoProvider", provider: "auto", status: 500, wantErr: "DuckDuckGo fallback: duckduckgo: search error: status 500", noProv: true},
 		{name: "auto duckduckgo no results", provider: "auto", status: 200, body: "<html></html>", wantErr: "no results from DuckDuckGo fallback", noProv: true},
 		{name: "unknown provider", provider: "bing", wantErr: `unknown search_provider "bing"`},
 	}
@@ -151,7 +168,7 @@ func TestExecute_Providers(t *testing.T) {
 			if tc.searxng {
 				searxng = srv.URL + "/"
 			}
-			tl := newTool(srv, tc.creds, searxng, tc.provider)
+			tl := newTool(t, srv, tc.creds, searxng, tc.provider)
 
 			got, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "go docs", "count": 2}))
 			if tc.wantErr != "" {
@@ -173,8 +190,26 @@ func TestExecute_Providers(t *testing.T) {
 	}
 }
 
+// TestNew_SearXNGPinnedWithoutURLErrors: pinning search_provider=searxng
+// with no URL resolvable from config, credentials, or env is a
+// misconfiguration, not a runtime condition to fail open on — New must
+// error at construction (so agent run fails at startup) rather than
+// leaving every web_search call to fail later.
+func TestNew_SearXNGPinnedWithoutURLErrors(t *testing.T) {
+	t.Setenv("SEARXNG_URL", "")
+	_, err := New(nil, "", "searxng")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"searxng_url", "searxng", "SEARXNG_URL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should name %q as a source it checked", err.Error(), want)
+		}
+	}
+}
+
 func TestExecute_QueryValidation(t *testing.T) {
-	tl := New(nil, "", "")
+	tl := mustNew(t, nil, "", "")
 	for name, raw := range map[string]map[string]any{
 		"missing": {},
 		"blank":   {"query": "   "},
@@ -202,7 +237,7 @@ func TestExecute_CountClamped(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	for in, want := range map[int]string{0: "1", 99: "10", 3: "3"} {
-		tl := newTool(srv, fakeCreds{"brave": "k"}, "", "brave")
+		tl := newTool(t, srv, fakeCreds{"brave": "k"}, "", "brave")
 		if _, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q", "count": in})); err != nil {
 			t.Fatal(err)
 		}
@@ -214,7 +249,7 @@ func TestExecute_CountClamped(t *testing.T) {
 
 func TestExecute_SearxngTruncatesToCount(t *testing.T) {
 	srv := serve(t, 200, searxJSON)
-	tl := newTool(srv, nil, srv.URL, "searxng")
+	tl := newTool(t, srv, nil, srv.URL, "searxng")
 	got, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q", "count": 1}))
 	if err != nil {
 		t.Fatal(err)
@@ -226,12 +261,12 @@ func TestExecute_SearxngTruncatesToCount(t *testing.T) {
 
 func TestExecute_NoResultsMessage(t *testing.T) {
 	srv := serve(t, 200, `{"results":[]}`)
-	tl := newTool(srv, nil, srv.URL, "searxng")
+	tl := newTool(t, srv, nil, srv.URL, "searxng")
 	got, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "No results found." {
+	if got != "Source: searxng\nNo results found." {
 		t.Errorf("got %q", got)
 	}
 }
@@ -245,13 +280,13 @@ func TestExecute_TransportErrors(t *testing.T) {
 		creds    fakeCreds
 		wantErr  string
 	}{
-		{"searxng", nil, "searxng search failed"},
-		{"brave", fakeCreds{"brave": "k"}, "brave search failed"},
-		{"tavily", fakeCreds{"tavily": "k"}, "tavily search failed"},
-		{"duckduckgo", nil, "duckduckgo search failed"},
+		{"searxng", nil, "searxng: search request failed"},
+		{"brave", fakeCreds{"brave": "k"}, "brave: search request failed"},
+		{"tavily", fakeCreds{"tavily": "k"}, "tavily: search request failed"},
+		{"duckduckgo", nil, "duckduckgo: search failed after 3 retries"},
 	} {
 		t.Run(tc.provider, func(t *testing.T) {
-			tl := newTool(srv, tc.creds, srv.URL, tc.provider)
+			tl := newTool(t, srv, tc.creds, srv.URL, tc.provider)
 			_, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"}))
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("err = %v, want %q", err, tc.wantErr)
@@ -265,7 +300,7 @@ func TestExecute_BadEndpointURL(t *testing.T) {
 	srv := serve(t, 200, "")
 	for _, provider := range []string{"searxng", "brave", "tavily", "duckduckgo"} {
 		t.Run(provider, func(t *testing.T) {
-			tl := newTool(srv, fakeCreds{"brave": "k", "tavily": "k"}, "\x7f", provider)
+			tl := newTool(t, srv, fakeCreds{"brave": "k", "tavily": "k"}, "\x7f", provider)
 			tl.braveURL, tl.tavilyURL, tl.ddgURL = "\x7f", "\x7f", "\x7f"
 			if _, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"})); err == nil {
 				t.Error("expected request construction error")
@@ -280,16 +315,16 @@ func TestExecute_ReadBodyError(t *testing.T) {
 		_, _ = w.Write([]byte("short"))
 	}))
 	t.Cleanup(srv.Close)
-	tl := newTool(srv, nil, "", "duckduckgo")
+	tl := newTool(t, srv, nil, "", "duckduckgo")
 	_, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"}))
-	if err == nil || !strings.Contains(err.Error(), "read duckduckgo response") {
+	if err == nil || !strings.Contains(err.Error(), "duckduckgo: failed to read response") {
 		t.Errorf("err = %v", err)
 	}
 }
 
 func TestExecute_ContextCancelled(t *testing.T) {
 	t.Run("search cooldown", func(t *testing.T) {
-		tl := New(nil, "", "", instant)
+		tl := mustNew(t, nil, "", "", instant)
 		tl.searchLimit.cooldown, tl.searchLimit.last = time.Hour, time.Now()
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -299,7 +334,7 @@ func TestExecute_ContextCancelled(t *testing.T) {
 		}
 	})
 	t.Run("ddg cooldown", func(t *testing.T) {
-		tl := New(nil, "", "duckduckgo", instant)
+		tl := mustNew(t, nil, "", "duckduckgo", instant)
 		tl.ddgLimit.cooldown, tl.ddgLimit.last = time.Hour, time.Now()
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -310,7 +345,7 @@ func TestExecute_ContextCancelled(t *testing.T) {
 	})
 	t.Run("ddg retry backoff", func(t *testing.T) {
 		srv := serve(t, 429, "")
-		tl := newTool(srv, nil, "", "duckduckgo")
+		tl := newTool(t, srv, nil, "", "duckduckgo")
 		tl.ddgBackoff = time.Hour
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -325,7 +360,7 @@ func TestExecute_ContextCancelled(t *testing.T) {
 
 func TestExecute_CooldownWaits(t *testing.T) {
 	srv := serve(t, 200, liteSample)
-	tl := newTool(srv, nil, "", "duckduckgo")
+	tl := newTool(t, srv, nil, "", "duckduckgo")
 	tl.searchLimit.cooldown, tl.ddgLimit.cooldown = 5*time.Millisecond, 30*time.Millisecond
 	tl.searchLimit.last, tl.ddgLimit.last = time.Now(), time.Now()
 
@@ -343,7 +378,7 @@ func TestLimiter_InjectedClock(t *testing.T) {
 	// the full cooldown; with the clock advanced past it, it must not.
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := base
-	tl := New(nil, "", "", instant)
+	tl := mustNew(t, nil, "", "", instant)
 	tl.now = func() time.Time { return clock }
 	tl.searchLimit.cooldown = time.Hour
 
@@ -365,10 +400,10 @@ func TestLimiter_InjectedClock(t *testing.T) {
 }
 
 func TestWithHTTPTimeout(t *testing.T) {
-	if got := New(nil, "", "", WithHTTPTimeout(time.Second)).client.Timeout; got != time.Second {
+	if got := mustNew(t, nil, "", "", WithHTTPTimeout(time.Second)).client.Timeout; got != time.Second {
 		t.Errorf("timeout = %v, want 1s", got)
 	}
-	if got := New(nil, "", "").client.Timeout; got != 30*time.Second {
+	if got := mustNew(t, nil, "", "").client.Timeout; got != 30*time.Second {
 		t.Errorf("default timeout = %v, want 30s", got)
 	}
 }
@@ -383,7 +418,7 @@ func TestDuckDuckGo_RetriesThenSucceeds(t *testing.T) {
 		_, _ = w.Write([]byte(liteSample))
 	}))
 	t.Cleanup(srv.Close)
-	tl := newTool(srv, nil, "", "duckduckgo")
+	tl := newTool(t, srv, nil, "", "duckduckgo")
 	tl.ddgBackoff, tl.ddgMaxBackoff = time.Millisecond, time.Millisecond
 
 	got, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "q"}))
@@ -396,15 +431,15 @@ func TestDuckDuckGo_RetriesThenSucceeds(t *testing.T) {
 }
 
 func TestWithCooldown(t *testing.T) {
-	if got := New(nil, "", "", WithCooldown(9*time.Second)).ddgLimit.cooldown; got != 9*time.Second {
+	if got := mustNew(t, nil, "", "", WithCooldown(9*time.Second)).ddgLimit.cooldown; got != 9*time.Second {
 		t.Errorf("ddgLimit.cooldown = %v, want 9s", got)
 	}
-	if got := New(nil, "", "").ddgLimit.cooldown; got != defaultDDGCooldown {
+	if got := mustNew(t, nil, "", "").ddgLimit.cooldown; got != defaultDDGCooldown {
 		t.Errorf("default ddgLimit.cooldown = %v, want %v", got, defaultDDGCooldown)
 	}
 	// WithCooldown must not affect the general searchLimit used by every
 	// provider — only DuckDuckGo.
-	tl := New(nil, "", "", WithCooldown(9*time.Second))
+	tl := mustNew(t, nil, "", "", WithCooldown(9*time.Second))
 	if tl.searchLimit.cooldown != defaultCooldown {
 		t.Errorf("searchLimit.cooldown = %v, want unaffected default %v", tl.searchLimit.cooldown, defaultCooldown)
 	}
@@ -417,7 +452,7 @@ func TestExecute_CacheHitAvoidsSecondHTTPCall(t *testing.T) {
 		_, _ = w.Write([]byte(searxJSON))
 	}))
 	t.Cleanup(srv.Close)
-	tl := newTool(srv, nil, srv.URL, "searxng")
+	tl := newTool(t, srv, nil, srv.URL, "searxng")
 
 	a := args(t, map[string]any{"query": "cached query"})
 	first, err := tl.Execute(t.Context(), a)
@@ -443,7 +478,7 @@ func TestExecute_CacheExpiresAfterTTL(t *testing.T) {
 		_, _ = w.Write([]byte(searxJSON))
 	}))
 	t.Cleanup(srv.Close)
-	tl := newTool(srv, nil, srv.URL, "searxng")
+	tl := newTool(t, srv, nil, srv.URL, "searxng")
 
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := base
@@ -478,7 +513,7 @@ func TestExecute_CacheKeyedByQueryAndCount(t *testing.T) {
 		_, _ = w.Write([]byte(searxJSON))
 	}))
 	t.Cleanup(srv.Close)
-	tl := newTool(srv, nil, srv.URL, "searxng")
+	tl := newTool(t, srv, nil, srv.URL, "searxng")
 
 	if _, err := tl.Execute(t.Context(), args(t, map[string]any{"query": "a"})); err != nil {
 		t.Fatal(err)
@@ -495,9 +530,10 @@ func TestExecute_CacheKeyedByQueryAndCount(t *testing.T) {
 }
 
 func TestNew_UsesHTTP1Transport(t *testing.T) {
-	tr, ok := New(nil, "", "").client.Transport.(*http.Transport)
+	tl := mustNew(t, nil, "", "")
+	tr, ok := tl.client.Transport.(*http.Transport)
 	if !ok {
-		t.Fatalf("client.Transport = %T, want *http.Transport", New(nil, "", "").client.Transport)
+		t.Fatalf("client.Transport = %T, want *http.Transport", tl.client.Transport)
 	}
 	if tr.ForceAttemptHTTP2 {
 		t.Error("ForceAttemptHTTP2 = true, want false (search must not negotiate HTTP/2)")

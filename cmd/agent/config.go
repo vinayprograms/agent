@@ -510,7 +510,9 @@ func runConfigValidate(out io.Writer, d deps, t target) error {
 	cfg, problems := validateAgentFile(t, files[0])
 	problems = append(problems, validatePolicyFile(t, files[1], cfg)...)
 	problems = append(problems, validateCredentialsFile(t, files[2])...)
+	problems = append(problems, searchProviderProblems(d, t, files[1], files[2], cfg)...)
 	warnings := credentialWarnings(d, t, files[2], cfg)
+	warnings = append(warnings, searchProviderWarnings(d, t, files[1], files[2], cfg)...)
 
 	for _, w := range warnings {
 		fmt.Fprintf(out, "warning: %s\n", w)
@@ -546,6 +548,10 @@ func validateAgentFile(t target, f fileset) (*config.Config, []string) {
 	for _, dep := range cfg.Deprecations {
 		problems = append(problems, fmt.Sprintf("%s: %s", f.name, dep))
 	}
+	// Unknown keys are always mistakes (typos), unlike a configured
+	// provider missing a credential, so they fail validation rather than
+	// merely warn.
+	problems = append(problems, cfg.UnknownKeys...)
 	return cfg, problems
 }
 
@@ -645,6 +651,79 @@ func envKeySet(d deps, cfg *config.Config, provider string) bool {
 // therefore needs no credential.
 func localProvider(p string) bool {
 	return p == configfile.ProviderOllamaLocal || p == configfile.ProviderLMStudio
+}
+
+// resolvedSearchSources reports which search-provider sources config,
+// credentials and the environment resolve, for callers deciding whether
+// web_search has anything usable to fall back on. err is non-nil only when
+// credentials could not be read (already reported by credentialWarnings);
+// callers should treat that as "nothing to add" rather than guessing.
+func resolvedSearchSources(d deps, t target, credsFile fileset, cfg *config.Config) (hasSearXNG, hasBrave, hasTavily bool, err error) {
+	var override string
+	if active := credsFile.active(); len(active) > 0 && t.explicit {
+		override = active[0]
+	}
+	creds, err := d.credentials(override)
+	if err != nil {
+		return false, false, false, err
+	}
+	hasSearXNG = cfg.Web.SearXNGURL != "" || creds.Get("searxng") != "" || d.getenv("SEARXNG_URL") != ""
+	hasBrave = creds.Get("brave") != "" || d.getenv("BRAVE_API_KEY") != ""
+	hasTavily = creds.Get("tavily") != "" || d.getenv("TAVILY_API_KEY") != ""
+	return hasSearXNG, hasBrave, hasTavily, nil
+}
+
+// searchProviderProblems fails validation when [web] search_provider is
+// pinned to "searxng" but no URL resolves from any source: that combination
+// can never work, so agent run/serve refuse to start on it (see
+// websearch.New) — config validate must report the same thing as a
+// failure, not a warning a user might skip past.
+func searchProviderProblems(d deps, t target, policyFile, credsFile fileset, cfg *config.Config) []string {
+	if !webSearchEnabled(t, policyFile, cfg) || cfg.Web.SearchProvider != "searxng" {
+		return nil
+	}
+	hasSearXNG, _, _, err := resolvedSearchSources(d, t, credsFile, cfg)
+	if err != nil || hasSearXNG {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"[web] search_provider is \"searxng\" but no SearXNG URL is configured " +
+			"(agent.toml, credentials, or SEARXNG_URL) — see docs/configuration/web-search.md")}
+}
+
+// searchProviderWarnings warns when web_search is enabled by policy but
+// would fall back to the keyless DuckDuckGo provider, which is often rate
+// limited.
+func searchProviderWarnings(d deps, t target, policyFile, credsFile fileset, cfg *config.Config) []string {
+	if !webSearchEnabled(t, policyFile, cfg) || cfg.Web.SearchProvider == "searxng" {
+		return nil // pinned-but-unreachable searxng is a problem, not a warning
+	}
+	hasSearXNG, hasBrave, hasTavily, err := resolvedSearchSources(d, t, credsFile, cfg)
+	if err != nil || hasSearXNG || hasBrave || hasTavily {
+		return nil
+	}
+	return []string{
+		"web_search will fall back to keyless DuckDuckGo, which is often rate limited (403); " +
+			"configure searxng/brave/tavily — see docs/configuration/web-search.md",
+	}
+}
+
+// webSearchEnabled reports whether web_search is enabled by the effective
+// policy. No policy file at all is legal and enables every tool.
+func webSearchEnabled(t target, f fileset, cfg *config.Config) bool {
+	active := f.active()
+	if len(active) == 0 {
+		return true
+	}
+	body, err := os.ReadFile(active[0])
+	if err != nil {
+		return false
+	}
+	pol, _, err := policy.FromTOMLWithUnknownKeys(string(body), cfg.Agent.Workspace, t.home)
+	if err != nil {
+		return false
+	}
+	return pol.IsToolEnabled("web_search")
 }
 
 // ---------------------------------------------------------------------------

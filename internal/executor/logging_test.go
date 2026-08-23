@@ -212,3 +212,68 @@ func TestTracingSpans(t *testing.T) {
 	_, span = exec.startSubAgentSpan(ctx, "r", "m")
 	exec.endSubAgentSpan(span, "output", errors.New("e"))
 }
+
+// TestLogToolResult_ErrorSurvivesInMeta guards against Event.Error being
+// silently dropped: jsonlRecord's footer-level "error" field shadows the
+// embedded Event.Error on the wire (see EventMeta.Error's doc comment), so
+// a failed tool's error text must also live in meta.error to survive a
+// round trip through the session log.
+func TestLogToolResult_ErrorSurvivesInMeta(t *testing.T) {
+	exec, sess, _ := newLoggingExecutor(t, false)
+	ctx := context.Background()
+
+	exec.logToolResult(ctx, "bash", map[string]any{"command": "false"}, "c1", "", errors.New("exit status 1"), time.Millisecond)
+
+	var ev session.Event
+	for _, e := range sess.Events {
+		if e.Type == session.EventToolResult {
+			ev = e
+		}
+	}
+	if ev.Meta == nil || ev.Meta.Error != "exit status 1" {
+		t.Fatalf("meta.error = %+v, want %q", ev.Meta, "exit status 1")
+	}
+}
+
+// TestLogToolResult_ResultRecordedInMeta checks the (truncated) result text
+// lands in meta.result in debug mode, for both success and failure — the
+// same PII rule that gates Content also gates meta.result.
+func TestLogToolResult_ResultRecordedInMeta(t *testing.T) {
+	exec, sess, _ := newLoggingExecutor(t, true)
+	ctx := context.Background()
+
+	exec.logToolResult(ctx, "read", map[string]any{"path": "x"}, "c1", strings.Repeat("y", 600), nil, time.Millisecond)
+
+	var ev session.Event
+	for _, e := range sess.Events {
+		if e.Type == session.EventToolResult {
+			ev = e
+		}
+	}
+	if ev.Meta == nil || len(ev.Meta.Result) != 503 || !strings.HasSuffix(ev.Meta.Result, "...") {
+		t.Fatalf("meta.result = %d bytes, want 500 + \"...\" (truncated)", len(ev.Meta.Result))
+	}
+}
+
+// TestLogToolResult_ResultWithheldWithoutDebug checks meta.result is empty
+// outside debug mode, even though meta.error (checked separately in
+// TestLogToolResult_ErrorSurvivesInMeta) is always populated on failure.
+func TestLogToolResult_ResultWithheldWithoutDebug(t *testing.T) {
+	exec, sess, _ := newLoggingExecutor(t, false)
+	ctx := context.Background()
+
+	exec.logToolResult(ctx, "read", map[string]any{"path": "x"}, "c1", "secret output", errors.New("bad"), time.Millisecond)
+
+	var ev session.Event
+	for _, e := range sess.Events {
+		if e.Type == session.EventToolResult {
+			ev = e
+		}
+	}
+	if ev.Meta == nil || ev.Meta.Result != "" {
+		t.Fatalf("meta.result = %q, want empty without debug", ev.Meta.Result)
+	}
+	if ev.Meta.Error != "bad" {
+		t.Fatalf("meta.error = %q, want %q even without debug", ev.Meta.Error, "bad")
+	}
+}

@@ -380,3 +380,101 @@ func TestLoadFile_Limits(t *testing.T) {
 		t.Errorf("Limits = %+v, want 40 tool calls, 25 turns, 10m", cfg.Limits)
 	}
 }
+
+func TestLoadFile_WebSearchProvider(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[web]\nsearch_provider = \"searxng\"\nsearxng_url = \"http://127.0.0.1:9/\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if cfg.Web.SearchProvider != "searxng" || cfg.Web.SearXNGURL != "http://127.0.0.1:9/" {
+		t.Errorf("Web = %+v, want search_provider=searxng, searxng_url set", cfg.Web)
+	}
+}
+
+func TestLoadFile_WebSearchProviderInvalidIsAnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	if err := os.WriteFile(path, []byte("[web]\nsearch_provider = \"bing\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadFile(path)
+	if err == nil || !strings.Contains(err.Error(), "bing") {
+		t.Fatalf("an invalid search_provider must be rejected and named in the error, got %v", err)
+	}
+}
+
+func TestLoadFile_UnknownKeyIsReported(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[web]\nsearch_providerx = \"searxng\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(cfg.UnknownKeys) != 1 || !strings.Contains(cfg.UnknownKeys[0], "web.search_providerx") {
+		t.Errorf("UnknownKeys = %v, want one entry naming web.search_providerx", cfg.UnknownKeys)
+	}
+	if !strings.Contains(cfg.UnknownKeys[0], path) {
+		t.Errorf("UnknownKeys entry %q should name the source file %q", cfg.UnknownKeys[0], path)
+	}
+}
+
+func TestLoadFile_KnownWebSearchKeysAreNotUnknown(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[web]\nsearch_provider = \"searxng\"\nsearxng_url = \"http://127.0.0.1:9/\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(cfg.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none for known [web] keys", cfg.UnknownKeys)
+	}
+}
+
+func TestLoadFile_StorageCompatDoesNotReportUnknownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[storage]\nlocation = \"/tmp/somewhere\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(cfg.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none for the [storage] compat path", cfg.UnknownKeys)
+	}
+	if len(cfg.Deprecations) != 1 {
+		t.Errorf("Deprecations = %v, want one entry for [storage]", cfg.Deprecations)
+	}
+}
+
+// TestLoadFile_ProfilesAreNotUnknownKeys guards against a false positive on
+// [profiles.<name>] tables: Profiles is a map, so its sub-tables and keys
+// are dynamic by design and must never be flagged as unknown.
+func TestLoadFile_ProfilesAreNotUnknownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[profiles.fast]\nprovider = \"anthropic\"\nmodel = \"haiku\"\n\n[profiles.creative]\nmodel = \"opus\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(cfg.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none for [profiles.*] tables", cfg.UnknownKeys)
+	}
+	if cfg.Profiles["fast"].Model != "haiku" || cfg.Profiles["creative"].Model != "opus" {
+		t.Errorf("Profiles = %+v, want both entries decoded", cfg.Profiles)
+	}
+}

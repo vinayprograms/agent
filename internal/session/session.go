@@ -209,6 +209,14 @@ type EventMeta struct {
 	Prompt   string `json:"prompt,omitempty"`   // Full prompt sent to LLM
 	Response string `json:"response,omitempty"` // Full LLM response
 	Thinking string `json:"thinking,omitempty"` // LLM thinking/reasoning (if available)
+
+	// Error carries a failure's error text. It exists because Event.Error
+	// is shadowed on the wire: jsonlRecord's footer-level "error" field
+	// wins over the embedded Event.Error field of the same JSON name when
+	// an event record is marshaled, so a tool_result's error never reached
+	// the JSONL file. Populate this instead for anything that must survive
+	// persistence.
+	Error string `json:"error,omitempty"` // Failure text (e.g. a failed tool's error)
 }
 
 // AddEvent sequences and timestamps event (if its Timestamp is zero),

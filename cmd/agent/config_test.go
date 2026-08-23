@@ -382,7 +382,13 @@ func TestConfigValidate_CleanConfiguration(t *testing.T) {
 	if !strings.Contains(h.out.String(), "✓") {
 		t.Errorf("validate output: %q", h.out.String())
 	}
-	if strings.Contains(h.out.String(), "warning") {
+	// The local scenario needs no LLM credential, but it does enable
+	// web_search with no provider configured, so the DDG fallback warning
+	// is expected here.
+	if !strings.Contains(h.out.String(), "keyless DuckDuckGo") {
+		t.Errorf("a freshly initialised local config has no search provider: %q", h.out.String())
+	}
+	if strings.Contains(h.out.String(), `is configured in agent.toml but no credential`) {
 		t.Errorf("a local provider needs no credential: %q", h.out.String())
 	}
 }
@@ -435,6 +441,24 @@ func TestConfigValidate_DeprecatedStorageSection(t *testing.T) {
 	}
 }
 
+func TestConfigValidate_UnknownKeyFailsValidation(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[web]\nsearch_providerx = \"searxng\"\n")
+	err := h.exec("config", "validate")
+	if err == nil || !strings.Contains(err.Error(), "web.search_providerx") {
+		t.Errorf("unknown key must fail validation and name the key: %v", err)
+	}
+}
+
+func TestConfigValidate_KnownWebSearchKeysAreNotUnknown(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[web]\nsearch_provider = \"searxng\"\nsearxng_url = \"http://127.0.0.1:9/\"\n")
+	err := h.exec("config", "validate")
+	if err != nil {
+		t.Errorf("known [web] keys must not be reported as unknown: %v", err)
+	}
+}
+
 func TestConfigValidate_MissingCredentialIsAWarningNotAFailure(t *testing.T) {
 	h := configEnv(t)
 	write(t, "agent.toml", "[llm]\nprovider = \"anthropic\"\nmodel = \"claude\"\n")
@@ -456,7 +480,7 @@ func TestConfigValidate_CredentialFoundSilencesTheWarning(t *testing.T) {
 	if err := h.exec("config", "validate"); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(h.out.String(), "warning") {
+	if strings.Contains(h.out.String(), "is configured in agent.toml but no credential") {
 		t.Errorf("a resolvable credential must not warn:\n%s", h.out.String())
 	}
 }
@@ -473,8 +497,80 @@ func TestConfigValidate_CustomAPIKeyEnvSilencesTheWarning(t *testing.T) {
 	if err := h.exec("config", "validate"); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(h.out.String(), "warning") {
+	if strings.Contains(h.out.String(), "is configured in agent.toml but no credential") {
 		t.Errorf("api_key_env must satisfy the credential check:\n%s", h.out.String())
+	}
+}
+
+func TestConfigValidate_WarnsWhenNoSearchProviderConfigured(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[llm]\nmodel = \"x\"\n")
+	if err := h.exec("config", "validate"); err != nil {
+		t.Fatal(err)
+	}
+	want := "warning: web_search will fall back to keyless DuckDuckGo, which is often rate limited (403); configure searxng/brave/tavily — see docs/configuration/web-search.md"
+	if !strings.Contains(h.out.String(), want) {
+		t.Errorf("output = %q, want it to contain %q", h.out.String(), want)
+	}
+}
+
+func TestConfigValidate_NoDDGWarningWhenSearXNGURLConfigured(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[llm]\nmodel = \"x\"\n\n[web]\nsearch_provider = \"searxng\"\nsearxng_url = \"http://127.0.0.1:9/\"\n")
+	if err := h.exec("config", "validate"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(h.out.String(), "keyless DuckDuckGo") {
+		t.Errorf("searxng_url is configured, must not warn about the DDG fallback:\n%s", h.out.String())
+	}
+}
+
+func TestConfigValidate_NoDDGWarningWhenBraveKeyPresent(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[llm]\nmodel = \"x\"\n")
+	h.deps.credentials = func(string) (credentials.Lookup, error) {
+		return credentials.FileStore{"brave": {APIKey: "k"}}, nil
+	}
+	if err := h.exec("config", "validate"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(h.out.String(), "keyless DuckDuckGo") {
+		t.Errorf("a brave credential must silence the DDG fallback warning:\n%s", h.out.String())
+	}
+}
+
+func TestConfigValidate_NoDDGWarningWhenTavilyKeyPresent(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[llm]\nmodel = \"x\"\n")
+	h.deps.credentials = func(string) (credentials.Lookup, error) {
+		return credentials.FileStore{"tavily": {APIKey: "k"}}, nil
+	}
+	if err := h.exec("config", "validate"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(h.out.String(), "keyless DuckDuckGo") {
+		t.Errorf("a tavily credential must silence the DDG fallback warning:\n%s", h.out.String())
+	}
+}
+
+func TestConfigValidate_SearXNGPinnedButNoURLFailsValidation(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[llm]\nmodel = \"x\"\n\n[web]\nsearch_provider = \"searxng\"\n")
+	err := h.exec("config", "validate")
+	if err == nil || !strings.Contains(err.Error(), `search_provider is "searxng" but no SearXNG URL is configured`) {
+		t.Errorf("err = %v, want a failure naming the missing SearXNG URL", err)
+	}
+}
+
+func TestConfigValidate_NoSearchWarningWhenWebSearchDisabled(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[llm]\nmodel = \"x\"\n")
+	write(t, "policy.toml", "default_deny = true\n[tools.read]\n")
+	if err := h.exec("config", "validate"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(h.out.String(), "keyless DuckDuckGo") {
+		t.Errorf("web_search is disabled by policy, must not warn:\n%s", h.out.String())
 	}
 }
 

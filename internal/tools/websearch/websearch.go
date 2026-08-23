@@ -139,14 +139,22 @@ func WithCooldown(d time.Duration) Option {
 //
 // creds may be nil. searxngURL and provider come from config
 // ([web].searxng_url / search_provider); see the package doc for how
-// credentials are resolved.
-func New(creds credentials.Lookup, searxngURL, provider string, opts ...Option) *Tool {
+// credentials are resolved. Pinning provider to "searxng" with no URL
+// resolvable from any of the three sources is a misconfiguration, not a
+// runtime condition to fail open on: it errors here so the caller (agent
+// run/serve) fails at startup instead of every web_search call failing
+// later.
+func New(creds credentials.Lookup, searxngURL, provider string, opts ...Option) (*Tool, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
 		provider = "auto"
 	}
 	if searxngURL == "" {
 		searxngURL = resolve(creds, "searxng", "SEARXNG_URL")
+	}
+	if provider == "searxng" && searxngURL == "" {
+		return nil, fmt.Errorf("web_search: search_provider=searxng but no searxng_url is configured " +
+			"(checked [web].searxng_url, credentials [searxng], and SEARXNG_URL)")
 	}
 	t := &Tool{
 		searxngURL:    searxngURL,
@@ -168,7 +176,7 @@ func New(creds credentials.Lookup, searxngURL, provider string, opts ...Option) 
 	for _, opt := range opts {
 		opt(t)
 	}
-	return t
+	return t, nil
 }
 
 // limiter enforces a minimum gap between consecutive calls.
@@ -248,68 +256,92 @@ func (t *Tool) Execute(ctx context.Context, args tools.Args) (string, error) {
 	if err := t.searchLimit.wait(ctx, t.now); err != nil {
 		return "", err
 	}
-	results, err := t.search(ctx, query, count)
+	results, providerUsed, err := t.search(ctx, query, count)
 	if err != nil {
 		return "", err
 	}
-	formatted := formatResults(results)
+	formatted := formatResults(providerUsed, results)
 	t.cache.put(key, formatted, t.now())
 	return formatted, nil
 }
 
-func (t *Tool) search(ctx context.Context, query string, count int) ([]SearchResult, error) {
+// providerErr labels err with the provider that produced it, so a failed
+// tool_error log line and the session's meta.error always name which
+// provider was responsible.
+func providerErr(provider string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", provider, err)
+}
+
+// search runs the query against the resolved provider and reports which
+// provider actually answered it (needed by the caller to name the source
+// on success and to label a returned error).
+func (t *Tool) search(ctx context.Context, query string, count int) ([]SearchResult, string, error) {
 	switch t.provider {
 	case "searxng":
-		if t.searxngURL == "" {
-			return nil, fmt.Errorf("web_search: search_provider=searxng but no searxng_url ([web].searxng_url, credentials [searxng] or SEARXNG_URL) is set")
-		}
-		return t.searchSearXNG(ctx, query, count)
+		// New guarantees t.searxngURL is non-empty whenever provider is
+		// pinned to "searxng" — see its doc comment.
+		results, err := t.searchSearXNG(ctx, query, count)
+		return results, "searxng", providerErr("searxng", err)
 	case "brave":
 		if t.braveKey == "" {
-			return nil, fmt.Errorf("web_search: search_provider=brave but no Brave API key (credentials [brave] or BRAVE_API_KEY) is set")
+			return nil, "brave", providerErr("brave", errors.New("no Brave API key (credentials [brave] or BRAVE_API_KEY) is set"))
 		}
-		return t.searchBrave(ctx, query, count)
+		results, err := t.searchBrave(ctx, query, count)
+		return results, "brave", providerErr("brave", err)
 	case "tavily":
 		if t.tavilyKey == "" {
-			return nil, fmt.Errorf("web_search: search_provider=tavily but no Tavily API key (credentials [tavily] or TAVILY_API_KEY) is set")
+			return nil, "tavily", providerErr("tavily", errors.New("no Tavily API key (credentials [tavily] or TAVILY_API_KEY) is set"))
 		}
-		return t.searchTavily(ctx, query, count)
+		results, err := t.searchTavily(ctx, query, count)
+		return results, "tavily", providerErr("tavily", err)
 	case "duckduckgo":
-		return t.searchDuckDuckGo(ctx, query, count)
+		results, err := t.searchDuckDuckGo(ctx, query, count)
+		return results, "duckduckgo", providerErr("duckduckgo", err)
 	case "auto":
 		// Cascade: SearXNG (self-hosted) > Brave > Tavily > DuckDuckGo.
 		if t.searxngURL != "" {
-			return t.searchSearXNG(ctx, query, count)
+			results, err := t.searchSearXNG(ctx, query, count)
+			return results, "searxng", providerErr("searxng", err)
 		}
 		if t.braveKey != "" {
-			return t.searchBrave(ctx, query, count)
+			results, err := t.searchBrave(ctx, query, count)
+			return results, "brave", providerErr("brave", err)
 		}
 		if t.tavilyKey != "" {
-			return t.searchTavily(ctx, query, count)
+			results, err := t.searchTavily(ctx, query, count)
+			return results, "tavily", providerErr("tavily", err)
 		}
 		// No configured provider — DuckDuckGo is the keyless fallback, but it
 		// is rate-limited and may fail. Warn the caller with actionable guidance
 		// so failures aren't a silent mystery.
 		results, err := t.searchDuckDuckGo(ctx, query, count)
 		if err != nil {
-			return nil, fmt.Errorf("web_search: %w (DuckDuckGo fallback: %w)", ErrNoProvider, err)
+			return nil, "duckduckgo", fmt.Errorf("web_search: %w (DuckDuckGo fallback: %w)", ErrNoProvider, providerErr("duckduckgo", err))
 		}
 		if len(results) == 0 {
-			return nil, fmt.Errorf("web_search: %w (no results from DuckDuckGo fallback)", ErrNoProvider)
+			return nil, "duckduckgo", fmt.Errorf("web_search: %w (no results from DuckDuckGo fallback)", ErrNoProvider)
 		}
-		return results, nil
+		return results, "duckduckgo", nil
 	default:
-		return nil, fmt.Errorf("web_search: unknown search_provider %q (want auto|searxng|brave|tavily|duckduckgo)", t.provider)
+		return nil, "", fmt.Errorf("web_search: unknown search_provider %q (want auto|searxng|brave|tavily|duckduckgo)", t.provider)
 	}
 }
 
-// formatResults renders results in the same text layout as agentkit's built-in
-// web_search, so prompts tuned against the built-in keep working.
-func formatResults(results []SearchResult) string {
-	if len(results) == 0 {
-		return "No results found."
-	}
+// formatResults renders results in the same text layout as agentkit's
+// built-in web_search (so prompts tuned against the built-in keep working),
+// preceded by a "Source: <provider>" line naming which provider answered
+// the query.
+func formatResults(provider string, results []SearchResult) string {
 	var b strings.Builder
+	fmt.Fprintf(&b, "Source: %s\n", provider)
+	if len(results) == 0 {
+		b.WriteString("No results found.")
+		return b.String()
+	}
+	b.WriteString("\n")
 	for i, r := range results {
 		if i > 0 {
 			b.WriteString("\n\n")
@@ -337,13 +369,13 @@ func (t *Tool) searchSearXNG(ctx context.Context, query string, count int) ([]Se
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("searxng search failed: %w", err)
+		return nil, fmt.Errorf("search request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("searxng search error (%d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("search error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var searxResp struct {
@@ -354,7 +386,7 @@ func (t *Tool) searchSearXNG(ctx context.Context, query string, count int) ([]Se
 		} `json:"results"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&searxResp); err != nil {
-		return nil, fmt.Errorf("failed to parse searxng response: %w", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	results := make([]SearchResult, 0, count)
@@ -380,13 +412,13 @@ func (t *Tool) searchBrave(ctx context.Context, query string, count int) ([]Sear
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("brave search failed: %w", err)
+		return nil, fmt.Errorf("search request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("brave search error (%d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("search error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var braveResp struct {
@@ -399,7 +431,7 @@ func (t *Tool) searchBrave(ctx context.Context, query string, count int) ([]Sear
 		} `json:"web"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&braveResp); err != nil {
-		return nil, fmt.Errorf("failed to parse brave response: %w", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	results := make([]SearchResult, 0, len(braveResp.Web.Results))
@@ -426,13 +458,13 @@ func (t *Tool) searchTavily(ctx context.Context, query string, count int) ([]Sea
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("tavily search failed: %w", err)
+		return nil, fmt.Errorf("search request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("tavily search error (%d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("search error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var tavilyResp struct {
@@ -443,7 +475,7 @@ func (t *Tool) searchTavily(ctx context.Context, query string, count int) ([]Sea
 		} `json:"results"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tavilyResp); err != nil {
-		return nil, fmt.Errorf("failed to parse tavily response: %w", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	results := make([]SearchResult, 0, len(tavilyResp.Results))

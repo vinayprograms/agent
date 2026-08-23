@@ -68,6 +68,13 @@ type Config struct {
 	// Deprecations lists legacy settings found while loading (e.g. [storage]).
 	// They were honoured; callers decide whether to warn the user.
 	Deprecations []string `toml:"-"`
+
+	// UnknownKeys lists TOML keys present in a loaded file that this struct
+	// does not decode — almost always a typo, since every key it does
+	// support has a `toml` tag above. Each entry is formatted
+	// "<file>: unknown key <dotted.key>"; callers decide whether to warn or
+	// fail on them.
+	UnknownKeys []string `toml:"-"`
 }
 
 // AgentConfig contains agent identification settings.
@@ -92,6 +99,23 @@ type LLMConfig struct {
 type WebConfig struct {
 	GatewayURL      string `toml:"gateway_url"`
 	GatewayTokenEnv string `toml:"gateway_token_env"`
+
+	// SearchProvider pins web_search to one provider ("auto", "searxng",
+	// "brave", "tavily", "duckduckgo"), or "" for the default cascade.
+	SearchProvider string `toml:"search_provider"`
+	// SearXNGURL is the SearXNG instance to query; takes precedence over
+	// the [searxng] credential and the SEARXNG_URL env var.
+	SearXNGURL string `toml:"searxng_url"`
+}
+
+// validWebSearchProviders are the accepted [web] search_provider values.
+var validWebSearchProviders = map[string]bool{
+	"":           true,
+	"auto":       true,
+	"searxng":    true,
+	"brave":      true,
+	"tavily":     true,
+	"duckduckgo": true,
 }
 
 // Protocol selects the telemetry exporter.
@@ -306,6 +330,12 @@ func mergeFile(cfg *Config, path string) error {
 		if _, err := time.ParseDuration(v); err != nil {
 			return fmt.Errorf("%s: [limits] max_duration %q: %w", path, v, err)
 		}
+	}
+	if v := file.Web.SearchProvider; !validWebSearchProviders[v] {
+		return fmt.Errorf("%s: [web] search_provider %q: not a valid provider (want one of auto, searxng, brave, tavily, duckduckgo)", path, v)
+	}
+	for _, key := range md.Undecoded() {
+		cfg.UnknownKeys = append(cfg.UnknownKeys, fmt.Sprintf("%s: unknown key %s", path, key.String()))
 	}
 	if file.Storage == nil {
 		return nil

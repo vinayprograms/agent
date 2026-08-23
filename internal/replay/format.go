@@ -190,7 +190,15 @@ func (r *Replayer) fmtToolResult(w io.Writer, seqNum, ts string, event *session.
 	}
 	argsHint := r.getArgsHint(event.Tool, event.Args)
 
-	if event.Error != "" {
+	// event.Error does not survive persistence (jsonlRecord's footer-level
+	// "error" field shadows it on the wire), so a replayed session carries
+	// the failure text in meta.error instead; fall back to that.
+	errText := event.Error
+	if errText == "" && event.Meta != nil {
+		errText = event.Meta.Error
+	}
+
+	if errText != "" {
 		fmt.Fprintf(w, "%s │ %s │ %s%s %s%s %s%s\n", seqNum, ts,
 			agentPrefix,
 			toolStyle.Render("TOOL RESULT:"),
@@ -198,7 +206,7 @@ func (r *Replayer) fmtToolResult(w io.Writer, seqNum, ts string, event *session.
 			argsHint,
 			dimStyle.Render(fmt.Sprintf("(%dms)", event.DurationMs)),
 			corr)
-		r.printError(w, event.Error)
+		r.printError(w, errText)
 	} else {
 		fmt.Fprintf(w, "%s │ %s │ %s%s %s%s %s%s\n", seqNum, ts,
 			agentPrefix,

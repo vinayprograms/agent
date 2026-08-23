@@ -68,7 +68,7 @@ func TestParseDuckDuckGoLite_SkipsNonHTTPLinks(t *testing.T) {
 }
 
 func TestJitteredBackoff_Bounds(t *testing.T) {
-	tl := New(nil, "", "")
+	tl := mustNew(t, nil, "", "")
 	backoff := 2 * time.Second
 
 	tl.randFloat = func() float64 { return 0 }

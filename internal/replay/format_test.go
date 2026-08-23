@@ -125,3 +125,24 @@ func TestFmtPhaseCommit_LongCommitmentVerbosity2(t *testing.T) {
 		t.Errorf("expected full commitment block at verbosity 2, got:\n%s", buf.String())
 	}
 }
+
+// TestFmtToolResult_ErrorFromMeta covers the replay path for a persisted
+// session: Event.Error does not survive the JSONL round trip (jsonlRecord's
+// footer-level "error" field shadows it), so a failed tool_result's error
+// text lives in meta.error instead. Replay must still render it as a
+// failure with the error text shown.
+func TestFmtToolResult_ErrorFromMeta(t *testing.T) {
+	r := New(0)
+	e := session.Event{
+		Type: session.EventToolResult,
+		Tool: "bash",
+		Meta: &session.EventMeta{Error: "exit status 1"},
+	}
+	var buf bytes.Buffer
+	var lastGoal string
+	r.formatEvent(&buf, 1, &e, &lastGoal)
+	out := buf.String()
+	if !strings.Contains(out, "FAILED") || !strings.Contains(out, "exit status 1") {
+		t.Errorf("output = %q, want it to show the tool failed with the meta.error text", out)
+	}
+}

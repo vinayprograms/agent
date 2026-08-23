@@ -236,7 +236,11 @@ provider = "none"
 ```
 
 `[web]` (`gateway_url`, `gateway_token_env`) configures an Internet Gateway
-proxy for `web_search`/`web_fetch`; see the
+proxy for `web_search`/`web_fetch`. `[web] search_provider` pins `web_search`
+to one backend (`""`/`"auto"`, `"searxng"`, `"brave"`, `"tavily"`, or
+`"duckduckgo"`; any other value is a config-load error naming the bad value),
+and `[web] searxng_url` sets the SearXNG instance URL, taking precedence over
+the `[searxng]` credential and the `SEARXNG_URL` env var. See the
 [Web Search](web-search.md) page for provider fallback order and env vars.
 
 `[profiles.*]`, `[mcp.servers.*]` and `REQUIRES` are covered in depth in
@@ -407,6 +411,26 @@ Delete the `[storage]` table and keep only `[state]`
 
 **`WARN: [storage] is deprecated, rename to [state] with location = "..."`**
 Non-fatal; the value still loads. Rename the section when convenient.
+
+**`WARN: <file>: unknown key <dotted.key> (ignored)`**
+`agent.toml` has a key this build does not recognise — almost always a
+typo (e.g. `search_providerx` instead of `search_provider`). The key is
+ignored at run time; `agent run`/`agent serve` only warn, but
+`agent config validate` treats it as a failure (exit 1) since an unknown
+key is never intentional. Fix the key name.
+
+**`Source: searxng` / `Source: brave` / `Source: tavily` / `Source: duckduckgo`**
+The first line of a successful `web_search` result names the provider
+that answered the query, so you can tell which one is actually in effect
+without digging through config. A failed search is likewise prefixed
+with the provider name, e.g. `searxng: search error (500): ...`.
+
+**`search_provider=searxng but no searxng_url is configured (checked ...)`**
+`[web] search_provider = "searxng"` with no URL resolvable from
+`[web].searxng_url`, the `[searxng]` credential, or `SEARXNG_URL` can never
+work, so `agent run`/`agent serve` refuse to start on it and
+`agent config validate` reports it as a failure. Set one of the three
+sources, or unpin `search_provider` back to `"auto"`.
 
 **`<file> uses keys the current policy schema does not recognise: ...`**
 One or more legacy policy keys are present. See the migration table in

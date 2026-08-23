@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/checkpoint"
@@ -496,5 +497,18 @@ func TestTruncateForLog(t *testing.T) {
 	}
 	if got := truncateForLog("abcdef", 3); !strings.HasPrefix(got, "abc") || len(got) <= 3 {
 		t.Errorf("got %q", got)
+	}
+}
+
+// A cut that lands mid-rune must back off to the previous rune boundary
+// rather than splitting a multi-byte UTF-8 character into invalid bytes.
+func TestTruncateForLog_DoesNotSplitUTF8Rune(t *testing.T) {
+	s := strings.Repeat("\u00e9", 5) // 'é', 2 bytes each; maxLen=3 lands mid-rune
+	got := truncateForLog(s, 3)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateForLog(%q, 3) = %q, not valid UTF-8", s, got)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("got %q, want truncation suffix", got)
 	}
 }

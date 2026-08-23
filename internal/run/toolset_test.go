@@ -2,6 +2,9 @@ package run
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -314,5 +317,61 @@ func TestPathGuard_CwdResolutionForUnconfinedTools(t *testing.T) {
 	}
 	if err := g.Check(t.Context(), args); err == nil {
 		t.Fatal("relative path must be checked against the cwd for patch")
+	}
+}
+
+// TestBuildToolset_WebSearchConfigWired proves SearXNGURL/SearchProvider on
+// toolsetConfig actually reach the registered web_search tool: pinning the
+// provider to "searxng" and pointing it at a fake SearXNG server must make
+// the tool query that server, not fall through to the DuckDuckGo default.
+func TestBuildToolset_WebSearchConfigWired(t *testing.T) {
+	ws := t.TempDir()
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"results":[{"title":"t","url":"https://example.com","content":"c"}]}`)
+	}))
+	defer srv.Close()
+
+	reg, err := buildToolset(toolsetConfig{
+		Policy:         permissivePolicy(ws),
+		Workspace:      ws,
+		Spawn:          tools.NewSpawnBinder(),
+		SearXNGURL:     srv.URL,
+		SearchProvider: "searxng",
+	})
+	if err != nil {
+		t.Fatalf("buildToolset: %v", err)
+	}
+	out, err := reg.Execute(context.Background(), "web_search", map[string]any{"query": "test"})
+	if err != nil {
+		t.Fatalf("web_search Execute: %v", err)
+	}
+	if !hit {
+		t.Fatal("web_search did not query the configured SearXNG server; SearXNGURL/SearchProvider were not wired through")
+	}
+	if !strings.Contains(out, "example.com") {
+		t.Errorf("web_search result = %q, want it to contain the SearXNG result", out)
+	}
+}
+
+// TestBuildToolset_SearXNGPinnedWithoutURLFailsClosed pins the
+// misconfiguration that reaches a caller through buildToolset (an
+// agent.toml with search_provider="searxng" and no resolvable URL): New
+// must surface it as a construction error, so Runtime.setup fails at
+// startup instead of registering a web_search tool that would fail on
+// every call.
+func TestBuildToolset_SearXNGPinnedWithoutURLFailsClosed(t *testing.T) {
+	t.Setenv("SEARXNG_URL", "")
+	ws := t.TempDir()
+	_, err := buildToolset(toolsetConfig{
+		Policy:         permissivePolicy(ws),
+		Workspace:      ws,
+		Spawn:          tools.NewSpawnBinder(),
+		SearchProvider: "searxng",
+	})
+	if err == nil || !strings.Contains(err.Error(), "searxng") {
+		t.Fatalf("buildToolset error = %v, want a searxng misconfiguration error", err)
 	}
 }

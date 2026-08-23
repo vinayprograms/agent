@@ -119,6 +119,9 @@ func (l *Loaded) loadConfig(opts LoadOptions, warn io.Writer) error {
 	for _, d := range cfg.Deprecations {
 		fmt.Fprintf(warn, "WARN: %s\n", d)
 	}
+	for _, uk := range cfg.UnknownKeys {
+		fmt.Fprintf(warn, "WARN: %s (ignored)\n", uk)
+	}
 
 	if opts.Workspace != "" && cfg.Agent.Workspace != "" {
 		cliResolved := l.absPath(opts.Workspace)

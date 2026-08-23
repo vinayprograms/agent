@@ -153,9 +153,19 @@ func (e *Executor) logToolResult(ctx context.Context, name string, args map[stri
 		AgentRole:     agentID.Role,
 		Timestamp:     time.Now(),
 	}
+	// Event.Error does not survive persistence (see EventMeta.Error's doc
+	// comment), so a failed tool's error text is duplicated into meta.error
+	// here, unconditionally — an error carries no arbitrary tool output, so
+	// it is not subject to the same PII rule as Content/meta.result below.
+	meta := &session.EventMeta{}
+	if e.debug {
+		meta.Result = truncateForLog(result, 500)
+	}
 	if err != nil {
 		event.Error = err.Error()
+		meta.Error = err.Error()
 	}
+	event.Meta = meta
 	e.session.AddEvent(event)
 }
 

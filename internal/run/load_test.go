@@ -312,6 +312,22 @@ func TestLoad_WarningsReachStderr(t *testing.T) {
 	}
 }
 
+func TestLoad_UnknownConfigKeyWarnsOnStderr(t *testing.T) {
+	src := writeAgentDir(t)
+	cfgPath := filepath.Join(src, "agent.toml")
+	body := "[agent]\nworkspace = \"" + src + "\"\n\n[web]\nsearch_providerx = \"searxng\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf strings.Builder
+	if _, err := Load(LoadOptions{AgentfilePath: filepath.Join(src, "Agentfile"), ConfigPath: cfgPath, Workspace: src, Stderr: &buf}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "WARN:") || !strings.Contains(buf.String(), "web.search_providerx") || !strings.Contains(buf.String(), "(ignored)") {
+		t.Errorf("expected unknown-key warning naming web.search_providerx, got %q", buf.String())
+	}
+}
+
 func TestAbsPath(t *testing.T) {
 	l := &Loaded{home: "/home/u"}
 	if got := l.absPath("~/x"); got != "/home/u/x" {
