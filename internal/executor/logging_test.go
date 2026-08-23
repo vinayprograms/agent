@@ -236,10 +236,10 @@ func TestLogToolResult_ErrorSurvivesInMeta(t *testing.T) {
 }
 
 // TestLogToolResult_ResultRecordedInMeta checks the (truncated) result text
-// lands in meta.result for both success and failure, independent of debug
-// mode (which gates Content, not Meta).
+// lands in meta.result in debug mode, for both success and failure — the
+// same PII rule that gates Content also gates meta.result.
 func TestLogToolResult_ResultRecordedInMeta(t *testing.T) {
-	exec, sess, _ := newLoggingExecutor(t, false)
+	exec, sess, _ := newLoggingExecutor(t, true)
 	ctx := context.Background()
 
 	exec.logToolResult(ctx, "read", map[string]any{"path": "x"}, "c1", strings.Repeat("y", 600), nil, time.Millisecond)
@@ -252,5 +252,28 @@ func TestLogToolResult_ResultRecordedInMeta(t *testing.T) {
 	}
 	if ev.Meta == nil || len(ev.Meta.Result) != 503 || !strings.HasSuffix(ev.Meta.Result, "...") {
 		t.Fatalf("meta.result = %d bytes, want 500 + \"...\" (truncated)", len(ev.Meta.Result))
+	}
+}
+
+// TestLogToolResult_ResultWithheldWithoutDebug checks meta.result is empty
+// outside debug mode, even though meta.error (checked separately in
+// TestLogToolResult_ErrorSurvivesInMeta) is always populated on failure.
+func TestLogToolResult_ResultWithheldWithoutDebug(t *testing.T) {
+	exec, sess, _ := newLoggingExecutor(t, false)
+	ctx := context.Background()
+
+	exec.logToolResult(ctx, "read", map[string]any{"path": "x"}, "c1", "secret output", errors.New("bad"), time.Millisecond)
+
+	var ev session.Event
+	for _, e := range sess.Events {
+		if e.Type == session.EventToolResult {
+			ev = e
+		}
+	}
+	if ev.Meta == nil || ev.Meta.Result != "" {
+		t.Fatalf("meta.result = %q, want empty without debug", ev.Meta.Result)
+	}
+	if ev.Meta.Error != "bad" {
+		t.Fatalf("meta.error = %q, want %q even without debug", ev.Meta.Error, "bad")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/session"
@@ -14,12 +15,18 @@ import (
 // output substitution.
 var variableRef = regexp.MustCompile(`\$([a-zA-Z_][a-zA-Z0-9_]*)`)
 
-// truncateForLog truncates a string for logging purposes.
+// truncateForLog truncates a string for logging purposes. The cut point
+// backs off to the previous rune boundary when maxLen would otherwise land
+// inside a multi-byte UTF-8 character, so the result is always valid UTF-8.
 func truncateForLog(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	cut := maxLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
 // buildStructuredOutputInstruction builds instructions for structured output.
