@@ -553,14 +553,12 @@ func TestConfigValidate_NoDDGWarningWhenTavilyKeyPresent(t *testing.T) {
 	}
 }
 
-func TestConfigValidate_WarnsWhenSearXNGPinnedButNoURL(t *testing.T) {
+func TestConfigValidate_SearXNGPinnedButNoURLFailsValidation(t *testing.T) {
 	h := configEnv(t)
 	write(t, "agent.toml", "[llm]\nmodel = \"x\"\n\n[web]\nsearch_provider = \"searxng\"\n")
-	if err := h.exec("config", "validate"); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(h.out.String(), `search_provider is "searxng" but no SearXNG URL is configured`) {
-		t.Errorf("output = %q, want a warning naming the missing SearXNG URL", h.out.String())
+	err := h.exec("config", "validate")
+	if err == nil || !strings.Contains(err.Error(), `search_provider is "searxng" but no SearXNG URL is configured`) {
+		t.Errorf("err = %v, want a failure naming the missing SearXNG URL", err)
 	}
 }
 

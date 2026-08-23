@@ -355,3 +355,23 @@ func TestBuildToolset_WebSearchConfigWired(t *testing.T) {
 		t.Errorf("web_search result = %q, want it to contain the SearXNG result", out)
 	}
 }
+
+// TestBuildToolset_SearXNGPinnedWithoutURLFailsClosed pins the
+// misconfiguration that reaches a caller through buildToolset (an
+// agent.toml with search_provider="searxng" and no resolvable URL): New
+// must surface it as a construction error, so Runtime.setup fails at
+// startup instead of registering a web_search tool that would fail on
+// every call.
+func TestBuildToolset_SearXNGPinnedWithoutURLFailsClosed(t *testing.T) {
+	t.Setenv("SEARXNG_URL", "")
+	ws := t.TempDir()
+	_, err := buildToolset(toolsetConfig{
+		Policy:         permissivePolicy(ws),
+		Workspace:      ws,
+		Spawn:          tools.NewSpawnBinder(),
+		SearchProvider: "searxng",
+	})
+	if err == nil || !strings.Contains(err.Error(), "searxng") {
+		t.Fatalf("buildToolset error = %v, want a searxng misconfiguration error", err)
+	}
+}

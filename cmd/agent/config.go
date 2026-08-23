@@ -510,6 +510,7 @@ func runConfigValidate(out io.Writer, d deps, t target) error {
 	cfg, problems := validateAgentFile(t, files[0])
 	problems = append(problems, validatePolicyFile(t, files[1], cfg)...)
 	problems = append(problems, validateCredentialsFile(t, files[2])...)
+	problems = append(problems, searchProviderProblems(d, t, files[1], files[2], cfg)...)
 	warnings := credentialWarnings(d, t, files[2], cfg)
 	warnings = append(warnings, searchProviderWarnings(d, t, files[1], files[2], cfg)...)
 
@@ -652,39 +653,59 @@ func localProvider(p string) bool {
 	return p == configfile.ProviderOllamaLocal || p == configfile.ProviderLMStudio
 }
 
-// searchProviderWarnings warns when web_search is enabled by policy but
-// resolving a search provider at run time would fail to find one, since the
-// keyless DuckDuckGo fallback is often rate limited.
-func searchProviderWarnings(d deps, t target, policyFile, credsFile fileset, cfg *config.Config) []string {
-	if !webSearchEnabled(t, policyFile, cfg) {
-		return nil
-	}
-
+// resolvedSearchSources reports which search-provider sources config,
+// credentials and the environment resolve, for callers deciding whether
+// web_search has anything usable to fall back on. err is non-nil only when
+// credentials could not be read (already reported by credentialWarnings);
+// callers should treat that as "nothing to add" rather than guessing.
+func resolvedSearchSources(d deps, t target, credsFile fileset, cfg *config.Config) (hasSearXNG, hasBrave, hasTavily bool, err error) {
 	var override string
 	if active := credsFile.active(); len(active) > 0 && t.explicit {
 		override = active[0]
 	}
 	creds, err := d.credentials(override)
 	if err != nil {
-		return nil // already reported by credentialWarnings
+		return false, false, false, err
 	}
+	hasSearXNG = cfg.Web.SearXNGURL != "" || creds.Get("searxng") != "" || d.getenv("SEARXNG_URL") != ""
+	hasBrave = creds.Get("brave") != "" || d.getenv("BRAVE_API_KEY") != ""
+	hasTavily = creds.Get("tavily") != "" || d.getenv("TAVILY_API_KEY") != ""
+	return hasSearXNG, hasBrave, hasTavily, nil
+}
 
-	hasSearXNG := cfg.Web.SearXNGURL != "" || creds.Get("searxng") != "" || d.getenv("SEARXNG_URL") != ""
-	hasBrave := creds.Get("brave") != "" || d.getenv("BRAVE_API_KEY") != ""
-	hasTavily := creds.Get("tavily") != "" || d.getenv("TAVILY_API_KEY") != ""
-
-	const seeDocs = "see docs/configuration/web-search.md"
-	switch {
-	case cfg.Web.SearchProvider == "searxng" && !hasSearXNG:
-		return []string{fmt.Sprintf(
-			"[web] search_provider is \"searxng\" but no SearXNG URL is configured "+
-				"(agent.toml, credentials, or SEARXNG_URL) — %s", seeDocs)}
-	case !hasSearXNG && !hasBrave && !hasTavily:
-		return []string{fmt.Sprintf(
-			"web_search will fall back to keyless DuckDuckGo, which is often rate limited (403); "+
-				"configure searxng/brave/tavily — %s", seeDocs)}
+// searchProviderProblems fails validation when [web] search_provider is
+// pinned to "searxng" but no URL resolves from any source: that combination
+// can never work, so agent run/serve refuse to start on it (see
+// websearch.New) — config validate must report the same thing as a
+// failure, not a warning a user might skip past.
+func searchProviderProblems(d deps, t target, policyFile, credsFile fileset, cfg *config.Config) []string {
+	if !webSearchEnabled(t, policyFile, cfg) || cfg.Web.SearchProvider != "searxng" {
+		return nil
 	}
-	return nil
+	hasSearXNG, _, _, err := resolvedSearchSources(d, t, credsFile, cfg)
+	if err != nil || hasSearXNG {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"[web] search_provider is \"searxng\" but no SearXNG URL is configured " +
+			"(agent.toml, credentials, or SEARXNG_URL) — see docs/configuration/web-search.md")}
+}
+
+// searchProviderWarnings warns when web_search is enabled by policy but
+// would fall back to the keyless DuckDuckGo provider, which is often rate
+// limited.
+func searchProviderWarnings(d deps, t target, policyFile, credsFile fileset, cfg *config.Config) []string {
+	if !webSearchEnabled(t, policyFile, cfg) || cfg.Web.SearchProvider == "searxng" {
+		return nil // pinned-but-unreachable searxng is a problem, not a warning
+	}
+	hasSearXNG, hasBrave, hasTavily, err := resolvedSearchSources(d, t, credsFile, cfg)
+	if err != nil || hasSearXNG || hasBrave || hasTavily {
+		return nil
+	}
+	return []string{
+		"web_search will fall back to keyless DuckDuckGo, which is often rate limited (403); " +
+			"configure searxng/brave/tavily — see docs/configuration/web-search.md",
+	}
 }
 
 // webSearchEnabled reports whether web_search is enabled by the effective

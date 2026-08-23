@@ -28,6 +28,11 @@ error naming the bad value. `[web] searxng_url` takes precedence over the
 `[searxng]` credential, which takes precedence over the `SEARXNG_URL`
 environment variable.
 
+Pinning `search_provider = "searxng"` with no URL resolvable from any of
+those three sources is a misconfiguration, not something to fail open on:
+`agent run`/`agent serve` refuse to start (naming all three sources), and
+`agent config validate` reports it as a failure (exit 1), not a warning.
+
 ## SearXNG (Recommended — Free, Self-Hosted)
 
 [SearXNG](https://github.com/searxng/searxng) is a privacy-respecting meta-search engine you can self-host. Zero cost, no API limits.

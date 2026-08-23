@@ -457,3 +457,24 @@ func TestLoadFile_StorageCompatDoesNotReportUnknownKeys(t *testing.T) {
 		t.Errorf("Deprecations = %v, want one entry for [storage]", cfg.Deprecations)
 	}
 }
+
+// TestLoadFile_ProfilesAreNotUnknownKeys guards against a false positive on
+// [profiles.<name>] tables: Profiles is a map, so its sub-tables and keys
+// are dynamic by design and must never be flagged as unknown.
+func TestLoadFile_ProfilesAreNotUnknownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[profiles.fast]\nprovider = \"anthropic\"\nmodel = \"haiku\"\n\n[profiles.creative]\nmodel = \"opus\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(cfg.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none for [profiles.*] tables", cfg.UnknownKeys)
+	}
+	if cfg.Profiles["fast"].Model != "haiku" || cfg.Profiles["creative"].Model != "opus" {
+		t.Errorf("Profiles = %+v, want both entries decoded", cfg.Profiles)
+	}
+}

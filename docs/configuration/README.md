@@ -425,6 +425,13 @@ that answered the query, so you can tell which one is actually in effect
 without digging through config. A failed search is likewise prefixed
 with the provider name, e.g. `searxng: search error (500): ...`.
 
+**`search_provider=searxng but no searxng_url is configured (checked ...)`**
+`[web] search_provider = "searxng"` with no URL resolvable from
+`[web].searxng_url`, the `[searxng]` credential, or `SEARXNG_URL` can never
+work, so `agent run`/`agent serve` refuse to start on it and
+`agent config validate` reports it as a failure. Set one of the three
+sources, or unpin `search_provider` back to `"auto"`.
+
 **`<file> uses keys the current policy schema does not recognise: ...`**
 One or more legacy policy keys are present. See the migration table in
 section 6 and rename each key listed.

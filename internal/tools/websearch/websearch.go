@@ -139,14 +139,22 @@ func WithCooldown(d time.Duration) Option {
 //
 // creds may be nil. searxngURL and provider come from config
 // ([web].searxng_url / search_provider); see the package doc for how
-// credentials are resolved.
-func New(creds credentials.Lookup, searxngURL, provider string, opts ...Option) *Tool {
+// credentials are resolved. Pinning provider to "searxng" with no URL
+// resolvable from any of the three sources is a misconfiguration, not a
+// runtime condition to fail open on: it errors here so the caller (agent
+// run/serve) fails at startup instead of every web_search call failing
+// later.
+func New(creds credentials.Lookup, searxngURL, provider string, opts ...Option) (*Tool, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
 		provider = "auto"
 	}
 	if searxngURL == "" {
 		searxngURL = resolve(creds, "searxng", "SEARXNG_URL")
+	}
+	if provider == "searxng" && searxngURL == "" {
+		return nil, fmt.Errorf("web_search: search_provider=searxng but no searxng_url is configured " +
+			"(checked [web].searxng_url, credentials [searxng], and SEARXNG_URL)")
 	}
 	t := &Tool{
 		searxngURL:    searxngURL,
@@ -168,7 +176,7 @@ func New(creds credentials.Lookup, searxngURL, provider string, opts ...Option) 
 	for _, opt := range opts {
 		opt(t)
 	}
-	return t
+	return t, nil
 }
 
 // limiter enforces a minimum gap between consecutive calls.
@@ -273,9 +281,8 @@ func providerErr(provider string, err error) error {
 func (t *Tool) search(ctx context.Context, query string, count int) ([]SearchResult, string, error) {
 	switch t.provider {
 	case "searxng":
-		if t.searxngURL == "" {
-			return nil, "searxng", providerErr("searxng", errors.New("no searxng_url ([web].searxng_url, credentials [searxng] or SEARXNG_URL) is set"))
-		}
+		// New guarantees t.searxngURL is non-empty whenever provider is
+		// pinned to "searxng" — see its doc comment.
 		results, err := t.searchSearXNG(ctx, query, count)
 		return results, "searxng", providerErr("searxng", err)
 	case "brave":

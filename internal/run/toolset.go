@@ -129,7 +129,11 @@ func buildToolset(c toolsetConfig) (*tools.Registry, error) {
 			return add(webfetch.New(c.Summarizer, fetchOpts...), domainGuard{pol: c.Policy, tool: "web_fetch"})
 		},
 		func() error {
-			return add(websearch.New(c.Creds, c.SearXNGURL, c.SearchProvider, searchOpts...))
+			searchTool, err := websearch.New(c.Creds, c.SearXNGURL, c.SearchProvider, searchOpts...)
+			if err != nil {
+				return err
+			}
+			return add(searchTool)
 		},
 
 		// Sub-agents (late-bound by the executor).
