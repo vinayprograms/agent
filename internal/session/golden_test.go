@@ -123,6 +123,7 @@ func goldenSession() *Session {
 			CheckpointType: "pre", CheckpointID: "ck1", SubAgentName: "sub", SubAgentRole: "r", SubAgentModel: "m",
 			SubAgentTask: "t", SubAgentOutput: "o", SubAgentInputs: map[string]string{"a": "b"},
 			Model: "model", LatencyMs: 5, TokensIn: 10, TokensOut: 20, Prompt: "p", Response: "resp", Thinking: "th",
+			Error: "boom",
 		}
 		sess.AddEvent(ev)
 	}
