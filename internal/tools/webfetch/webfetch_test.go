@@ -273,6 +273,53 @@ func TestExecute_SummarizerError(t *testing.T) {
 	}
 }
 
+// TestExecute_SummarizerEmptyAnswer proves a summarizer that returns ""
+// with a nil error (e.g. a reasoning model that spent its whole token
+// budget on hidden thinking and produced no content) degrades to the
+// truncated page text the same way a summarizer error does — it must not
+// be returned as a silent empty result.
+func TestExecute_SummarizerEmptyAnswer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("<html><body><p>text</p></body></html>"))
+	}))
+	defer srv.Close()
+
+	tl := New(&fakeSummarizer{answer: ""})
+	out, err := tl.Execute(t.Context(), args(t, map[string]any{"url": srv.URL, "question": "q"}))
+	if err != nil {
+		t.Fatalf("Execute() with an empty-answer summarizer: want nil error, got %v", err)
+	}
+	if out == "" {
+		t.Fatal("Execute() = \"\", want a non-empty degrade-to-text result")
+	}
+	if !strings.Contains(out, "[summary unavailable:") {
+		t.Errorf("Execute() = %q, want it to contain the summarizer-unavailable warning", out)
+	}
+	if !strings.Contains(out, "text") {
+		t.Errorf("Execute() = %q, want it to still contain the page text", out)
+	}
+}
+
+// TestExecute_SummarizerWhitespaceAnswer proves a whitespace-only answer
+// is also treated as empty, not as valid content.
+func TestExecute_SummarizerWhitespaceAnswer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("<html><body><p>text</p></body></html>"))
+	}))
+	defer srv.Close()
+
+	tl := New(&fakeSummarizer{answer: "   \n\t  "})
+	out, err := tl.Execute(t.Context(), args(t, map[string]any{"url": srv.URL, "question": "q"}))
+	if err != nil {
+		t.Fatalf("Execute() with a whitespace-answer summarizer: want nil error, got %v", err)
+	}
+	if !strings.Contains(out, "[summary unavailable:") {
+		t.Errorf("Execute() = %q, want it to contain the summarizer-unavailable warning", out)
+	}
+}
+
 func TestExtractReadableText(t *testing.T) {
 	tests := []struct {
 		name string

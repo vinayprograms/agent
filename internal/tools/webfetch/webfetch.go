@@ -208,6 +208,14 @@ func (t *Tool) Execute(ctx context.Context, args tools.Args) (string, error) {
 
 	summaryInput, truncated := truncateRunes(content, t.maxSummaryChars)
 	answer, err := t.summarizer.Summarize(ctx, summaryInput+truncated, question)
+	if err == nil && strings.TrimSpace(answer) == "" {
+		// Some models (reasoning models under a tight token budget) return
+		// stop_reason="length" with all tokens spent on hidden thinking and
+		// no error — an empty-but-successful answer. Treat it the same as
+		// a summarizer failure so we still degrade to raw text instead of
+		// silently returning "".
+		err = fmt.Errorf("summarizer returned empty answer")
+	}
 	if err != nil {
 		text, textTruncated := truncateRunes(content, t.maxTextChars)
 		return fmt.Sprintf("[summary unavailable: %v]\n\n%s%s", err, text, textTruncated), nil
