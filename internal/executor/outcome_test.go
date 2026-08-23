@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -184,6 +185,200 @@ func TestOutcome_ConvergeSuccessReportsIterations(t *testing.T) {
 	}
 	if result.Status != StatusComplete {
 		t.Errorf("Status = %v, want %v", result.Status, StatusComplete)
+	}
+}
+
+// A CONVERGE goal that never converges, even after its continuation retry,
+// keeps the ORIGINAL not_converged outcome (not the retry's own failure),
+// with Retried set and both reasons folded into one string. This is the
+// 35-iterative-improvement repro: the retry's budget_exhausted used to mask
+// the fact that the critic never agreed the work was done.
+func TestOutcome_ConvergeRetryFailsKeepsOriginalOutcome(t *testing.T) {
+	model := modelFunc(func(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+		return &llm.ChatResponse{Content: "still refining"}, nil // never emits CONVERGED, ever
+	})
+
+	limit := 2
+	wf := &agentfile.Workflow{
+		Name:  "converge-retry-fail",
+		Steps: []agentfile.Step{{Type: agentfile.StepRUN, Name: "main", UsingGoals: []string{"refine"}}},
+		Goals: []agentfile.Goal{{
+			Name: "refine", Outcome: "Refine", IsConverge: true, WithinLimit: &limit,
+		}},
+	}
+	exec := mustNewExecutor(t, wf, model, nil, nil)
+
+	result, err := exec.Run(t.Context(), RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	oc := result.Goals["refine"]
+	if oc.Outcome != OutcomeNotConverged {
+		t.Errorf("Outcome = %v, want %v (original outcome must survive a failed retry)", oc.Outcome, OutcomeNotConverged)
+	}
+	if !oc.Retried {
+		t.Errorf("Retried = false, want true")
+	}
+	if !strings.Contains(oc.Reason, "did not converge") {
+		t.Errorf("Reason = %q, want it to still carry the original not-converged reason", oc.Reason)
+	}
+	if !strings.Contains(oc.Reason, "retry also failed") {
+		t.Errorf("Reason = %q, want it to also carry the retry's failure", oc.Reason)
+	}
+	if result.Status != StatusFailed {
+		t.Errorf("Status = %v, want %v", result.Status, StatusFailed)
+	}
+}
+
+// A CONVERGE goal that does not converge on the first pass but does
+// converge on its continuation retry reports outcome=ok, Retried=true
+// (unchanged behavior — the retry rescued it).
+func TestOutcome_ConvergeRetrySucceedsIsOk(t *testing.T) {
+	var calls atomic.Int32
+	model := modelFunc(func(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+		n := calls.Add(1)
+		if n == 1 {
+			return &llm.ChatResponse{Content: "still refining"}, nil // exhausts the 1-iteration limit
+		}
+		return &llm.ChatResponse{Content: "final answer\nCONVERGED"}, nil // retry converges immediately
+	})
+
+	limit := 1
+	wf := &agentfile.Workflow{
+		Name:  "converge-retry-ok",
+		Steps: []agentfile.Step{{Type: agentfile.StepRUN, Name: "main", UsingGoals: []string{"refine"}}},
+		Goals: []agentfile.Goal{{
+			Name: "refine", Outcome: "Refine", IsConverge: true, WithinLimit: &limit,
+		}},
+	}
+	exec := mustNewExecutor(t, wf, model, nil, nil)
+
+	result, err := exec.Run(t.Context(), RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	oc := result.Goals["refine"]
+	if oc.Outcome != OutcomeOK {
+		t.Errorf("Outcome = %v, want %v", oc.Outcome, OutcomeOK)
+	}
+	if !oc.Retried {
+		t.Errorf("Retried = false, want true")
+	}
+	if result.Status != StatusComplete {
+		t.Errorf("Status = %v, want %v", result.Status, StatusComplete)
+	}
+}
+
+// A plain goal whose first attempt exhausts its budget, and whose
+// continuation retry ALSO exhausts its (small, fresh) retry budget, reports
+// the outcome as budget_exhausted (not masked by anything else), Retried
+// true, with both reasons folded together.
+func TestOutcome_BudgetExhaustedRetryAlsoFailsStaysBudgetExhausted(t *testing.T) {
+	model := modelFunc(func(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+		// Always keeps calling tools — trips both the tiny initial budget
+		// and the small retry budget.
+		return &llm.ChatResponse{
+			Content:   "still working",
+			ToolCalls: []llm.ToolCallResponse{{ID: "1", Name: "search", Args: map[string]any{}}},
+		}, nil
+	})
+
+	loop := fakeTool{name: "search", run: func(context.Context, tools.Args) (string, error) {
+		return "result", nil
+	}}
+	reg, _ := newTestRegistry(t, t.TempDir(), loop)
+
+	wf := &agentfile.Workflow{
+		Name:  "budget-retry-fail",
+		Steps: []agentfile.Step{{Type: agentfile.StepRUN, Name: "main", UsingGoals: []string{"research"}}},
+		Goals: []agentfile.Goal{{Name: "research", Outcome: "search forever"}},
+	}
+	exec := mustNew(t, Config{
+		Workflow: wf,
+		Model:    model,
+		Registry: reg,
+		Policy:   permissivePolicy(),
+		Budget:   Budget{MaxToolCalls: 1},
+	})
+
+	result, err := exec.Run(t.Context(), RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	oc := result.Goals["research"]
+	if oc.Outcome != OutcomeBudgetExhausted {
+		t.Errorf("Outcome = %v, want %v", oc.Outcome, OutcomeBudgetExhausted)
+	}
+	if !oc.Retried {
+		t.Errorf("Retried = false, want true")
+	}
+	if !strings.Contains(oc.Reason, "retry also failed") {
+		t.Errorf("Reason = %q, want it to carry the retry's own failure too", oc.Reason)
+	}
+	if result.Status != StatusFailed {
+		t.Errorf("Status = %v, want %v", result.Status, StatusFailed)
+	}
+}
+
+// goal_end's session event meta carries the iteration count for a CONVERGE
+// goal, both when it converges and when it doesn't — previously
+// goal_end.meta.iterations was always null even though result.Iterations
+// was populated.
+func TestGoalEndMeta_CarriesIterationsForConvergeGoals(t *testing.T) {
+	cases := []struct {
+		name            string
+		converges       bool
+		wantIterAtLeast int
+	}{
+		{name: "converged", converges: true, wantIterAtLeast: 1},
+		{name: "not-converged", converges: false, wantIterAtLeast: 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			model := modelFunc(func(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+				if tc.converges {
+					return &llm.ChatResponse{Content: "final answer\nCONVERGED"}, nil
+				}
+				return &llm.ChatResponse{Content: "still refining"}, nil
+			})
+
+			limit := 2
+			wf := &agentfile.Workflow{
+				Name:  "converge-meta",
+				Steps: []agentfile.Step{{Type: agentfile.StepRUN, Name: "main", UsingGoals: []string{"refine"}}},
+				Goals: []agentfile.Goal{{
+					Name: "refine", Outcome: "Refine", IsConverge: true, WithinLimit: &limit,
+				}},
+			}
+			sess := &session.Session{}
+			exec := mustNew(t, Config{
+				Workflow: wf,
+				Model:    model,
+				Session:  sess,
+				Debug:    true,
+			})
+
+			if _, err := exec.Run(t.Context(), RunOptions{}); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			var end *session.Event
+			for i := range sess.Events {
+				if sess.Events[i].Type == session.EventGoalEnd {
+					end = &sess.Events[i]
+				}
+			}
+			if end == nil {
+				t.Fatal("no goal_end event")
+			}
+			if end.Meta == nil || end.Meta.Iterations < tc.wantIterAtLeast {
+				got := -1
+				if end.Meta != nil {
+					got = end.Meta.Iterations
+				}
+				t.Errorf("goal_end.meta.iterations = %d, want >= %d (non-null, populated)", got, tc.wantIterAtLeast)
+			}
+		})
 	}
 }
 

@@ -223,7 +223,8 @@ type EventMeta struct {
 	Error string `json:"error,omitempty"` // Failure text (e.g. a failed tool's error)
 
 	// Goal outcome (goal_end events)
-	Retried bool `json:"retried,omitempty"` // Whether the goal was retried after a soft failure
+	Retried    bool `json:"retried,omitempty"`    // Whether the goal was retried after a soft failure
+	Iterations int  `json:"iterations,omitempty"` // Iteration count for CONVERGE goals (converged or not)
 }
 
 // AddEvent sequences and timestamps event (if its Timestamp is zero),

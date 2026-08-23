@@ -256,10 +256,11 @@ func (e *Executor) logGoalEnd(goalName, output string, outcome GoalOutcome) {
 		Success:   &ok,
 		Timestamp: time.Now(),
 		Meta: &session.EventMeta{
-			Result:  string(outcome.Outcome),
-			Reason:  outcome.Reason,
-			Error:   outcome.Reason,
-			Retried: outcome.Retried,
+			Result:     string(outcome.Outcome),
+			Reason:     outcome.Reason,
+			Error:      outcome.Reason,
+			Retried:    outcome.Retried,
+			Iterations: outcome.Iterations,
 		},
 	})
 }
