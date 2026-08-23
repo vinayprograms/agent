@@ -17,7 +17,7 @@ require (
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.50.0
 	github.com/spf13/cobra v1.10.2
-	github.com/vinayprograms/agentkit v1.2.1
+	github.com/vinayprograms/agentkit v1.2.2
 	github.com/vinayprograms/swarmkit v1.0.0
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0
@@ -140,5 +140,3 @@ require (
 	google.golang.org/grpc v1.83.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-replace github.com/vinayprograms/agentkit => ../agentkit
