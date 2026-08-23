@@ -13,7 +13,20 @@ SearXNG -> Brave -> Tavily -> DuckDuckGo (fallback)
 | 3 | Tavily | `TAVILY_API_KEY` | Good for research |
 | 4 | DuckDuckGo | None | Zero-config fallback |
 
-Configure in `~/.config/agent/credentials.toml`.
+Configure in `~/.config/agent/credentials.toml`. You can also pin `web_search`
+to a single provider and/or set the SearXNG URL directly in `agent.toml`:
+
+```toml
+[web]
+search_provider = "searxng"  # "auto" (default), "searxng", "brave", "tavily", "duckduckgo"
+searxng_url = "http://localhost:8080"
+```
+
+`search_provider` must be one of `""`/`"auto"`, `"searxng"`, `"brave"`,
+`"tavily"`, or `"duckduckgo"` — any other value fails config loading with an
+error naming the bad value. `[web] searxng_url` takes precedence over the
+`[searxng]` credential, which takes precedence over the `SEARXNG_URL`
+environment variable.
 
 ## SearXNG (Recommended — Free, Self-Hosted)
 

@@ -236,7 +236,11 @@ provider = "none"
 ```
 
 `[web]` (`gateway_url`, `gateway_token_env`) configures an Internet Gateway
-proxy for `web_search`/`web_fetch`; see the
+proxy for `web_search`/`web_fetch`. `[web] search_provider` pins `web_search`
+to one backend (`""`/`"auto"`, `"searxng"`, `"brave"`, `"tavily"`, or
+`"duckduckgo"`; any other value is a config-load error naming the bad value),
+and `[web] searxng_url` sets the SearXNG instance URL, taking precedence over
+the `[searxng]` credential and the `SEARXNG_URL` env var. See the
 [Web Search](web-search.md) page for provider fallback order and env vars.
 
 `[profiles.*]`, `[mcp.servers.*]` and `REQUIRES` are covered in depth in

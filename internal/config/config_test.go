@@ -380,3 +380,29 @@ func TestLoadFile_Limits(t *testing.T) {
 		t.Errorf("Limits = %+v, want 40 tool calls, 25 turns, 10m", cfg.Limits)
 	}
 }
+
+func TestLoadFile_WebSearchProvider(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[web]\nsearch_provider = \"searxng\"\nsearxng_url = \"http://127.0.0.1:9/\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if cfg.Web.SearchProvider != "searxng" || cfg.Web.SearXNGURL != "http://127.0.0.1:9/" {
+		t.Errorf("Web = %+v, want search_provider=searxng, searxng_url set", cfg.Web)
+	}
+}
+
+func TestLoadFile_WebSearchProviderInvalidIsAnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	if err := os.WriteFile(path, []byte("[web]\nsearch_provider = \"bing\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadFile(path)
+	if err == nil || !strings.Contains(err.Error(), "bing") {
+		t.Fatalf("an invalid search_provider must be rejected and named in the error, got %v", err)
+	}
+}

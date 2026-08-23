@@ -92,6 +92,23 @@ type LLMConfig struct {
 type WebConfig struct {
 	GatewayURL      string `toml:"gateway_url"`
 	GatewayTokenEnv string `toml:"gateway_token_env"`
+
+	// SearchProvider pins web_search to one provider ("auto", "searxng",
+	// "brave", "tavily", "duckduckgo"), or "" for the default cascade.
+	SearchProvider string `toml:"search_provider"`
+	// SearXNGURL is the SearXNG instance to query; takes precedence over
+	// the [searxng] credential and the SEARXNG_URL env var.
+	SearXNGURL string `toml:"searxng_url"`
+}
+
+// validWebSearchProviders are the accepted [web] search_provider values.
+var validWebSearchProviders = map[string]bool{
+	"":           true,
+	"auto":       true,
+	"searxng":    true,
+	"brave":      true,
+	"tavily":     true,
+	"duckduckgo": true,
 }
 
 // Protocol selects the telemetry exporter.
@@ -306,6 +323,9 @@ func mergeFile(cfg *Config, path string) error {
 		if _, err := time.ParseDuration(v); err != nil {
 			return fmt.Errorf("%s: [limits] max_duration %q: %w", path, v, err)
 		}
+	}
+	if v := file.Web.SearchProvider; !validWebSearchProviders[v] {
+		return fmt.Errorf("%s: [web] search_provider %q: not a valid provider (want one of auto, searxng, brave, tavily, duckduckgo)", path, v)
 	}
 	if file.Storage == nil {
 		return nil

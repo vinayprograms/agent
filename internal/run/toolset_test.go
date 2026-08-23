@@ -2,6 +2,9 @@ package run
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -314,5 +317,41 @@ func TestPathGuard_CwdResolutionForUnconfinedTools(t *testing.T) {
 	}
 	if err := g.Check(t.Context(), args); err == nil {
 		t.Fatal("relative path must be checked against the cwd for patch")
+	}
+}
+
+// TestBuildToolset_WebSearchConfigWired proves SearXNGURL/SearchProvider on
+// toolsetConfig actually reach the registered web_search tool: pinning the
+// provider to "searxng" and pointing it at a fake SearXNG server must make
+// the tool query that server, not fall through to the DuckDuckGo default.
+func TestBuildToolset_WebSearchConfigWired(t *testing.T) {
+	ws := t.TempDir()
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"results":[{"title":"t","url":"https://example.com","content":"c"}]}`)
+	}))
+	defer srv.Close()
+
+	reg, err := buildToolset(toolsetConfig{
+		Policy:         permissivePolicy(ws),
+		Workspace:      ws,
+		Spawn:          tools.NewSpawnBinder(),
+		SearXNGURL:     srv.URL,
+		SearchProvider: "searxng",
+	})
+	if err != nil {
+		t.Fatalf("buildToolset: %v", err)
+	}
+	out, err := reg.Execute(context.Background(), "web_search", map[string]any{"query": "test"})
+	if err != nil {
+		t.Fatalf("web_search Execute: %v", err)
+	}
+	if !hit {
+		t.Fatal("web_search did not query the configured SearXNG server; SearXNGURL/SearchProvider were not wired through")
+	}
+	if !strings.Contains(out, "example.com") {
+		t.Errorf("web_search result = %q, want it to contain the SearXNG result", out)
 	}
 }

@@ -317,6 +317,8 @@ func (rt *Runtime) setupRegistry() error {
 		BashGate:         rt.bashGate,
 		Spawn:            rt.spawn,
 		SearchCooldownMS: rt.cfg.Timeouts.SearchCooldownMS,
+		SearXNGURL:       rt.cfg.Web.SearXNGURL,
+		SearchProvider:   rt.cfg.Web.SearchProvider,
 	})
 	if err != nil {
 		return err
