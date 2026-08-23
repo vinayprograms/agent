@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -64,8 +65,15 @@ func TestNewHTTP1Transport_HonoursHTTPSProxy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tr.Proxy(req): %v", err)
 	}
-	if proxyURL == nil || proxyURL.String() != proxy.URL {
-		t.Fatalf("tr.Proxy(req) = %v, want %v", proxyURL, proxy.URL)
+	// http.ProxyFromEnvironment caches the environment on first use, so
+	// under -count>1 it may report an earlier run's proxy; compare against
+	// what the stdlib resolves rather than this run's URL.
+	want, _ := http.ProxyFromEnvironment(req)
+	if proxyURL == nil || want == nil || proxyURL.String() != want.String() {
+		t.Fatalf("tr.Proxy(req) = %v, want ProxyFromEnvironment's %v", proxyURL, want)
+	}
+	if want.String() != proxy.URL {
+		t.Skip("ProxyFromEnvironment cached an earlier run's proxy; the CONNECT path is covered on the first run")
 	}
 
 	resp, err := client.Do(req)
@@ -79,5 +87,36 @@ func TestNewHTTP1Transport_HonoursHTTPSProxy(t *testing.T) {
 		}
 	default:
 		t.Fatal("proxy never received a CONNECT request")
+	}
+}
+
+// TestNewHTTP1Transport_PinsALPNAfterDefaultTransportUsed reproduces the
+// production failure: once http.DefaultTransport has been used, its TLS
+// config advertises h2, the clone inherits it, and an h2-capable server
+// then answers in HTTP/2 on a connection we parse as HTTP/1.1.
+func TestNewHTTP1Transport_PinsALPNAfterDefaultTransportUsed(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.Proto))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+
+	def := http.DefaultTransport.(*http.Transport)
+	saved := def.TLSClientConfig
+	def.TLSClientConfig = &tls.Config{NextProtos: []string{"h2", "http/1.1"}, RootCAs: srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs}
+	defer func() { def.TLSClientConfig = saved }()
+
+	tr := NewHTTP1Transport()
+	if got := tr.TLSClientConfig.NextProtos; len(got) != 1 || got[0] != "http/1.1" {
+		t.Fatalf("NextProtos = %v, want [http/1.1]", got)
+	}
+	resp, err := (&http.Client{Transport: tr}).Get(srv.URL)
+	if err != nil {
+		t.Fatalf("request over pinned transport failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.ProtoMajor != 1 {
+		t.Errorf("negotiated %s, want HTTP/1.x", resp.Proto)
 	}
 }
