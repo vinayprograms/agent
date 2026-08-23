@@ -39,11 +39,25 @@ const browserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
 
 const defaultHTTPTimeout = 2 * time.Minute
 
+// Default caps on how much of a fetched page this tool reads and hands
+// onward. Unbounded reads/summarizer inputs against large pages blow the
+// summarizer's context window (400 "prompt too long") or overrun the
+// caller's fetch timeout; these keep both bounded regardless of page size.
+const (
+	defaultMaxBodyBytes    = 2 << 20 // 2 MiB, raw HTTP response body
+	defaultMaxSummaryChars = 60000   // ~15k tokens, well under any 128k model
+	defaultMaxTextChars    = 15000   // returned verbatim (no summarizer, or summarizer failed)
+)
+
 // Tool implements agentkit's tools.Tool interface for web_fetch, using an
 // HTTP/1.1-only client to avoid HTTP/2 fingerprint rejection.
 type Tool struct {
 	summarizer tools.Summarizer
 	client     *http.Client
+
+	maxBodyBytes    int64
+	maxSummaryChars int
+	maxTextChars    int
 }
 
 // transport lets tests point Execute's client at a custom RoundTripper
@@ -68,12 +82,47 @@ func WithHTTPTimeout(d time.Duration) Option {
 	}
 }
 
+// WithMaxBodyBytes caps how much of the raw HTTP response body is read
+// (default 2 MiB). A non-positive value leaves the default in place.
+func WithMaxBodyBytes(n int64) Option {
+	return func(t *Tool) {
+		if n > 0 {
+			t.maxBodyBytes = n
+		}
+	}
+}
+
+// WithMaxSummaryChars caps how many characters of extracted text are handed
+// to the summarizer (default 60000). A non-positive value leaves the
+// default in place.
+func WithMaxSummaryChars(n int) Option {
+	return func(t *Tool) {
+		if n > 0 {
+			t.maxSummaryChars = n
+		}
+	}
+}
+
+// WithMaxTextChars caps how many characters of extracted text are returned
+// verbatim — when there is no summarizer, or the summarizer fails (default
+// 15000). A non-positive value leaves the default in place.
+func WithMaxTextChars(n int) Option {
+	return func(t *Tool) {
+		if n > 0 {
+			t.maxTextChars = n
+		}
+	}
+}
+
 // New constructs the replacement web_fetch tool. summarizer may be nil, in
 // which case Execute returns the full extracted page text.
 func New(summarizer tools.Summarizer, opts ...Option) *Tool {
 	t := &Tool{
-		summarizer: summarizer,
-		client:     &http.Client{Timeout: defaultHTTPTimeout, Transport: httpclient.NewHTTP1Transport()},
+		summarizer:      summarizer,
+		client:          &http.Client{Timeout: defaultHTTPTimeout, Transport: httpclient.NewHTTP1Transport()},
+		maxBodyBytes:    defaultMaxBodyBytes,
+		maxSummaryChars: defaultMaxSummaryChars,
+		maxTextChars:    defaultMaxTextChars,
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -131,9 +180,15 @@ func (t *Tool) Execute(ctx context.Context, args tools.Args) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Read one byte past the cap so a body that exactly fills it can be
+	// told apart from one that overflows it.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, t.maxBodyBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+	bodyTruncated := int64(len(body)) > t.maxBodyBytes
+	if bodyTruncated {
+		body = body[:t.maxBodyBytes]
 	}
 
 	// HTTP errors with a body are results, not errors.
@@ -142,15 +197,35 @@ func (t *Tool) Execute(ctx context.Context, args tools.Args) (string, error) {
 	}
 
 	content := extractReadableText(string(body))
+	if bodyTruncated {
+		content += fmt.Sprintf("\n\n[body truncated: read %d bytes]", t.maxBodyBytes)
+	}
 
 	if t.summarizer == nil {
-		return content, nil
+		text, truncated := truncateRunes(content, t.maxTextChars)
+		return text + truncated, nil
 	}
-	answer, err := t.summarizer.Summarize(ctx, content, question)
+
+	summaryInput, truncated := truncateRunes(content, t.maxSummaryChars)
+	answer, err := t.summarizer.Summarize(ctx, summaryInput+truncated, question)
 	if err != nil {
-		return "", fmt.Errorf("summarization failed: %w", err)
+		text, textTruncated := truncateRunes(content, t.maxTextChars)
+		return fmt.Sprintf("[summary unavailable: %v]\n\n%s%s", err, text, textTruncated), nil
 	}
 	return answer, nil
+}
+
+// truncateRunes cuts s to at most max runes (never splitting a multi-byte
+// rune) and, when it truncated, returns a trailing note reporting how many
+// of the original characters were dropped. The empty string is returned as
+// the note when no truncation was needed.
+func truncateRunes(s string, max int) (text, note string) {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s, ""
+	}
+	kept := string(runes[:max])
+	return kept, fmt.Sprintf("\n\n[truncated: %d of %d characters]", max, len(runes))
 }
 
 var (

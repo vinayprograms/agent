@@ -396,6 +396,24 @@ func TestLoadFile_WebSearchProvider(t *testing.T) {
 	}
 }
 
+func TestLoadFile_WebFetchMaxChars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[web]\nfetch_max_chars = 5000\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if cfg.Web.FetchMaxChars != 5000 {
+		t.Errorf("Web.FetchMaxChars = %d, want 5000", cfg.Web.FetchMaxChars)
+	}
+	if len(cfg.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none for known [web] fetch_max_chars", cfg.UnknownKeys)
+	}
+}
+
 func TestLoadFile_WebSearchProviderInvalidIsAnError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.toml")
 	if err := os.WriteFile(path, []byte("[web]\nsearch_provider = \"bing\"\n"), 0o600); err != nil {

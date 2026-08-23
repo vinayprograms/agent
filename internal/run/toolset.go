@@ -43,6 +43,10 @@ type toolsetConfig struct {
 	// ([timeouts].search_cooldown_ms). Zero keeps the websearch package
 	// default (2s).
 	SearchCooldownMS int
+	// FetchMaxChars caps web_fetch's returned text when there is no
+	// summarizer or summarization fails ([web].fetch_max_chars). Zero
+	// keeps the webfetch package default (15000).
+	FetchMaxChars int
 }
 
 // buildToolset registers every builtin tool that the policy enables.
@@ -82,6 +86,9 @@ func buildToolset(c toolsetConfig) (*tools.Registry, error) {
 	}
 	if c.SearchCooldownMS > 0 {
 		searchOpts = append(searchOpts, websearch.WithCooldown(time.Duration(c.SearchCooldownMS)*time.Millisecond))
+	}
+	if c.FetchMaxChars > 0 {
+		fetchOpts = append(fetchOpts, webfetch.WithMaxTextChars(c.FetchMaxChars))
 	}
 
 	steps := []func() error{

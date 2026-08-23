@@ -33,6 +33,27 @@ those three sources is a misconfiguration, not something to fail open on:
 `agent run`/`agent serve` refuse to start (naming all three sources), and
 `agent config validate` reports it as a failure (exit 1), not a warning.
 
+## `web_fetch` text limits
+
+`web_fetch` bounds how much of a page it reads and returns, so a very large
+page can't blow the summarizer's context window or overrun the
+`[timeouts] web_fetch` deadline:
+
+- The raw HTTP response body is capped at 2 MiB.
+- Text handed to the summarizer is capped at 60000 characters (~15k tokens).
+- Text returned verbatim — when no summarizer is configured, or the
+  summarizer call fails — is capped at 15000 characters by default;
+  configure it with `[web] fetch_max_chars`:
+
+```toml
+[web]
+fetch_max_chars = 20000
+```
+
+When the summarizer fails, `web_fetch` still returns the (truncated) page
+text with a `[summary unavailable: <error>]` prefix instead of failing the
+tool outright — the page content is still useful even without a summary.
+
 ## SearXNG (Recommended — Free, Self-Hosted)
 
 [SearXNG](https://github.com/searxng/searxng) is a privacy-respecting meta-search engine you can self-host. Zero cost, no API limits.

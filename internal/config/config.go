@@ -106,6 +106,12 @@ type WebConfig struct {
 	// SearXNGURL is the SearXNG instance to query; takes precedence over
 	// the [searxng] credential and the SEARXNG_URL env var.
 	SearXNGURL string `toml:"searxng_url"`
+
+	// FetchMaxChars caps how many characters of extracted page text
+	// web_fetch returns verbatim when there is no summarizer, or the
+	// summarizer fails (webfetch.WithMaxTextChars). Zero keeps the
+	// package default (15000).
+	FetchMaxChars int `toml:"fetch_max_chars"`
 }
 
 // validWebSearchProviders are the accepted [web] search_provider values.

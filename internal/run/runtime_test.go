@@ -630,6 +630,7 @@ func TestToolsetConfig_WiredFromConfig(t *testing.T) {
 	l := testWorkflow(t, func(c *config.Config) {
 		c.Web.SearXNGURL = "http://searx.example"
 		c.Web.SearchProvider = "searxng"
+		c.Web.FetchMaxChars = 12345
 		c.Timeouts.SearchCooldownMS = 4242
 		c.Timeouts.WebSearch = 77
 		c.SmallLLM = config.LLMConfig{Provider: "ollama-local", Model: "small"}
@@ -705,6 +706,11 @@ func TestToolsetConfig_WiredFromConfig(t *testing.T) {
 		"SearchCooldownMS": func(t *testing.T, v reflect.Value) {
 			if v.Int() != 4242 {
 				t.Errorf("SearchCooldownMS = %d, want [timeouts].search_cooldown_ms", v.Int())
+			}
+		},
+		"FetchMaxChars": func(t *testing.T, v reflect.Value) {
+			if v.Int() != 12345 {
+				t.Errorf("FetchMaxChars = %d, want [web].fetch_max_chars", v.Int())
 			}
 		},
 	}

@@ -242,6 +242,9 @@ to one backend (`""`/`"auto"`, `"searxng"`, `"brave"`, `"tavily"`, or
 and `[web] searxng_url` sets the SearXNG instance URL, taking precedence over
 the `[searxng]` credential and the `SEARXNG_URL` env var. See the
 [Web Search](web-search.md) page for provider fallback order and env vars.
+`[web] fetch_max_chars` caps how many characters of extracted page text
+`web_fetch` returns verbatim when there is no summarizer configured, or the
+summarizer call fails (default 15000).
 
 `[profiles.*]`, `[mcp.servers.*]` and `REQUIRES` are covered in depth in
 [Capability Profiles](profiles.md) and [Protocols](protocols.md).
