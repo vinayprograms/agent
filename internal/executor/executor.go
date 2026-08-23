@@ -174,7 +174,13 @@ type Executor struct {
 	// Convergence tracking
 	convergenceFailures map[string]int // goals that hit WITHIN limit without converging
 	convergenceContext  string         // current convergence history (for multi-agent goals)
-	mu                  sync.Mutex     // protects convergenceFailures
+	// parallelConverged reports whether every USING agent in the most recent
+	// executeSimpleParallel call emitted the CONVERGED marker in its raw
+	// output. Only meaningful while convergenceContext is set (i.e. during a
+	// CONVERGE goal's multi-agent iteration); executeConvergeMultiAgent reads
+	// it immediately after the call.
+	parallelConverged bool
+	mu                sync.Mutex // protects convergenceFailures
 
 	// Metrics collector for heartbeat reporting (optional, set by serve mode)
 	metricsCollector MetricsCollector
@@ -1336,6 +1342,12 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	wg.Wait()
 	close(resultChan)
 
+	// converging is true while this call is a CONVERGE goal's multi-agent
+	// iteration. Only then does the CONVERGED marker mean anything; for a
+	// plain (non-converge) multi-agent goal we leave agent output untouched.
+	converging := e.convergenceContext != ""
+	allConverged := true // vacuously true; ANDed with each surviving agent below
+
 	// Collect results and log sub-agent completions
 	var agentOutputs []string
 	var budgetErr error
@@ -1362,13 +1374,37 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 					budgetErr = result.err
 				}
 				if strings.TrimSpace(result.output) != "" {
-					agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
+					out := result.output
+					if converging {
+						content, done := splitConvergence(out)
+						out = content
+						allConverged = allConverged && done
+					}
+					agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, out))
+				} else if converging {
+					// No output at all from this agent: it cannot have
+					// converged.
+					allConverged = false
 				}
 				continue
 			}
 			return "", result.err
 		}
-		agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
+		out := result.output
+		if converging {
+			content, done := splitConvergence(out)
+			out = content
+			allConverged = allConverged && done
+		}
+		agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, out))
+	}
+
+	if converging {
+		// Every USING agent must emit CONVERGED for the goal to converge; a
+		// critic that still sees gaps blocks it. The marker itself has
+		// already been stripped from agentOutputs above so the synthesizer
+		// never sees it.
+		e.parallelConverged = allConverged && len(agentOutputs) > 0
 	}
 
 	if budgetErr != nil {
@@ -1402,11 +1438,13 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	resp, err := e.model.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
-	e.recordLLMMetrics(resp, time.Since(synthStart))
+	synthDuration := time.Since(synthStart)
+	e.recordLLMMetrics(resp, synthDuration)
 	if err != nil {
 		e.hooks.Fire(ctx, hooks.LLMError, map[string]any{"error": err})
 		return "", err
 	}
+	e.logLLMCall(ctx, session.EventAssistant, messages, resp, synthDuration)
 
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", resp.Content)
 
