@@ -406,3 +406,54 @@ func TestLoadFile_WebSearchProviderInvalidIsAnError(t *testing.T) {
 		t.Fatalf("an invalid search_provider must be rejected and named in the error, got %v", err)
 	}
 }
+
+func TestLoadFile_UnknownKeyIsReported(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[web]\nsearch_providerx = \"searxng\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(cfg.UnknownKeys) != 1 || !strings.Contains(cfg.UnknownKeys[0], "web.search_providerx") {
+		t.Errorf("UnknownKeys = %v, want one entry naming web.search_providerx", cfg.UnknownKeys)
+	}
+	if !strings.Contains(cfg.UnknownKeys[0], path) {
+		t.Errorf("UnknownKeys entry %q should name the source file %q", cfg.UnknownKeys[0], path)
+	}
+}
+
+func TestLoadFile_KnownWebSearchKeysAreNotUnknown(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[web]\nsearch_provider = \"searxng\"\nsearxng_url = \"http://127.0.0.1:9/\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(cfg.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none for known [web] keys", cfg.UnknownKeys)
+	}
+}
+
+func TestLoadFile_StorageCompatDoesNotReportUnknownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := "[storage]\nlocation = \"/tmp/somewhere\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(cfg.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none for the [storage] compat path", cfg.UnknownKeys)
+	}
+	if len(cfg.Deprecations) != 1 {
+		t.Errorf("Deprecations = %v, want one entry for [storage]", cfg.Deprecations)
+	}
+}

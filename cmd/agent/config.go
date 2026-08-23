@@ -547,6 +547,10 @@ func validateAgentFile(t target, f fileset) (*config.Config, []string) {
 	for _, dep := range cfg.Deprecations {
 		problems = append(problems, fmt.Sprintf("%s: %s", f.name, dep))
 	}
+	// Unknown keys are always mistakes (typos), unlike a configured
+	// provider missing a credential, so they fail validation rather than
+	// merely warn.
+	problems = append(problems, cfg.UnknownKeys...)
 	return cfg, problems
 }
 

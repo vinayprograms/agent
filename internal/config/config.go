@@ -68,6 +68,13 @@ type Config struct {
 	// Deprecations lists legacy settings found while loading (e.g. [storage]).
 	// They were honoured; callers decide whether to warn the user.
 	Deprecations []string `toml:"-"`
+
+	// UnknownKeys lists TOML keys present in a loaded file that this struct
+	// does not decode — almost always a typo, since every key it does
+	// support has a `toml` tag above. Each entry is formatted
+	// "<file>: unknown key <dotted.key>"; callers decide whether to warn or
+	// fail on them.
+	UnknownKeys []string `toml:"-"`
 }
 
 // AgentConfig contains agent identification settings.
@@ -326,6 +333,9 @@ func mergeFile(cfg *Config, path string) error {
 	}
 	if v := file.Web.SearchProvider; !validWebSearchProviders[v] {
 		return fmt.Errorf("%s: [web] search_provider %q: not a valid provider (want one of auto, searxng, brave, tavily, duckduckgo)", path, v)
+	}
+	for _, key := range md.Undecoded() {
+		cfg.UnknownKeys = append(cfg.UnknownKeys, fmt.Sprintf("%s: unknown key %s", path, key.String()))
 	}
 	if file.Storage == nil {
 		return nil

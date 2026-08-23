@@ -441,6 +441,24 @@ func TestConfigValidate_DeprecatedStorageSection(t *testing.T) {
 	}
 }
 
+func TestConfigValidate_UnknownKeyFailsValidation(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[web]\nsearch_providerx = \"searxng\"\n")
+	err := h.exec("config", "validate")
+	if err == nil || !strings.Contains(err.Error(), "web.search_providerx") {
+		t.Errorf("unknown key must fail validation and name the key: %v", err)
+	}
+}
+
+func TestConfigValidate_KnownWebSearchKeysAreNotUnknown(t *testing.T) {
+	h := configEnv(t)
+	write(t, "agent.toml", "[web]\nsearch_provider = \"searxng\"\nsearxng_url = \"http://127.0.0.1:9/\"\n")
+	err := h.exec("config", "validate")
+	if err != nil {
+		t.Errorf("known [web] keys must not be reported as unknown: %v", err)
+	}
+}
+
 func TestConfigValidate_MissingCredentialIsAWarningNotAFailure(t *testing.T) {
 	h := configEnv(t)
 	write(t, "agent.toml", "[llm]\nprovider = \"anthropic\"\nmodel = \"claude\"\n")
