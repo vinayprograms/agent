@@ -695,26 +695,62 @@ func (rt *Runtime) Run(ctx context.Context) error {
 	rt.sess.Outputs = result.Outputs
 	rt.sessionMgr.Update(rt.sess)
 
-	// Report convergence failures if any
-	if failures := rt.exec.ConvergenceFailures(); len(failures) > 0 {
-		fmt.Fprintf(rt.stderr, "\n⚠ Convergence warnings:\n")
-		for goal, iterations := range failures {
-			fmt.Fprintf(rt.stderr, "  • Goal %q did not converge (used all %d iterations)\n", goal, iterations)
+	// Report every goal that did not end ok, so a headless caller (and a
+	// human watching stderr) can tell a budget-exhausted or empty-output
+	// goal from a genuinely completed one without grepping the JSONL.
+	for name, oc := range result.Goals {
+		if oc.Outcome == executor.OutcomeOK {
+			continue
 		}
+		retried := ""
+		if oc.Retried {
+			retried = " (after retry)"
+		}
+		fmt.Fprintf(rt.stderr, "⚠ Goal %s: %s%s — %s\n", name, oc.Outcome, retried, oc.Reason)
 	}
 
-	fmt.Fprintf(rt.stderr, "\n✓ Workflow complete\n\n")
+	switch result.Status {
+	case executor.StatusComplete:
+		fmt.Fprintf(rt.stderr, "\n✓ Workflow complete\n\n")
+	case executor.StatusPartial:
+		fmt.Fprintf(rt.stderr, "\n⚠ Workflow partial — some goals did not complete\n\n")
+	default:
+		fmt.Fprintf(rt.stderr, "\n✗ Workflow failed — no goal completed\n\n")
+	}
 
 	// For inline goals, print the output directly in a user-friendly format
 	if rt.wf.Name == inlineGoalName && len(result.Outputs) > 0 {
 		for _, output := range result.Outputs {
 			fmt.Fprintln(rt.stdout, output)
 		}
-		return nil
+	} else {
+		output, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(rt.stdout, string(output))
 	}
-	output, _ := json.MarshalIndent(result, "", "  ")
-	fmt.Fprintln(rt.stdout, string(output))
+
+	if result.Status != executor.StatusComplete {
+		return &statusExitError{status: result.Status}
+	}
 	return nil
+}
+
+// statusExitError signals the run command's exit code for a run that
+// finished (no hard execution error) but not every goal was ok: 2 for
+// partial, 1 for failed. It carries no alarming message of its own — the
+// per-goal "⚠ Goal ..." lines above already explained why.
+type statusExitError struct{ status executor.Status }
+
+func (e *statusExitError) Error() string {
+	return fmt.Sprintf("workflow ended with status %q", e.status)
+}
+
+// ExitCode implements the interface main.go checks to pick a process exit
+// code other than the default 1.
+func (e *statusExitError) ExitCode() int {
+	if e.status == executor.StatusPartial {
+		return 2
+	}
+	return 1
 }
 
 // Close runs every registered cleanup function, most recent first.

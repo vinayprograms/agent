@@ -109,7 +109,7 @@ func TestLogHelpers_DebugContent(t *testing.T) {
 	exec.logToolResult(ctx, "read", map[string]any{"path": "x"}, "c1", "out", errors.New("bad"), time.Millisecond)
 	exec.logLLMCall(ctx, session.EventAssistant, []llm.Message{{Role: "user", Content: "hi"}}, &llm.ChatResponse{Content: "yo", Model: "m", InputTokens: 1, OutputTokens: 2, Thinking: "t"}, time.Millisecond)
 	exec.logGoalStart("g")
-	exec.logGoalEnd("g", strings.Repeat("x", 2500))
+	exec.logGoalEnd("g", strings.Repeat("x", 2500), GoalOutcome{Outcome: OutcomeOK})
 	exec.logPhaseCommit("g", "plan", "high", 5)
 	exec.logPhaseExecute("g", "complete", 6)
 	exec.logPhaseReconcile("g", "s", []string{"t1"}, true, 7)
@@ -160,7 +160,7 @@ func TestLogHelpers_DebugContent(t *testing.T) {
 	quiet, qsess, qbuf := newLoggingExecutor(t, false)
 	quiet.logToolResult(ctx, "read", nil, "c1", "secret", nil, time.Millisecond)
 	quiet.logLLMCall(ctx, session.EventAssistant, nil, &llm.ChatResponse{Content: "secret"}, 0)
-	quiet.logGoalEnd("g", "secret")
+	quiet.logGoalEnd("g", "secret", GoalOutcome{Outcome: OutcomeOK})
 	quiet.logSubAgentEnd("r", "r", "", "secret", 0, nil)
 	for _, ev := range qsess.Events {
 		if strings.Contains(ev.Content, "secret") || (ev.Meta != nil && (ev.Meta.Response == "secret" || ev.Meta.SubAgentOutput == "secret")) {
@@ -180,7 +180,7 @@ func TestLogHelpers_NoSessionNoop(t *testing.T) {
 	exec.logToolResult(ctx, "t", nil, "", "", nil, 0)
 	exec.logLLMCall(ctx, "t", nil, &llm.ChatResponse{}, 0)
 	exec.logGoalStart("g")
-	exec.logGoalEnd("g", "")
+	exec.logGoalEnd("g", "", GoalOutcome{Outcome: OutcomeOK})
 	exec.logPhaseCommit("g", "", "", 0)
 	exec.logPhaseExecute("g", "", 0)
 	exec.logPhaseReconcile("g", "", nil, false, 0)
@@ -275,5 +275,39 @@ func TestLogToolResult_ResultWithheldWithoutDebug(t *testing.T) {
 	}
 	if ev.Meta.Error != "bad" {
 		t.Fatalf("meta.error = %q, want %q even without debug", ev.Meta.Error, "bad")
+	}
+}
+
+// TestLogLLMCall_StopReasonAlwaysLogged checks that stop_reason and
+// thinking_chars land in meta.* on every assistant event, not just in
+// --debug mode: a headless caller needs these to diagnose a
+// stop_reason=="length"-with-empty-content turn (P0 #1) without having to
+// re-run with --debug (which would also leak prompt/response content).
+func TestLogLLMCall_StopReasonAlwaysLogged(t *testing.T) {
+	exec, sess, _ := newLoggingExecutor(t, false)
+	ctx := context.Background()
+
+	exec.logLLMCall(ctx, session.EventAssistant, []llm.Message{{Role: "user", Content: "hi"}},
+		&llm.ChatResponse{Content: "", Model: "m", StopReason: "length", Thinking: "long reasoning trace"},
+		time.Millisecond)
+
+	var ev session.Event
+	for _, e := range sess.Events {
+		if e.Type == session.EventAssistant {
+			ev = e
+		}
+	}
+	if ev.Meta == nil {
+		t.Fatal("no meta on assistant event")
+	}
+	if ev.Meta.StopReason != "length" {
+		t.Errorf("meta.stop_reason = %q, want %q", ev.Meta.StopReason, "length")
+	}
+	if ev.Meta.ThinkingChars != len("long reasoning trace") {
+		t.Errorf("meta.thinking_chars = %d, want %d", ev.Meta.ThinkingChars, len("long reasoning trace"))
+	}
+	// Debug-only fields stay withheld.
+	if ev.Meta.Response != "" || ev.Meta.Prompt != "" || ev.Meta.Thinking != "" {
+		t.Errorf("debug-only fields leaked without debug: %+v", ev.Meta)
 	}
 }

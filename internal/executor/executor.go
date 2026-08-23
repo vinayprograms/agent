@@ -89,9 +89,16 @@ func getAgentIdentity(ctx context.Context) AgentIdentity {
 type Status string
 
 const (
-	StatusRunning  Status = "running"
+	StatusRunning Status = "running"
+	// StatusComplete means every goal's outcome was ok.
 	StatusComplete Status = "complete"
-	StatusFailed   Status = "failed"
+	// StatusPartial means at least one goal was ok but at least one was
+	// not (budget_exhausted, not_converged, empty_output, or error that
+	// still let the run continue).
+	StatusPartial Status = "partial"
+	// StatusFailed means no goal was ok (or the run itself errored before
+	// any goal could report an outcome).
+	StatusFailed Status = "failed"
 	// StatusAborted is a run stopped by RunOptions.StepGate.
 	StatusAborted Status = "aborted"
 )
@@ -105,11 +112,36 @@ var ErrAborted = errors.New("run aborted")
 type Result struct {
 	Status  Status
 	Outputs map[string]string
-	// Iterations reports only the CONVERGE goals that exhausted their WITHIN
-	// limit without converging, mapped to that limit. Goals that converged
-	// are absent, so a successful run leaves it nil. The name is part of the
-	// printed JSON result.
+	// Iterations reports the iteration count for every CONVERGE goal that
+	// ran, whether it converged or not. The name is part of the printed
+	// JSON result.
 	Iterations map[string]int
+	// Goals reports every goal's explicit outcome, keyed by goal name.
+	Goals map[string]GoalOutcome
+}
+
+// goalsStatus derives the workflow Status from every recorded goal outcome:
+// complete only if every goal is ok; partial if some are; failed if none
+// are (including the case where no goal outcome was recorded at all).
+func goalsStatus(goals map[string]GoalOutcome) Status {
+	if len(goals) == 0 {
+		// No goal ran (e.g. an empty workflow): trivially complete.
+		return StatusComplete
+	}
+	okCount := 0
+	for _, g := range goals {
+		if g.Outcome == OutcomeOK {
+			okCount++
+		}
+	}
+	switch {
+	case okCount == len(goals):
+		return StatusComplete
+	case okCount > 0:
+		return StatusPartial
+	default:
+		return StatusFailed
+	}
 }
 
 // Executor is the central orchestrator: it runs the LLM loop, dispatches
@@ -174,7 +206,19 @@ type Executor struct {
 	// Convergence tracking
 	convergenceFailures map[string]int // goals that hit WITHIN limit without converging
 	convergenceContext  string         // current convergence history (for multi-agent goals)
-	mu                  sync.Mutex     // protects convergenceFailures
+	// parallelConverged reports whether every USING agent in the most recent
+	// executeSimpleParallel call emitted the CONVERGED marker in its raw
+	// output. Only meaningful while convergenceContext is set (i.e. during a
+	// CONVERGE goal's multi-agent iteration); executeConvergeMultiAgent reads
+	// it immediately after the call.
+	parallelConverged bool
+
+	// goalOutcomes records how each goal that reached executeGoalWithTracking's
+	// end ended, keyed by goal name. Used to compute the workflow Status and
+	// the Result.Goals map.
+	goalOutcomes map[string]GoalOutcome
+
+	mu sync.Mutex // protects convergenceFailures, goalOutcomes
 
 	// Metrics collector for heartbeat reporting (optional, set by serve mode)
 	metricsCollector MetricsCollector
@@ -506,17 +550,26 @@ func (e *Executor) Run(ctx context.Context, opts RunOptions) (*Result, error) {
 		}
 		e.logExecutionComplete(workflowName, startTime, string(status))
 		e.endWorkflowSpan(workflowSpan, string(status), err)
-		return &Result{Status: status}, err
+		return &Result{Status: status, Goals: e.GoalOutcomes()}, err
 	}
 
 	// Collect outputs
-	result := &Result{
-		Status:     StatusComplete,
-		Outputs:    state.Outputs,
-		Iterations: e.ConvergenceFailures(),
+	goals := e.GoalOutcomes()
+	iterations := make(map[string]int)
+	for name, oc := range goals {
+		if oc.Iterations > 0 {
+			iterations[name] = oc.Iterations
+		}
 	}
-	e.logExecutionComplete(workflowName, startTime, string(StatusComplete))
-	e.endWorkflowSpan(workflowSpan, string(StatusComplete), nil)
+	status := goalsStatus(goals)
+	result := &Result{
+		Status:     status,
+		Outputs:    state.Outputs,
+		Iterations: iterations,
+		Goals:      goals,
+	}
+	e.logExecutionComplete(workflowName, startTime, string(status))
+	e.endWorkflowSpan(workflowSpan, string(status), nil)
 	return result, nil
 }
 
@@ -613,6 +666,8 @@ type GoalResult struct {
 	// Vars holds the goal's declared `-> var` structured outputs (empty when
 	// the goal declares none), keyed by var name rather than goal name.
 	Vars map[string]string
+	// Outcome explicitly classifies how the goal ended; see GoalOutcome.
+	Outcome GoalOutcome
 }
 
 // isSupervised determines if a goal should be supervised based on goal settings and workflow defaults.
@@ -656,23 +711,50 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		if err != nil {
 			return nil, err
 		}
-		// Parse structured output if declared
+		convergeLimit := e.getConvergeLimit(goal)
 		var vars map[string]string
 		if len(goal.Outputs) > 0 {
 			vars = parseStructuredOutput(result.Output, goal.Outputs)
-			for field, value := range vars {
-				e.outputs[field] = value
-			}
 		}
-		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": result.Output})
-		e.logGoalEnd(goal.Name, result.Output)
+		outcome := classifyOutcome(result.Output, true, goal.Outputs, vars, asBudgetError(result.BudgetErr), !result.Converged && result.BudgetErr == nil, convergeLimit)
+		if result.Converged {
+			outcome.Iterations = result.Iterations
+		}
+
+		outcome = e.maybeRetry(ctx, goal, outcome, func(retryCtx context.Context, g *agentfile.Goal) GoalOutcome {
+			retryResult, rerr := e.executeConvergeGoal(retryCtx, g)
+			if rerr != nil {
+				return GoalOutcome{Outcome: OutcomeError, Reason: rerr.Error()}
+			}
+			result = retryResult
+			limit := e.getConvergeLimit(g)
+			if len(goal.Outputs) > 0 {
+				vars = parseStructuredOutput(result.Output, goal.Outputs)
+			}
+			oc := classifyOutcome(result.Output, true, goal.Outputs, vars, asBudgetError(result.BudgetErr), !result.Converged && result.BudgetErr == nil, limit)
+			if result.Converged {
+				oc.Iterations = result.Iterations
+			}
+			return oc
+		})
+
+		for field, value := range vars {
+			e.outputs[field] = value
+		}
+		if !result.Converged && outcome.Outcome == OutcomeNotConverged {
+			e.trackConvergenceFailure(goal.Name, convergeLimit)
+		}
+		e.recordGoalOutcome(goal.Name, outcome)
+		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": result.Output, "outcome": string(outcome.Outcome)})
+		e.logGoalEnd(goal.Name, result.Output, outcome)
 		e.flushSession()
-		return &GoalResult{Output: result.Output, ToolCallsMade: false, Vars: vars}, nil
+		return &GoalResult{Output: result.Output, ToolCallsMade: false, Vars: vars, Outcome: outcome}, nil
 	}
 
 	// Check for multi-agent execution
 	if len(goal.UsingAgent) > 0 {
 		output, err := e.executeMultiAgentGoal(ctx, goal)
+		spent := asBudgetError(err)
 		// A spent budget ends this goal with its partial output; the run
 		// continues to the next goal, same as a single-agent goal.
 		if e.noteBudget(ctx, err) {
@@ -685,14 +767,35 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		var vars map[string]string
 		if len(goal.Outputs) > 0 {
 			vars = parseStructuredOutput(output, goal.Outputs)
-			for field, value := range vars {
-				e.outputs[field] = value
-			}
 		}
-		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
-		e.logGoalEnd(goal.Name, output)
+		// toolCallsMade is passed false here (not literally true): a
+		// multi-agent goal's "no tool calls" concept doesn't map to a
+		// single turn, so this lets classifyOutcome's empty-output check
+		// fire on the one signal that matters for a multi-agent goal: no
+		// text came back at all (see 09-story-generator / P0 #1).
+		outcome := classifyOutcome(output, false, goal.Outputs, vars, spent, false, 0)
+
+		outcome = e.maybeRetry(ctx, goal, outcome, func(retryCtx context.Context, g *agentfile.Goal) GoalOutcome {
+			retryOutput, rerr := e.executeMultiAgentGoal(retryCtx, g)
+			retrySpent := asBudgetError(rerr)
+			if rerr != nil && retrySpent == nil {
+				return GoalOutcome{Outcome: OutcomeError, Reason: rerr.Error()}
+			}
+			output = retryOutput
+			if len(goal.Outputs) > 0 {
+				vars = parseStructuredOutput(output, goal.Outputs)
+			}
+			return classifyOutcome(output, false, goal.Outputs, vars, retrySpent, false, 0)
+		})
+
+		for field, value := range vars {
+			e.outputs[field] = value
+		}
+		e.recordGoalOutcome(goal.Name, outcome)
+		e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output, "outcome": string(outcome.Outcome)})
+		e.logGoalEnd(goal.Name, output, outcome)
 		e.flushSession()
-		return &GoalResult{Output: output, ToolCallsMade: false, Vars: vars}, nil
+		return &GoalResult{Output: output, ToolCallsMade: false, Vars: vars, Outcome: outcome}, nil
 	}
 
 	// Build XML-structured prompt with context from previous goals
@@ -727,6 +830,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	e.currentGoalSupervised = supervised
 
 	// Run through the supervision pipeline (or just execute if unsupervised)
+	var spentBudget error
 	pipelineResult, err := e.pipeline.Run(
 		ctx,
 		supervision.PipelineRequest{
@@ -745,6 +849,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
 				output, toolsUsed, toolCallsMade, err := e.executePhase(ctx, goal, prompt)
 				if e.noteBudget(ctx, err) {
+					spentBudget = err
 					err = nil
 				}
 				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed, ToolCallsMade: toolCallsMade}, err
@@ -781,16 +886,42 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	var vars map[string]string
 	if len(goal.Outputs) > 0 {
 		vars = parseStructuredOutput(output, goal.Outputs)
-		for field, value := range vars {
-			e.outputs[field] = value
+	}
+	outcome := classifyOutcome(output, toolCallsMade, goal.Outputs, vars, asBudgetError(spentBudget), false, 0)
+
+	outcome = e.maybeRetry(ctx, goal, outcome, func(retryCtx context.Context, g *agentfile.Goal) GoalOutcome {
+		rb := newBrief(e.workflow.Name)
+		for goalName, priorOutput := range e.outputs {
+			rb.AddPriorGoal(goalName, priorOutput)
 		}
+		retryDescription := e.interpolate(g.Outcome)
+		if len(g.Outputs) > 0 {
+			retryDescription += "\n\n" + buildStructuredOutputInstruction(g.Outputs)
+		}
+		rb.SetCurrentGoal(g.Name, retryDescription)
+		retryOutput, _, retryToolCallsMade, rerr := e.executePhase(retryCtx, g, rb.String())
+		retrySpent := asBudgetError(rerr)
+		if rerr != nil && retrySpent == nil {
+			return GoalOutcome{Outcome: OutcomeError, Reason: rerr.Error()}
+		}
+		output = retryOutput
+		toolCallsMade = retryToolCallsMade
+		if len(goal.Outputs) > 0 {
+			vars = parseStructuredOutput(output, goal.Outputs)
+		}
+		return classifyOutcome(output, toolCallsMade, goal.Outputs, vars, retrySpent, false, 0)
+	})
+
+	for field, value := range vars {
+		e.outputs[field] = value
 	}
 
-	e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output})
+	e.recordGoalOutcome(goal.Name, outcome)
+	e.hooks.Fire(ctx, hooks.GoalComplete, map[string]any{"name": goal.Name, "output": output, "outcome": string(outcome.Outcome)})
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
-	e.logGoalEnd(goal.Name, output)
+	e.logGoalEnd(goal.Name, output, outcome)
 	e.flushSession()
-	return &GoalResult{Output: output, ToolCallsMade: toolCallsMade, Vars: vars}, nil
+	return &GoalResult{Output: output, ToolCallsMade: toolCallsMade, Vars: vars, Outcome: outcome}, nil
 }
 
 // commitPhase asks the agent to declare its intent before execution.
@@ -934,12 +1065,23 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 	// Track tools used
 	toolsUsedMap := make(map[string]bool)
 
+	// truncationRetried guards the single continuation retry (P0 #1) for a
+	// turn that comes back truncated (stop_reason=="length") or outright
+	// empty with no tool calls — the case where a reasoning model spends
+	// its whole token budget on thinking and never produces content or a
+	// tool call. Without this, such a turn falls straight into the "no
+	// tool calls => execution complete" branch below and gets reported as
+	// a successful, empty goal.
+	truncationRetried := false
+	var thinkingOverride llm.ThinkingLevel
+
 	// Execute goal loop
 	for {
 		llmStart := time.Now()
 		resp, err := e.model.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    toolDefs,
+			Thinking: thinkingOverride,
 		})
 		llmDuration := time.Since(llmStart)
 		if err != nil {
@@ -951,6 +1093,17 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 		// Log full LLM interaction (for -vv replay)
 		e.logLLMCall(ctx, session.EventAssistant, messages, resp, llmDuration)
 		e.recordLLMMetrics(resp, llmDuration)
+
+		if truncatedEmptyTurn(resp) && !truncationRetried {
+			truncationRetried = true
+			e.logger.Warn("LLM turn truncated or empty; retrying once with thinking off",
+				"goal", goal.Name, "stop_reason", resp.StopReason)
+			e.logEvent(session.EventSystem, fmt.Sprintf("Goal %q: LLM turn came back truncated/empty (stop_reason=%q); retrying once with thinking off", goal.Name, resp.StopReason))
+			messages = append(messages, llm.Message{Role: "user", Content: truncationNudge})
+			e.logEvent(session.EventUser, truncationNudge)
+			thinkingOverride = llm.ThinkingOff
+			continue
+		}
 
 		// Check for skill activation in response
 		if skill := e.checkSkillActivation(ctx, resp.Content); skill != nil {
@@ -1336,6 +1489,12 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	wg.Wait()
 	close(resultChan)
 
+	// converging is true while this call is a CONVERGE goal's multi-agent
+	// iteration. Only then does the CONVERGED marker mean anything; for a
+	// plain (non-converge) multi-agent goal we leave agent output untouched.
+	converging := e.convergenceContext != ""
+	allConverged := true // vacuously true; ANDed with each surviving agent below
+
 	// Collect results and log sub-agent completions
 	var agentOutputs []string
 	var budgetErr error
@@ -1362,18 +1521,63 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 					budgetErr = result.err
 				}
 				if strings.TrimSpace(result.output) != "" {
-					agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
+					out := result.output
+					if converging {
+						content, done := splitConvergence(out)
+						out = content
+						allConverged = allConverged && done
+					}
+					agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, out))
+				} else if converging {
+					// No output at all from this agent: it cannot have
+					// converged.
+					allConverged = false
+				}
+				continue
+			}
+			if empty := asEmptyTurnError(result.err); empty != nil {
+				// This agent's LLM turn stayed truncated/empty even after
+				// its one retry (P0 #1 / 8c's root cause). subagent_end
+				// was already logged above with success==false. Don't
+				// abort the whole multi-agent goal over one agent's empty
+				// turn: drop it from the synthesis input, same treatment
+				// as a budget-exhausted agent with no partial output.
+				e.logger.Warn("dropping sub-agent with empty output from synthesis", "agent", result.name, "reason", empty.Error())
+				if converging {
+					allConverged = false
 				}
 				continue
 			}
 			return "", result.err
 		}
-		agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
+		out := result.output
+		if converging {
+			content, done := splitConvergence(out)
+			out = content
+			allConverged = allConverged && done
+		}
+		agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, out))
+	}
+
+	if converging {
+		// Every USING agent must emit CONVERGED for the goal to converge; a
+		// critic that still sees gaps blocks it. The marker itself has
+		// already been stripped from agentOutputs above so the synthesizer
+		// never sees it.
+		e.parallelConverged = allConverged && len(agentOutputs) > 0
 	}
 
 	if budgetErr != nil {
 		// Don't spend more budget synthesizing a partial result.
 		return strings.Join(agentOutputs, "\n\n"), budgetErr
+	}
+
+	// No agent produced usable output (e.g. the only agent's turn stayed
+	// truncated/empty through its retry): return empty rather than run a
+	// synthesis call over nothing. classifyOutcome (at the call site)
+	// turns this into empty_output.
+	if len(agentOutputs) == 0 {
+		return "", nil
 	}
 
 	// Single agent: return directly
@@ -1402,11 +1606,13 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	resp, err := e.model.Chat(ctx, llm.ChatRequest{
 		Messages: messages,
 	})
-	e.recordLLMMetrics(resp, time.Since(synthStart))
+	synthDuration := time.Since(synthStart)
+	e.recordLLMMetrics(resp, synthDuration)
 	if err != nil {
 		e.hooks.Fire(ctx, hooks.LLMError, map[string]any{"error": err})
 		return "", err
 	}
+	e.logLLMCall(ctx, session.EventAssistant, messages, resp, synthDuration)
 
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", resp.Content)
 

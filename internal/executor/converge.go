@@ -17,6 +17,10 @@ type ConvergenceResult struct {
 	Converged  bool   // true if the goal converged before hitting the limit
 	Iterations int    // number of iterations executed
 	Output     string // final output (last substantive iteration)
+	// BudgetErr is set when the goal stopped because its budget (tool
+	// calls, turns, or duration) ran out mid-iteration, rather than by
+	// exhausting its WITHIN limit without converging.
+	BudgetErr error
 }
 
 // executeConvergeGoal executes a CONVERGE goal with iterative refinement.
@@ -53,6 +57,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 	var converged bool
 	var iterationCount int
 	var budgetStopped bool
+	var budgetErr error
 
 	// Run through the supervision pipeline
 	pipelineResult, err := e.pipeline.Run(
@@ -77,8 +82,9 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 					// iteration (e.g. MaxDuration ticking over between
 					// iterations, or a multi-agent iteration that hit its
 					// limit). Don't start another round against it.
-					if e.noteBudget(ctx, budgetOf(ctx).exhausted()) {
+					if exhErr := budgetOf(ctx).exhausted(); e.noteBudget(ctx, exhErr) {
 						budgetStopped = true
+						budgetErr = exhErr
 						break
 					}
 
@@ -88,13 +94,14 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 
 					prompt := e.buildConvergePrompt(goal, iterations, "")
 
-					output, iterErr := e.executeConvergeIteration(ctx, goal, prompt)
+					content, done, iterErr := e.executeConvergeIteration(ctx, goal, prompt)
 					if e.noteBudget(ctx, iterErr) {
 						// Out of budget: keep this iteration's partial output
 						// and stop refining.
 						iterationCount = i
 						budgetStopped = true
-						if trimmed := strings.TrimSpace(output); trimmed != "" {
+						budgetErr = iterErr
+						if trimmed := strings.TrimSpace(content); trimmed != "" {
 							lastOutput = trimmed
 						}
 						break
@@ -103,7 +110,6 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 						return nil, fmt.Errorf("convergence iteration %d failed: %w", i, iterErr)
 					}
 
-					content, done := splitConvergence(output)
 					iterationCount = i
 					// A marker-only response carries no new content, so the
 					// previous iteration's output stays final.
@@ -161,7 +167,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 	case supervision.VerdictReorient:
 		e.logger.Info("supervisor requested reorientation", "goal", goal.Name, "correction", pipelineResult.Correction)
 		correctionPrompt := e.buildConvergePrompt(goal, iterations, pipelineResult.Correction)
-		correctedOutput, corrErr := e.executeConvergeIteration(ctx, goal, correctionPrompt)
+		correctedOutput, _, corrErr := e.executeConvergeIteration(ctx, goal, correctionPrompt)
 		if corrErr != nil {
 			return nil, fmt.Errorf("correction iteration failed: %w", corrErr)
 		}
@@ -175,6 +181,7 @@ func (e *Executor) executeConvergeGoal(ctx context.Context, goal *agentfile.Goal
 		Converged:  converged,
 		Iterations: iterationCount,
 		Output:     finalOutput,
+		BudgetErr:  budgetErr,
 	}, nil
 }
 
@@ -241,10 +248,13 @@ func (e *Executor) buildConvergePrompt(goal *agentfile.Goal, iterations []Conver
 	return b.String()
 }
 
-// executeConvergeIteration executes a single iteration of a convergence goal.
+// executeConvergeIteration executes a single iteration of a convergence goal,
+// returning the iteration's substantive content (with any trailing
+// convergenceMarker stripped) and whether the goal converged this iteration.
 // This handles both single-agent and multi-agent execution.
-func (e *Executor) executeConvergeIteration(ctx context.Context, goal *agentfile.Goal, prompt string) (string, error) {
-	// Check for multi-agent execution
+func (e *Executor) executeConvergeIteration(ctx context.Context, goal *agentfile.Goal, prompt string) (string, bool, error) {
+	// Check for multi-agent execution. Convergence there is decided per
+	// agent, from raw output, before synthesis - see executeConvergeMultiAgent.
 	if len(goal.UsingAgent) > 0 {
 		// For multi-agent convergence, we need to run the multi-agent flow
 		// but with the convergence-aware prompt
@@ -257,16 +267,27 @@ func (e *Executor) executeConvergeIteration(ctx context.Context, goal *agentfile
 	// Use executePhase which handles tools, thinking, etc. The output is
 	// returned even on error: a budget stop keeps its partial result.
 	output, _, _, err := e.executePhase(ctx, goal, prompt)
-	return output, err
+	if err != nil {
+		return output, false, err
+	}
+	content, done := splitConvergence(output)
+	return content, done, nil
 }
 
 // executeConvergeMultiAgent handles multi-agent execution within a convergence loop.
-func (e *Executor) executeConvergeMultiAgent(ctx context.Context, goal *agentfile.Goal, prompt string) (string, error) {
+// Convergence is decided from each USING agent's raw output, not the
+// synthesized text: executeSimpleParallel sets e.parallelConverged to true
+// only if every agent emitted the CONVERGED marker (a critic that still sees
+// gaps blocks the goal from converging), after stripping the marker from
+// each agent's output so the synthesizer never sees it.
+func (e *Executor) executeConvergeMultiAgent(ctx context.Context, goal *agentfile.Goal, prompt string) (string, bool, error) {
 	// Store convergence context so executeSimpleParallel can use it
 	e.convergenceContext = prompt
+	e.parallelConverged = false
 	defer func() { e.convergenceContext = "" }()
 
-	return e.executeMultiAgentGoal(ctx, goal)
+	output, err := e.executeMultiAgentGoal(ctx, goal)
+	return output, e.parallelConverged, err
 }
 
 // trackConvergenceFailure records a convergence failure for replay warning.
@@ -277,6 +298,28 @@ func (e *Executor) trackConvergenceFailure(goalName string, iterations int) {
 		e.convergenceFailures = make(map[string]int)
 	}
 	e.convergenceFailures[goalName] = iterations
+}
+
+// recordGoalOutcome records how goalName ended, for the workflow Result's
+// Goals map and Status computation.
+func (e *Executor) recordGoalOutcome(goalName string, outcome GoalOutcome) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.goalOutcomes == nil {
+		e.goalOutcomes = make(map[string]GoalOutcome)
+	}
+	e.goalOutcomes[goalName] = outcome
+}
+
+// GoalOutcomes returns a copy of every goal outcome recorded so far.
+func (e *Executor) GoalOutcomes() map[string]GoalOutcome {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	result := make(map[string]GoalOutcome, len(e.goalOutcomes))
+	for k, v := range e.goalOutcomes {
+		result[k] = v
+	}
+	return result
 }
 
 // ConvergenceFailures returns goals that failed to converge, with the

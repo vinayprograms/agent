@@ -127,11 +127,20 @@ func TestBudget_EndsGoalNotRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if result.Status != StatusComplete {
-		t.Errorf("Status = %v, want %v", result.Status, StatusComplete)
+	// "research" never stops calling tools, even on its continuation
+	// retry, so it stays budget_exhausted; "report" is ok. One of two
+	// goals ok makes the workflow partial, not complete.
+	if result.Status != StatusPartial {
+		t.Errorf("Status = %v, want %v", result.Status, StatusPartial)
 	}
-	if got := calls.Load(); got > 4 {
-		t.Errorf("tool calls = %d, want at most the budget of 4", got)
+	if oc := result.Goals["research"]; oc.Outcome != OutcomeBudgetExhausted {
+		t.Errorf("Goals[research].Outcome = %v, want %v", oc.Outcome, OutcomeBudgetExhausted)
+	}
+	if oc := result.Goals["report"]; oc.Outcome != OutcomeOK {
+		t.Errorf("Goals[report].Outcome = %v, want %v", oc.Outcome, OutcomeOK)
+	}
+	if got := calls.Load(); got > 4+5 {
+		t.Errorf("tool calls = %d, want at most the budget of 4 plus the 5-call retry budget", got)
 	}
 	if got := result.Outputs["report"]; got != "wrapped up" {
 		t.Errorf("Outputs[report] = %q, want %q — later goals must still run", got, "wrapped up")
@@ -196,8 +205,14 @@ func TestBudget_MultiAgentConvergeEndsGoal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if result.Status != StatusComplete {
-		t.Errorf("Status = %v, want %v", result.Status, StatusComplete)
+	// The mock never stops calling tools, so the one-shot continuation
+	// retry also exhausts its small budget: the goal never gets to ok, so
+	// the workflow is failed (its only goal isn't ok), not complete.
+	if result.Status != StatusFailed {
+		t.Errorf("Status = %v, want %v", result.Status, StatusFailed)
+	}
+	if oc := result.Goals["refine"]; oc.Outcome != OutcomeBudgetExhausted || !oc.Retried {
+		t.Errorf("Goals[refine] = %+v, want outcome=budget_exhausted retried=true", oc)
 	}
 
 	// The goal must have ended long before using all 25 iterations.
@@ -210,21 +225,22 @@ func TestBudget_MultiAgentConvergeEndsGoal(t *testing.T) {
 		t.Errorf("ConvergenceFailures()[refine] = %d, want 0 — budget exhaustion isn't a convergence failure", failures["refine"])
 	}
 
-	// Exactly one "goal budget exhausted" log line, despite two agents
+	// Exactly one "goal budget exhausted" log line per attempt (the
+	// original run and the one continuation retry), despite two agents
 	// racing to spend the last of a shared budget across possibly several
-	// iterations.
-	if n := strings.Count(logBuf.String(), "goal budget exhausted"); n != 1 {
-		t.Errorf(`log contains %d "goal budget exhausted" lines, want exactly 1:\n%s`, n, logBuf.String())
+	// iterations within each attempt.
+	if n := strings.Count(logBuf.String(), "goal budget exhausted"); n != 2 {
+		t.Errorf(`log contains %d "goal budget exhausted" lines, want exactly 2 (original + retry):\n%s`, n, logBuf.String())
 	}
 
-	// Exactly one session warning event for the same reason.
+	// Exactly one session warning event per attempt for the same reason.
 	warnings := 0
 	for _, evt := range sess.Events {
 		if evt.Type == session.EventWarning && strings.Contains(evt.Content, "exceeded budget") {
 			warnings++
 		}
 	}
-	if warnings != 1 {
-		t.Errorf("session has %d budget-exceeded warning events, want exactly 1", warnings)
+	if warnings != 2 {
+		t.Errorf("session has %d budget-exceeded warning events, want exactly 2 (original + retry)", warnings)
 	}
 }

@@ -480,3 +480,115 @@ func TestGoalComplete_FiresOncePerGoal(t *testing.T) {
 		})
 	}
 }
+
+// TestConvergeGoal_MultiAgent_AllConverged verifies that a multi-agent
+// CONVERGE goal converges after one iteration when every USING agent emits
+// the CONVERGED marker in its raw output, even though the synthesized
+// (post-marker-stripping) text never carries the marker itself.
+func TestConvergeGoal_MultiAgent_AllConverged(t *testing.T) {
+	limit := 5
+	wf := &agentfile.Workflow{
+		Name: "converge-multi",
+		Agents: []agentfile.Agent{
+			{Name: "agentA"},
+			{Name: "agentB"},
+		},
+		Goals: []agentfile.Goal{
+			{
+				Name:        "refine",
+				Outcome:     "Refine the proposal",
+				IsConverge:  true,
+				WithinLimit: &limit,
+				UsingAgent:  []string{"agentA", "agentB"},
+			},
+		},
+	}
+
+	var mu sync.Mutex
+	synthCalls := 0
+	provider := modelFunc(func(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		sys := req.Messages[0].Content
+		switch {
+		case strings.Contains(sys, "agentA"):
+			return &llm.ChatResponse{Content: "Position A is solid.\nCONVERGED"}, nil
+		case strings.Contains(sys, "agentB"):
+			return &llm.ChatResponse{Content: "Position B agrees.\nCONVERGED"}, nil
+		default:
+			// Synthesis call.
+			mu.Lock()
+			synthCalls++
+			mu.Unlock()
+			return &llm.ChatResponse{Content: "Synthesized: both agree."}, nil
+		}
+	})
+
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
+	result, err := exec.executeConvergeGoal(context.Background(), &wf.Goals[0])
+	if err != nil {
+		t.Fatalf("executeConvergeGoal() error = %v", err)
+	}
+
+	if !result.Converged {
+		t.Error("expected goal to converge when all USING agents emit CONVERGED")
+	}
+	if result.Iterations != 1 {
+		t.Errorf("expected 1 iteration, got %d", result.Iterations)
+	}
+	if strings.Contains(result.Output, "CONVERGED") {
+		t.Errorf("synthesized output should not carry the marker, got %q", result.Output)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if synthCalls != 1 {
+		t.Errorf("expected 1 synthesis call, got %d", synthCalls)
+	}
+}
+
+// TestConvergeGoal_MultiAgent_PartialConverge verifies that a multi-agent
+// CONVERGE goal does NOT converge when even one USING agent withholds the
+// CONVERGED marker - a critic that still sees gaps must block convergence.
+func TestConvergeGoal_MultiAgent_PartialConverge(t *testing.T) {
+	limit := 2
+	wf := &agentfile.Workflow{
+		Name: "converge-multi-partial",
+		Agents: []agentfile.Agent{
+			{Name: "agentA"},
+			{Name: "critic"},
+		},
+		Goals: []agentfile.Goal{
+			{
+				Name:        "refine",
+				Outcome:     "Refine the proposal",
+				IsConverge:  true,
+				WithinLimit: &limit,
+				UsingAgent:  []string{"agentA", "critic"},
+			},
+		},
+	}
+
+	provider := modelFunc(func(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		sys := req.Messages[0].Content
+		switch {
+		case strings.Contains(sys, "agentA"):
+			return &llm.ChatResponse{Content: "Position A is solid.\nCONVERGED"}, nil
+		case strings.Contains(sys, "critic"):
+			// The critic never converges: it always sees a gap.
+			return &llm.ChatResponse{Content: "Still missing evidence for claim X."}, nil
+		default:
+			return &llm.ChatResponse{Content: "Synthesized: mixed."}, nil
+		}
+	})
+
+	exec := mustNewExecutor(t, wf, provider, nil, nil)
+	result, err := exec.executeConvergeGoal(context.Background(), &wf.Goals[0])
+	if err != nil {
+		t.Fatalf("executeConvergeGoal() error = %v", err)
+	}
+
+	if result.Converged {
+		t.Error("expected goal NOT to converge while the critic withholds CONVERGED")
+	}
+	if result.Iterations != 2 {
+		t.Errorf("expected to run out the 2-iteration limit, got %d", result.Iterations)
+	}
+}

@@ -200,10 +200,14 @@ type EventMeta struct {
 	SubAgentInputs map[string]string `json:"subagent_inputs,omitempty"` // Inputs passed to sub-agent
 
 	// LLM details
-	Model     string `json:"model,omitempty"`      // Model used
-	LatencyMs int64  `json:"latency_ms,omitempty"` // LLM call latency
-	TokensIn  int    `json:"tokens_in,omitempty"`  // Input tokens
-	TokensOut int    `json:"tokens_out,omitempty"` // Output tokens
+	Model          string `json:"model,omitempty"`           // Model used
+	LatencyMs      int64  `json:"latency_ms,omitempty"`      // LLM call latency
+	TokensIn       int    `json:"tokens_in,omitempty"`       // Input tokens
+	TokensOut      int    `json:"tokens_out,omitempty"`      // Output tokens
+	StopReason     string `json:"stop_reason,omitempty"`     // Why the LLM stopped (e.g. "stop", "length", "tool_calls")
+	ThinkingChars  int    `json:"thinking_chars,omitempty"`  // Length of the model's thinking/reasoning text, when separated from content
+	TruncatedEmpty bool   `json:"truncated_empty,omitempty"` // This turn hit stop_reason=="length" (or was empty) with no tool calls
+	RetriedEmpty   bool   `json:"retried_empty,omitempty"`   // A continuation retry ran after a truncated/empty turn
 
 	// Full LLM interaction (for forensic replay)
 	Prompt   string `json:"prompt,omitempty"`   // Full prompt sent to LLM
@@ -217,6 +221,9 @@ type EventMeta struct {
 	// the JSONL file. Populate this instead for anything that must survive
 	// persistence.
 	Error string `json:"error,omitempty"` // Failure text (e.g. a failed tool's error)
+
+	// Goal outcome (goal_end events)
+	Retried bool `json:"retried,omitempty"` // Whether the goal was retried after a soft failure
 }
 
 // AddEvent sequences and timestamps event (if its Timestamp is zero),
