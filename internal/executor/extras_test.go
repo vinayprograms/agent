@@ -128,7 +128,7 @@ func TestSecurityResearchPrefix(t *testing.T) {
 	})
 	exec = mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: model, Security: &SecurityConfig{Mode: SecurityResearch, Scope: "lab", Reviewer: denyingReviewer()}})
 	exec.spawnDynamicAgent(context.Background(), "r", "t", nil)
-	exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "t", nil, "", []GoalOutput{{ID: "prev", Output: "o"}}, false)
+	_, _, _ = exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "t", nil, "", []GoalOutput{{ID: "prev", Output: "o"}}, false)
 	for _, s := range systems {
 		if !strings.Contains(s, "Authorized Scope: lab") {
 			t.Errorf("prefix missing from system prompt: %q", s)
@@ -146,7 +146,7 @@ func TestGuidancePrefixes_ForSubAgents(t *testing.T) {
 		return &llm.ChatResponse{Content: "ok"}, nil
 	})
 	exec := mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: model, Registry: reg, WorkspaceContext: "WS"})
-	if _, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "t", []string{"f"}, "", nil, false); err != nil {
+	if _, _, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "t", []string{"f"}, "", nil, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"PERSISTENT KNOWLEDGE BASE", "SCRATCHPAD"} {

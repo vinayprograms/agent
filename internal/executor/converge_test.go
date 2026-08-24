@@ -339,9 +339,6 @@ func TestConvergeGoal_MultiAgent(t *testing.T) {
 	if !strings.Contains(tasks[0], "convergence-instruction") {
 		t.Errorf("agents did not get the convergence prompt: %q", tasks[0])
 	}
-	if exec.convergenceContext != "" {
-		t.Error("convergence context outlived the multi-agent iteration")
-	}
 }
 
 func TestSplitConvergence(t *testing.T) {
@@ -481,11 +478,13 @@ func TestGoalComplete_FiresOncePerGoal(t *testing.T) {
 	}
 }
 
-// TestConvergeGoal_MultiAgent_AllConverged verifies that a multi-agent
-// CONVERGE goal converges after one iteration when every USING agent emits
-// the CONVERGED marker in its raw output, even though the synthesized
-// (post-marker-stripping) text never carries the marker itself.
-func TestConvergeGoal_MultiAgent_AllConverged(t *testing.T) {
+// TestConvergeGoal_Pipeline_LastAgentDecides verifies that a CONVERGE goal's
+// USING agents run sequentially (b sees a's output) and that ONLY the last
+// agent's decision matters: the first agent (agentA) never emits CONVERGED,
+// yet the goal still converges after one iteration because the last agent
+// (agentB) does. There is no synthesis call: the last agent's output IS the
+// goal's output.
+func TestConvergeGoal_Pipeline_LastAgentDecides(t *testing.T) {
 	limit := 5
 	wf := &agentfile.Workflow{
 		Name: "converge-multi",
@@ -505,21 +504,21 @@ func TestConvergeGoal_MultiAgent_AllConverged(t *testing.T) {
 	}
 
 	var mu sync.Mutex
-	synthCalls := 0
+	var sawAInB bool
 	provider := modelFunc(func(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 		sys := req.Messages[0].Content
+		user := req.Messages[len(req.Messages)-1].Content
 		switch {
 		case strings.Contains(sys, "agentA"):
-			return &llm.ChatResponse{Content: "Position A is solid.\nCONVERGED"}, nil
+			// agentA never converges on its own.
+			return &llm.ChatResponse{Content: "Position A is a draft."}, nil
 		case strings.Contains(sys, "agentB"):
-			return &llm.ChatResponse{Content: "Position B agrees.\nCONVERGED"}, nil
-		default:
-			// Synthesis call.
 			mu.Lock()
-			synthCalls++
+			sawAInB = strings.Contains(user, "Position A is a draft")
 			mu.Unlock()
-			return &llm.ChatResponse{Content: "Synthesized: both agree."}, nil
+			return &llm.ChatResponse{Content: "Position B is final.\nCONVERGED"}, nil
 		}
+		return &llm.ChatResponse{Content: "unexpected caller"}, nil
 	})
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
@@ -529,25 +528,25 @@ func TestConvergeGoal_MultiAgent_AllConverged(t *testing.T) {
 	}
 
 	if !result.Converged {
-		t.Error("expected goal to converge when all USING agents emit CONVERGED")
+		t.Error("expected goal to converge on the last agent's decision alone")
 	}
 	if result.Iterations != 1 {
 		t.Errorf("expected 1 iteration, got %d", result.Iterations)
 	}
-	if strings.Contains(result.Output, "CONVERGED") {
-		t.Errorf("synthesized output should not carry the marker, got %q", result.Output)
+	if result.Output != "Position B is final." {
+		t.Errorf("expected the last agent's output as the goal output (no synthesis), got %q", result.Output)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if synthCalls != 1 {
-		t.Errorf("expected 1 synthesis call, got %d", synthCalls)
+	if !sawAInB {
+		t.Error("expected agentB to see agentA's output (sequential pipeline)")
 	}
 }
 
-// TestConvergeGoal_MultiAgent_PartialConverge verifies that a multi-agent
-// CONVERGE goal does NOT converge when even one USING agent withholds the
-// CONVERGED marker - a critic that still sees gaps must block convergence.
-func TestConvergeGoal_MultiAgent_PartialConverge(t *testing.T) {
+// TestConvergeGoal_Pipeline_FirstAgentMarkerIgnored verifies that a marker
+// from a non-last pipeline agent does NOT converge the goal — only the last
+// agent's decision counts.
+func TestConvergeGoal_Pipeline_FirstAgentMarkerIgnored(t *testing.T) {
 	limit := 2
 	wf := &agentfile.Workflow{
 		Name: "converge-multi-partial",
@@ -570,13 +569,14 @@ func TestConvergeGoal_MultiAgent_PartialConverge(t *testing.T) {
 		sys := req.Messages[0].Content
 		switch {
 		case strings.Contains(sys, "agentA"):
+			// agentA emits the marker, but it's not the last agent — it must
+			// not converge the goal.
 			return &llm.ChatResponse{Content: "Position A is solid.\nCONVERGED"}, nil
 		case strings.Contains(sys, "critic"):
-			// The critic never converges: it always sees a gap.
+			// The critic (last agent) never converges: it always sees a gap.
 			return &llm.ChatResponse{Content: "Still missing evidence for claim X."}, nil
-		default:
-			return &llm.ChatResponse{Content: "Synthesized: mixed."}, nil
 		}
+		return &llm.ChatResponse{Content: "unexpected caller"}, nil
 	})
 
 	exec := mustNewExecutor(t, wf, provider, nil, nil)
@@ -586,7 +586,7 @@ func TestConvergeGoal_MultiAgent_PartialConverge(t *testing.T) {
 	}
 
 	if result.Converged {
-		t.Error("expected goal NOT to converge while the critic withholds CONVERGED")
+		t.Error("expected goal NOT to converge: only the last agent's decision counts, and the critic never converges")
 	}
 	if result.Iterations != 2 {
 		t.Errorf("expected to run out the 2-iteration limit, got %d", result.Iterations)

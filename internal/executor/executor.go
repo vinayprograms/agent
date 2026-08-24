@@ -205,13 +205,6 @@ type Executor struct {
 
 	// Convergence tracking
 	convergenceFailures map[string]int // goals that hit WITHIN limit without converging
-	convergenceContext  string         // current convergence history (for multi-agent goals)
-	// parallelConverged reports whether every USING agent in the most recent
-	// executeSimpleParallel call emitted the CONVERGED marker in its raw
-	// output. Only meaningful while convergenceContext is set (i.e. during a
-	// CONVERGE goal's multi-agent iteration); executeConvergeMultiAgent reads
-	// it immediately after the call.
-	parallelConverged bool
 
 	// goalOutcomes records how each goal that reached executeGoalWithTracking's
 	// end ended, keyed by goal name. Used to compute the workflow Status and
@@ -712,8 +705,10 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			return nil, err
 		}
 		convergeLimit := e.getConvergeLimit(goal)
-		var vars map[string]string
-		if len(goal.Outputs) > 0 {
+		// Prefer the vars bundled into the converged tool call; fall back to
+		// scraping JSON out of the final output otherwise.
+		vars := result.Vars
+		if len(goal.Outputs) > 0 && !result.ViaTool {
 			vars = parseStructuredOutput(result.Output, goal.Outputs)
 		}
 		outcome := classifyOutcome(result.Output, true, goal.Outputs, vars, asBudgetError(result.BudgetErr), !result.Converged && result.BudgetErr == nil, convergeLimit)
@@ -726,7 +721,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			}
 			result = retryResult
 			limit := e.getConvergeLimit(g)
-			if len(goal.Outputs) > 0 {
+			vars = result.Vars
+			if len(goal.Outputs) > 0 && !result.ViaTool {
 				vars = parseStructuredOutput(result.Output, goal.Outputs)
 			}
 			oc := classifyOutcome(result.Output, true, goal.Outputs, vars, asBudgetError(result.BudgetErr), !result.Converged && result.BudgetErr == nil, limit)
@@ -807,7 +803,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 
 	// Add structured output instruction if outputs are declared
 	if len(goal.Outputs) > 0 {
-		goalDescription += "\n\n" + buildStructuredOutputInstruction(goal.Outputs)
+		goalDescription += "\n\n" + buildStructuredOutputInstruction(goal.Outputs) + emitOutputsInstruction
 	}
 
 	b.SetCurrentGoal(goal.Name, goalDescription)
@@ -825,8 +821,17 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 	// Track supervision status for sub-agents spawned during this goal
 	e.currentGoalSupervised = supervised
 
+	// Offer the emit_outputs decision tool whenever the goal declares
+	// `-> outputs`; parseStructuredOutput remains the fallback for a
+	// provider that ignores it (see resolveOutputVars).
+	var extraTools []llm.ToolDef
+	if len(goal.Outputs) > 0 {
+		extraTools = append(extraTools, emitOutputsTool(goal.Outputs))
+	}
+
 	// Run through the supervision pipeline (or just execute if unsupervised)
 	var spentBudget error
+	var decision *llm.ToolCallResponse
 	pipelineResult, err := e.pipeline.Run(
 		ctx,
 		supervision.PipelineRequest{
@@ -843,7 +848,8 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			},
 			// EXECUTE: do the work
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
-				output, toolsUsed, toolCallsMade, err := e.executePhase(ctx, goal, prompt)
+				output, toolsUsed, toolCallsMade, dec, err := e.executePhase(ctx, goal, prompt, extraTools...)
+				decision = dec
 				if e.noteBudget(ctx, err) {
 					spentBudget = err
 					err = nil
@@ -869,7 +875,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		e.logger.Info("reorienting execution", "goal", goal.Name, "correction", pipelineResult.Correction)
 		b.SetCorrection(pipelineResult.Correction)
 		correctedPrompt := b.String()
-		output, _, toolCallsMade, err = e.executePhase(ctx, goal, correctedPrompt)
+		output, _, toolCallsMade, decision, err = e.executePhase(ctx, goal, correctedPrompt, extraTools...)
 		if err != nil {
 			return nil, err
 		}
@@ -878,10 +884,13 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		return nil, fmt.Errorf("supervision paused but no resolution provided")
 	}
 
-	// Parse structured output if declared
+	// Resolve structured output if declared: prefer the emit_outputs tool
+	// call, fall back to scraping JSON out of prose.
 	var vars map[string]string
 	if len(goal.Outputs) > 0 {
-		vars = parseStructuredOutput(output, goal.Outputs)
+		var viaTool bool
+		vars, viaTool = resolveOutputVars(output, decision, goal.Outputs)
+		e.logger.Debug("resolved goal outputs", "goal", goal.Name, "via_tool", viaTool)
 	}
 	outcome := classifyOutcome(output, toolCallsMade, goal.Outputs, vars, asBudgetError(spentBudget), false, 0)
 
@@ -891,11 +900,13 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			rb.AddPriorGoal(goalName, priorOutput)
 		}
 		retryDescription := e.interpolate(g.Outcome)
+		var retryExtraTools []llm.ToolDef
 		if len(g.Outputs) > 0 {
-			retryDescription += "\n\n" + buildStructuredOutputInstruction(g.Outputs)
+			retryDescription += "\n\n" + buildStructuredOutputInstruction(g.Outputs) + emitOutputsInstruction
+			retryExtraTools = append(retryExtraTools, emitOutputsTool(g.Outputs))
 		}
 		rb.SetCurrentGoal(g.Name, retryDescription)
-		retryOutput, _, retryToolCallsMade, rerr := e.executePhase(retryCtx, g, rb.String())
+		retryOutput, _, retryToolCallsMade, retryDecision, rerr := e.executePhase(retryCtx, g, rb.String(), retryExtraTools...)
 		retrySpent := asBudgetError(rerr)
 		if rerr != nil && retrySpent == nil {
 			return GoalOutcome{Outcome: OutcomeError, Reason: rerr.Error()}
@@ -903,7 +914,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		output = retryOutput
 		toolCallsMade = retryToolCallsMade
 		if len(goal.Outputs) > 0 {
-			vars = parseStructuredOutput(output, goal.Outputs)
+			vars, _ = resolveOutputVars(output, retryDecision, goal.Outputs)
 		}
 		return classifyOutcome(output, toolCallsMade, goal.Outputs, vars, retrySpent, false, 0)
 	})
@@ -1005,7 +1016,15 @@ Respond with a JSON object:
 }
 
 // executePhase runs the actual goal execution loop.
-func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, prompt string) (output string, toolsUsed []string, toolCallsMade bool, err error) {
+// executePhase runs the goal execution loop. extraTools, when non-empty, are
+// decision tools (converged, emit_outputs) offered alongside the goal's
+// regular tools; if the model calls one, the loop ends immediately and the
+// call is returned as decision instead of being executed like a regular
+// tool. A turn that calls both a decision tool and a regular tool in the
+// same response is treated as ending on the decision (regular calls in that
+// turn are dropped) — a model choosing to report a decision has finished,
+// so there is nothing to feed the dropped calls' results back into.
+func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, prompt string, extraTools ...llm.ToolDef) (output string, toolsUsed []string, toolCallsMade bool, decision *llm.ToolCallResponse, err error) {
 	start := time.Now()
 
 	// Build system message with skills context
@@ -1054,8 +1073,14 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 	e.logEvent(session.EventSystem, systemMsg)
 	e.logEvent(session.EventUser, prompt)
 
-	// Get tool definitions (built-in + MCP)
+	// Get tool definitions (built-in + MCP), plus any decision tools
+	// (converged, emit_outputs) the caller wants offered this phase.
 	toolDefs := e.getAllToolDefinitions()
+	toolDefs = append(toolDefs, extraTools...)
+	extraToolNames := make(map[string]bool, len(extraTools))
+	for _, t := range extraTools {
+		extraToolNames[t.Name] = true
+	}
 	e.logger.Debug("tools available", "count", len(toolDefs))
 
 	// Track tools used
@@ -1083,7 +1108,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 		if err != nil {
 			e.hooks.Fire(ctx, hooks.LLMError, map[string]any{"error": err})
 			e.logPhaseExecute(goal.Name, "error", time.Since(start).Milliseconds())
-			return "", nil, toolCallsMade, fmt.Errorf("LLM error: %w", err)
+			return "", nil, toolCallsMade, nil, fmt.Errorf("LLM error: %w", err)
 		}
 
 		// Log full LLM interaction (for -vv replay)
@@ -1141,7 +1166,24 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 				toolsUsed = append(toolsUsed, tool)
 			}
 			e.logPhaseExecute(goal.Name, "complete", time.Since(start).Milliseconds())
-			return resp.Content, toolsUsed, toolCallsMade, nil
+			return resp.Content, toolsUsed, toolCallsMade, nil, nil
+		}
+
+		// A decision-tool call (converged, emit_outputs) ends the phase
+		// immediately: the model reporting a decision has finished, so
+		// there's nothing to feed a tool result back into. If the model
+		// also emitted regular tool calls in the same turn, those are
+		// dropped — see executePhase's doc comment.
+		if len(extraToolNames) > 0 {
+			for i := range resp.ToolCalls {
+				if extraToolNames[resp.ToolCalls[i].Name] {
+					for tool := range toolsUsedMap {
+						toolsUsed = append(toolsUsed, tool)
+					}
+					e.logPhaseExecute(goal.Name, "decision", time.Since(start).Milliseconds())
+					return resp.Content, toolsUsed, toolCallsMade, &resp.ToolCalls[i], nil
+				}
+			}
 		}
 
 		toolCallsMade = true
@@ -1151,7 +1193,7 @@ func (e *Executor) executePhase(ctx context.Context, goal *agentfile.Goal, promp
 				toolsUsed = append(toolsUsed, tool)
 			}
 			e.logPhaseExecute(goal.Name, "budget_exhausted", time.Since(start).Milliseconds())
-			return resp.Content, toolsUsed, toolCallsMade, err
+			return resp.Content, toolsUsed, toolCallsMade, nil, err
 		}
 
 		// Track tools used
@@ -1442,12 +1484,6 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 
 	task := e.interpolate(goal.Outcome)
 
-	// If we're in a convergence loop, use the convergence-aware prompt instead
-	// This includes the full XML context with convergence history
-	if e.convergenceContext != "" {
-		task = e.convergenceContext
-	}
-
 	// Build prior goals context from completed goals
 	priorGoals := e.buildPriorGoalsContext()
 
@@ -1471,7 +1507,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 
 			// Use spawnAgentWithPrompt which shares code with dynamic agents
 			// Pass agent's supervision flag - agent is supervised if it has SUPERVISED or inherits from goal
-			output, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires, priorGoals, agent.IsSupervised(e.workflow))
+			output, _, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires, priorGoals, agent.IsSupervised(e.workflow))
 
 			resultChan <- agentResult{
 				name:       agent.Name,
@@ -1484,12 +1520,6 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 
 	wg.Wait()
 	close(resultChan)
-
-	// converging is true while this call is a CONVERGE goal's multi-agent
-	// iteration. Only then does the CONVERGED marker mean anything; for a
-	// plain (non-converge) multi-agent goal we leave agent output untouched.
-	converging := e.convergenceContext != ""
-	allConverged := true // vacuously true; ANDed with each surviving agent below
 
 	// Collect results and log sub-agent completions
 	var agentOutputs []string
@@ -1517,17 +1547,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 					budgetErr = result.err
 				}
 				if strings.TrimSpace(result.output) != "" {
-					out := result.output
-					if converging {
-						content, done := splitConvergence(out)
-						out = content
-						allConverged = allConverged && done
-					}
-					agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, out))
-				} else if converging {
-					// No output at all from this agent: it cannot have
-					// converged.
-					allConverged = false
+					agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
 				}
 				continue
 			}
@@ -1539,28 +1559,11 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 				// turn: drop it from the synthesis input, same treatment
 				// as a budget-exhausted agent with no partial output.
 				e.logger.Warn("dropping sub-agent with empty output from synthesis", "agent", result.name, "reason", empty.Error())
-				if converging {
-					allConverged = false
-				}
 				continue
 			}
 			return "", result.err
 		}
-		out := result.output
-		if converging {
-			content, done := splitConvergence(out)
-			out = content
-			allConverged = allConverged && done
-		}
-		agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, out))
-	}
-
-	if converging {
-		// Every USING agent must emit CONVERGED for the goal to converge; a
-		// critic that still sees gaps blocks it. The marker itself has
-		// already been stripped from agentOutputs above so the synthesizer
-		// never sees it.
-		e.parallelConverged = allConverged && len(agentOutputs) > 0
+		agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
 	}
 
 	if budgetErr != nil {

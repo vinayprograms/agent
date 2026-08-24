@@ -64,12 +64,18 @@ func parseStructuredOutput(content string, expectedFields []string) map[string]s
 			case string:
 				result[field] = v
 			default:
-				jsonBytes, _ := json.Marshal(v)
-				result[field] = string(jsonBytes)
+				result[field] = jsonStringify(v)
 			}
 		}
 	}
 	return result
+}
+
+// jsonStringify re-marshals a non-string decoded JSON value back to its JSON
+// text, for callers that need every field as a string.
+func jsonStringify(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 // extractJSON extracts a JSON object from content that may contain surrounding text.

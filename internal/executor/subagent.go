@@ -74,7 +74,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 			},
 			// EXECUTE
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
-				output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, userPrompt)
+				output, toolsUsed, _, err := e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, userPrompt)
 				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
 			},
 			// POST-CHECKPOINT
@@ -94,7 +94,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	case supervision.VerdictReorient:
 		e.logger.Info("reorienting sub-agent execution", "role", role, "correction", pipelineResult.Correction)
 		correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, pipelineResult.Correction)
-		output, _, err = e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, correctedTask)
+		output, _, _, err = e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, correctedTask)
 		if err != nil {
 			return "", err
 		}
@@ -110,17 +110,20 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 // spawnAgentWithPrompt spawns a sub-agent with a custom system prompt and optional profile.
 // This is the unified entry point used by both AGENT entries and dynamic sub-agents.
 // The profile parameter allows using a different LLM model (e.g., "fast", "reasoning-heavy").
-func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt, task string, outputs []string, profile string, priorGoals []GoalOutput, agentSupervised bool) (string, error) {
+// extraTools, when non-empty, are decision tools (converged, emit_outputs)
+// offered to this agent alongside its regular tools; decision reports which
+// one, if any, the agent called (see subAgentExecutePhaseWithModel).
+func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt, task string, outputs []string, profile string, priorGoals []GoalOutput, agentSupervised bool, extraTools ...llm.ToolDef) (output string, decision *llm.ToolCallResponse, err error) {
 	// Set sub-agent context
 	ctx = withAgentIdentity(ctx, role, role)
 
 	// Get the model (use profile if specified, otherwise default)
 	model := e.model
 	if profile != "" {
-		var err error
-		model, err = e.resolver.Model(profile)
-		if err != nil {
-			return "", fmt.Errorf("failed to get provider for profile %q: %w", profile, err)
+		var perr error
+		model, perr = e.resolver.Model(profile)
+		if perr != nil {
+			return "", nil, fmt.Errorf("failed to get provider for profile %q: %w", profile, perr)
 		}
 	}
 
@@ -193,7 +196,8 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 			},
 			// EXECUTE
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
-				output, toolsUsed, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt)
+				out, toolsUsed, dec, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt, extraTools...)
+				decision = dec
 				// Log/warn once per goal, but keep the error itself so it
 				// propagates to the caller (e.g. a multi-agent goal or a
 				// convergence loop) instead of looking like success. The
@@ -201,7 +205,7 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 				// let a convergence loop start another iteration against an
 				// already-spent budget (see executeConvergeMultiAgent).
 				e.noteBudget(ctx, err)
-				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
+				return &supervision.ExecuteResult{Output: out, ToolsUsed: toolsUsed}, err
 			},
 			// POST-CHECKPOINT
 			Post: func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
@@ -217,30 +221,34 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 		if pipelineResult != nil {
 			out = pipelineResult.Output
 		}
-		return out, err
+		return out, decision, err
 	}
 
-	output := pipelineResult.Output
+	output = pipelineResult.Output
 
 	// Handle supervision verdict
 	switch pipelineResult.Verdict {
 	case supervision.VerdictReorient:
 		correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, pipelineResult.Correction)
-		output, _, err = e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, correctedTask)
+		output, _, decision, err = e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, correctedTask, extraTools...)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 	case supervision.VerdictPause:
-		return "", fmt.Errorf("sub-agent %s paused by supervisor: %s", role, pipelineResult.Question)
+		return "", nil, fmt.Errorf("sub-agent %s paused by supervisor: %s", role, pipelineResult.Question)
 	}
 
 	e.hooks.Fire(ctx, hooks.SubAgentComplete, map[string]any{"name": role, "output": output})
 	e.extractAndStoreObservations(ctx, role, "AGENT", output)
-	return output, nil
+	return output, decision, nil
 }
 
-// subAgentExecutePhaseWithModel runs the sub-agent execution loop with a specific model.
-func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.Model, role, systemPrompt, userPrompt string) (output string, toolsUsed []string, err error) {
+// subAgentExecutePhaseWithModel runs the sub-agent execution loop with a
+// specific model. extraTools, when non-empty, are decision tools
+// (converged, emit_outputs) offered alongside the regular tools; a call to
+// one of them ends the loop immediately and is returned as decision instead
+// of being executed like a regular tool call — mirroring executePhase.
+func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.Model, role, systemPrompt, userPrompt string, extraTools ...llm.ToolDef) (output string, toolsUsed []string, decision *llm.ToolCallResponse, err error) {
 	start := time.Now()
 	stepID := fmt.Sprintf("subagent:%s", role)
 	e.logPhaseStart("EXECUTE", role, stepID)
@@ -256,6 +264,11 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 		if def.Name != "spawn_agents" {
 			toolDefs = append(toolDefs, def)
 		}
+	}
+	toolDefs = append(toolDefs, extraTools...)
+	extraToolNames := make(map[string]bool, len(extraTools))
+	for _, t := range extraTools {
+		extraToolNames[t.Name] = true
 	}
 
 	toolsUsedMap := make(map[string]bool)
@@ -282,7 +295,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 			for tool := range toolsUsedMap {
 				toolsUsed = append(toolsUsed, tool)
 			}
-			return "Sub-agent reached maximum turn limit. Returning partial results.", toolsUsed, nil
+			return "Sub-agent reached maximum turn limit. Returning partial results.", toolsUsed, nil, nil
 		}
 		llmStart := time.Now()
 		resp, err := model.Chat(ctx, llm.ChatRequest{
@@ -293,7 +306,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 		llmDuration := time.Since(llmStart)
 		if err != nil {
 			e.logPhaseComplete("EXECUTE", role, stepID, start, "error")
-			return "", nil, fmt.Errorf("sub-agent LLM error: %w", err)
+			return "", nil, nil, fmt.Errorf("sub-agent LLM error: %w", err)
 		}
 
 		// Log full LLM interaction (for -vv replay)
@@ -318,7 +331,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 				toolsUsed = append(toolsUsed, tool)
 			}
 			e.logPhaseComplete("EXECUTE", role, stepID, start, "empty_output")
-			return "", toolsUsed, &emptyLLMTurnError{role: role, reason: fmt.Sprintf("LLM turn stayed truncated/empty (stop_reason=%q) after one retry", resp.StopReason)}
+			return "", toolsUsed, nil, &emptyLLMTurnError{role: role, reason: fmt.Sprintf("LLM turn stayed truncated/empty (stop_reason=%q) after one retry", resp.StopReason)}
 		}
 
 		// No tool calls = sub-agent complete
@@ -327,7 +340,21 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 				toolsUsed = append(toolsUsed, tool)
 			}
 			e.logPhaseComplete("EXECUTE", role, stepID, start, "complete")
-			return resp.Content, toolsUsed, nil
+			return resp.Content, toolsUsed, nil, nil
+		}
+
+		// A decision-tool call (converged, emit_outputs) ends the loop
+		// immediately, same rule as executePhase.
+		if len(extraToolNames) > 0 {
+			for i := range resp.ToolCalls {
+				if extraToolNames[resp.ToolCalls[i].Name] {
+					for tool := range toolsUsedMap {
+						toolsUsed = append(toolsUsed, tool)
+					}
+					e.logPhaseComplete("EXECUTE", role, stepID, start, "decision")
+					return resp.Content, toolsUsed, &resp.ToolCalls[i], nil
+				}
+			}
 		}
 
 		if err := budgetOf(ctx).spend(len(resp.ToolCalls)); err != nil {
@@ -335,7 +362,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 				toolsUsed = append(toolsUsed, tool)
 			}
 			e.logPhaseComplete("EXECUTE", role, stepID, start, "budget_exhausted")
-			return resp.Content, toolsUsed, err
+			return resp.Content, toolsUsed, nil, err
 		}
 
 		// Track tools used
