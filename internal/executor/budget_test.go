@@ -244,3 +244,153 @@ func TestBudget_MultiAgentConvergeEndsGoal(t *testing.T) {
 		t.Errorf("session has %d budget-exceeded warning events, want exactly 2 (original + retry)", warnings)
 	}
 }
+
+// remainingToolCalls reports the tool-call headroom left in the budget, or
+// -1 when there is no cap. executeSimpleParallel uses this to carve a fair
+// share of that headroom across parallel agents (3c).
+func TestBudget_RemainingToolCalls(t *testing.T) {
+	var nilBudget *budget
+	if got := nilBudget.remainingToolCalls(); got != -1 {
+		t.Errorf("nil budget remainingToolCalls() = %d, want -1", got)
+	}
+
+	unlimited := &budget{goal: "g", start: time.Now()}
+	if got := unlimited.remainingToolCalls(); got != -1 {
+		t.Errorf("unlimited budget remainingToolCalls() = %d, want -1", got)
+	}
+
+	b := &budget{goal: "g", limits: Budget{MaxToolCalls: 10}, start: time.Now()}
+	if got := b.remainingToolCalls(); got != 10 {
+		t.Errorf("fresh budget remainingToolCalls() = %d, want 10", got)
+	}
+	_ = b.spend(4)
+	if got := b.remainingToolCalls(); got != 6 {
+		t.Errorf("after spending 4, remainingToolCalls() = %d, want 6", got)
+	}
+	_ = b.spend(100) // overspend
+	if got := b.remainingToolCalls(); got != 0 {
+		t.Errorf("after overspending, remainingToolCalls() = %d, want 0 (never negative)", got)
+	}
+}
+
+// A sub-agent given a localToolCap gets nudged to wrap up once its own tool
+// calls would cross that share, and returns whatever content it has instead
+// of erroring — even if it ignores the nudge and asks for more tools (3c).
+func TestSubAgent_LocalBudgetNudgeReturnsPartialOutput(t *testing.T) {
+	loop := fakeTool{name: "search", run: func(context.Context, tools.Args) (string, error) {
+		return "more results", nil
+	}}
+	reg, _ := newTestRegistry(t, t.TempDir(), loop)
+
+	var nudged bool
+	turn := 0
+	model := modelFunc(func(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		turn++
+		last := req.Messages[len(req.Messages)-1]
+		if last.Role == "user" && strings.Contains(last.Content, "allotted share") {
+			nudged = true
+			return &llm.ChatResponse{Content: "final answer after nudge"}, nil
+		}
+		// Keeps calling tools forever otherwise.
+		return &llm.ChatResponse{
+			Content:   "still working",
+			ToolCalls: []llm.ToolCallResponse{{ID: "1", Name: "search", Args: map[string]any{}}},
+		}, nil
+	})
+
+	exec := mustNewExecutor(t, &agentfile.Workflow{Name: "x"}, model, reg, permissivePolicy())
+	ctx := exec.withBudget(t.Context(), "g") // unlimited goal budget; only the local cap should bind
+
+	out, _, _, _, err := exec.subAgentExecutePhaseWithModel(ctx, model, "r", "sys", "task", 2)
+	if err != nil {
+		t.Fatalf("subAgentExecutePhaseWithModel: %v", err)
+	}
+	if !nudged {
+		t.Error("expected the agent to receive the fair-share nudge")
+	}
+	if out != "final answer after nudge" {
+		t.Errorf("output = %q, want the agent's post-nudge answer", out)
+	}
+	_ = turn
+}
+
+// A sub-agent that ignores the nudge and keeps asking for tools still ends
+// gracefully with partial output (not an error) once it crosses its local
+// cap a second time — this is what prevents "everyone fails with empty
+// output" (3c / run 38).
+func TestSubAgent_LocalBudgetHardStopIsGraceful(t *testing.T) {
+	loop := fakeTool{name: "search", run: func(context.Context, tools.Args) (string, error) {
+		return "more results", nil
+	}}
+	reg, _ := newTestRegistry(t, t.TempDir(), loop)
+
+	model := modelFunc(func(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+		// Never stops calling tools, even after the nudge.
+		return &llm.ChatResponse{
+			Content:   "keeps going regardless",
+			ToolCalls: []llm.ToolCallResponse{{ID: "1", Name: "search", Args: map[string]any{}}},
+		}, nil
+	})
+
+	exec := mustNewExecutor(t, &agentfile.Workflow{Name: "x"}, model, reg, permissivePolicy())
+	ctx := exec.withBudget(t.Context(), "g")
+
+	out, _, _, _, err := exec.subAgentExecutePhaseWithModel(ctx, model, "r", "sys", "task", 2)
+	if err != nil {
+		t.Fatalf("subAgentExecutePhaseWithModel returned an error instead of degrading gracefully: %v", err)
+	}
+	if strings.TrimSpace(out) == "" {
+		t.Error("expected non-empty partial output on local-budget hard stop, got empty")
+	}
+}
+
+// End-to-end: two parallel agents in a GOAL that never stop calling tools
+// must not both burn the entire shared goal budget and come back empty —
+// the fair-share cap should make at least one of them wrap up with real
+// output. Regression for run 38 (two sub-agents hit 41/40 calls, both
+// success=false, outputs all "").
+func TestBudget_ParallelAgentsDontBothComeBackEmpty(t *testing.T) {
+	loop := fakeTool{name: "search", run: func(context.Context, tools.Args) (string, error) {
+		return "more results", nil
+	}}
+	reg, _ := newTestRegistry(t, t.TempDir(), loop)
+
+	model := modelFunc(func(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		last := req.Messages[len(req.Messages)-1]
+		if last.Role == "user" && strings.Contains(last.Content, "allotted share") {
+			return &llm.ChatResponse{Content: "wrapped up early"}, nil
+		}
+		return &llm.ChatResponse{
+			Content:   "still going",
+			ToolCalls: []llm.ToolCallResponse{{ID: "1", Name: "search", Args: map[string]any{}}},
+		}, nil
+	})
+
+	wf := &agentfile.Workflow{
+		Name:  "budget-parallel",
+		Steps: []agentfile.Step{{Type: agentfile.StepRUN, Name: "main", UsingGoals: []string{"work"}}},
+		Goals: []agentfile.Goal{{
+			Name: "work", Outcome: "do work", UsingAgent: []string{"a", "b"},
+		}},
+		Agents: []agentfile.Agent{{Name: "a"}, {Name: "b"}},
+	}
+
+	sess := &session.Session{}
+	exec := mustNew(t, Config{
+		Workflow: wf,
+		Model:    model,
+		Registry: reg,
+		Policy:   permissivePolicy(),
+		Session:  sess,
+		Budget:   Budget{MaxToolCalls: 8},
+	})
+
+	result, err := exec.Run(t.Context(), RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	out := result.Outputs["work"]
+	if strings.TrimSpace(out) == "" {
+		t.Error("expected non-empty combined output from the parallel goal, got empty — both agents starved each other")
+	}
+}

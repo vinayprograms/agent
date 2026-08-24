@@ -87,7 +87,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 			},
 			// EXECUTE
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
-				out, toolsUsed, _, model, err := e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, userPrompt)
+				out, toolsUsed, _, model, err := e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, userPrompt, 0)
 				if model != "" {
 					resolvedModel = model
 				}
@@ -111,7 +111,7 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 		e.logger.Info("reorienting sub-agent execution", "role", role, "correction", pipelineResult.Correction)
 		correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, pipelineResult.Correction)
 		var model string
-		output, _, _, model, err = e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, correctedTask)
+		output, _, _, model, err = e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, correctedTask, 0)
 		if model != "" {
 			resolvedModel = model
 		}
@@ -134,7 +134,14 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 // extraTools, when non-empty, are decision tools (converged, emit_outputs)
 // offered to this agent alongside its regular tools; decision reports which
 // one, if any, the agent called (see subAgentExecutePhaseWithModel).
-func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt, task string, outputs []string, profile string, priorGoals []GoalOutput, agentSupervised bool, extraTools ...llm.ToolDef) (output string, decision *llm.ToolCallResponse, err error) {
+// localToolCap, when > 0, is this agent's fair share of the goal's
+// remaining tool-call budget (see executeSimpleParallel) — a soft cap that
+// nudges the agent to wrap up once it's spent its share, instead of letting
+// it (and its parallel siblings) run the shared goal budget to zero. 0
+// means no local cap (the agent may use the full remaining goal budget),
+// which is correct for CONVERGE's sequential pipeline where there are no
+// concurrent siblings to starve.
+func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt, task string, outputs []string, profile string, priorGoals []GoalOutput, agentSupervised bool, localToolCap int, extraTools ...llm.ToolDef) (output string, decision *llm.ToolCallResponse, err error) {
 	// Set sub-agent context
 	ctx = withAgentIdentity(ctx, role, role)
 
@@ -226,7 +233,7 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 			},
 			// EXECUTE
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
-				out, toolsUsed, dec, gotModel, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt, extraTools...)
+				out, toolsUsed, dec, gotModel, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt, localToolCap, extraTools...)
 				decision = dec
 				if gotModel != "" {
 					resolvedModel = gotModel
@@ -264,7 +271,7 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	case supervision.VerdictReorient:
 		correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, pipelineResult.Correction)
 		var gotModel string
-		output, _, decision, gotModel, err = e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, correctedTask, extraTools...)
+		output, _, decision, gotModel, err = e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, correctedTask, localToolCap, extraTools...)
 		if gotModel != "" {
 			resolvedModel = gotModel
 		}
@@ -289,7 +296,11 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 // own LLM responses (llm.ChatResponse.Model) — the actual provider/model
 // that ran, as opposed to the caller-supplied profile name (#7). Empty if
 // the sub-agent never got a response (e.g. immediate LLM error).
-func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.Model, role, systemPrompt, userPrompt string, extraTools ...llm.ToolDef) (output string, toolsUsed []string, decision *llm.ToolCallResponse, resolvedModel string, err error) {
+// localToolCap (3c), when > 0, is a soft per-agent cap on tool calls —
+// this agent's fair share of the goal's shared budget when it's running
+// alongside parallel siblings (see executeSimpleParallel). Reaching it
+// nudges the agent to wrap up rather than hard-failing it.
+func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.Model, role, systemPrompt, userPrompt string, localToolCap int, extraTools ...llm.ToolDef) (output string, toolsUsed []string, decision *llm.ToolCallResponse, resolvedModel string, err error) {
 	start := time.Now()
 	stepID := fmt.Sprintf("subagent:%s", role)
 	e.logPhaseStart("EXECUTE", role, stepID)
@@ -326,6 +337,16 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 	// an empty deliverable (see 09-story-generator).
 	truncationRetried := false
 	var thinkingOverride llm.ThinkingLevel
+
+	// localToolsUsed/localNudged implement the 3c fair-share nudge: once
+	// this agent's own tool calls would cross its localToolCap, ask it
+	// once to wrap up instead of continuing to draw on the shared goal
+	// budget. This is a single warning, not a hard stop — a sibling that
+	// finishes early leaves budget unused, and an agent that genuinely
+	// needs a couple more calls after the nudge still gets them, just
+	// against the shared budget check below like normal.
+	localToolsUsed := 0
+	localNudged := false
 
 	// Execute sub-agent loop
 	for {
@@ -398,6 +419,34 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 			}
 		}
 
+		// Fair-share nudge (3c): this agent is about to cross its carved-out
+		// share of the goal's shared tool-call budget. First time: nudge it
+		// to wrap up and give it one more turn instead of failing outright.
+		// If it still wants more tool calls after the nudge, stop here and
+		// hand back whatever content it produced — a graceful degradation
+		// (partial output, no error) rather than letting it keep spending
+		// the shared budget its parallel siblings also need. This is what
+		// stops the run-38 failure mode: two agents both hitting the shared
+		// cap simultaneously with neither having produced a final answer.
+		if localToolCap > 0 && localToolsUsed+len(resp.ToolCalls) > localToolCap {
+			if !localNudged {
+				localNudged = true
+				e.logger.Info("sub-agent nearing fair-share tool budget; nudging to wrap up",
+					"role", role, "used", localToolsUsed, "cap", localToolCap)
+				messages = append(messages, llm.Message{Role: "user", Content: localBudgetNudge})
+				continue
+			}
+			for tool := range toolsUsedMap {
+				toolsUsed = append(toolsUsed, tool)
+			}
+			e.logPhaseComplete("EXECUTE", role, stepID, start, "local_budget")
+			content := resp.Content
+			if strings.TrimSpace(content) == "" {
+				content = "Sub-agent reached its fair share of the goal's tool budget. Returning partial results."
+			}
+			return content, toolsUsed, nil, resp.Model, nil
+		}
+
 		if err := budgetOf(ctx).spend(len(resp.ToolCalls)); err != nil {
 			for tool := range toolsUsedMap {
 				toolsUsed = append(toolsUsed, tool)
@@ -405,6 +454,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 			e.logPhaseComplete("EXECUTE", role, stepID, start, "budget_exhausted")
 			return resp.Content, toolsUsed, nil, resp.Model, err
 		}
+		localToolsUsed += len(resp.ToolCalls)
 
 		// Track tools used
 		for _, tc := range resp.ToolCalls {

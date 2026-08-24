@@ -308,7 +308,7 @@ func TestSpawnAgent_MetricsAndContext(t *testing.T) {
 	exec.inputs = map[string]string{"in": "1"}
 	exec.outputs = map[string]string{"prior": "earlier output"}
 
-	out, _, err := exec.spawnAgentWithPrompt(t.Context(), "researcher", "sys", "find things", nil, "", exec.buildPriorGoalsContext(), false)
+	out, _, err := exec.spawnAgentWithPrompt(t.Context(), "researcher", "sys", "find things", nil, "", exec.buildPriorGoalsContext(), false, 0)
 	if err != nil || out != "sub output" {
 		t.Fatalf("got %q %v", out, err)
 	}
@@ -356,7 +356,7 @@ func TestSpawnAgent_ReorientAndPipelineErrors(t *testing.T) {
 	}
 
 	exec, _ = newSupervisedExecutor(t, wf, newModel(errors.New("model down")), fakeSupervisor{supervise: true, verdict: "REORIENT"})
-	if _, _, err := exec.spawnAgentWithPrompt(t.Context(), "r", "sys", "task", nil, "", nil, true); err == nil {
+	if _, _, err := exec.spawnAgentWithPrompt(t.Context(), "r", "sys", "task", nil, "", nil, true, 0); err == nil {
 		t.Error("expected the corrected run's failure to surface (static agent)")
 	}
 
@@ -365,7 +365,7 @@ func TestSpawnAgent_ReorientAndPipelineErrors(t *testing.T) {
 		return nil, errors.New("model down")
 	})
 	exec, _ = newSupervisedExecutor(t, wf, failing, fakeSupervisor{supervise: true, verdict: "CONTINUE"})
-	if _, _, err := exec.spawnAgentWithPrompt(t.Context(), "r", "sys", "task", nil, "", nil, true); err == nil {
+	if _, _, err := exec.spawnAgentWithPrompt(t.Context(), "r", "sys", "task", nil, "", nil, true, 0); err == nil {
 		t.Error("expected the pipeline error to surface")
 	}
 }
@@ -383,7 +383,7 @@ func TestSubAgentExecutePhase_ToolLoop(t *testing.T) {
 		return &llm.ChatResponse{Content: "sub done"}, nil
 	})
 	exec := mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: model, Registry: reg, Policy: permissivePolicy()})
-	out, toolsUsed, _, _, err := exec.subAgentExecutePhaseWithModel(t.Context(), model, "r", "sys", "task")
+	out, toolsUsed, _, _, err := exec.subAgentExecutePhaseWithModel(t.Context(), model, "r", "sys", "task", 0)
 	if err != nil || out != "sub done" {
 		t.Fatalf("got %q %v", out, err)
 	}

@@ -60,6 +60,27 @@ func (b *budget) spend(toolCalls int) error {
 	return b.limitReachedLocked()
 }
 
+// remainingToolCalls reports how many tool calls are left in the goal's
+// budget: max(MaxToolCalls-spent, 0). It returns -1 when there is no
+// tool-call cap (nil budget, or MaxToolCalls unset), meaning "unlimited" —
+// callers use this to decide whether per-sub-agent fair-share carving is
+// even meaningful.
+func (b *budget) remainingToolCalls() int {
+	if b == nil {
+		return -1
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.limits.MaxToolCalls <= 0 {
+		return -1
+	}
+	remaining := b.limits.MaxToolCalls - b.tools
+	if remaining < 0 {
+		remaining = 0
+	}
+	return remaining
+}
+
 // exhausted reports whether the goal has already reached any of its limits,
 // without spending anything new. Callers use it to avoid starting another
 // round of work (a convergence iteration, a fresh batch of sub-agents)

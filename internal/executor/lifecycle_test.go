@@ -102,13 +102,13 @@ func TestSpawnAgentWithPrompt_ProfileResolution(t *testing.T) {
 	wf := &agentfile.Workflow{Name: "x"}
 
 	exec := mustNew(t, Config{Workflow: wf, Model: llmmock.New(), Resolver: fakeResolver{models: map[string]llm.Model{"fast": fast}}})
-	out, _, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "task", nil, "fast", nil, false)
+	out, _, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "task", nil, "fast", nil, false, 0)
 	if err != nil || out != "fast answer" {
 		t.Fatalf("got %q %v", out, err)
 	}
 
 	exec = mustNew(t, Config{Workflow: wf, Model: llmmock.New(), Resolver: fakeResolver{err: errors.New("unknown profile")}})
-	if _, _, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "task", nil, "slow", nil, false); err == nil || !strings.Contains(err.Error(), "unknown profile") {
+	if _, _, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "task", nil, "slow", nil, false, 0); err == nil || !strings.Contains(err.Error(), "unknown profile") {
 		t.Fatalf("expected resolver error, got %v", err)
 	}
 }
@@ -453,7 +453,7 @@ func TestSupervisedSubAgent(t *testing.T) {
 	if _, err := exec.spawnDynamicAgent(context.Background(), "r", "t", nil); err == nil || !strings.Contains(err.Error(), "paused by supervisor") {
 		t.Fatalf("expected pause, got %v", err)
 	}
-	if _, _, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "t", nil, "", nil, true); err == nil || !strings.Contains(err.Error(), "paused by supervisor") {
+	if _, _, err := exec.spawnAgentWithPrompt(context.Background(), "r", "sys", "t", nil, "", nil, true, 0); err == nil || !strings.Contains(err.Error(), "paused by supervisor") {
 		t.Fatalf("expected pause, got %v", err)
 	}
 
