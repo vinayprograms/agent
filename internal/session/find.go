@@ -124,13 +124,18 @@ func summarizeJSONL(path string) (Summary, error) {
 			}
 			sum.ID, sum.Name = rec.ID, rec.WorkflowName
 			sum.Agentfile, sum.Label = rec.Agentfile, rec.Label
-			sum.CreatedAt = rec.CreatedAt
+			if rec.CreatedAt != nil {
+				sum.CreatedAt = *rec.CreatedAt
+			}
 			seenHeader = true
 		case bytes.HasPrefix(line, footerPrefix):
 			if err := json.Unmarshal(line, &rec); err != nil {
 				return Summary{}, fmt.Errorf("session: summarize %s: %w", path, err)
 			}
-			sum.Status, sum.Error, sum.UpdatedAt = rec.Status, rec.Error, rec.UpdatedAt
+			sum.Status, sum.Error = rec.Status, rec.Error
+			if rec.UpdatedAt != nil {
+				sum.UpdatedAt = *rec.UpdatedAt
+			}
 		}
 		if err == io.EOF {
 			break
