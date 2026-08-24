@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -309,5 +310,43 @@ func TestLogLLMCall_StopReasonAlwaysLogged(t *testing.T) {
 	// Debug-only fields stay withheld.
 	if ev.Meta.Response != "" || ev.Meta.Prompt != "" || ev.Meta.Thinking != "" {
 		t.Errorf("debug-only fields leaked without debug: %+v", ev.Meta)
+	}
+}
+
+// TestSubAgentStartEndArePaired guards the regression where CONVERGE-pipeline
+// sub-agents logged a subagent_start that never got a matching subagent_end,
+// because only the GOAL fan-out path called logSubAgentEnd.
+func TestSubAgentStartEndArePaired(t *testing.T) {
+	src, err := os.ReadFile("subagent.go")
+	if err != nil {
+		t.Fatalf("read subagent.go: %v", err)
+	}
+	body := string(src)
+	if !strings.Contains(body, "e.logSubAgentStart(") {
+		t.Fatal("logSubAgentStart no longer called from spawnAgentWithPrompt")
+	}
+	if !strings.Contains(body, "e.logSubAgentEnd(") {
+		t.Error("spawnAgentWithPrompt must log subagent_end on every return path, " +
+			"otherwise non-fan-out paths (CONVERGE pipeline) emit unmatched start events")
+	}
+}
+
+// TestLogGoalEnd_SuccessHasNoError guards against a successful goal logging its
+// convergence reason in the Error field, which makes log consumers read a
+// healthy goal as a failure.
+func TestLogGoalEnd_SuccessHasNoError(t *testing.T) {
+	exec, sess, _ := newLoggingExecutor(t, false)
+	exec.logGoalEnd("g", "out", GoalOutcome{Outcome: OutcomeOK, Reason: "all checks passed"})
+	exec.logGoalEnd("h", "out", GoalOutcome{Outcome: OutcomeBudgetExhausted, Reason: "ran out"})
+
+	evs := sess.Events
+	if got := evs[0].Meta.Error; got != "" {
+		t.Errorf("successful goal logged Error=%q, want empty", got)
+	}
+	if got := evs[0].Meta.Reason; got != "all checks passed" {
+		t.Errorf("successful goal Reason=%q, want it preserved", got)
+	}
+	if got := evs[1].Meta.Error; got != "ran out" {
+		t.Errorf("failed goal Error=%q, want the reason", got)
 	}
 }

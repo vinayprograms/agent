@@ -160,8 +160,58 @@ CONVERGE refine "Refine the code until it's clean" WITHIN 10
 1. Agent executes the goal and produces output
 2. Output is fed back as context for the next iteration
 3. Agent sees all previous iterations in `<convergence-history>` tags
-4. Process repeats until agent outputs `CONVERGED` or hits the WITHIN limit
-5. Final output is the last substantive iteration (not the "CONVERGED" signal)
+4. Process repeats until the goal converges (see below) or hits the WITHIN limit
+5. Final output is the last substantive iteration (not the convergence signal itself)
+
+### Deciding convergence
+
+The agent that is deciding convergence (the single agent for a plain CONVERGE
+goal, or the last agent in a `USING` pipeline — see below) reports
+convergence by calling a `converged(reason)` tool, not by writing a marker
+word in its reply. This is the primary channel, and the reason it gives is
+logged on the goal's `goal_end` session event, so "why did this converge?"
+is answerable from the logs without re-running the goal.
+
+Not every provider can force a model to call a specific tool (notably Ollama
+Cloud, which offers tools but can't pin one). For that case there is a
+lenient prose fallback: if the agent's last non-empty line, once whitespace,
+markdown fences, and trailing punctuation are stripped, reads `CONVERGED`
+(case-insensitive), the goal is treated as converged anyway. The word
+appearing mid-paragraph does not count — only a marker on its own trailing
+line does. Authors don't need to do anything for this: both channels are
+always available, and the runtime picks whichever the model actually used.
+
+The same tool call also carries any `-> outputs` fields the goal declares,
+so a CONVERGE goal reports its structured outputs in the same call that
+reports convergence, rather than needing the outputs scraped separately out
+of prose (see `-> outputs` below).
+
+### CONVERGE with USING is a pipeline
+
+Unlike `GOAL ... USING`, which fans agents out in **parallel** and
+synthesizes their outputs, `CONVERGE ... USING` runs its agents
+**sequentially**, once per iteration: agent `a` runs first, then agent `b`
+runs and sees `a`'s output as context, and so on. Because the pipeline is
+sequential, there is nothing to synthesize — the **last agent's output is
+the goal's output** directly.
+
+Only the **last agent in the pipeline decides convergence** (via the
+`converged` tool or the lenient fallback, as above). Earlier agents in the
+pipeline are not offered the tool at all, and their prompts carry no
+convergence instruction — an agent that isn't the one deciding shouldn't be
+told to call a decision it doesn't have. A typical use is a
+generator-then-critic pipeline where the critic (last agent) is the one
+that ultimately judges the work done:
+
+```
+CONVERGE polish "Refine the code until it passes review" -> clean_code USING drafter, critic WITHIN 5
+```
+
+Each iteration: `drafter` produces a draft, `critic` reviews it (seeing the
+draft as context) and either calls `converged` when satisfied or returns
+feedback that becomes the next iteration's starting point. `drafter`'s
+output within an iteration is not itself the goal's output — only the last
+agent's (`critic`'s) output is.
 
 ### Syntax
 
@@ -176,6 +226,8 @@ holds for `GOAL`.
 ### Key features
 
 - **Same capabilities as GOAL**: tools, USING, spawn_agents, supervision all work
+- **USING is sequential, not fan-out**: see "CONVERGE with USING is a pipeline" above
+- **Convergence is decided by one agent**: the single agent, or the last in the pipeline — via the `converged` tool, with a lenient prose fallback
 - **Safety limit**: WITHIN prevents infinite loops
 - **Limit is hidden**: The LLM never sees the max iteration count (prevents gaming)
 - **Graceful degradation**: If limit is hit, returns last output with a warning
@@ -186,17 +238,18 @@ holds for `GOAL`.
 ```
 NAME code-polish
 
-AGENT critic "You are a code critic. Find issues."
-CONVERGE polish "Refine the code until it passes review" -> clean_code USING critic WITHIN 5
+AGENT drafter "You write and revise code."
+AGENT critic "You are a code critic. Find issues, or call converged when there are none left."
+CONVERGE polish "Refine the code until it passes review" -> clean_code USING drafter, critic WITHIN 5
 
 RUN main USING polish
 ```
 
 Each iteration:
-1. Agent produces refined code
-2. Critic agent evaluates it (via USING)
-3. If issues found, another iteration runs
-4. When agent believes code is clean, outputs `CONVERGED`
+1. `drafter` produces (or revises) the code
+2. `critic` reviews it, seeing `drafter`'s output as context (sequential pipeline)
+3. If issues remain, `critic` returns feedback — that's the iteration's output, and the next iteration starts from it
+4. When `critic` judges the code clean, it calls the `converged` tool (or, as a fallback, writes `CONVERGED` as the trailing line of its reply)
 
 ### Warning on non-convergence
 
