@@ -72,7 +72,13 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 		action = "deny"
 	}
 
-	content := fmt.Sprintf("[%s] %s: %s", step, verdict, command)
+	// Truncate the command for logging: shellguard can be handed arbitrarily
+	// long commands (heredocs, base64 blobs) and the command must still be
+	// present regardless of debug mode for the decision to be auditable
+	// (#1) — but an unbounded command shouldn't blow up Content/meta.source.
+	truncatedCmd := truncateForLog(command, 2000)
+
+	content := fmt.Sprintf("[%s] %s: %s", step, verdict, truncatedCmd)
 	if reason != "" {
 		content += fmt.Sprintf(" | reason: %s", reason)
 	}
@@ -89,7 +95,7 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 			Action:    action,
 			Reason:    reason,
 			LatencyMs: durationMs,
-			Source:    command,
+			Source:    truncatedCmd,
 			TokensIn:  inputTokens,
 			TokensOut: outputTokens,
 		},
@@ -102,7 +108,10 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 // logToolCall logs a tool call event to the session.
 // Returns a correlation ID that should be passed to logToolResult.
 func (e *Executor) logToolCall(ctx context.Context, name string, args map[string]any) string {
-	corrID := fmt.Sprintf("tool-%d", time.Now().UnixNano())
+	// A nanosecond timestamp alone collides when parallel tool calls land in
+	// the same tick; append a monotonic counter so corr_id is always unique
+	// under concurrency (#7).
+	corrID := fmt.Sprintf("tool-%d-%d", time.Now().UnixNano(), e.toolCallSeq.Add(1))
 
 	if e.session == nil {
 		return corrID
@@ -135,11 +144,15 @@ func (e *Executor) logToolResult(ctx context.Context, name string, args map[stri
 	// Get agent identity from context (thread-safe for parallel execution)
 	agentID := getAgentIdentity(ctx)
 
-	// Only include tool output in debug mode (PII protection)
-	var content string
-	if e.debug {
-		content = result
-	}
+	// Content policy (#2, #9): a session must be replayable/diagnosable
+	// without --debug. Debug mode logs the full tool result (Content +
+	// meta.Result); otherwise Content still carries a truncated preview and
+	// meta carries the full result's byte size + hash, so a run can be
+	// audited for e.g. an oversized web_fetch payload (~70k-token
+	// injection, suspected in 37) without needing a --debug rerun.
+	preview, size, hash := contentPreview(result)
+	content := preview
+	success := err == nil
 
 	event := session.Event{
 		Type:          session.EventToolResult,
@@ -148,6 +161,7 @@ func (e *Executor) logToolResult(ctx context.Context, name string, args map[stri
 		Tool:          name,
 		Args:          args,
 		Content:       content,
+		Success:       &success,
 		DurationMs:    duration.Milliseconds(),
 		Agent:         agentID.Name,
 		AgentRole:     agentID.Role,
@@ -157,8 +171,13 @@ func (e *Executor) logToolResult(ctx context.Context, name string, args map[stri
 	// comment), so a failed tool's error text is duplicated into meta.error
 	// here, unconditionally — an error carries no arbitrary tool output, so
 	// it is not subject to the same PII rule as Content/meta.result below.
-	meta := &session.EventMeta{}
+	meta := &session.EventMeta{
+		ContentSize: size,
+		ContentHash: hash,
+	}
 	if e.debug {
+		content = result
+		event.Content = content
 		meta.Result = truncateForLog(result, 500)
 	}
 	if err != nil {
@@ -190,8 +209,17 @@ func (e *Executor) logLLMCall(ctx context.Context, eventType string, messages []
 		ThinkingChars: len(resp.Thinking),
 	}
 
-	// Content only logged in debug mode (PII/data protection)
-	var content string
+	// Content policy (#2, #9): a session must be diagnosable and roughly
+	// replayable even without --debug, but full LLM content is
+	// PII-sensitive. Debug mode logs it in full (Event.Content +
+	// meta.Prompt/Response/Thinking); otherwise every assistant event still
+	// carries a truncated content preview plus the full response's byte
+	// size and hash, so "empty output", "truncated output", and "huge
+	// output" are all distinguishable from the JSONL alone.
+	preview, size, hash := contentPreview(resp.Content)
+	meta.ContentSize = size
+	meta.ContentHash = hash
+	content := preview
 	if e.debug {
 		content = resp.Content
 		var promptParts []string
@@ -519,16 +547,61 @@ func (e *Executor) logSecurityDecision(tool, action, reason, trust, checkPath st
 	})
 }
 
-// logSubAgentStart logs the start of a sub-agent execution.
-func (e *Executor) logSubAgentStart(name, role, model, task string, inputs map[string]string) {
+// logObservation logs the result of an observation-extraction attempt
+// (findings/insights/lessons pulled from a completed goal or sub-agent's
+// output for semantic memory). Counts are always logged, even on zero
+// extractions or failure, so "Observations: enabled" in run.log is backed
+// by session evidence either way (#11: the extractor previously ran with
+// no corresponding event, so 49 real runs showed zero observation events
+// despite the banner). Content is debug-only (PII protection); failErr, if
+// set, is a store/extract error and is always logged (needed to diagnose a
+// silent no-op without --debug).
+func (e *Executor) logObservation(source string, findings, insights, lessons []string, failErr string) {
 	if e.session == nil {
 		return
 	}
 
 	meta := &session.EventMeta{
-		SubAgentName:  name,
-		SubAgentRole:  role,
-		SubAgentModel: model,
+		ObservationSource:   source,
+		ObservationCount:    len(findings) + len(insights) + len(lessons),
+		ObservationFindings: len(findings),
+		ObservationInsights: len(insights),
+		ObservationLessons:  len(lessons),
+	}
+	if failErr != "" {
+		meta.ObservationStoreError = failErr
+	}
+
+	var content string
+	if e.debug {
+		content = truncateForLog(fmt.Sprintf("findings=%v insights=%v lessons=%v", findings, insights, lessons), 2000)
+	}
+
+	success := failErr == ""
+	e.session.AddEvent(session.Event{
+		Type:      session.EventObservation,
+		Goal:      e.currentGoal,
+		Content:   content,
+		Success:   &success,
+		Timestamp: time.Now(),
+		Meta:      meta,
+	})
+}
+
+// logSubAgentStart logs the start of a sub-agent execution. model is the
+// resolved model name (e.g. "deepseek-v4-pro:cloud") when already known at
+// spawn time, empty otherwise — it is not resolved until the first LLM
+// call, so logSubAgentEnd is the reliable place to find it (#7).
+func (e *Executor) logSubAgentStart(name, role, profile, model, task string, inputs map[string]string) {
+	if e.session == nil {
+		return
+	}
+
+	meta := &session.EventMeta{
+		SubAgentName:    name,
+		SubAgentRole:    role,
+		SubAgentProfile: profile,
+		SubAgentModel:   model,
 	}
 
 	// Only include task and inputs in debug mode (PII protection)
@@ -547,8 +620,12 @@ func (e *Executor) logSubAgentStart(name, role, model, task string, inputs map[s
 	})
 }
 
-// logSubAgentEnd logs the end of a sub-agent execution.
-func (e *Executor) logSubAgentEnd(name, role, model, output string, durationMs int64, err error) {
+// logSubAgentEnd logs the end of a sub-agent execution. model should be the
+// resolved model name observed from the sub-agent's own LLM responses
+// (falls back to profile when the sub-agent never got a response, e.g. an
+// immediate error) — profiles like "reasoning-heavy" are not model names
+// (#7).
+func (e *Executor) logSubAgentEnd(name, role, profile, model, output string, durationMs int64, err error) {
 	if e.session == nil {
 		return
 	}
@@ -558,11 +635,24 @@ func (e *Executor) logSubAgentEnd(name, role, model, output string, durationMs i
 		errStr = err.Error()
 		success = false
 	}
+	if model == "" {
+		model = profile
+	}
 
 	meta := &session.EventMeta{
-		SubAgentName:  name,
-		SubAgentRole:  role,
-		SubAgentModel: model,
+		SubAgentName:    name,
+		SubAgentRole:    role,
+		SubAgentProfile: profile,
+		SubAgentModel:   model,
+	}
+
+	// Event.Error does not survive persistence (see EventMeta.Error's doc
+	// comment: the footer-level "error" field of the same JSON name wins
+	// over the embedded Event.Error on marshal), so a failed sub-agent's
+	// error text must also land in meta.error or it never reaches the
+	// JSONL file at all (#8/#12).
+	if errStr != "" {
+		meta.Error = errStr
 	}
 
 	// Only include output in debug mode (PII protection)

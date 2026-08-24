@@ -51,14 +51,27 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 	}
 	userPrompt := BuildTaskContext(role, e.currentGoal, taskDescription)
 
-	// Log the spawn
+	// Log the spawn — both to hooks (existing consumers) and to the session
+	// (subagent_start/end). This is the spawn_agents tool's actual
+	// implementation (bound via cfg.SpawnBinder), so it previously fired
+	// hooks only and never wrote subagent_start/end session events at all
+	// (#5) — mirror the pairing pattern already used by spawnAgentWithPrompt.
 	e.hooks.Fire(ctx, hooks.SubAgentStart, map[string]any{"name": role, "input": map[string]string{"task": task}})
+	e.logSubAgentStart(role, role, "", "", task, map[string]string{"task": task})
+	subAgentStarted := time.Now()
+	var resolvedModel string
+	var output string
+	var err error
+	defer func() {
+		e.logSubAgentEnd(role, role, "", resolvedModel, output, time.Since(subAgentStarted).Milliseconds(), err)
+	}()
 
 	// Sub-agents inherit supervision from their parent goal
 	supervised := e.currentGoalSupervised
 
 	// Run through the supervision pipeline
-	pipelineResult, err := e.pipeline.Run(
+	var pipelineResult *supervision.PipelineResult
+	pipelineResult, err = e.pipeline.Run(
 		ctx,
 		supervision.PipelineRequest{
 			StepID:        fmt.Sprintf("subagent:%s", role),
@@ -74,8 +87,11 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 			},
 			// EXECUTE
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
-				output, toolsUsed, _, err := e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, userPrompt)
-				return &supervision.ExecuteResult{Output: output, ToolsUsed: toolsUsed}, err
+				out, toolsUsed, _, model, err := e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, userPrompt)
+				if model != "" {
+					resolvedModel = model
+				}
+				return &supervision.ExecuteResult{Output: out, ToolsUsed: toolsUsed}, err
 			},
 			// POST-CHECKPOINT
 			Post: func(ctx context.Context, pre *checkpoint.PreCheckpoint, output string, toolsUsed []string) *checkpoint.PostCheckpoint {
@@ -87,19 +103,24 @@ func (e *Executor) spawnDynamicAgent(ctx context.Context, role, task string, out
 		return "", err
 	}
 
-	output := pipelineResult.Output
+	output = pipelineResult.Output
 
 	// Handle supervision verdict
 	switch pipelineResult.Verdict {
 	case supervision.VerdictReorient:
 		e.logger.Info("reorienting sub-agent execution", "role", role, "correction", pipelineResult.Correction)
 		correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, pipelineResult.Correction)
-		output, _, _, err = e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, correctedTask)
+		var model string
+		output, _, _, model, err = e.subAgentExecutePhaseWithModel(ctx, e.model, role, systemPrompt, correctedTask)
+		if model != "" {
+			resolvedModel = model
+		}
 		if err != nil {
 			return "", err
 		}
 	case supervision.VerdictPause:
-		return "", fmt.Errorf("sub-agent %s paused by supervisor: %s", role, pipelineResult.Question)
+		err = fmt.Errorf("sub-agent %s paused by supervisor: %s", role, pipelineResult.Question)
+		return "", err
 	}
 
 	e.hooks.Fire(ctx, hooks.SubAgentComplete, map[string]any{"name": role, "output": output})
@@ -160,14 +181,15 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	for k, v := range e.outputs {
 		inputs[k] = v
 	}
-	e.logSubAgentStart(role, role, profile, task, inputs)
+	e.logSubAgentStart(role, role, profile, "", task, inputs)
 
 	// Pair the end event with the start on every return path. Previously only
 	// the GOAL fan-out path logged it, so CONVERGE-pipeline sub-agents emitted
 	// a subagent_start that never got a subagent_end.
 	subAgentStarted := time.Now()
+	var resolvedModel string
 	defer func() {
-		e.logSubAgentEnd(role, role, profile, output, time.Since(subAgentStarted).Milliseconds(), err)
+		e.logSubAgentEnd(role, role, profile, resolvedModel, output, time.Since(subAgentStarted).Milliseconds(), err)
 	}()
 
 	e.hooks.Fire(ctx, hooks.SubAgentStart, map[string]any{"name": role, "input": map[string]string{"task": task}})
@@ -204,8 +226,11 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 			},
 			// EXECUTE
 			Execute: func(ctx context.Context) (*supervision.ExecuteResult, error) {
-				out, toolsUsed, dec, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt, extraTools...)
+				out, toolsUsed, dec, gotModel, err := e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, userPrompt, extraTools...)
 				decision = dec
+				if gotModel != "" {
+					resolvedModel = gotModel
+				}
 				// Log/warn once per goal, but keep the error itself so it
 				// propagates to the caller (e.g. a multi-agent goal or a
 				// convergence loop) instead of looking like success. The
@@ -238,7 +263,11 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	switch pipelineResult.Verdict {
 	case supervision.VerdictReorient:
 		correctedTask := BuildTaskContextWithCorrection(role, e.currentGoal, taskDescription, pipelineResult.Correction)
-		output, _, decision, err = e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, correctedTask, extraTools...)
+		var gotModel string
+		output, _, decision, gotModel, err = e.subAgentExecutePhaseWithModel(ctx, model, role, systemPrompt, correctedTask, extraTools...)
+		if gotModel != "" {
+			resolvedModel = gotModel
+		}
 		if err != nil {
 			return "", nil, err
 		}
@@ -256,7 +285,11 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 // (converged, emit_outputs) offered alongside the regular tools; a call to
 // one of them ends the loop immediately and is returned as decision instead
 // of being executed like a regular tool call — mirroring executePhase.
-func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.Model, role, systemPrompt, userPrompt string, extraTools ...llm.ToolDef) (output string, toolsUsed []string, decision *llm.ToolCallResponse, err error) {
+// resolvedModel, on return, is the model name reported by the sub-agent's
+// own LLM responses (llm.ChatResponse.Model) — the actual provider/model
+// that ran, as opposed to the caller-supplied profile name (#7). Empty if
+// the sub-agent never got a response (e.g. immediate LLM error).
+func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.Model, role, systemPrompt, userPrompt string, extraTools ...llm.ToolDef) (output string, toolsUsed []string, decision *llm.ToolCallResponse, resolvedModel string, err error) {
 	start := time.Now()
 	stepID := fmt.Sprintf("subagent:%s", role)
 	e.logPhaseStart("EXECUTE", role, stepID)
@@ -303,7 +336,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 			for tool := range toolsUsedMap {
 				toolsUsed = append(toolsUsed, tool)
 			}
-			return "Sub-agent reached maximum turn limit. Returning partial results.", toolsUsed, nil, nil
+			return "Sub-agent reached maximum turn limit. Returning partial results.", toolsUsed, nil, "", nil
 		}
 		llmStart := time.Now()
 		resp, err := model.Chat(ctx, llm.ChatRequest{
@@ -314,7 +347,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 		llmDuration := time.Since(llmStart)
 		if err != nil {
 			e.logPhaseComplete("EXECUTE", role, stepID, start, "error")
-			return "", nil, nil, fmt.Errorf("sub-agent LLM error: %w", err)
+			return "", nil, nil, "", fmt.Errorf("sub-agent LLM error: %w", err)
 		}
 
 		// Log full LLM interaction (for -vv replay)
@@ -339,7 +372,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 				toolsUsed = append(toolsUsed, tool)
 			}
 			e.logPhaseComplete("EXECUTE", role, stepID, start, "empty_output")
-			return "", toolsUsed, nil, &emptyLLMTurnError{role: role, reason: fmt.Sprintf("LLM turn stayed truncated/empty (stop_reason=%q) after one retry", resp.StopReason)}
+			return "", toolsUsed, nil, resp.Model, &emptyLLMTurnError{role: role, reason: fmt.Sprintf("LLM turn stayed truncated/empty (stop_reason=%q) after one retry", resp.StopReason)}
 		}
 
 		// No tool calls = sub-agent complete
@@ -348,7 +381,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 				toolsUsed = append(toolsUsed, tool)
 			}
 			e.logPhaseComplete("EXECUTE", role, stepID, start, "complete")
-			return resp.Content, toolsUsed, nil, nil
+			return resp.Content, toolsUsed, nil, resp.Model, nil
 		}
 
 		// A decision-tool call (converged, emit_outputs) ends the loop
@@ -360,7 +393,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 						toolsUsed = append(toolsUsed, tool)
 					}
 					e.logPhaseComplete("EXECUTE", role, stepID, start, "decision")
-					return resp.Content, toolsUsed, &resp.ToolCalls[i], nil
+					return resp.Content, toolsUsed, &resp.ToolCalls[i], resp.Model, nil
 				}
 			}
 		}
@@ -370,7 +403,7 @@ func (e *Executor) subAgentExecutePhaseWithModel(ctx context.Context, model llm.
 				toolsUsed = append(toolsUsed, tool)
 			}
 			e.logPhaseComplete("EXECUTE", role, stepID, start, "budget_exhausted")
-			return resp.Content, toolsUsed, nil, err
+			return resp.Content, toolsUsed, nil, resp.Model, err
 		}
 
 		// Track tools used

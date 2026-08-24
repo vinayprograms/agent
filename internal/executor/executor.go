@@ -213,6 +213,12 @@ type Executor struct {
 
 	mu sync.Mutex // protects convergenceFailures, goalOutcomes
 
+	// toolCallSeq generates unique correlation IDs for tool calls. A
+	// timestamp alone collides when parallel tool calls land in the same
+	// nanosecond (#7); this counter guarantees distinctness under
+	// concurrency regardless of clock resolution.
+	toolCallSeq atomic.Uint64
+
 	// Metrics collector for heartbeat reporting (optional, set by serve mode)
 	metricsCollector MetricsCollector
 
@@ -422,12 +428,23 @@ func (e *Executor) extractAndStoreObservations(ctx context.Context, stepName, st
 	e.background.Go(func() {
 		defer cancel()
 		f, i, l, err := e.observationExtractor.Extract(ctx, output, memory.WithSource(source))
-		if err != nil || len(f)+len(i)+len(l) == 0 {
+		if err != nil {
+			e.logObservation(source, f, i, l, "extract failed: "+err.Error())
+			return
+		}
+		if len(f)+len(i)+len(l) == 0 {
+			// Not an error: the extractor legitimately found nothing worth
+			// keeping. Logged anyway (count=0) so "Observations: enabled"
+			// in run.log is backed by session evidence either way (#11).
+			e.logObservation(source, f, i, l, "")
 			return
 		}
 		if _, err := e.observationStore.RememberFIL(ctx, f, i, l, source); err != nil {
 			e.logger.Warn("failed to store observations", "source", source, "error", err.Error())
+			e.logObservation(source, f, i, l, "store failed: "+err.Error())
+			return
 		}
+		e.logObservation(source, f, i, l, "")
 	})
 }
 
