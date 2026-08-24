@@ -8,8 +8,28 @@ default_deny = false
 
 # Allowed Directories (Universal Filesystem Boundary)
 # ---
-# All tools that touch the filesystem (read, write, edit, bash, glob, grep, ls)
-# are restricted to these directories. Paths outside are denied.
+# The dedicated filesystem tools (read, write, edit, glob, grep, ls) enforce
+# this boundary deterministically: paths outside allowed_dirs are denied,
+# no exceptions.
+#
+# bash is different. Its shellguard gate applies the same boundary — writes
+# and DATA READS (cat, grep on a file, python -c "open(...)", etc.) are
+# confined to allowed_dirs, and separately, credential/secret paths
+# (~/.ssh, ~/.aws, *.pem, *.key, .env, id_rsa*) are always blocked — but a
+# TOOLCHAIN READ (GOROOT, GOCACHE, ~/go/pkg/mod, site-packages, node_modules,
+# /usr/lib, /usr/include, Homebrew paths, and similar interpreter/library/
+# build-cache paths read incidentally while a compiler or interpreter runs)
+# is always allowed, or `go build`/`go test`/`python`/`npm` would break.
+# If a `[tools.read]`/`[tools.write]`/`[tools.edit]` table is absent (tool
+# disabled), bash is told and denies the matching operation outright too.
+#
+# IMPORTANT: this bash boundary is judged by an LLM review step, not
+# deterministic path matching. Treat it as a deterrent-grade boundary, not
+# a hard security boundary — a sufficiently adversarial phrasing can still
+# be misjudged by the reviewer. For a hard boundary, disable bash
+# (`default_deny = true`, no `[tools.bash]` table) and rely on the
+# deterministic filesystem tools instead.
+#
 # Supports $WORKSPACE expansion. If omitted, defaults to workspace only.
 # allowed_dirs = ["$WORKSPACE", "/tmp"]
 
