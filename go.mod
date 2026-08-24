@@ -140,3 +140,5 @@ require (
 	google.golang.org/grpc v1.83.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+replace github.com/vinayprograms/agentkit => /Users/vinay/Documents/projects/agentkit
