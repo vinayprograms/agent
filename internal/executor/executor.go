@@ -1514,6 +1514,29 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	// Build prior goals context from completed goals
 	priorGoals := e.buildPriorGoalsContext()
 
+	// Carve a fair share of the goal's remaining tool-call budget for each
+	// parallel agent (3c). Without this, all agents draw on the same
+	// counter with nothing telling any one of them to wind down — in
+	// practice the fastest/greediest agents burn the whole goal budget
+	// before any of them produces a final answer, and every sub-agent
+	// then fails with an empty deliverable (run 38: two agents hit 41/40
+	// tool calls, both success=false, outputs all ""). Splitting the
+	// remaining allowance N ways up front means each agent gets nudged to
+	// wrap up on its own share well before the shared budget is spent, so
+	// a slow/wasteful sibling can't starve the others. Unlimited budgets
+	// (remainingToolCalls == -1) get no cap, preserving today's behaviour.
+	localToolCap := 0
+	if remaining := budgetOf(ctx).remainingToolCalls(); remaining >= 0 {
+		n := len(agents)
+		if n < 1 {
+			n = 1
+		}
+		localToolCap = remaining / n
+		if localToolCap < 1 {
+			localToolCap = 1
+		}
+	}
+
 	resultChan := make(chan agentResult, len(agents))
 	var wg sync.WaitGroup
 
@@ -1534,7 +1557,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 
 			// Use spawnAgentWithPrompt which shares code with dynamic agents
 			// Pass agent's supervision flag - agent is supervised if it has SUPERVISED or inherits from goal
-			output, _, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires, priorGoals, agent.IsSupervised(e.workflow))
+			output, _, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires, priorGoals, agent.IsSupervised(e.workflow), localToolCap)
 
 			resultChan <- agentResult{
 				name:       agent.Name,

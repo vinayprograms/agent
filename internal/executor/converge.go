@@ -422,7 +422,10 @@ func (e *Executor) executeConvergePipeline(ctx context.Context, goal *agentfile.
 			}
 		}
 
-		output, decision, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, agentTask, nil, agent.Requires, priorGoals, agent.IsSupervised(e.workflow), extraTools...)
+		// No local tool-call cap: CONVERGE is a sequential pipeline (one
+		// agent at a time), so there are no siblings to starve and the
+		// agent should be free to use the goal's full remaining budget.
+		output, decision, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, agentTask, nil, agent.Requires, priorGoals, agent.IsSupervised(e.workflow), 0, extraTools...)
 		if err != nil {
 			// Preserve whatever partial output came back (e.g. a spent
 			// budget) as the pipeline's output so far.

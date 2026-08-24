@@ -117,6 +117,12 @@ func classifyOutcome(output string, toolCallsMade bool, declared []string, vars 
 // decides the turn is "done".
 const truncationNudge = "Your previous response was cut off or empty. Answer directly and concisely; do not spend your whole response budget on reasoning."
 
+// localBudgetNudge (3c) tells a parallel sub-agent it has used its fair
+// share of the goal's shared tool-call budget and should wrap up now,
+// before the shared budget runs out on it or a sibling. It fires once per
+// sub-agent, from subAgentExecutePhaseWithModel's localToolCap check.
+const localBudgetNudge = "You are approaching your allotted share of this goal's tool-call budget, which is shared with other agents working in parallel. Wrap up now: give your best final answer based on what you've already gathered. Do not make further tool calls unless truly necessary."
+
 // truncatedEmptyTurn reports whether an LLM turn looks like a truncated or
 // empty turn that must not be treated as a normal "no tool calls, I'm
 // done" turn: it made no tool calls, and either the provider reported
