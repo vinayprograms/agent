@@ -1535,17 +1535,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	var agentOutputs []string
 	var budgetErr error
 	for result := range resultChan {
-		// Find agent for model info
-		model := ""
-		for _, a := range agents {
-			if a.Name == result.name && a.Requires != "" {
-				model = a.Requires
-				break
-			}
-		}
-
-		// Log sub-agent completion
-		e.logSubAgentEnd(result.name, result.name, model, result.output, result.durationMs, result.err)
+		// subagent_end is logged by spawnAgentWithPrompt for every path.
 
 		if result.err != nil {
 			var spent *budgetError

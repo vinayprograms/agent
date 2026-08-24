@@ -162,6 +162,14 @@ func (e *Executor) spawnAgentWithPrompt(ctx context.Context, role, systemPrompt,
 	}
 	e.logSubAgentStart(role, role, profile, task, inputs)
 
+	// Pair the end event with the start on every return path. Previously only
+	// the GOAL fan-out path logged it, so CONVERGE-pipeline sub-agents emitted
+	// a subagent_start that never got a subagent_end.
+	subAgentStarted := time.Now()
+	defer func() {
+		e.logSubAgentEnd(role, role, profile, output, time.Since(subAgentStarted).Milliseconds(), err)
+	}()
+
 	e.hooks.Fire(ctx, hooks.SubAgentStart, map[string]any{"name": role, "input": map[string]string{"task": task}})
 
 	// Track active sub-agent count for metrics
