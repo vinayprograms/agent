@@ -330,3 +330,23 @@ func TestSubAgentStartEndArePaired(t *testing.T) {
 			"otherwise non-fan-out paths (CONVERGE pipeline) emit unmatched start events")
 	}
 }
+
+// TestLogGoalEnd_SuccessHasNoError guards against a successful goal logging its
+// convergence reason in the Error field, which makes log consumers read a
+// healthy goal as a failure.
+func TestLogGoalEnd_SuccessHasNoError(t *testing.T) {
+	exec, sess, _ := newLoggingExecutor(t, false)
+	exec.logGoalEnd("g", "out", GoalOutcome{Outcome: OutcomeOK, Reason: "all checks passed"})
+	exec.logGoalEnd("h", "out", GoalOutcome{Outcome: OutcomeBudgetExhausted, Reason: "ran out"})
+
+	evs := sess.Events
+	if got := evs[0].Meta.Error; got != "" {
+		t.Errorf("successful goal logged Error=%q, want empty", got)
+	}
+	if got := evs[0].Meta.Reason; got != "all checks passed" {
+		t.Errorf("successful goal Reason=%q, want it preserved", got)
+	}
+	if got := evs[1].Meta.Error; got != "ran out" {
+		t.Errorf("failed goal Error=%q, want the reason", got)
+	}
+}

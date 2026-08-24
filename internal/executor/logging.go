@@ -249,6 +249,14 @@ func (e *Executor) logGoalEnd(goalName, output string, outcome GoalOutcome) {
 	}
 
 	ok := outcome.Outcome == OutcomeOK
+
+	// Reason explains every outcome, including a successful convergence.
+	// Error must stay empty on success, or log consumers read a healthy
+	// goal as a failed one.
+	errText := ""
+	if !ok {
+		errText = outcome.Reason
+	}
 	e.session.AddEvent(session.Event{
 		Type:      session.EventGoalEnd,
 		Goal:      goalName,
@@ -258,7 +266,7 @@ func (e *Executor) logGoalEnd(goalName, output string, outcome GoalOutcome) {
 		Meta: &session.EventMeta{
 			Result:     string(outcome.Outcome),
 			Reason:     outcome.Reason,
-			Error:      outcome.Reason,
+			Error:      errText,
 			Retried:    outcome.Retried,
 			Iterations: outcome.Iterations,
 		},
