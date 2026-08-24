@@ -337,9 +337,16 @@ func (e *Executor) executeConvergeIteration(ctx context.Context, goal *agentfile
 	e.currentGoal = goal.Name
 
 	extraTools := []llm.ToolDef{convergedToolFor(goal.Outputs)}
+	// The single agent is the one deciding convergence, so it gets the
+	// tool-call instruction (a provider that can't force tool_choice, e.g.
+	// Ollama Cloud, still needs the prompt-level nudge).
+	agentPrompt := prompt + convergedInstruction
+	if len(goal.Outputs) > 0 {
+		agentPrompt += fmt.Sprintf(" Include your declared output fields (%s) in that same call.", strings.Join(goal.Outputs, ", "))
+	}
 	// Use executePhase which handles tools, thinking, etc. The output is
 	// returned even on error: a budget stop keeps its partial result.
-	output, _, _, decision, err := e.executePhase(ctx, goal, prompt, extraTools...)
+	output, _, _, decision, err := e.executePhase(ctx, goal, agentPrompt, extraTools...)
 	if err != nil {
 		return convergeIterationResult{Content: output}, err
 	}

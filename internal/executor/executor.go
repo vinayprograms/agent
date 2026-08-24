@@ -713,6 +713,13 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		}
 		outcome := classifyOutcome(result.Output, true, goal.Outputs, vars, asBudgetError(result.BudgetErr), !result.Converged && result.BudgetErr == nil, convergeLimit)
 		outcome.Iterations = result.Iterations
+		// Log why the goal converged (from the converged tool, or the
+		// lenient prose fallback) so a session JSONL reader can answer "why
+		// did this converge?" without re-running the goal. classifyOutcome
+		// never sets Reason for OutcomeOK, so this can't clobber anything.
+		if result.Converged && result.Reason != "" {
+			outcome.Reason = result.Reason
+		}
 
 		outcome = e.maybeRetry(ctx, goal, outcome, func(retryCtx context.Context, g *agentfile.Goal) GoalOutcome {
 			retryResult, rerr := e.executeConvergeGoal(retryCtx, g)
@@ -727,6 +734,9 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			}
 			oc := classifyOutcome(result.Output, true, goal.Outputs, vars, asBudgetError(result.BudgetErr), !result.Converged && result.BudgetErr == nil, limit)
 			oc.Iterations = result.Iterations
+			if result.Converged && result.Reason != "" {
+				oc.Reason = result.Reason
+			}
 			return oc
 		})
 
