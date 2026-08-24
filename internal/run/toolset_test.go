@@ -231,7 +231,7 @@ func TestBuildToolset_BashGate(t *testing.T) {
 	var decisions []string
 	gate := shellguard.New(shellguard.Bash(), ws, []string{ws}, []string{"git"}, nil, "")
 	gate.OnDecision = func(command, step string, allowed bool, reason string, _ int64, _, _ int) {
-		decisions = append(decisions, step)
+		decisions = append(decisions, step+":"+command)
 	}
 	reg, err := buildToolset(toolsetConfig{Policy: pol, Workspace: ws, BashGate: gate})
 	if err != nil {
@@ -249,8 +249,23 @@ func TestBuildToolset_BashGate(t *testing.T) {
 	if err != nil || !strings.Contains(out, "ok") {
 		t.Errorf("echo: out=%q err=%v", out, err)
 	}
-	if len(decisions) != 3 {
-		t.Errorf("expected 3 OnDecision calls, got %d", len(decisions))
+	// Three commands, but "echo ok" is decided twice: the deterministic
+	// stage allows it, then agentkit's path pre-check (v1.5.0) reports its
+	// own allow so callers can audit which stage decided. Each command must
+	// produce at least one decision, and none may go unreported.
+	for _, cmd := range []string{"git status", "sudo ls", "echo ok"} {
+		var seen bool
+		for _, d := range decisions {
+			if strings.Contains(d, cmd) {
+				seen = true
+			}
+		}
+		if !seen {
+			t.Errorf("no OnDecision reported for %q; decisions=%v", cmd, decisions)
+		}
+	}
+	if len(decisions) < 3 {
+		t.Errorf("expected at least 3 OnDecision calls, got %d: %v", len(decisions), decisions)
 	}
 }
 

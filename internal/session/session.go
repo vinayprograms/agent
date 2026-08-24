@@ -59,6 +59,9 @@ const (
 	EventSubAgentStart = "subagent_start" // Sub-agent spawned
 	EventSubAgentEnd   = "subagent_end"   // Sub-agent completed
 
+	// Observation extraction (semantic memory)
+	EventObservation = "observation" // Insights extracted from a completed piece of work (or a failed extraction)
+
 	// Warning events (shown in yellow in replay)
 	EventWarning = "warning"
 )
@@ -192,12 +195,13 @@ type EventMeta struct {
 	CheckpointID   string `json:"ckpt_id,omitempty"`   // Checkpoint identifier
 
 	// Sub-agent execution
-	SubAgentName   string            `json:"subagent_name,omitempty"`   // Sub-agent identifier
-	SubAgentRole   string            `json:"subagent_role,omitempty"`   // Sub-agent role (from AGENT definition)
-	SubAgentModel  string            `json:"subagent_model,omitempty"`  // Model used by sub-agent
-	SubAgentTask   string            `json:"subagent_task,omitempty"`   // Task given to sub-agent
-	SubAgentOutput string            `json:"subagent_output,omitempty"` // Full output from sub-agent
-	SubAgentInputs map[string]string `json:"subagent_inputs,omitempty"` // Inputs passed to sub-agent
+	SubAgentName    string            `json:"subagent_name,omitempty"`    // Sub-agent identifier
+	SubAgentRole    string            `json:"subagent_role,omitempty"`    // Sub-agent role (from AGENT definition)
+	SubAgentModel   string            `json:"subagent_model,omitempty"`   // Resolved model actually used by the sub-agent (e.g. "deepseek-v4-pro:cloud")
+	SubAgentProfile string            `json:"subagent_profile,omitempty"` // Profile name requested (e.g. "reasoning-heavy"); may differ from SubAgentModel
+	SubAgentTask    string            `json:"subagent_task,omitempty"`    // Task given to sub-agent
+	SubAgentOutput  string            `json:"subagent_output,omitempty"`  // Full output from sub-agent
+	SubAgentInputs  map[string]string `json:"subagent_inputs,omitempty"`  // Inputs passed to sub-agent
 
 	// LLM details
 	Model          string `json:"model,omitempty"`           // Model used
@@ -214,6 +218,17 @@ type EventMeta struct {
 	Response string `json:"response,omitempty"` // Full LLM response
 	Thinking string `json:"thinking,omitempty"` // LLM thinking/reasoning (if available)
 
+	// Non-debug content policy: full assistant/tool_result content is
+	// PII-sensitive and only logged under --debug (see Response/Result
+	// above and Event.Content). Outside debug mode a run must still be
+	// diagnosable and roughly replayable, so every event that withholds
+	// full content instead logs a truncated preview plus the full content's
+	// byte size and a short hash — enough to tell empty from truncated from
+	// huge (e.g. the suspected ~70k-token web_fetch injection), and to
+	// confirm two previews came from the same underlying text.
+	ContentSize int    `json:"content_size,omitempty"` // Full content length in bytes, regardless of debug mode
+	ContentHash string `json:"content_hash,omitempty"` // First 16 hex chars of sha256(full content)
+
 	// Error carries a failure's error text. It exists because Event.Error
 	// is shadowed on the wire: jsonlRecord's footer-level "error" field
 	// wins over the embedded Event.Error field of the same JSON name when
@@ -225,6 +240,14 @@ type EventMeta struct {
 	// Goal outcome (goal_end events)
 	Retried    bool `json:"retried,omitempty"`    // Whether the goal was retried after a soft failure
 	Iterations int  `json:"iterations,omitempty"` // Iteration count for CONVERGE goals (converged or not)
+
+	// Observation extraction (observation events)
+	ObservationSource     string `json:"obs_source,omitempty"`      // Who/what produced the extracted work (agent name or role)
+	ObservationCount      int    `json:"obs_count,omitempty"`       // Total number of observations extracted
+	ObservationFindings   int    `json:"obs_findings,omitempty"`    // Count of "finding" type observations
+	ObservationInsights   int    `json:"obs_insights,omitempty"`    // Count of "insight" type observations
+	ObservationLessons    int    `json:"obs_lessons,omitempty"`     // Count of "lesson" type observations
+	ObservationStoreError string `json:"obs_store_error,omitempty"` // Set if extraction succeeded but storing failed
 }
 
 // AddEvent sequences and timestamps event (if its Timestamp is zero),

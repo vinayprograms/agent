@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +43,13 @@ func TestSessionEventSchema(t *testing.T) {
 	exec.logSecuritySupervisor("bash", "b0001", "DENY", "why", "supervisor", 34, 5, 6)
 	exec.logSecurityDecision("bash", "deny", "why", "", "static→triage→supervisor")
 	exec.logSecurityBlock("b0001", "untrusted", "data", "tool:web_fetch", "<block/>", 4.2)
+	exec.LogBashSecurity("go test ./...", "llm", true, "safe, read-only", 42, 7, 8)
+	exec.logObservation("GOAL:g", []string{"f1"}, []string{"i1"}, nil, "")
+	exec.logSubAgentStart("r", "r", "reasoning-heavy", "deepseek-v4-pro:cloud", "task", nil)
+	exec.logSubAgentEnd("r", "r", "reasoning-heavy", "deepseek-v4-pro:cloud", "out", 5, errors.New("boom"))
+	ctx := withAgentIdentity(context.Background(), "w", "r")
+	exec.logToolResult(ctx, "read", nil, "c1", "some result text", nil, time.Millisecond)
+	exec.logLLMCall(ctx, session.EventAssistant, nil, &llm.ChatResponse{Content: "hi there", Model: "m"}, time.Millisecond)
 
 	wantKeys := map[string][]string{
 		session.EventSecurityStatic:     {"check", "block_id", "related_blocks", "flags", "taint_lineage"},
@@ -49,6 +57,21 @@ func TestSessionEventSchema(t *testing.T) {
 		session.EventSecuritySupervisor: {"supervisor_type", "check", "block_id", "verdict", "reason", "model", "tokens_in", "tokens_out"},
 		session.EventSecurityDecision:   {"action", "reason", "check_path"},
 		session.EventSecurityBlock:      {"block_id", "trust", "block_type", "source", "entropy"},
+		// #1: bash_security must carry the command and reason regardless of
+		// debug mode (source doubles as the command, check as the stage).
+		session.EventBashSecurity: {"check", "action", "reason", "source", "latency_ms", "tokens_in", "tokens_out"},
+		// #3: observation events must exist at all and carry counts.
+		session.EventObservation: {"obs_source", "obs_count", "obs_findings", "obs_insights"},
+		// #7: subagent_start/end must carry both profile and resolved model.
+		session.EventSubAgentStart: {"subagent_name", "subagent_role", "subagent_profile", "subagent_model"},
+		// #7, #8: subagent_end must carry resolved model, and its error
+		// must survive persistence via meta.error (Event.Error is shadowed
+		// on the wire by jsonlRecord.Error of the same JSON name).
+		session.EventSubAgentEnd: {"subagent_model", "subagent_profile", "error"},
+		// #2, #9: tool_result/assistant must carry size+hash even without
+		// full content, so a run stays diagnosable without --debug.
+		session.EventToolResult: {"content_size", "content_hash"},
+		session.EventAssistant:  {"content_size", "content_hash"},
 	}
 	for _, ev := range sess.Events {
 		raw, err := json.Marshal(ev)
@@ -116,8 +139,8 @@ func TestLogHelpers_DebugContent(t *testing.T) {
 	exec.logPhaseReconcile("g", "s", []string{"t1"}, true, 7)
 	exec.logPhaseSupervise("g", "s", "REORIENT", "fix it", true, 8)
 	exec.logCheckpoint("pre", "g", "s", "cp1")
-	exec.logSubAgentStart("r", "r", "fast", "task", map[string]string{"k": "v"})
-	exec.logSubAgentEnd("r", "r", "fast", "out", 9, errors.New("sub failed"))
+	exec.logSubAgentStart("r", "r", "fast", "deepseek-v4-pro:cloud", "task", map[string]string{"k": "v"})
+	exec.logSubAgentEnd("r", "r", "fast", "deepseek-v4-pro:cloud", "out", 9, errors.New("sub failed"))
 
 	byType := map[string]session.Event{}
 	for _, ev := range sess.Events {
@@ -147,30 +170,59 @@ func TestLogHelpers_DebugContent(t *testing.T) {
 	if ev := byType[session.EventCheckpoint]; ev.Meta.CheckpointID != "cp1" || ev.Step != "s" {
 		t.Errorf("checkpoint: %+v", ev)
 	}
-	if ev := byType[session.EventSubAgentStart]; ev.Meta.SubAgentTask != "task" || ev.Meta.SubAgentInputs["k"] != "v" {
+	if ev := byType[session.EventSubAgentStart]; ev.Meta.SubAgentTask != "task" || ev.Meta.SubAgentInputs["k"] != "v" || ev.Meta.SubAgentProfile != "fast" || ev.Meta.SubAgentModel != "deepseek-v4-pro:cloud" {
 		t.Errorf("subagent start: %+v", ev.Meta)
 	}
-	if ev := byType[session.EventSubAgentEnd]; ev.Error != "sub failed" || *ev.Success || ev.Meta.SubAgentOutput != "out" {
+	if ev := byType[session.EventSubAgentEnd]; ev.Error != "sub failed" || *ev.Success || ev.Meta.SubAgentOutput != "out" || ev.Meta.SubAgentModel != "deepseek-v4-pro:cloud" || ev.Meta.Error != "sub failed" {
 		t.Errorf("subagent end: %+v", ev)
 	}
 	if !strings.Contains(buf.String(), "tool_error") {
 		t.Error("expected tool_error log line")
 	}
 
-	// Non-debug: content is withheld.
+	// Non-debug policy (#2, #9): the FULL prompt/response/tool-output/
+	// sub-agent-output fields (meta.Prompt/Response/SubAgentOutput, and
+	// Event.Content beyond previewLen) are still withheld outside --debug
+	// (PII protection, unchanged). What changed: every such event now
+	// always carries a truncated preview (<=previewLen bytes) plus the full
+	// content's byte size and hash, so a run stays diagnosable without a
+	// --debug rerun. A short string like "secret" is entirely within
+	// previewLen, so it appears in the preview by design — the guarantee
+	// is "nothing beyond previewLen bytes leaks", not "nothing leaks".
 	quiet, qsess, qbuf := newLoggingExecutor(t, false)
-	quiet.logToolResult(ctx, "read", nil, "c1", "secret", nil, time.Millisecond)
-	quiet.logLLMCall(ctx, session.EventAssistant, nil, &llm.ChatResponse{Content: "secret"}, 0)
-	quiet.logGoalEnd("g", "secret", GoalOutcome{Outcome: OutcomeOK})
-	quiet.logSubAgentEnd("r", "r", "", "secret", 0, nil)
+	longSecret := "TOP-SECRET:" + strings.Repeat("x", previewLen+50)
+	quiet.logToolResult(ctx, "read", nil, "c1", longSecret, nil, time.Millisecond)
+	quiet.logLLMCall(ctx, session.EventAssistant, nil, &llm.ChatResponse{Content: longSecret}, 0)
+	quiet.logGoalEnd("g", longSecret, GoalOutcome{Outcome: OutcomeOK})
+	quiet.logSubAgentEnd("r", "r", "", "", longSecret, 0, nil)
 	for _, ev := range qsess.Events {
-		if strings.Contains(ev.Content, "secret") || (ev.Meta != nil && (ev.Meta.Response == "secret" || ev.Meta.SubAgentOutput == "secret")) {
-			t.Errorf("content leaked without debug: %+v", ev)
+		if len(ev.Content) > previewLen+len("...") {
+			t.Errorf("content not truncated to preview without debug: %+v", ev)
 		}
+		if ev.Meta != nil && (ev.Meta.Response == longSecret || ev.Meta.SubAgentOutput == longSecret || ev.Meta.Result == longSecret) {
+			t.Errorf("full content leaked into debug-only meta field without debug: %+v", ev)
+		}
+	}
+	if ev := byTypeIn(qsess, session.EventToolResult); ev.Meta == nil || ev.Meta.ContentSize != len(longSecret) || ev.Meta.ContentHash == "" {
+		t.Errorf("tool_result missing content size/hash without debug: %+v", ev.Meta)
+	}
+	if ev := byTypeIn(qsess, session.EventAssistant); ev.Meta == nil || ev.Meta.ContentSize != len(longSecret) || ev.Meta.ContentHash == "" {
+		t.Errorf("assistant missing content size/hash without debug: %+v", ev.Meta)
 	}
 	if !strings.Contains(qbuf.String(), "tool_result") {
 		t.Error("expected tool_result debug log line")
 	}
+}
+
+// byTypeIn returns the first event of the given type in sess, or the zero
+// Event if none.
+func byTypeIn(sess *session.Session, typ string) session.Event {
+	for _, ev := range sess.Events {
+		if ev.Type == typ {
+			return ev
+		}
+	}
+	return session.Event{}
 }
 
 func TestLogHelpers_NoSessionNoop(t *testing.T) {
@@ -192,8 +244,8 @@ func TestLogHelpers_NoSessionNoop(t *testing.T) {
 	exec.logSecurityTriage("", "", false, "", 0, 0, 0, "")
 	exec.logSecuritySupervisor("", "", "", "", "", 0, 0, 0)
 	exec.logSecurityDecision("", "", "", "", "")
-	exec.logSubAgentStart("", "", "", "", nil)
-	exec.logSubAgentEnd("", "", "", "", 0, nil)
+	exec.logSubAgentStart("", "", "", "", "", nil)
+	exec.logSubAgentEnd("", "", "", "", "", 0, nil)
 }
 
 func TestTracingSpans(t *testing.T) {
@@ -348,5 +400,71 @@ func TestLogGoalEnd_SuccessHasNoError(t *testing.T) {
 	}
 	if got := evs[1].Meta.Error; got != "ran out" {
 		t.Errorf("failed goal Error=%q, want the reason", got)
+	}
+}
+
+// TestSpawnDynamicAgent_EmitsPairedSubAgentEvents guards #5: the spawn_agents
+// tool binds directly to spawnDynamicAgent (cfg.SpawnBinder.Bind), which
+// previously fired hooks only and never wrote subagent_start/end session
+// events at all — so neither dynamic spawn_agents calls nor static
+// `RUN ... USING` goals that go through it left any session record.
+func TestSpawnDynamicAgent_EmitsPairedSubAgentEvents(t *testing.T) {
+	sess := &session.Session{}
+	model := modelFunc(func(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		return &llm.ChatResponse{Content: "done", Model: "deepseek-v4-pro:cloud"}, nil
+	})
+	exec := mustNew(t, Config{
+		Workflow: &agentfile.Workflow{Name: "x"},
+		Model:    model,
+		Session:  sess,
+	})
+
+	out, err := exec.spawnDynamicAgent(context.Background(), "researcher", "find things", nil)
+	if err != nil {
+		t.Fatalf("spawnDynamicAgent: %v", err)
+	}
+	if out != "done" {
+		t.Errorf("output = %q, want %q", out, "done")
+	}
+
+	starts := eventsOfType(sess, session.EventSubAgentStart)
+	ends := eventsOfType(sess, session.EventSubAgentEnd)
+	if len(starts) != 1 || len(ends) != 1 {
+		t.Fatalf("spawnDynamicAgent must emit paired subagent_start/end; got %d starts, %d ends", len(starts), len(ends))
+	}
+	if ends[0].Meta.SubAgentModel != "deepseek-v4-pro:cloud" {
+		t.Errorf("subagent_end.meta.subagent_model = %q, want the resolved model", ends[0].Meta.SubAgentModel)
+	}
+	if ends[0].Success == nil || !*ends[0].Success {
+		t.Errorf("subagent_end.success = %v, want true", ends[0].Success)
+	}
+}
+
+// TestLogToolCall_CorrIDUnique guards #7 (numbered #6/#7 depending on
+// section): fmt.Sprintf("tool-%d", time.Now().UnixNano()) collided when
+// parallel tool calls landed in the same nanosecond tick. corr_id must be
+// distinct across concurrent calls regardless of clock resolution.
+func TestLogToolCall_CorrIDUnique(t *testing.T) {
+	exec, _, _ := newLoggingExecutor(t, false)
+	ctx := context.Background()
+
+	const n = 200
+	ids := make([]string, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ids[i] = exec.logToolCall(ctx, "read", nil)
+		}(i)
+	}
+	wg.Wait()
+
+	seen := make(map[string]bool, n)
+	for _, id := range ids {
+		if seen[id] {
+			t.Fatalf("duplicate corr_id %q", id)
+		}
+		seen[id] = true
 	}
 }

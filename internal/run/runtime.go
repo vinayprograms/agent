@@ -273,6 +273,17 @@ func (rt *Runtime) createSmallLLM() error {
 func (rt *Runtime) setupMemory() error {
 	rt.scratchpad = memory.NewInMemoryStore()
 
+	// The bleve/bolt store below takes an exclusive lock on rt.storagePath.
+	// A second concurrent `agent run` sharing the same [state] location
+	// blocks here silently (observed 60-90s startup stalls, #9) with no
+	// output at all until the first process releases the lock. We cannot
+	// distinguish "opening" from "waiting on another process's lock" from
+	// this side without a non-blocking probe, but logging before the call
+	// at least tells an operator watching stderr where the process is
+	// stuck and which path to check (e.g. `lsof <path>`) instead of it
+	// looking hung.
+	fmt.Fprintf(rt.stderr, "🔒 Acquiring state lock at %s (blocks if another `agent run` holds it)...\n", rt.storagePath)
+
 	var err error
 	rt.bleveStore, err = memory.NewBleveStore(memory.BleveStoreConfig{
 		BasePath: rt.storagePath,

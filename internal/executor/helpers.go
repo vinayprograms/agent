@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -10,6 +12,22 @@ import (
 	"github.com/vinayprograms/agent/internal/agentfile"
 	"github.com/vinayprograms/agent/internal/session"
 )
+
+// contentPreview computes a non-debug-safe summary of a piece of content
+// that must not be logged in full outside debug mode: a short truncated
+// preview, its full byte size, and a short hash of the full content. The
+// hash lets forensic tooling confirm two truncated previews came from the
+// same underlying output (or diff against a full copy captured elsewhere)
+// without the runtime ever writing the full text to the non-debug JSONL.
+const previewLen = 300
+
+func contentPreview(s string) (preview string, size int, hash string) {
+	if s == "" {
+		return "", 0, ""
+	}
+	sum := sha256.Sum256([]byte(s))
+	return truncateForLog(s, previewLen), len(s), hex.EncodeToString(sum[:])[:16]
+}
 
 // variableRef matches a $name reference left in a prompt after input and
 // output substitution.

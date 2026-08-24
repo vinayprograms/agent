@@ -154,12 +154,12 @@ func TestRecorder_HeaderFieldsGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// updated_at is a zero time.Time on the header record: it is not
-	// omitempty-able, and has been on the wire since the format was cut.
-	// updated_at is a zero time on the header record: time.Time is not
-	// omitempty-able, and it has been on the wire since the format was cut.
+	// The header carries only created_at. updated_at belongs to the footer,
+	// and used to leak onto the header (and every event) as a zero
+	// "0001-01-01T00:00:00Z" because encoding/json's omitempty does not
+	// elide a zero time.Time — the record fields are pointers now so it does.
 	header, _, _ := strings.Cut(string(data), "\n")
-	want := `{"_type":"header","id":"` + sess.ID + `","workflow_name":"deployed","agentfile":"/abs/path/Agentfile","label":"worker-3","inputs":{"task":"do it"},"created_at":` + mustJSON(t, sess.CreatedAt) + `,"updated_at":"0001-01-01T00:00:00Z"}`
+	want := `{"_type":"header","id":"` + sess.ID + `","workflow_name":"deployed","agentfile":"/abs/path/Agentfile","label":"worker-3","inputs":{"task":"do it"},"created_at":` + mustJSON(t, sess.CreatedAt) + `}`
 	if header != want {
 		t.Errorf("header record\n got: %s\nwant: %s", header, want)
 	}

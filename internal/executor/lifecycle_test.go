@@ -198,6 +198,69 @@ func TestExtractAndStoreObservations(t *testing.T) {
 	newExec(&fakeExtractor{}, nil).extractAndStoreObservations(context.Background(), "r", "AGENT", "output")
 }
 
+// TestExtractAndStoreObservations_EmitsSessionEvent guards #3: agentkit's
+// extractor previously silently returned empty and, separately, the agent
+// side never emitted a session event for the attempt at all — so
+// "Observations: enabled" in run.log was never backed by any JSONL
+// evidence across 49 real runs. A successful extraction, an empty
+// extraction, and a failed extraction must each produce one observation
+// event with the outcome distinguishable from the JSONL alone.
+func TestExtractAndStoreObservations_EmitsSessionEvent(t *testing.T) {
+	wf := &agentfile.Workflow{Name: "x"}
+	newExec := func(t *testing.T, ex ObservationExtractor, st ObservationStore) (*Executor, *session.Session) {
+		sess := &session.Session{}
+		e := mustNew(t, Config{Workflow: wf, Model: llmmock.New(), Session: sess, ObservationExtractor: ex, ObservationStore: st})
+		return e, sess
+	}
+
+	// Successful extraction with findings.
+	store := &fakeStore{done: make(chan string, 1)}
+	exec, sess := newExec(t, &fakeExtractor{}, store)
+	exec.extractAndStoreObservations(context.Background(), "goal1", "GOAL", "output")
+	<-store.done
+	waitForEvent(t, sess, session.EventObservation)
+	obs := eventsOfType(sess, session.EventObservation)[0]
+	if obs.Meta.ObservationCount == 0 {
+		t.Errorf("expected non-zero observation count, got %+v", obs.Meta)
+	}
+	if obs.Success == nil || !*obs.Success {
+		t.Errorf("successful extraction logged success=%v, want true", obs.Success)
+	}
+
+	// Empty extraction still logs an event (count=0, not an error).
+	exec, sess = newExec(t, &fakeExtractor{}, store)
+	exec.extractAndStoreObservations(context.Background(), "goal1", "GOAL", "")
+	waitForEvent(t, sess, session.EventObservation)
+	obs = eventsOfType(sess, session.EventObservation)[0]
+	if obs.Meta.ObservationCount != 0 || obs.Meta.ObservationStoreError != "" {
+		t.Errorf("empty extraction: %+v", obs.Meta)
+	}
+
+	// Extractor error is logged, not silently dropped.
+	exec, sess = newExec(t, &fakeExtractor{err: errors.New("boom")}, store)
+	exec.extractAndStoreObservations(context.Background(), "goal1", "GOAL", "output")
+	waitForEvent(t, sess, session.EventObservation)
+	obs = eventsOfType(sess, session.EventObservation)[0]
+	if obs.Meta.ObservationStoreError == "" || obs.Success == nil || *obs.Success {
+		t.Errorf("extractor error not reflected: %+v success=%v", obs.Meta, obs.Success)
+	}
+}
+
+// waitForEvent polls sess for at least one event of typ, failing the test
+// if none appears (extractAndStoreObservations logs from a background
+// goroutine).
+func waitForEvent(t *testing.T, sess *session.Session, typ string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(eventsOfType(sess, typ)) > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no %s event within timeout", typ)
+}
+
 // Real memory types satisfy the observation seam without adapters.
 func TestObservationSeam_MemoryTypes(t *testing.T) {
 	var _ ObservationExtractor = memory.NewExtractor(llmmock.New())

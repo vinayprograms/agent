@@ -112,7 +112,11 @@ type jsonlRecord struct {
 	Agentfile    string            `json:"agentfile,omitempty"`
 	Label        string            `json:"label,omitempty"`
 	Inputs       map[string]string `json:"inputs,omitempty"`
-	CreatedAt    time.Time         `json:"created_at,omitempty"`
+	// Pointers so omitempty actually elides them: encoding/json does NOT
+	// omit a zero time.Time, so value fields here serialised
+	// "0001-01-01T00:00:00Z" onto every event record, which read as a
+	// missing timestamp when events in fact carry their own Timestamp.
+	CreatedAt    *time.Time        `json:"created_at,omitempty"`
 
 	// Event fields (when _type == "event") - embedded Event
 	*Event `json:",omitempty"`
@@ -123,7 +127,7 @@ type jsonlRecord struct {
 	Error     string            `json:"error,omitempty"`
 	Outputs   map[string]string `json:"outputs,omitempty"`
 	State     map[string]any    `json:"state,omitempty"`
-	UpdatedAt time.Time         `json:"updated_at,omitempty"`
+	UpdatedAt *time.Time        `json:"updated_at,omitempty"`
 }
 
 // save appends to s's file: header on first write, then only the events
@@ -144,6 +148,8 @@ func (r *Recorder) save(s *Session) error {
 	defer f.Close()
 	w := bufio.NewWriter(f)
 
+	createdAt, updatedAt := s.CreatedAt, s.UpdatedAt
+
 	var recs []jsonlRecord
 	if isNew {
 		recs = append(recs, jsonlRecord{
@@ -153,7 +159,7 @@ func (r *Recorder) save(s *Session) error {
 			Agentfile:    s.Agentfile,
 			Label:        s.Label,
 			Inputs:       s.Inputs,
-			CreatedAt:    s.CreatedAt,
+			CreatedAt:    &createdAt,
 		})
 	}
 	for i := s.written; i < len(s.Events); i++ {
@@ -166,7 +172,7 @@ func (r *Recorder) save(s *Session) error {
 		Error:      s.Error,
 		Outputs:    s.Outputs,
 		State:      s.State,
-		UpdatedAt:  s.UpdatedAt,
+		UpdatedAt:  &updatedAt,
 	})
 	for _, rec := range recs {
 		data, err := json.Marshal(rec)
@@ -265,7 +271,9 @@ func applyRecord(s *Session, line []byte) error {
 		s.Agentfile = rec.Agentfile
 		s.Label = rec.Label
 		s.Inputs = rec.Inputs
-		s.CreatedAt = rec.CreatedAt
+		if rec.CreatedAt != nil {
+			s.CreatedAt = *rec.CreatedAt
+		}
 	case recordEvent:
 		if rec.Event != nil {
 			s.Events = append(s.Events, *rec.Event)
@@ -276,7 +284,9 @@ func applyRecord(s *Session, line []byte) error {
 		s.Error = rec.Error
 		s.Outputs = rec.Outputs
 		s.State = rec.State
-		s.UpdatedAt = rec.UpdatedAt
+		if rec.UpdatedAt != nil {
+			s.UpdatedAt = *rec.UpdatedAt
+		}
 	}
 	return nil
 }

@@ -383,7 +383,7 @@ func TestSubAgentExecutePhase_ToolLoop(t *testing.T) {
 		return &llm.ChatResponse{Content: "sub done"}, nil
 	})
 	exec := mustNew(t, Config{Workflow: &agentfile.Workflow{Name: "x"}, Model: model, Registry: reg, Policy: permissivePolicy()})
-	out, toolsUsed, _, err := exec.subAgentExecutePhaseWithModel(t.Context(), model, "r", "sys", "task")
+	out, toolsUsed, _, _, err := exec.subAgentExecutePhaseWithModel(t.Context(), model, "r", "sys", "task")
 	if err != nil || out != "sub done" {
 		t.Fatalf("got %q %v", out, err)
 	}
