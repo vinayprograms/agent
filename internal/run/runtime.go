@@ -297,7 +297,25 @@ func (rt *Runtime) setupRegistry() error {
 		if tp := rt.pol.GetToolPolicy("bash"); tp != nil {
 			denied = tp.Deny
 		}
-		rt.bashGate = shellguard.New(shellguard.Bash(), workspace, rt.pol.AllowedDirs, denied, rt.smallLLM, rt.secScope)
+		// Tell shellguard which filesystem tools policy has disabled, so
+		// bash can't be used as a side door around them: a disabled
+		// read/write/edit tool means bash data reads / writes are denied
+		// too, not just ones outside allowed_dirs.
+		var disabledTools []string
+		for _, name := range []string{"read", "write", "edit"} {
+			if !rt.pol.IsToolEnabled(name) {
+				disabledTools = append(disabledTools, name)
+			}
+		}
+		rt.bashGate = shellguard.NewGate(shellguard.Config{
+			Shell:              shellguard.Bash(),
+			Workspace:          workspace,
+			AllowedDirs:        rt.pol.AllowedDirs,
+			UserDeniedCommands: denied,
+			DisabledTools:      disabledTools,
+			Model:              rt.smallLLM,
+			SecurityScope:      rt.secScope,
+		})
 	}
 
 	var summarizer tools.Summarizer
