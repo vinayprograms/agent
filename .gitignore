@@ -48,8 +48,11 @@ DESIGN-DEBT.md
 # Runtime state written by local agent runs
 /storage/
 
-# Outputs from ad-hoc example/system-test runs
-/test-results/
+# Outputs from ad-hoc example/system-test runs. The leading underscore is
+# load-bearing: the go tool skips _-prefixed directories, so `go build ./...`
+# will not walk into run outputs that contain .go files. Without it this
+# directory needs its own go.mod to stay out of the module.
+/_test-results/
 
 # Transitional migration scaffolding — not part of understanding the repo.
 .go-migrate/

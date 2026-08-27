@@ -26,7 +26,7 @@ func TestPolicy_FilesUseCurrentSchema(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", "storage", "test-results":
+			case ".git", "node_modules", "storage", "_test-results":
 				return filepath.SkipDir
 			}
 			return nil
