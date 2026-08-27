@@ -90,7 +90,13 @@ func (e *Executor) LogBashSecurity(command, step string, allowed bool, reason st
 		DurationMs: durationMs,
 		Timestamp:  time.Now(),
 		Meta: &session.EventMeta{
-			CheckName: step, // "deterministic" or "llm"
+			// step distinguishes which stage decided and whether it could
+			// decide at all: "deterministic", "path-precheck", "llm", or —
+			// when the LLM stage could not produce a verdict — "llm-timeout"
+			// / "llm-error", where Pass records the deterministic fallback
+			// rather than a judgement the reviewer never made. Auditing a
+			// denial means nothing if an outage looks identical to a block.
+			CheckName: step,
 			Pass:      allowed,
 			Action:    action,
 			Reason:    reason,
