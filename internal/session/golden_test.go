@@ -60,7 +60,7 @@ func TestRecorder_WireFormatGolden(t *testing.T) {
 	// Event.Error is not on the wire: jsonlRecord's footer-level Error field
 	// shadows the embedded Event.Error when marshaling. Pre-existing format
 	// behavior, pinned by the fixture above; fixing it is a format change.
-	if diff := cmp.Diff(sess.Events, loaded.Events, cmpopts.IgnoreFields(Event{}, "Error")); diff != "" {
+	if diff := cmp.Diff(sess.events, loaded.events, cmpopts.IgnoreFields(Event{}, "Error")); diff != "" {
 		t.Errorf("events round trip (-want +got):\n%s", diff)
 	}
 }
@@ -79,7 +79,7 @@ func goldenSession() *Session {
 		State:        map[string]any{"k": "v", "n": 1.5},
 		Outputs:      map[string]string{},
 		Status:       StatusRunning,
-		Events:       []Event{},
+		events:       []Event{},
 		CreatedAt:    goldenTime(0),
 		UpdatedAt:    goldenTime(0),
 	}

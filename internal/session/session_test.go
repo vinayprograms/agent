@@ -30,8 +30,8 @@ func eventsOnDisk(t *testing.T, rec *Recorder, id string) []string {
 	if err != nil {
 		t.Fatalf("Get(%q) error: %v", id, err)
 	}
-	types := make([]string, len(s.Events))
-	for i, e := range s.Events {
+	types := make([]string, len(s.events))
+	for i, e := range s.events {
 		types[i] = e.Type
 	}
 	return types
@@ -78,7 +78,7 @@ func TestRecorder_Create(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get error: %v", err)
 	}
-	if got.ID != s.ID || got.WorkflowName != "wf" || got.Status != StatusRunning || len(got.Events) != 0 {
+	if got.ID != s.ID || got.WorkflowName != "wf" || got.Status != StatusRunning || len(got.events) != 0 {
 		t.Errorf("Get after Create = %+v", got)
 	}
 
@@ -115,7 +115,7 @@ func TestRecorder_Update(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Status != StatusFailed || got.Error != "x" || len(got.Events) != 2 || got.UpdatedAt.IsZero() {
+		if got.Status != StatusFailed || got.Error != "x" || len(got.events) != 2 || got.UpdatedAt.IsZero() {
 			t.Errorf("Get = %+v", got)
 		}
 		if got.seq.Load() != 2 || got.written != 2 {
@@ -159,7 +159,7 @@ func TestRecorder_Get(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID != "old" || len(got.Events) != 1 || got.seq.Load() != 7 {
+	if got.ID != "old" || len(got.events) != 1 || got.seq.Load() != 7 {
 		t.Errorf("Get legacy = %+v", got)
 	}
 	if _, err := rec.Get("missing"); err == nil {
@@ -178,8 +178,8 @@ func TestSession_ZeroValue(t *testing.T) {
 	}
 	s.Flush()
 	s.Close()
-	if len(s.Events) != 2 || !s.Events[0].Timestamp.Equal(fixed) || s.Events[1].Timestamp.IsZero() {
-		t.Errorf("events = %+v", s.Events)
+	if len(s.events) != 2 || !s.events[0].Timestamp.Equal(fixed) || s.events[1].Timestamp.IsZero() {
+		t.Errorf("events = %+v", s.events)
 	}
 	if s.UpdatedAt.IsZero() {
 		t.Error("UpdatedAt not set")
@@ -303,16 +303,16 @@ func TestWriter(t *testing.T) {
 			if got := eventsOnDisk(t, rec, s.ID); len(got) != 3 {
 				t.Errorf("after Close+AddEvent on disk = %d, want 3 (not persisted yet)", len(got))
 			}
-			if len(s.Events) != 3+eventChSize+1 {
-				t.Errorf("in memory = %d events", len(s.Events))
+			if len(s.events) != 3+eventChSize+1 {
+				t.Errorf("in memory = %d events", len(s.events))
 			}
 			s.Status = StatusComplete
 			if err := rec.Update(s); err != nil {
 				t.Fatal(err)
 			}
 			got, _ := rec.Get(s.ID)
-			if len(got.Events) != 3+eventChSize+1 || got.Status != StatusComplete {
-				t.Errorf("after final Update: %d events, status %q", len(got.Events), got.Status)
+			if len(got.events) != 3+eventChSize+1 || got.Status != StatusComplete {
+				t.Errorf("after final Update: %d events, status %q", len(got.events), got.Status)
 			}
 		})
 	})
@@ -324,8 +324,8 @@ func TestWriter(t *testing.T) {
 			os.RemoveAll(dir)
 			s.AddEvent(Event{Type: EventUser})
 			s.Close()
-			if len(s.Events) != 1 {
-				t.Errorf("events kept in memory = %d, want 1", len(s.Events))
+			if len(s.events) != 1 {
+				t.Errorf("events kept in memory = %d, want 1", len(s.events))
 			}
 		})
 	})
@@ -390,17 +390,17 @@ func TestReadFile(t *testing.T) {
 	}{
 		{name: "jsonl", path: write("j.jsonl", jsonl), want: &Session{
 			ID: "j", WorkflowName: "w", Inputs: map[string]string{"a": "b"}, Status: StatusComplete,
-			Outputs: map[string]string{"o": "v"}, Events: []Event{{SeqID: 1, Type: EventUser, Content: long}},
+			Outputs: map[string]string{"o": "v"}, events: []Event{{SeqID: 1, Type: EventUser, Content: long}},
 		}},
 		{name: "jsonl truncated", path: write("j.jsonl", jsonl), opts: ReadOptions{MaxContentSize: 5}, want: &Session{
 			ID: "j", WorkflowName: "w", Inputs: map[string]string{"a": "b"}, Status: StatusComplete,
-			Outputs: map[string]string{"o": "v"}, Events: []Event{{SeqID: 1, Type: EventUser, Content: truncated}},
+			Outputs: map[string]string{"o": "v"}, events: []Event{{SeqID: 1, Type: EventUser, Content: truncated}},
 		}},
 		{name: "legacy", path: write("l.json", legacy), want: &Session{
-			ID: "l", Events: []Event{{SeqID: 3, Type: EventUser, Content: long}},
+			ID: "l", events: []Event{{SeqID: 3, Type: EventUser, Content: long}},
 		}},
 		{name: "legacy truncated", path: write("l.json", legacy), opts: ReadOptions{MaxContentSize: 5}, want: &Session{
-			ID: "l", Events: []Event{{SeqID: 3, Type: EventUser, Content: truncated}},
+			ID: "l", events: []Event{{SeqID: 3, Type: EventUser, Content: truncated}},
 		}},
 		{name: "unknown format", path: write("u", "?"), wantErr: "unknown file format"},
 		{name: "jsonl missing", path: filepath.Join(dir, "nope.jsonl"), wantErr: "read file"},
@@ -427,9 +427,9 @@ func TestReadFile(t *testing.T) {
 			if diff := cmp.Diff(tt.want, got, ignore); diff != "" {
 				t.Errorf("ReadFile(%q) (-want +got):\n%s", tt.path, diff)
 			}
-			last := tt.want.Events[len(tt.want.Events)-1].SeqID
-			if got.seq.Load() != last || got.written != len(tt.want.Events) {
-				t.Errorf("seq=%d written=%d, want %d, %d", got.seq.Load(), got.written, last, len(tt.want.Events))
+			last := tt.want.events[len(tt.want.events)-1].SeqID
+			if got.seq.Load() != last || got.written != len(tt.want.events) {
+				t.Errorf("seq=%d written=%d, want %d, %d", got.seq.Load(), got.written, last, len(tt.want.events))
 			}
 		})
 	}

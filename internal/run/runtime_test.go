@@ -727,3 +727,72 @@ func TestToolsetConfig_WiredFromConfig(t *testing.T) {
 		t.Run(field.Name, func(t *testing.T) { check(t, rv.Field(i)) })
 	}
 }
+
+// TestShellguard_PolicySettingsReachGate asserts policy shellguard settings
+// actually arrive at the gate. Both are silent at runtime — thinking only
+// shifts latency and verdict quality, and a deadline that never fires looks
+// exactly like one that was never set — so a broken wiring would show up as
+// nothing rather than as a failure.
+func TestShellguard_PolicySettingsReachGate(t *testing.T) {
+	thinking := true
+	w := testWorkflow(t, func(c *config.Config) {
+		c.SmallLLM = config.LLMConfig{Provider: "ollama-local", Model: "small"}
+	})
+	w.Policy.Tools["bash"] = &policy.ToolPolicy{}
+	w.Policy.Shellguard = &policy.Shellguard{Thinking: &thinking, Timeout: "45s"}
+
+	rt := newRuntime(w, testDeps())
+	defer rt.Close()
+	if err := rt.setup(t.Context()); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if rt.bashGate == nil {
+		t.Fatal("bash gate not built")
+	}
+	level, timeout := rt.bashGate.LLMSettings()
+	if level == llm.ThinkingOff {
+		t.Error("policy thinking=true did not reach the gate")
+	}
+	if timeout != 45*time.Second {
+		t.Errorf("gate timeout = %v, want 45s", timeout)
+	}
+}
+
+// TestShellguard_DefaultsWhenPolicySilent pins the default: a policy with no
+// [shellguard] section gets thinking off and no deadline.
+func TestShellguard_DefaultsWhenPolicySilent(t *testing.T) {
+	w := testWorkflow(t, func(c *config.Config) {
+		c.SmallLLM = config.LLMConfig{Provider: "ollama-local", Model: "small"}
+	})
+	w.Policy.Tools["bash"] = &policy.ToolPolicy{}
+
+	rt := newRuntime(w, testDeps())
+	defer rt.Close()
+	if err := rt.setup(t.Context()); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	level, timeout := rt.bashGate.LLMSettings()
+	if level != llm.ThinkingOff {
+		t.Errorf("default thinking = %q, want off", level)
+	}
+	if timeout != 0 {
+		t.Errorf("default timeout = %v, want 0", timeout)
+	}
+}
+
+// TestShellguard_BadTimeoutFailsSetup asserts a malformed duration stops
+// setup rather than silently leaving the gate unbounded — an operator who
+// asked for a deadline must not be left believing they have one.
+func TestShellguard_BadTimeoutFailsSetup(t *testing.T) {
+	w := testWorkflow(t, func(c *config.Config) {
+		c.SmallLLM = config.LLMConfig{Provider: "ollama-local", Model: "small"}
+	})
+	w.Policy.Tools["bash"] = &policy.ToolPolicy{}
+	w.Policy.Shellguard = &policy.Shellguard{Timeout: "45"} // missing unit
+
+	rt := newRuntime(w, testDeps())
+	defer rt.Close()
+	if err := rt.setup(t.Context()); err == nil {
+		t.Error("malformed shellguard.timeout should fail setup")
+	}
+}

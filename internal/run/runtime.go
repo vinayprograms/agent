@@ -318,6 +318,16 @@ func (rt *Runtime) setupRegistry() error {
 				disabledTools = append(disabledTools, name)
 			}
 		}
+		// shellguard.thinking / .timeout come from policy, not model
+		// config: how hard the guard reasons and how long it may take are
+		// properties of the security posture, so a strict policy holds
+		// whichever model an operator runs. A malformed timeout is a load
+		// error rather than a silent fallback to "no deadline" — the
+		// operator asked for a bound and must not believe they have one.
+		llmTimeout, err := rt.pol.LLMTimeout()
+		if err != nil {
+			return err
+		}
 		rt.bashGate = shellguard.NewGate(shellguard.Config{
 			Shell:              shellguard.Bash(),
 			Workspace:          workspace,
@@ -326,6 +336,8 @@ func (rt *Runtime) setupRegistry() error {
 			DisabledTools:      disabledTools,
 			Model:              rt.smallLLM,
 			SecurityScope:      rt.secScope,
+			Thinking:           rt.pol.ThinkingEnabled(),
+			Timeout:            llmTimeout,
 		})
 	}
 

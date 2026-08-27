@@ -110,7 +110,7 @@ func TestReplayer_loadSession_Truncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSession() error = %v", err)
 	}
-	got := sess.Events[0].Content
+	got := sess.Snapshot()[0].Content
 	if !strings.HasPrefix(got, strings.Repeat("x", 10)) {
 		t.Errorf("Content = %q, want it truncated to 10 leading bytes", got)
 	}

@@ -63,7 +63,7 @@ func (r *Recorder) Create(meta Meta) (*Session, error) {
 		State:        make(map[string]any),
 		Outputs:      make(map[string]string),
 		Status:       StatusRunning,
-		Events:       []Event{},
+		events:       []Event{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		sink:         r.sink,
@@ -116,7 +116,7 @@ type jsonlRecord struct {
 	// omit a zero time.Time, so value fields here serialised
 	// "0001-01-01T00:00:00Z" onto every event record, which read as a
 	// missing timestamp when events in fact carry their own Timestamp.
-	CreatedAt    *time.Time        `json:"created_at,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
 
 	// Event fields (when _type == "event") - embedded Event
 	*Event `json:",omitempty"`
@@ -162,8 +162,8 @@ func (r *Recorder) save(s *Session) error {
 			CreatedAt:    &createdAt,
 		})
 	}
-	for i := s.written; i < len(s.Events); i++ {
-		recs = append(recs, jsonlRecord{RecordType: recordEvent, Event: &s.Events[i]})
+	for i := s.written; i < len(s.events); i++ {
+		recs = append(recs, jsonlRecord{RecordType: recordEvent, Event: &s.events[i]})
 	}
 	recs = append(recs, jsonlRecord{
 		RecordType: recordFooter,
@@ -185,7 +185,7 @@ func (r *Recorder) save(s *Session) error {
 	if err := cmp.Or(w.Flush(), f.Sync()); err != nil {
 		return fmt.Errorf("session: write file: %w", err)
 	}
-	s.written = len(s.Events)
+	s.written = len(s.events)
 	return nil
 }
 
@@ -213,16 +213,16 @@ func ReadFile(path string, opts ReadOptions) (*Session, error) {
 		return nil, err
 	}
 	if n := opts.MaxContentSize; n > 0 {
-		for i := range s.Events {
-			if c := s.Events[i].Content; len(c) > n {
-				s.Events[i].Content = fmt.Sprintf("%s\n... [truncated, %d bytes total]", c[:n], len(c))
+		for i := range s.events {
+			if c := s.events[i].Content; len(c) > n {
+				s.events[i].Content = fmt.Sprintf("%s\n... [truncated, %d bytes total]", c[:n], len(c))
 			}
 		}
 	}
-	if len(s.Events) > 0 {
-		s.seq.Store(s.Events[len(s.Events)-1].SeqID)
+	if len(s.events) > 0 {
+		s.seq.Store(s.events[len(s.events)-1].SeqID)
 	}
-	s.written = len(s.Events)
+	s.written = len(s.events)
 	return s, nil
 }
 
@@ -239,7 +239,7 @@ func readJSONL(path string) (*Session, error) {
 		Inputs:  make(map[string]string),
 		State:   make(map[string]any),
 		Outputs: make(map[string]string),
-		Events:  []Event{},
+		events:  []Event{},
 	}
 	r := bufio.NewReader(f)
 	for {
@@ -276,7 +276,7 @@ func applyRecord(s *Session, line []byte) error {
 		}
 	case recordEvent:
 		if rec.Event != nil {
-			s.Events = append(s.Events, *rec.Event)
+			s.events = append(s.events, *rec.Event)
 		}
 	case recordFooter:
 		s.Status = rec.Status
@@ -300,6 +300,16 @@ func readLegacyJSON(path string) (*Session, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("session: parse legacy JSON: %w", err)
 	}
+	// events is unexported, so it cannot carry a struct tag for the decoder.
+	// The legacy on-disk key is still "events" and must keep working, so
+	// pull it out separately rather than changing the format.
+	var legacy struct {
+		Events []Event `json:"events"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return nil, fmt.Errorf("session: parse legacy JSON events: %w", err)
+	}
+	s.AppendEvents(legacy.Events...)
 	return &s, nil
 }
 

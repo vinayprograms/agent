@@ -147,7 +147,7 @@ func TestBudget_EndsGoalNotRun(t *testing.T) {
 	}
 
 	var warned string
-	for _, evt := range sess.Events {
+	for _, evt := range sess.Snapshot() {
 		if evt.Type == session.EventWarning && strings.Contains(evt.Content, "exceeded budget") {
 			warned = evt.Content
 		}
@@ -235,7 +235,7 @@ func TestBudget_MultiAgentConvergeEndsGoal(t *testing.T) {
 
 	// Exactly one session warning event per attempt for the same reason.
 	warnings := 0
-	for _, evt := range sess.Events {
+	for _, evt := range sess.Snapshot() {
 		if evt.Type == session.EventWarning && strings.Contains(evt.Content, "exceeded budget") {
 			warnings++
 		}
