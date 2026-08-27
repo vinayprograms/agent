@@ -1484,9 +1484,37 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 
 				e.hooks.Fire(ctx, hooks.SupervisionEvent, map[string]any{"step_id": goal.Name, "phase": "supervise", "data": superviseResult})
 
-				// Handle supervision verdict
-				if superviseResult.Verdict == "PAUSE" {
+				// Handle supervision verdict. A single-agent goal reruns
+				// its phase with the correction applied (see the
+				// VerdictReorient case in executeGoal); a multi-agent goal
+				// has to do the same or the supervisor is advisory only —
+				// the verdict was logged and then discarded, and the goal
+				// still reported ok.
+				switch supervision.Verdict(superviseResult.Verdict) {
+				case supervision.VerdictPause:
 					return "", agentVars, fmt.Errorf("supervision paused: %s", superviseResult.Question)
+
+				case supervision.VerdictReorient:
+					e.logger.Info("reorienting execution", "goal", goal.Name, "correction", superviseResult.Correction)
+					// Rerun the agents once with the correction in hand.
+					// Reorienting again off the rerun would let a
+					// supervisor that never accepts anything loop forever,
+					// so the second result stands whatever it says.
+					correctedGoal := *goal
+					correctedGoal.Outcome = goal.Outcome + "\n\nSupervisor correction — address this: " + superviseResult.Correction
+					reOutput, reVars, reErr := e.executeSimpleParallel(ctx, &correctedGoal, agents)
+					if reErr != nil {
+						var spent *budgetError
+						if !errors.As(reErr, &spent) {
+							return "", agentVars, reErr
+						}
+						// A spent budget ends the goal with what we have.
+						if strings.TrimSpace(reOutput) != "" {
+							output, agentVars = reOutput, reVars
+						}
+						return output, agentVars, reErr
+					}
+					output, agentVars = reOutput, reVars
 				}
 			}
 		}

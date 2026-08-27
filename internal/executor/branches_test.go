@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/vinayprograms/agent/internal/agentfile"
@@ -534,5 +535,79 @@ func TestExecuteMCPTool_ServerError(t *testing.T) {
 	})
 	if _, err := exec.executeMCPTool(t.Context(), llm.ToolCallResponse{Name: "mcp_fs_boom"}); err == nil || !strings.Contains(err.Error(), "server error") {
 		t.Errorf("got %v, want the server error", err)
+	}
+}
+
+// goalReorientingSupervisor returns REORIENT for the GOAL and CONTINUE for
+// sub-agents, isolating goal-scope reorientation from the sub-agent path
+// (which already worked).
+type goalReorientingSupervisor struct{}
+
+func (goalReorientingSupervisor) Reconcile(pre *checkpoint.PreCheckpoint, _ *checkpoint.PostCheckpoint) *checkpoint.ReconcileResult {
+	return &checkpoint.ReconcileResult{StepID: pre.StepID, Supervise: true}
+}
+
+func (goalReorientingSupervisor) Supervise(_ context.Context, req supervision.SuperviseRequest) (*checkpoint.SuperviseResult, error) {
+	verdict := "CONTINUE"
+	if !strings.HasPrefix(req.Pre.StepID, "subagent:") {
+		verdict = "REORIENT"
+	}
+	return &checkpoint.SuperviseResult{StepID: req.Pre.StepID, Verdict: verdict, Correction: "cite your sources"}, nil
+}
+
+// TestMultiAgentGoal_ReorientRerunsAgents: a REORIENT verdict on a
+// multi-agent goal must actually rerun the agents with the correction. It
+// used to be logged and discarded — the goal returned its original output
+// and reported ok, so a supervisor rejecting the work looked like success.
+func TestMultiAgentGoal_ReorientRerunsAgents(t *testing.T) {
+	wf := &agentfile.Workflow{
+		Name: "x", Supervised: true,
+		Agents: []agentfile.Agent{{Name: "a1"}},
+		Steps:  []agentfile.Step{{Type: agentfile.StepRUN, UsingGoals: []string{"g"}}},
+		Goals:  []agentfile.Goal{{Name: "g", Outcome: "Work", UsingAgent: []string{"a1"}}},
+	}
+
+	var mu sync.Mutex
+	var sawCorrection bool
+	runs := 0
+	model := modelFunc(func(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		user := req.Messages[len(req.Messages)-1].Content
+		switch {
+		case strings.Contains(user, "declare your intent"):
+			return &llm.ChatResponse{Content: `{"interpretation":"i","approach":"a"}`}, nil
+		case strings.Contains(user, "Assess your work"):
+			return &llm.ChatResponse{Content: "not json"}, nil
+		}
+		mu.Lock()
+		runs++
+		if strings.Contains(user, "cite your sources") {
+			sawCorrection = true
+			mu.Unlock()
+			return &llm.ChatResponse{Content: "corrected output"}, nil
+		}
+		mu.Unlock()
+		return &llm.ChatResponse{Content: "first output"}, nil
+	})
+
+	exec := mustNew(t, Config{
+		Workflow: wf, Model: model, Session: &session.Session{},
+		CheckpointStore: failingStore{},
+		Supervisor:      goalReorientingSupervisor{},
+	})
+	out, _, err := exec.executeMultiAgentGoal(t.Context(), &wf.Goals[0])
+	if err != nil {
+		t.Fatalf("reorient must not fail the goal: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !sawCorrection {
+		t.Error("agents were not rerun with the supervisor's correction")
+	}
+	if runs < 2 {
+		t.Errorf("agent ran %d time(s); REORIENT should have triggered a rerun", runs)
+	}
+	if !strings.Contains(out, "corrected") {
+		t.Errorf("goal returned the pre-correction output: %q", out)
 	}
 }
