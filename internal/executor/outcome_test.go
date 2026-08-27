@@ -363,9 +363,9 @@ func TestGoalEndMeta_CarriesIterationsForConvergeGoals(t *testing.T) {
 			}
 
 			var end *session.Event
-			for i := range sess.Events {
-				if sess.Events[i].Type == session.EventGoalEnd {
-					end = &sess.Events[i]
+			for i := range sess.Snapshot() {
+				if sess.Snapshot()[i].Type == session.EventGoalEnd {
+					end = &sess.Snapshot()[i]
 				}
 			}
 			if end == nil {
@@ -526,9 +526,9 @@ func TestOutcome_SubAgentTruncatedTwiceIsEmptyOutputAndFails(t *testing.T) {
 	}
 
 	var end *session.Event
-	for i := range sess.Events {
-		if sess.Events[i].Type == session.EventSubAgentEnd {
-			end = &sess.Events[i]
+	for i := range sess.Snapshot() {
+		if sess.Snapshot()[i].Type == session.EventSubAgentEnd {
+			end = &sess.Snapshot()[i]
 		}
 	}
 	if end == nil {

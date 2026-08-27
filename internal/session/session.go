@@ -92,12 +92,18 @@ type Session struct {
 	Status       string            `json:"status"`
 	Result       string            `json:"result,omitempty"`
 	Error        string            `json:"error,omitempty"`
-	Events       []Event           `json:"events"`
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 
+	// events is deliberately unexported: it is guarded by mu, and an
+	// exported slice is an open invitation to read it without the lock —
+	// which races with the background goroutines that add events. Read it
+	// through Snapshot. The session is never marshalled as a whole (the
+	// on-disk JSONL is built field by field in recorder.go's jsonlRecord),
+	// so unexporting costs no serialization.
+	events  []Event
 	seq     atomic.Uint64 // last issued SeqID
-	mu      sync.Mutex    // guards Events, UpdatedAt, written
+	mu      sync.Mutex    // guards events, UpdatedAt, written
 	written int           // Events already appended to the file
 	sink    Sink          // set by Recorder.Create; nil otherwise
 	w       *writer       // set by Recorder.Create; nil otherwise
@@ -273,8 +279,41 @@ func (s *Session) AddEvent(event Event) uint64 {
 func (s *Session) append(events ...Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Events = append(s.Events, events...)
+	s.events = append(s.events, events...)
 	s.UpdatedAt = time.Now()
+}
+
+// Snapshot returns a copy of the events recorded so far, taken under the
+// same lock that guards appends.
+//
+// Events is an exported field, but reading it directly races with any
+// concurrent AddEvent — and events are added from background goroutines
+// (observation extraction, for one), so a reader that happens to run while
+// the session is live is racing whether or not it looks like it. Anything
+// reading events off a session that may still be written to goes through
+// here.
+func (s *Session) Snapshot() []Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
+
+// AppendEvents records events in memory as given, keeping their SeqIDs and
+// timestamps rather than assigning new ones the way AddEvent does. It is how
+// a session is rebuilt from events that already happened — loading a
+// transcript from disk, or constructing one for a consumer like replay.
+//
+// Use AddEvent for events happening now; this is for events that already
+// carry their identity.
+func (s *Session) AppendEvents(events ...Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, events...)
+	// Deliberately not touching UpdatedAt: these events already happened,
+	// and restoring them is not a modification of the session. Loading a
+	// transcript must round-trip the UpdatedAt that was persisted.
 }
 
 // Flush blocks until every event added so far is on disk. No-op after

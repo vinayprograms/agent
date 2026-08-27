@@ -53,7 +53,9 @@ func newSecuredExecutor(t *testing.T, sec *SecurityConfig) (*Executor, *session.
 
 func eventsOfType(sess *session.Session, typ string) []session.Event {
 	var out []session.Event
-	for _, ev := range sess.Events {
+	// Snapshot, not sess.Events: events arrive from background goroutines,
+	// so reading the slice directly races with AddEvent.
+	for _, ev := range sess.Snapshot() {
 		if ev.Type == typ {
 			out = append(out, ev)
 		}

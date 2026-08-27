@@ -73,7 +73,7 @@ func TestSessionEventSchema(t *testing.T) {
 		session.EventToolResult: {"content_size", "content_hash"},
 		session.EventAssistant:  {"content_size", "content_hash"},
 	}
-	for _, ev := range sess.Events {
+	for _, ev := range sess.Snapshot() {
 		raw, err := json.Marshal(ev)
 		if err != nil {
 			t.Fatal(err)
@@ -143,7 +143,7 @@ func TestLogHelpers_DebugContent(t *testing.T) {
 	exec.logSubAgentEnd("r", "r", "fast", "deepseek-v4-pro:cloud", "out", 9, errors.New("sub failed"))
 
 	byType := map[string]session.Event{}
-	for _, ev := range sess.Events {
+	for _, ev := range sess.Snapshot() {
 		byType[ev.Type] = ev
 	}
 	if ev := byType[session.EventToolResult]; ev.Content != "out" || ev.Error != "bad" || ev.Agent != "worker" || ev.AgentRole != "researcher" {
@@ -195,7 +195,7 @@ func TestLogHelpers_DebugContent(t *testing.T) {
 	quiet.logLLMCall(ctx, session.EventAssistant, nil, &llm.ChatResponse{Content: longSecret}, 0)
 	quiet.logGoalEnd("g", longSecret, GoalOutcome{Outcome: OutcomeOK})
 	quiet.logSubAgentEnd("r", "r", "", "", longSecret, 0, nil)
-	for _, ev := range qsess.Events {
+	for _, ev := range qsess.Snapshot() {
 		if len(ev.Content) > previewLen+len("...") {
 			t.Errorf("content not truncated to preview without debug: %+v", ev)
 		}
@@ -217,7 +217,7 @@ func TestLogHelpers_DebugContent(t *testing.T) {
 // byTypeIn returns the first event of the given type in sess, or the zero
 // Event if none.
 func byTypeIn(sess *session.Session, typ string) session.Event {
-	for _, ev := range sess.Events {
+	for _, ev := range sess.Snapshot() {
 		if ev.Type == typ {
 			return ev
 		}
@@ -278,7 +278,7 @@ func TestLogToolResult_ErrorSurvivesInMeta(t *testing.T) {
 	exec.logToolResult(ctx, "bash", map[string]any{"command": "false"}, "c1", "", errors.New("exit status 1"), time.Millisecond)
 
 	var ev session.Event
-	for _, e := range sess.Events {
+	for _, e := range sess.Snapshot() {
 		if e.Type == session.EventToolResult {
 			ev = e
 		}
@@ -298,7 +298,7 @@ func TestLogToolResult_ResultRecordedInMeta(t *testing.T) {
 	exec.logToolResult(ctx, "read", map[string]any{"path": "x"}, "c1", strings.Repeat("y", 600), nil, time.Millisecond)
 
 	var ev session.Event
-	for _, e := range sess.Events {
+	for _, e := range sess.Snapshot() {
 		if e.Type == session.EventToolResult {
 			ev = e
 		}
@@ -318,7 +318,7 @@ func TestLogToolResult_ResultWithheldWithoutDebug(t *testing.T) {
 	exec.logToolResult(ctx, "read", map[string]any{"path": "x"}, "c1", "secret output", errors.New("bad"), time.Millisecond)
 
 	var ev session.Event
-	for _, e := range sess.Events {
+	for _, e := range sess.Snapshot() {
 		if e.Type == session.EventToolResult {
 			ev = e
 		}
@@ -345,7 +345,7 @@ func TestLogLLMCall_StopReasonAlwaysLogged(t *testing.T) {
 		time.Millisecond)
 
 	var ev session.Event
-	for _, e := range sess.Events {
+	for _, e := range sess.Snapshot() {
 		if e.Type == session.EventAssistant {
 			ev = e
 		}
@@ -391,7 +391,7 @@ func TestLogGoalEnd_SuccessHasNoError(t *testing.T) {
 	exec.logGoalEnd("g", "out", GoalOutcome{Outcome: OutcomeOK, Reason: "all checks passed"})
 	exec.logGoalEnd("h", "out", GoalOutcome{Outcome: OutcomeBudgetExhausted, Reason: "ran out"})
 
-	evs := sess.Events
+	evs := sess.Snapshot()
 	if got := evs[0].Meta.Error; got != "" {
 		t.Errorf("successful goal logged Error=%q, want empty", got)
 	}

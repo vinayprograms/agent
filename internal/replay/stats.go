@@ -65,7 +65,7 @@ func ComputeStats(sess *session.Session) *Stats {
 
 	var firstEvent, lastEvent time.Time
 
-	for _, event := range sess.Events {
+	for _, event := range sess.Snapshot() {
 		// Track overall duration
 		if firstEvent.IsZero() || event.Timestamp.Before(firstEvent) {
 			firstEvent = event.Timestamp

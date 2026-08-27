@@ -74,12 +74,11 @@ func TestComputeStats_Empty(t *testing.T) {
 // parses "[deterministic] ..." / "[llm] ..." out of Content when Meta is
 // nil (older sessions predating structured bash-security Meta).
 func TestComputeStats_BashSecurityFallback(t *testing.T) {
-	sess := &session.Session{
-		Events: []session.Event{
-			{Type: session.EventBashSecurity, Content: "[deterministic] allow: ls"},
-			{Type: session.EventBashSecurity, Content: "[llm] deny: rm -rf /", DurationMs: 12},
-		},
-	}
+	sess := &session.Session{}
+	sess.AppendEvents([]session.Event{
+		{Type: session.EventBashSecurity, Content: "[deterministic] allow: ls"},
+		{Type: session.EventBashSecurity, Content: "[llm] deny: rm -rf /", DurationMs: 12},
+	}...)
 	stats := ComputeStats(sess)
 	if stats.BashDeterministicCount != 1 {
 		t.Errorf("BashDeterministicCount = %d, want 1", stats.BashDeterministicCount)
@@ -118,14 +117,13 @@ func TestPrintStats_Golden(t *testing.T) {
 }
 
 func TestComputeStats_SecurityLatencyFallback(t *testing.T) {
-	sess := &session.Session{
-		Events: []session.Event{
-			// DurationMs takes priority over Meta.LatencyMs.
-			{Type: session.EventSecurityTriage, DurationMs: 100, Meta: &session.EventMeta{LatencyMs: 999}},
-			// Falls back to Meta.LatencyMs when DurationMs is 0.
-			{Type: session.EventSecuritySupervisor, Meta: &session.EventMeta{LatencyMs: 50}},
-		},
-	}
+	sess := &session.Session{}
+	sess.AppendEvents([]session.Event{
+		// DurationMs takes priority over Meta.LatencyMs.
+		{Type: session.EventSecurityTriage, DurationMs: 100, Meta: &session.EventMeta{LatencyMs: 999}},
+		// Falls back to Meta.LatencyMs when DurationMs is 0.
+		{Type: session.EventSecuritySupervisor, Meta: &session.EventMeta{LatencyMs: 50}},
+	}...)
 	stats := ComputeStats(sess)
 	if stats.SecurityTriageTotalMs != 100 {
 		t.Errorf("SecurityTriageTotalMs = %d, want 100 (DurationMs wins over Meta.LatencyMs)", stats.SecurityTriageTotalMs)

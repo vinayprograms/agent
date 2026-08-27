@@ -73,15 +73,18 @@ func goldenSession() *session.Session {
 		{SeqID: 27, Type: session.EventWorkflowEnd, Timestamp: t(26), DurationMs: 26000},
 	}
 
-	return &session.Session{
+	sess := &session.Session{
 		ID:           "sess-golden-0001",
 		WorkflowName: "build-feature-workflow",
 		Inputs:       map[string]string{"repo": "agent"},
 		Status:       session.StatusComplete,
-		Events:       events,
 		CreatedAt:    t(0),
 		UpdatedAt:    t(26),
 	}
+	// AppendEvents, not a struct literal: events are lock-guarded, and these
+	// already carry their own SeqIDs and timestamps.
+	sess.AppendEvents(events...)
+	return sess
 }
 
 func replayGolden(t *testing.T, name string, verbosity int, opts ...ReplayerOption) {
@@ -146,7 +149,6 @@ func TestReplay_RunningSessionNoInputs(t *testing.T) {
 	sess := &session.Session{
 		ID:        "sess-empty",
 		Status:    session.StatusRunning,
-		Events:    nil,
 		CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 	r := New(0)

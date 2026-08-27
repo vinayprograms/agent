@@ -132,11 +132,12 @@ func (r *Replayer) printHeader(w io.Writer, sess *session.Session) {
 }
 
 func (r *Replayer) printTimeline(w io.Writer, sess *session.Session) {
-	fmt.Fprintf(w, "%s %s\n", titleStyle.Render("TIMELINE"), dimStyle.Render(fmt.Sprintf("(%d events)", len(sess.Events))))
+	events := sess.Snapshot()
+	fmt.Fprintf(w, "%s %s\n", titleStyle.Render("TIMELINE"), dimStyle.Render(fmt.Sprintf("(%d events)", len(events))))
 	fmt.Fprintln(w, divider)
 
 	var lastGoal string
-	for i, event := range sess.Events {
+	for i, event := range events {
 		r.formatEvent(w, i+1, &event, &lastGoal)
 	}
 }
