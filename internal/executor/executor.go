@@ -772,7 +772,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 
 	// Check for multi-agent execution
 	if len(goal.UsingAgent) > 0 {
-		output, err := e.executeMultiAgentGoal(ctx, goal)
+		output, agentVars, err := e.executeMultiAgentGoal(ctx, goal)
 		spent := asBudgetError(err)
 		// A spent budget ends this goal with its partial output; the run
 		// continues to the next goal, same as a single-agent goal.
@@ -782,10 +782,12 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		if err != nil {
 			return nil, err
 		}
-		// Parse structured output if declared (same as regular goals)
+		// Parse structured output if declared (same as regular goals),
+		// then fall back to the sub-agents' own declared outputs.
 		var vars map[string]string
 		if len(goal.Outputs) > 0 {
 			vars = parseStructuredOutput(output, goal.Outputs)
+			vars = mergeAgentOutputs(vars, goal.Outputs, agentVars)
 		}
 		// toolCallsMade is passed false here (not literally true): a
 		// multi-agent goal's "no tool calls" concept doesn't map to a
@@ -795,7 +797,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 		outcome := classifyOutcome(output, false, goal.Outputs, vars, spent, false, 0)
 
 		outcome = e.maybeRetry(ctx, goal, outcome, func(retryCtx context.Context, g *agentfile.Goal) GoalOutcome {
-			retryOutput, rerr := e.executeMultiAgentGoal(retryCtx, g)
+			retryOutput, retryAgentVars, rerr := e.executeMultiAgentGoal(retryCtx, g)
 			retrySpent := asBudgetError(rerr)
 			if rerr != nil && retrySpent == nil {
 				return GoalOutcome{Outcome: OutcomeError, Reason: rerr.Error()}
@@ -803,6 +805,7 @@ func (e *Executor) executeGoalWithTracking(ctx context.Context, goal *agentfile.
 			output = retryOutput
 			if len(goal.Outputs) > 0 {
 				vars = parseStructuredOutput(output, goal.Outputs)
+				vars = mergeAgentOutputs(vars, goal.Outputs, retryAgentVars)
 			}
 			return classifyOutcome(output, false, goal.Outputs, vars, retrySpent, false, 0)
 		})
@@ -1363,13 +1366,13 @@ func (e *Executor) getAllToolDefinitions() []llm.ToolDef {
 
 // executeMultiAgentGoal executes a goal that uses multiple agents in parallel.
 // Applies the four-phase checkpoint model at the goal level.
-func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Goal) (string, error) {
+func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Goal) (string, map[string]map[string]string, error) {
 	// Collect agent definitions
 	var agents []*agentfile.Agent
 	for _, agentName := range goal.UsingAgent {
 		agent := e.findAgent(agentName)
 		if agent == nil {
-			return "", fmt.Errorf("agent not found: %s", agentName)
+			return "", nil, fmt.Errorf("agent not found: %s", agentName)
 		}
 		agents = append(agents, agent)
 	}
@@ -1402,16 +1405,16 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 	// ============================================
 	// PHASE 2: EXECUTE - Run agents in parallel
 	// ============================================
-	output, err := e.executeSimpleParallel(ctx, goal, agents)
+	output, agentVars, err := e.executeSimpleParallel(ctx, goal, agents)
 	if err != nil {
 		// A spent budget ends this goal with whatever partial output the
 		// agents produced; the caller (a convergence loop, or the run
 		// itself) decides how to proceed. Any other error is fatal.
 		var spent *budgetError
 		if !errors.As(err, &spent) {
-			return "", err
+			return "", agentVars, err
 		}
-		return output, err
+		return output, agentVars, err
 	}
 
 	// Collect tool names from agents for checkpoint (agents used as "tools")
@@ -1483,21 +1486,27 @@ func (e *Executor) executeMultiAgentGoal(ctx context.Context, goal *agentfile.Go
 
 				// Handle supervision verdict
 				if superviseResult.Verdict == "PAUSE" {
-					return "", fmt.Errorf("supervision paused: %s", superviseResult.Question)
+					return "", agentVars, fmt.Errorf("supervision paused: %s", superviseResult.Question)
 				}
 			}
 		}
 	}
 
-	return output, nil
+	return output, agentVars, nil
 }
 
 // executeSimpleParallel executes AGENT entries in parallel using the same
 // execution path as dynamic sub-agents (spawnDynamicAgent).
-func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Goal, agents []*agentfile.Agent) (string, error) {
+func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Goal, agents []*agentfile.Agent) (string, map[string]map[string]string, error) {
+	// agentVars holds each agent's own declared outputs, keyed by agent
+	// name, so the goal can populate its `-> name` from them. Declared up
+	// front because every early return carries it.
+	agentVars := map[string]map[string]string{}
+
 	type agentResult struct {
 		name       string
 		output     string
+		vars       map[string]string
 		err        error
 		durationMs int64
 	}
@@ -1506,7 +1515,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	// iteration exhausted it). Don't spawn another round of agents just to
 	// have them trip the same budget again.
 	if err := budgetOf(ctx).exhausted(); e.noteBudget(ctx, err) {
-		return "", err
+		return "", agentVars, err
 	}
 
 	task := e.interpolate(goal.Outcome)
@@ -1557,11 +1566,22 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 
 			// Use spawnAgentWithPrompt which shares code with dynamic agents
 			// Pass agent's supervision flag - agent is supervised if it has SUPERVISED or inherits from goal
-			output, _, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires, priorGoals, agent.IsSupervised(e.workflow), localToolCap)
+			output, decision, err := e.spawnAgentWithPrompt(ctx, role, systemPrompt, task, agent.Outputs, agent.Requires, priorGoals, agent.IsSupervised(e.workflow), localToolCap)
+
+			// Keep the agent's own declared outputs. The goal asked this
+			// agent for `-> vulnerabilities, severity`; discarding them
+			// here is why a goal declaring `-> scan_results USING scanner`
+			// could not populate scan_results and was misreported as
+			// empty_output.
+			var agentVars map[string]string
+			if len(agent.Outputs) > 0 {
+				agentVars, _ = resolveOutputVars(output, decision, agent.Outputs)
+			}
 
 			resultChan <- agentResult{
 				name:       agent.Name,
 				output:     output,
+				vars:       agentVars,
 				err:        err,
 				durationMs: time.Since(startTime).Milliseconds(),
 			}
@@ -1588,6 +1608,9 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 				}
 				if strings.TrimSpace(result.output) != "" {
 					agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
+					if len(result.vars) > 0 {
+						agentVars[result.name] = result.vars
+					}
 				}
 				continue
 			}
@@ -1601,14 +1624,17 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 				e.logger.Warn("dropping sub-agent with empty output from synthesis", "agent", result.name, "reason", empty.Error())
 				continue
 			}
-			return "", result.err
+			return "", agentVars, result.err
 		}
 		agentOutputs = append(agentOutputs, fmt.Sprintf("[%s]: %s", result.name, result.output))
+		if len(result.vars) > 0 {
+			agentVars[result.name] = result.vars
+		}
 	}
 
 	if budgetErr != nil {
 		// Don't spend more budget synthesizing a partial result.
-		return strings.Join(agentOutputs, "\n\n"), budgetErr
+		return strings.Join(agentOutputs, "\n\n"), agentVars, budgetErr
 	}
 
 	// No agent produced usable output (e.g. the only agent's turn stayed
@@ -1616,7 +1642,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	// synthesis call over nothing. classifyOutcome (at the call site)
 	// turns this into empty_output.
 	if len(agentOutputs) == 0 {
-		return "", nil
+		return "", agentVars, nil
 	}
 
 	// Single agent: return directly
@@ -1627,7 +1653,7 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 			output = parts[1]
 		}
 		e.extractAndStoreObservations(ctx, goal.Name, "GOAL", output)
-		return output, nil
+		return output, agentVars, nil
 	}
 
 	// Multiple agents: synthesize responses
@@ -1649,13 +1675,13 @@ func (e *Executor) executeSimpleParallel(ctx context.Context, goal *agentfile.Go
 	e.recordLLMMetrics(resp, synthDuration)
 	if err != nil {
 		e.hooks.Fire(ctx, hooks.LLMError, map[string]any{"error": err})
-		return "", err
+		return "", agentVars, err
 	}
 	e.logLLMCall(ctx, session.EventAssistant, messages, resp, synthDuration)
 
 	e.extractAndStoreObservations(ctx, goal.Name, "GOAL", resp.Content)
 
-	return resp.Content, nil
+	return resp.Content, agentVars, nil
 }
 
 // executeTool executes a tool call (built-in or MCP).

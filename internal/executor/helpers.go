@@ -168,3 +168,64 @@ func (e *Executor) findAgent(name string) *agentfile.Agent {
 	}
 	return nil
 }
+
+// mergeAgentOutputs fills a goal's declared outputs from the outputs its
+// sub-agents declared, for the fields the goal's own response did not
+// supply.
+//
+// `GOAL scan "..." -> scan_results USING scanner` where
+// `AGENT scanner "..." -> vulnerabilities, severity` means scan_results
+// holds what the scanner produced. The scanner emits its own field names,
+// so looking for a "scan_results" key in the goal's text never finds one —
+// the goal was reported empty_output while its agents had done the work.
+//
+// Two ways a field gets filled, in order:
+//
+//   - by name: a declared goal output matching an agent's field name takes
+//     that value directly, so `GOAL x -> severity USING scanner` works.
+//   - by nesting: any goal output still empty is populated with the agents'
+//     outputs as a JSON object, which is the `-> scan_results` case. With
+//     one agent that is its fields; with several it is keyed by agent name,
+//     so nothing is silently dropped when siblings share a field name.
+//
+// Values the goal itself produced always win: a goal that emitted its own
+// outputs has said what it meant, and agent outputs are the fallback.
+func mergeAgentOutputs(vars map[string]string, declared []string, agentVars map[string]map[string]string) map[string]string {
+	if len(declared) == 0 || len(agentVars) == 0 {
+		return vars
+	}
+	if vars == nil {
+		vars = make(map[string]string, len(declared))
+	}
+
+	for _, field := range declared {
+		if strings.TrimSpace(vars[field]) != "" {
+			continue // the goal supplied this one
+		}
+		for _, av := range agentVars {
+			if v, ok := av[field]; ok && strings.TrimSpace(v) != "" {
+				vars[field] = v
+				break
+			}
+		}
+	}
+
+	// Whatever is still empty gets the agents' outputs nested under it.
+	var nested string
+	for _, field := range declared {
+		if strings.TrimSpace(vars[field]) != "" {
+			continue
+		}
+		if nested == "" {
+			if len(agentVars) == 1 {
+				for _, av := range agentVars {
+					nested = jsonStringify(av)
+				}
+			} else {
+				nested = jsonStringify(agentVars)
+			}
+		}
+		vars[field] = nested
+	}
+	return vars
+}

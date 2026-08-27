@@ -242,7 +242,7 @@ func TestMultiAgentGoal_SupervisionAndCheckpointFailures(t *testing.T) {
 		})
 	}
 
-	out, err := newExec("CONTINUE").executeMultiAgentGoal(t.Context(), &wf.Goals[0])
+	out, _, err := newExec("CONTINUE").executeMultiAgentGoal(t.Context(), &wf.Goals[0])
 	if err != nil || out != "agent output" {
 		t.Fatalf("got %q %v", out, err)
 	}
@@ -254,7 +254,7 @@ func TestMultiAgentGoal_SupervisionAndCheckpointFailures(t *testing.T) {
 		CheckpointStore: failingStore{},
 		Supervisor:      goalPausingSupervisor{},
 	})
-	if _, err := pauseGoalOnly.executeMultiAgentGoal(t.Context(), &wf.Goals[0]); err == nil || !strings.Contains(err.Error(), "supervision paused") {
+	if _, _, err := pauseGoalOnly.executeMultiAgentGoal(t.Context(), &wf.Goals[0]); err == nil || !strings.Contains(err.Error(), "supervision paused") {
 		t.Fatalf("expected pause, got %v", err)
 	}
 
@@ -265,7 +265,7 @@ func TestMultiAgentGoal_SupervisionAndCheckpointFailures(t *testing.T) {
 		Supervisor:      fakeSupervisor{supervise: true, verdict: "CONTINUE", err: errors.New("supervisor down")},
 	})
 	exec.currentGoal = "g"
-	if _, err := exec.executeMultiAgentGoal(t.Context(), &wf.Goals[0]); err != nil {
+	if _, _, err := exec.executeMultiAgentGoal(t.Context(), &wf.Goals[0]); err != nil {
 		t.Fatalf("supervisor failure must not fail the goal: %v", err)
 	}
 }

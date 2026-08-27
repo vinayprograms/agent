@@ -198,7 +198,7 @@ func TestGoalFanOut_RunsConcurrently(t *testing.T) {
 	})
 
 	exec := mustNewExecutor(t, wf, model, nil, nil)
-	if _, err := exec.executeMultiAgentGoal(context.Background(), &wf.Goals[0]); err != nil {
+	if _, _, err := exec.executeMultiAgentGoal(context.Background(), &wf.Goals[0]); err != nil {
 		t.Fatalf("executeMultiAgentGoal: %v", err)
 	}
 
