@@ -53,6 +53,9 @@ DESIGN-DEBT.md
 # will not walk into run outputs that contain .go files. Without it this
 # directory needs its own go.mod to stay out of the module.
 /_test-results/
+# Also ignore the un-prefixed name: older tooling and RERUN-SPEC still build
+# there, and a stray `git add -A` must never sweep run outputs into the repo.
+/test-results/
 
 # Transitional migration scaffolding — not part of understanding the repo.
 .go-migrate/
