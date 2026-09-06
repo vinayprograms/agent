@@ -2,8 +2,6 @@
 
 A Go-based headless agent for workflow automation using LLMs.
 
-> **Disclaimer:** This code was **gramcoded** — 12 days of texting an AI via Telegram, whenever inspiration hit. No IDE, no terminal — just a phone and [OpenClaw](https://github.com/openclaw/openclaw) + Claude Opus 4.5. **Review before production use**.
-
 ## Quick Start
 
 ### Option A: Interactive Setup (Recommended)
